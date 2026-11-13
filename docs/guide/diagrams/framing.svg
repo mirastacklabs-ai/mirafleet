@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 592" width="840" height="592" role="img" aria-labelledby="t d">
+<title id="t">Framing: a 4-byte length, then JSON</title>
+<desc id="d">On an SSH channel every message is a frame: four bytes giving the payload length in big-endian order, followed by that many bytes of JSON. The example request is 33 bytes, so its header is 00 00 00 21. The response uses the same framing.</desc>
+<style>
+:root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
+@media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
+svg{--T:12s;--slot:2s}
+.bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
+.pn{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
+.ttl{font:600 21px Oswald,"Arial Narrow",Arial,sans-serif;text-transform:uppercase;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.h{font-weight:600;letter-spacing:.12em;text-transform:uppercase;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.m{fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.b{font-weight:700;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.ln{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none}
+.ahp{fill:#00695F;fill:var(--accent,#00695F)}
+.dot{fill:#FF671F;fill:var(--signal,#FF671F)}
+.bdg{fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.bt{font-weight:700;fill:#FFFFFF;fill:var(--bg,#FFFFFF);text-anchor:middle}
+.cph{fill:#E0F0EE;fill:var(--okbg,#E0F0EE);stroke:#00695F;stroke:var(--ok,#00695F);stroke-width:1}
+.cpp{fill:#F6F5F1;fill:var(--band,#F6F5F1);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.hx{text-anchor:middle;font-weight:700}
+.hh{text-anchor:middle;font-weight:700;fill:#00695F;fill:var(--accent,#00695F)}
+.as{text-anchor:middle;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.br{stroke:#5E5E5E;stroke:var(--muted,#5E5E5E);stroke-width:1;fill:none}
+.rule{stroke:#FF671F;stroke:var(--signal,#FF671F);stroke-width:2}
+.pk{display:none}
+@media (prefers-reduced-motion:no-preference){
+.st{animation:lit var(--T) linear infinite both;animation-delay:calc((var(--i) - 1) * var(--slot))}
+.pk{display:inline;animation:mv var(--T) linear infinite}
+}
+@keyframes lit{0%{opacity:.25}1%{opacity:1}15.5%{opacity:1}16.67%{opacity:.25}100%{opacity:.25}}
+@keyframes mv{0%,33.33%{transform:translate(110px,92px)}45%,52%{transform:translate(700px,92px)}54%,66.67%{transform:translate(760px,110px)}68%,83.33%{transform:translate(760px,130px)}97%,100%{transform:translate(110px,130px)}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0,0L10,5L0,10z"/></marker></defs>
+<rect class="bg" width="840" height="592"/>
+<text class="ttl" x="10" y="32">One frame: length, then JSON</text>
+<line class="rule" x1="10" y1="42" x2="70" y2="42"/>
+
+<rect class="pn" x="10" y="56" width="140" height="100" rx="4"/>
+<text class="h" x="20" y="78">Operator</text>
+<text x="20" y="100">mirafleet mcp</text>
+<text class="m" x="20" y="118">WriteFrame</text>
+<text class="m" x="20" y="136">ReadFrame</text>
+<rect class="pn" x="690" y="56" width="140" height="100" rx="4"/>
+<text class="h" x="700" y="78">Central</text>
+<text x="700" y="100">api@ handler</text>
+<text class="m" x="700" y="118">ReadFrame</text>
+<text class="m" x="700" y="136">WriteFrame</text>
+
+<g class="st" style="--i:3">
+<line class="ln" x1="152" y1="92" x2="688" y2="92" marker-end="url(#ah)"/>
+<text x="230" y="84">request: [4-byte length][JSON]</text>
+<circle class="bdg" cx="190" cy="92" r="11"/><text class="bt" x="190" y="96.5">3</text>
+</g>
+<g class="st" style="--i:6">
+<line class="ln" x1="688" y1="130" x2="152" y2="130" marker-end="url(#ah)"/>
+<text x="230" y="152">response: [4-byte length][JSON]</text>
+<circle class="bdg" cx="190" cy="130" r="11"/><text class="bt" x="190" y="134.5">6</text>
+</g>
+<text class="m" x="230" y="108">one SSH channel (api@mirafleet), one request per channel</text>
+<g class="st" style="--i:4"><circle class="bdg" cx="818" cy="70" r="11"/><text class="bt" x="818" y="74.5">4</text></g>
+<g class="st" style="--i:5"><circle class="bdg" cx="818" cy="144" r="11"/><text class="bt" x="818" y="148.5">5</text></g>
+
+<text class="h" x="10" y="190">Request bytes (37)</text>
+<g class="st" style="--i:2">
+<rect class="cph" x="13" y="198" width="22" height="46"/><text class="hh" x="24" y="218">00</text><text class="as" x="24" y="236">·</text>
+<rect class="cph" x="35" y="198" width="22" height="46"/><text class="hh" x="46" y="218">00</text><text class="as" x="46" y="236">·</text>
+<rect class="cph" x="57" y="198" width="22" height="46"/><text class="hh" x="68" y="218">00</text><text class="as" x="68" y="236">·</text>
+<rect class="cph" x="79" y="198" width="22" height="46"/><text class="hh" x="90" y="218">21</text><text class="as" x="90" y="236">·</text>
+</g>
+<g class="st" style="--i:1">
+<rect class="cpp" x="101" y="198" width="22" height="46"/><text class="hx" x="112" y="218">7B</text><text class="as" x="112" y="236">{</text>
+<rect class="cpp" x="123" y="198" width="22" height="46"/><text class="hx" x="134" y="218">22</text><text class="as" x="134" y="236">&quot;</text>
+<rect class="cpp" x="145" y="198" width="22" height="46"/><text class="hx" x="156" y="218">76</text><text class="as" x="156" y="236">v</text>
+<rect class="cpp" x="167" y="198" width="22" height="46"/><text class="hx" x="178" y="218">22</text><text class="as" x="178" y="236">&quot;</text>
+<rect class="cpp" x="189" y="198" width="22" height="46"/><text class="hx" x="200" y="218">3A</text><text class="as" x="200" y="236">:</text>
+<rect class="cpp" x="211" y="198" width="22" height="46"/><text class="hx" x="222" y="218">31</text><text class="as" x="222" y="236">1</text>
+<rect class="cpp" x="233" y="198" width="22" height="46"/><text class="hx" x="244" y="218">2C</text><text class="as" x="244" y="236">,</text>
+<rect class="cpp" x="255" y="198" width="22" height="46"/><text class="hx" x="266" y="218">22</text><text class="as" x="266" y="236">&quot;</text>
+<rect class="cpp" x="277" y="198" width="22" height="46"/><text class="hx" x="288" y="218">69</text><text class="as" x="288" y="236">i</text>
+<rect class="cpp" x="299" y="198" width="22" height="46"/><text class="hx" x="310" y="218">64</text><text class="as" x="310" y="236">d</text>
+<rect class="cpp" x="321" y="198" width="22" height="46"/><text class="hx" x="332" y="218">22</text><text class="as" x="332" y="236">&quot;</text>
+<rect class="cpp" x="343" y="198" width="22" height="46"/><text class="hx" x="354" y="218">3A</text><text class="as" x="354" y="236">:</text>
+<rect class="cpp" x="365" y="198" width="22" height="46"/><text class="hx" x="376" y="218">22</text><text class="as" x="376" y="236">&quot;</text>
+<rect class="cpp" x="387" y="198" width="22" height="46"/><text class="hx" x="398" y="218">31</text><text class="as" x="398" y="236">1</text>
+<rect class="cpp" x="409" y="198" width="22" height="46"/><text class="hx" x="420" y="218">22</text><text class="as" x="420" y="236">&quot;</text>
+<rect class="cpp" x="431" y="198" width="22" height="46"/><text class="hx" x="442" y="218">2C</text><text class="as" x="442" y="236">,</text>
+<rect class="cpp" x="453" y="198" width="22" height="46"/><text class="hx" x="464" y="218">22</text><text class="as" x="464" y="236">&quot;</text>
+<rect class="cpp" x="475" y="198" width="22" height="46"/><text class="hx" x="486" y="218">6D</text><text class="as" x="486" y="236">m</text>
+<rect class="cpp" x="497" y="198" width="22" height="46"/><text class="hx" x="508" y="218">65</text><text class="as" x="508" y="236">e</text>
+<rect class="cpp" x="519" y="198" width="22" height="46"/><text class="hx" x="530" y="218">74</text><text class="as" x="530" y="236">t</text>
+<rect class="cpp" x="541" y="198" width="22" height="46"/><text class="hx" x="552" y="218">68</text><text class="as" x="552" y="236">h</text>
+<rect class="cpp" x="563" y="198" width="22" height="46"/><text class="hx" x="574" y="218">6F</text><text class="as" x="574" y="236">o</text>
+<rect class="cpp" x="585" y="198" width="22" height="46"/><text class="hx" x="596" y="218">64</text><text class="as" x="596" y="236">d</text>
+<rect class="cpp" x="607" y="198" width="22" height="46"/><text class="hx" x="618" y="218">22</text><text class="as" x="618" y="236">&quot;</text>
+<rect class="cpp" x="629" y="198" width="22" height="46"/><text class="hx" x="640" y="218">3A</text><text class="as" x="640" y="236">:</text>
+<rect class="cpp" x="651" y="198" width="22" height="46"/><text class="hx" x="662" y="218">22</text><text class="as" x="662" y="236">&quot;</text>
+<rect class="cpp" x="673" y="198" width="22" height="46"/><text class="hx" x="684" y="218">68</text><text class="as" x="684" y="236">h</text>
+<rect class="cpp" x="695" y="198" width="22" height="46"/><text class="hx" x="706" y="218">65</text><text class="as" x="706" y="236">e</text>
+<rect class="cpp" x="717" y="198" width="22" height="46"/><text class="hx" x="728" y="218">6C</text><text class="as" x="728" y="236">l</text>
+<rect class="cpp" x="739" y="198" width="22" height="46"/><text class="hx" x="750" y="218">6C</text><text class="as" x="750" y="236">l</text>
+<rect class="cpp" x="761" y="198" width="22" height="46"/><text class="hx" x="772" y="218">6F</text><text class="as" x="772" y="236">o</text>
+<rect class="cpp" x="783" y="198" width="22" height="46"/><text class="hx" x="794" y="218">22</text><text class="as" x="794" y="236">&quot;</text>
+<rect class="cpp" x="805" y="198" width="22" height="46"/><text class="hx" x="816" y="218">7D</text><text class="as" x="816" y="236">}</text>
+</g>
+<path class="br" d="M13,252v6h88v-6"/>
+<path class="br" d="M105,252v6h722v-6"/>
+<g class="st" style="--i:2"><circle class="bdg" cx="24" cy="278" r="11"/><text class="bt" x="24" y="282.5">2</text><text x="40" y="283">length = 33</text></g>
+<g class="st" style="--i:1"><circle class="bdg" cx="140" cy="278" r="11"/><text class="bt" x="140" y="282.5">1</text><text x="158" y="283">payload: 33 bytes of JSON, read exactly</text></g>
+<text class="h" x="10" y="318">Response bytes (32)</text>
+<g class="st" style="--i:6">
+<rect class="cph" x="13" y="326" width="22" height="46"/><text class="hh" x="24" y="346">00</text><text class="as" x="24" y="364">·</text>
+<rect class="cph" x="35" y="326" width="22" height="46"/><text class="hh" x="46" y="346">00</text><text class="as" x="46" y="364">·</text>
+<rect class="cph" x="57" y="326" width="22" height="46"/><text class="hh" x="68" y="346">00</text><text class="as" x="68" y="364">·</text>
+<rect class="cph" x="79" y="326" width="22" height="46"/><text class="hh" x="90" y="346">1C</text><text class="as" x="90" y="364">·</text>
+</g>
+<g class="st" style="--i:5">
+<rect class="cpp" x="101" y="326" width="22" height="46"/><text class="hx" x="112" y="346">7B</text><text class="as" x="112" y="364">{</text>
+<rect class="cpp" x="123" y="326" width="22" height="46"/><text class="hx" x="134" y="346">22</text><text class="as" x="134" y="364">&quot;</text>
+<rect class="cpp" x="145" y="326" width="22" height="46"/><text class="hx" x="156" y="346">76</text><text class="as" x="156" y="364">v</text>
+<rect class="cpp" x="167" y="326" width="22" height="46"/><text class="hx" x="178" y="346">22</text><text class="as" x="178" y="364">&quot;</text>
+<rect class="cpp" x="189" y="326" width="22" height="46"/><text class="hx" x="200" y="346">3A</text><text class="as" x="200" y="364">:</text>
+<rect class="cpp" x="211" y="326" width="22" height="46"/><text class="hx" x="222" y="346">31</text><text class="as" x="222" y="364">1</text>
+<rect class="cpp" x="233" y="326" width="22" height="46"/><text class="hx" x="244" y="346">2C</text><text class="as" x="244" y="364">,</text>
+<rect class="cpp" x="255" y="326" width="22" height="46"/><text class="hx" x="266" y="346">22</text><text class="as" x="266" y="364">&quot;</text>
+<rect class="cpp" x="277" y="326" width="22" height="46"/><text class="hx" x="288" y="346">69</text><text class="as" x="288" y="364">i</text>
+<rect class="cpp" x="299" y="326" width="22" height="46"/><text class="hx" x="310" y="346">64</text><text class="as" x="310" y="364">d</text>
+<rect class="cpp" x="321" y="326" width="22" height="46"/><text class="hx" x="332" y="346">22</text><text class="as" x="332" y="364">&quot;</text>
+<rect class="cpp" x="343" y="326" width="22" height="46"/><text class="hx" x="354" y="346">3A</text><text class="as" x="354" y="364">:</text>
+<rect class="cpp" x="365" y="326" width="22" height="46"/><text class="hx" x="376" y="346">22</text><text class="as" x="376" y="364">&quot;</text>
+<rect class="cpp" x="387" y="326" width="22" height="46"/><text class="hx" x="398" y="346">31</text><text class="as" x="398" y="364">1</text>
+<rect class="cpp" x="409" y="326" width="22" height="46"/><text class="hx" x="420" y="346">22</text><text class="as" x="420" y="364">&quot;</text>
+<rect class="cpp" x="431" y="326" width="22" height="46"/><text class="hx" x="442" y="346">2C</text><text class="as" x="442" y="364">,</text>
+<rect class="cpp" x="453" y="326" width="22" height="46"/><text class="hx" x="464" y="346">22</text><text class="as" x="464" y="364">&quot;</text>
+<rect class="cpp" x="475" y="326" width="22" height="46"/><text class="hx" x="486" y="346">72</text><text class="as" x="486" y="364">r</text>
+<rect class="cpp" x="497" y="326" width="22" height="46"/><text class="hx" x="508" y="346">65</text><text class="as" x="508" y="364">e</text>
+<rect class="cpp" x="519" y="326" width="22" height="46"/><text class="hx" x="530" y="346">73</text><text class="as" x="530" y="364">s</text>
+<rect class="cpp" x="541" y="326" width="22" height="46"/><text class="hx" x="552" y="346">75</text><text class="as" x="552" y="364">u</text>
+<rect class="cpp" x="563" y="326" width="22" height="46"/><text class="hx" x="574" y="346">6C</text><text class="as" x="574" y="364">l</text>
+<rect class="cpp" x="585" y="326" width="22" height="46"/><text class="hx" x="596" y="346">74</text><text class="as" x="596" y="364">t</text>
+<rect class="cpp" x="607" y="326" width="22" height="46"/><text class="hx" x="618" y="346">22</text><text class="as" x="618" y="364">&quot;</text>
+<rect class="cpp" x="629" y="326" width="22" height="46"/><text class="hx" x="640" y="346">3A</text><text class="as" x="640" y="364">:</text>
+<rect class="cpp" x="651" y="326" width="22" height="46"/><text class="hx" x="662" y="346">7B</text><text class="as" x="662" y="364">{</text>
+<rect class="cpp" x="673" y="326" width="22" height="46"/><text class="hx" x="684" y="346">7D</text><text class="as" x="684" y="364">}</text>
+<rect class="cpp" x="695" y="326" width="22" height="46"/><text class="hx" x="706" y="346">7D</text><text class="as" x="706" y="364">}</text>
+</g>
+<path class="br" d="M13,380v6h88v-6"/>
+<path class="br" d="M105,380v6h612v-6"/>
+<g class="st" style="--i:6"><circle class="bdg" cx="24" cy="406" r="11"/><text class="bt" x="24" y="410.5">6</text><text x="40" y="411">length = 28</text></g>
+<g class="st" style="--i:5"><circle class="bdg" cx="140" cy="406" r="11"/><text class="bt" x="140" y="410.5">5</text><text x="158" y="411">payload: 28 bytes of JSON</text></g>
+<circle class="dot pk" cx="0" cy="0" r="7"/>
+
+<text class="h" x="10" y="446">Steps</text>
+<g class="st" style="--i:1"><text x="10" y="470"><tspan class="b">1</tspan> The operator builds the JSON request: 33 bytes. Hex above, letters below each byte.</text></g>
+<g class="st" style="--i:2"><text x="10" y="490"><tspan class="b">2</tspan> It puts the payload length first, as 4 bytes, big-endian: 33 = 0x00000021.</text></g>
+<g class="st" style="--i:3"><text x="10" y="510"><tspan class="b">3</tspan> Header and payload go out in one Write on the channel.</text></g>
+<g class="st" style="--i:4"><text x="10" y="530"><tspan class="b">4</tspan> Central reads 4 bytes, checks the length against its limit BEFORE allocating, reads that many.</text></g>
+<g class="st" style="--i:5"><text x="10" y="550"><tspan class="b">5</tspan> Central runs the method and builds the JSON response (a small example: 28 bytes).</text></g>
+<g class="st" style="--i:6"><text x="10" y="570"><tspan class="b">6</tspan> The response is framed the same way: 28 = 0x0000001C. The operator reads it back.</text></g>
+</svg>

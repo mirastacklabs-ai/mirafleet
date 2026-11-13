@@ -1,0 +1,1257 @@
+# 4. Flows
+
+## What you will learn
+
+- The exact order of events when central starts, when a runner joins, and when a runner connects.
+- How an operator registers with the rotating code, and why two operators can use one code.
+- Every check an `action.run` passes on its way from `alice`'s laptop to `db-1`'s guard, and both
+  audit rows it leaves behind.
+- What happens to work that is already running when a runner or an operator is revoked, and why the
+  two revokes use opposite orders.
+- How reconnecting, stale heartbeats and shutdown behave, and what you see when things fail.
+
+[Chapter 3](03-architecture.md) showed the parts. This chapter shows them moving: eleven flows,
+each following one thing that really happens in mirafleet, from the command someone types to the
+rows that end up in the database. Every flow starts with a one-sentence summary, then a diagram and
+a numbered explanation that names the functions involved, so you can open the code and follow
+along.
+
+The diagrams use the names from the code as participant names (`Server`, `service.Service`,
+`registry.Registry`, `sqlite.DB`, and so on). A few terms to keep handy, all in the
+[glossary](glossary.md): **principal** (the verified identity behind a connection), **channel**
+(one request/response lane inside an SSH connection), **tombstone** (an in-memory "this runner id is
+dead" mark), **step** (one 60-second window of the registration code).
+
+## The cast, again
+
+| Name | Meaning in this chapter |
+|---|---|
+| `central.example.com:2222` | Acme's central. Data dir `/var/lib/mirafleet/central`. |
+| `dev`, `prod` | Fleets. `prod` is created with `-confirm` (a guarded fleet). |
+| `build-1` (in `dev`), `db-1` (in `prod`) | Runners. |
+| `alice`, `bob` | Operators. |
+| Dana | The admin: she has a shell on the central host and runs as the same user as central. |
+
+All the admin commands below (`mirafleet central fleet create ...` and friends) are clients of the
+running central: each one connects to `<data>/admin.sock`, sends one request, prints the answer and
+exits. Only `central init` works with central stopped.
+
+---
+
+## 1. `central init` and `central run`
+
+**In one sentence:** `central init` prepares a data directory once, and `central run` starts the
+server that listens for everyone else.
+
+```mermaid
+sequenceDiagram
+  participant Admin as Dana's shell
+  participant main as cmd/mirafleet
+  participant keys as keys
+  participant sqlite as sqlite.DB
+  participant Service as service.Service
+  participant Server as central.Server
+
+  Admin->>main: mirafleet central init -data D
+  main->>main: doCentralInit: prepareDataDir (umask 077, mkdir 0700, flock central.lock)
+  main->>keys: Generate host_ed25519 if absent
+  main->>keys: LoadSigner (refuses group/other-readable key)
+  main->>sqlite: Open: checks, pragmas, migrate (one transaction)
+  main->>Service: InitRegistrationSecret (principal admin, source cli)
+  Service->>sqlite: CreateSetting registration_secret + audit row
+  main-->>Admin: data dir, host key, fingerprint, next step
+  Admin->>main: mirafleet central run -data D -listen 0.0.0.0:2222
+  main->>main: startCentral: prepareDataDir (takes the lock again)
+  main->>Server: central.New(Config), Start (net.Listen tcp)
+  main->>Server: ServeAdmin (listen on admin.sock 0600)
+  main-->>Admin: central listening on ..., admin socket ...
+```
+
+*Look at the lock and the umask: both come before anything is created on disk.*
+
+1. **`centralInit`** parses `-data` (default `/var/lib/mirafleet/central`) and `-listen` (only used
+   in the hint it prints), then calls **`doCentralInit`**. It is *offline*: it works whether or not
+   a central is running, but it takes the same lock, so it cannot run while `central run` holds it.
+2. **`prepareDataDir`** does three things in a fixed order. `syscall.Umask(0o077)` first: the
+   *umask* removes permission bits from every file the process creates, so every file created
+   afterwards (the database, `-wal`, `-shm`) is born `0600` and never briefly readable by others.
+   Then `keys.EnsureDir` creates the directory with mode `0700`, or tightens it if it exists.
+   Finally `lockDataDir` takes an exclusive, non-blocking `flock` (an operating-system lock on a
+   file, released automatically if the process dies) on `<data>/central.lock`. A second central on
+   the same directory would fight over the database and the admin socket, so it fails with
+   "another central is already using ...".
+3. **Host key.** If `<data>/host_ed25519` does not exist, `keys.Generate` creates an Ed25519 pair:
+   the private key with mode `0600` (using `O_EXCL`, so it can never overwrite an existing key) and
+   the public key. An existing key is **never** replaced: replacing it would break the pin every
+   runner and operator holds. `init` is idempotent for the same reason.
+4. **Open the database.** `loadCentral` loads the signer (`keys.LoadSigner` refuses a private key
+   whose mode has any group/other bit), then calls `sqlite.Open`. `Open` refuses `:memory:` and
+   symlinked database files (and symlinked `-wal`/`-shm` files). It opens the file with
+   `O_NOFOLLOW`, which makes the operating system refuse to follow a symlink: otherwise an
+   attacker who can write in the directory could plant a link named `mirafleet.db` pointing at some
+   other file and trick central into opening or overwriting that file instead. `Open` then sets
+   safety settings (pragmas) on every connection and runs the embedded migrations in one
+   transaction. A database newer than this binary makes `Open` fail rather than guess. The pragma
+   list and the transaction details are in [chapter 6](06-data-model.md).
+5. **Build the services.** `loadCentral` then builds the `registry.Registry` (with `StaleAfter` =
+   3 x 15 s = 45 s), the `OperatorConns` tracker and the `service.Service` with
+   `policy.TablePolicy{}`.
+6. **`Service.InitRegistrationSecret`** is called as the `auth.LocalAdmin(uid)` principal with source
+   `cli`. It generates 32 random bytes and calls `Store.CreateSetting`, which inserts the
+   `registration_secret` setting *and* its audit row in one transaction. If the setting already
+   exists the store returns a conflict, and `doCentralInit` reports "already initialised;
+   registration secret kept". The secret is never printed, logged or audited. Only `central operator
+   rotate-secret` can overwrite it (via `PutSetting`).
+7. **`central run`** (`centralRun` then `startCentral`) repeats steps 2 and 4 (lock, host key,
+   database), then builds `central.New(central.Config{...})`. `New` rejects missing required
+   fields, fills the defaults (the limits are in [section 7.9](07-protocols.md#79-limits)) and
+   prepares the SSH server config: `PublicKeyCallback`, `PublicKeyAuthAlgorithms` limited to
+   Ed25519, `MaxAuthTries` of 3.
+8. **`Server.Start`** calls `net.Listen("tcp", listen)` and starts the accept loop. **`ServeAdmin`**
+   then binds `admin.sock`: `listenUnix` does it under umask `077`, a stale socket from a crashed
+   central is removed only after a failed dial proves nobody listens (and only while holding the
+   lock), and the file is `chmod 0600`. The order matters: SSH first, admin socket second, because
+   removing a stale socket is only safe under the lock.
+9. `centralRun` logs the address and then blocks on `<-ctx.Done()` until SIGINT or SIGTERM (flow
+   11).
+
+**What would go wrong without the lock?** Two centrals on one directory would each keep their own
+in-memory registry, so a `revoke` sent to one would never kick a runner connected to the other.
+
+---
+
+## 2. Creating a fleet and a join token
+
+**In one sentence:** Dana asks the running central, over its local admin socket, to create the
+`prod` fleet (guarded) and a join token, and central records both with an audit row.
+
+First the fleet:
+
+```mermaid
+sequenceDiagram
+  participant adminCLI as adminCLI (cmd/mirafleet)
+  participant AdminCall as central.AdminCall
+  participant Server as central.Server (adminConn)
+  participant methodTable as methodTable
+  participant Service as service.Service
+  participant sqlite as sqlite.DB
+
+  adminCLI->>AdminCall: fleet.create {name:prod, mode:actions, confirm:true}
+  AdminCall->>Server: dial admin.sock, write one frame
+  Server->>Server: checkPeer: peer UID == our UID
+  Server->>Server: api.ReadRequestTimeout (64 KiB, 10 s)
+  Server->>methodTable: serve (admin table)
+  methodTable->>Service: handleFleetCreate -> CreateFleet
+  Service->>Service: authorize (policy + admin kind)
+  Service->>sqlite: CreateFleet(fleet, now, audit event)
+  sqlite-->>Service: fleet row + audit row, one transaction
+  Service-->>adminCLI: fleet prod created
+```
+
+*Look at `sqlite.CreateFleet`: the fleet row and its audit row commit together.*
+
+Then the token, which takes the same path through the socket, the peer check and the method table:
+
+```mermaid
+sequenceDiagram
+  participant adminCLI as adminCLI (cmd/mirafleet)
+  participant Service as service.Service
+  participant tokens as tokens
+  participant sqlite as sqlite.DB
+
+  adminCLI->>Service: token.create {fleet:prod, uses:1, ttl_s:0} (via the admin socket)
+  Service->>Service: authorize (policy + admin kind), check limits
+  Service->>tokens: NewJoinToken(hostKey)
+  tokens-->>Service: id, secret, token string
+  Service->>sqlite: CreateToken(id, SHA-256 of secret, ...) + audit row
+  Service-->>adminCLI: token mfj1.... (only copy)
+```
+
+*Look at the last message: the full token exists in memory only until it is printed. The database
+gets just a hash.*
+
+1. **`adminCLI.fleetCreate`** parses the flags (`-mode`, `-confirm`) and calls `central.AdminCall`
+   with the socket path `<data>/admin.sock`.
+2. **`AdminCall`** builds an `api.Request` (version 1, random 16-hex id, method, params), refuses
+   anything over `api.MaxRequestBytes` (64 KiB), dials the Unix socket (5 s timeout), writes one
+   frame (4-byte length + JSON) and reads one frame back.
+3. **`ServeAdmin`'s accept loop** calls `checkPeer` *before reading a single byte*. On Linux it asks
+   the kernel for the peer's credentials (`SO_PEERCRED`) and requires the peer UID to equal
+   `os.Getuid()`. A process running as another user is closed and logged.
+4. **`adminConn`** reads the request with `api.ReadRequestTimeout`: the frame length is checked
+   against 64 KiB *before* any allocation, and the whole request must arrive within 10 s
+   (`api.RequestTimeout`). It builds a `callCtx` with principal `auth.LocalAdmin(uid)` and source
+   `cli`, then calls `adminTable().serve`.
+5. **`methodTable.serve`** applies the `allowed` predicate (admin table: `IsAdminMethod` plus
+   `fleets.list`, `runners.list`, `action.run`), finds the handler, applies `api.ListTimeout` (10 s,
+   but not for `action.run`) and calls it. `handleFleetCreate` decodes params strictly
+   (`DisallowUnknownFields`).
+6. **`Service.CreateFleet`**: `authorize` with `adminOnly` true. That means two gates: the policy
+   (`TablePolicy` allows the admin kind everything) and a direct `p.Kind == auth.KindAdmin` check.
+   An empty mode becomes `actions`; the name must match `^[a-z0-9][a-z0-9._-]{0,62}$`.
+7. **`Store.CreateFleet`** inserts the fleet and the audit row (`fleet.create`, source `cli`, actor
+   `uid:N`) in **one transaction**. Either both exist or neither does.
+8. **`Service.CreateToken`** (for `mirafleet central token create -fleet prod`): limits are
+   `DefaultTokenUses` 1 (max `MaxTokenUses` 1000), `DefaultTokenTTL` 24 h (max `MaxTokenTTL` 30
+   days). There is no "unlimited". Labels are limited to 32 entries.
+9. **`tokens.NewJoinToken`** draws 40 random bytes: 8 become the public id (16 hex chars), 32 become
+   the secret. The token is `mfj1.<id>.<secret in base64url>.<host-key hash>`; the last part is the
+   SHA-256 of central's host key, which is what lets the runner pin central later.
+10. **`Store.CreateToken`** stores `SHA-256(secret)`, not the secret, plus fleet, labels, `auto_approve`,
+    `max_uses`, `expires_at` and `created_by`, together with the audit row (`token.create`; the
+    subject is the token *id*, params are uses/ttl/approve). The token string is **not** in the audit
+    row.
+11. The CLI prints the token **alone on stdout** and the human text ("token ... for fleet prod,
+    expires ...; shown once") on stderr. So `TOKEN=$(mirafleet central token create -fleet prod)`
+    captures only the token.
+
+**Why hash the secret?** (`SHA-256` is a one-way function: easy to compute, practically impossible
+to reverse.) If the database file leaks, the attacker gets hashes of 256-bit random
+values. They cannot turn a hash back into a token that a runner would accept. This is the same idea as
+password hashing, minus the slow hash: the secret is random and long, so a fast SHA-256 is enough.
+
+---
+
+## 3. A runner joins
+
+**In one sentence:** a runner turns a one-time token into an enrolled but not yet trusted runner,
+refusing to talk to any central whose host key does not match the hash inside the token.
+
+Here Dana joins `build-1` to the `dev` fleet.
+
+![Runner join: token, enroll connection, host-key pinning, pending, approve](diagrams/runner-join.svg)
+
+*Look at where the host-key pin is checked: during the SSH handshake, before the token is sent.*
+
+1. Dana runs `token create` on central. It prints `mfj1.ID.SECRET.HASH` once (HASH pins central).
+2. Dana hands the token to the build-1 host by any channel, never through central.
+3. `runner join` dials `:2222` as user `enroll`. A host key not matching HASH is refused (no TOFU).
+4. It sends one `join@mirafleet` frame: token, runner name, labels.
+5. `Store.Enroll`, one transaction: look up by ID, constant-time compare, check stale, insert.
+6. Status is `pending` (`active` only if the token auto-approves). The enroll connection closes.
+7. Dana runs `runner approve dev/build-1`: status becomes `active`.
+8. The runner reconnects as user `runner` with its own key and sends heartbeats.
+
+### In detail
+
+First the runner side and the handshake:
+
+```mermaid
+sequenceDiagram
+  participant runnerJoin as runnerJoin (cmd/mirafleet)
+  participant runner as runner.Join
+  participant apiclient as apiclient.Join
+  participant Server as central.Server
+  participant KeyAuth as auth.KeyAuth
+
+  runnerJoin->>runnerJoin: check -token -, umask 077, runner.yaml absent
+  runnerJoin->>runnerJoin: readSecret (stdin, max 4096 bytes)
+  runnerJoin->>runner: Join(dir, addr, name, token)
+  runner->>runner: keys.Generate runner_ed25519 if absent, LoadSigner
+  runner->>apiclient: Join(addr, token, name, signer)
+  apiclient->>apiclient: tokens.ParseJoinToken, PinnedHash(hash)
+  apiclient->>Server: TCP + SSH handshake, user enroll
+  Server->>apiclient: host key (client checks pin, aborts on mismatch)
+  apiclient->>Server: public key auth
+  Server->>KeyAuth: Authenticate (user enroll: any ed25519 key)
+  Server->>Server: serveEnroll: limiter.allow, EnrollDeadline timer
+```
+
+*Look at the message where the host key arrives: the pin is checked there, before the token is
+sent.*
+
+Then the enroll request itself:
+
+```mermaid
+sequenceDiagram
+  participant runnerJoin as runnerJoin (cmd/mirafleet)
+  participant runner as runner.Join
+  participant apiclient as apiclient.Join
+  participant Server as central.Server
+  participant Service as service.Service
+  participant sqlite as sqlite.DB
+
+  apiclient->>Server: open join@mirafleet, send enroll.join frame
+  Server->>Service: Join(token, name, key)
+  Service->>sqlite: Enroll(tokenID, SHA-256 secret, runner, audit)
+  sqlite-->>Service: runner row (pending or active)
+  Service-->>apiclient: {fleet, runner, status}
+  Server->>Server: close channel and connection
+  runner->>runner: write known_hosts, then runner.yaml (atomic)
+  runner-->>runnerJoin: joined fleet dev as build-1, status pending
+```
+
+*Look at the last two messages on the runner: `runner.yaml` is written last, so a half-finished
+join leaves the directory re-joinable.*
+
+1. **`runnerJoin`** requires `-token -` (the literal dash: the token is read from standard input,
+   never from the command line, where `ps` and shell history could see it). It sets umask `077`.
+   It checks `runner.yaml` **before reading stdin or touching the network**: an already-joined
+   directory returns `ErrAlreadyJoined`. Then `readSecret` reads at most 4096 bytes and trims them.
+2. **`runner.Join`** validates the address (`net.SplitHostPort`) and the name
+   (`keys.RunnerNameRE`), creates the data dir `0700`, generates `runner_ed25519` if it is
+   absent and loads it with `keys.LoadSigner`.
+3. **`apiclient.Join`** calls `tokens.ParseJoinToken` just to extract the host-key hash from the
+   token, then `enroll`, which builds the **host-key callback** `PinnedHash(hash)`: during the SSH
+   handshake the client hashes the key central presents and compares it, in constant time, with the
+   hash in the token. If they differ, the handshake aborts with `ErrHostKeyMismatch`, and the
+   token **never leaves the runner**. There is no "trust on first use" fallback. This is the whole
+   point of putting the hash in the token.
+4. **`apiclient.Dial`** connects with SSH user `enroll`, Ed25519 only, and a handshake timeout of
+   `HandshakeTimeout` (30 s on the client).
+5. **On central**, `Server.handle` first takes a slot from `hsLimiter.acquire` (global cap
+   `MaxHandshakes`, per-IP cap `MaxHandshakesPerIP`), runs `ssh.NewServerConn` with a deadline of
+   `HandshakeTimeout`, and the public-key callback calls `KeyAuth.Authenticate`. For user `enroll`,
+   *any* Ed25519 key is accepted and becomes principal `Kind: enroll` with no id. The wrapper in
+   `central.New` also stores the presented key in `Permissions.Extensions["mirafleet-pubkey"]` so
+   the enrol code can register exactly that key.
+6. **`serveEnroll`** asks `limiter.allow(p.Remote)`: first the per-IP token bucket
+   (`EnrollRatePerMin`), then the global bucket (`EnrollGlobalRatePerMin`). It arms a timer so the
+   connection dies `EnrollDeadline` after it was *accepted* (not after authentication), and
+   `enrollKey` cross-checks that the stored key's fingerprint equals the principal's.
+7. Only **one** channel is allowed. The first channel must be `join@mirafleet` or
+   `register@mirafleet`; a second channel is rejected; a wrong first type closes the connection.
+   `serveEnrollChannel` reads the request with `api.ReadRequestTimeout`, and `enrollCall` checks
+   that it is an enroll method **and** matches the channel type (`enroll.join` on `join@mirafleet`).
+8. **`Service.Join`** (principal kind must be `enroll`, again checked directly): key must be
+   Ed25519, the name must be valid, `tokens.ParseJoinToken` must succeed, and the token's host-key
+   hash must equal central's own (`hostHashEqual`, constant time). It hashes the secret with
+   SHA-256 and calls the store.
+9. **`Store.Enroll`, part 1: is the token good?** The checks run in a **fixed order so timing
+   can't reveal which check failed**: a prober who measures response times learns nothing about
+   which part of a guessed token was wrong. All of `Enroll` is one transaction.
+   1. Look up the token by its public id.
+   2. Compare `SHA-256(secret)` with the stored hash in constant time, *against a dummy hash when
+      the id is unknown*, so "unknown id" and "wrong secret" take the same time.
+   3. Consume one use with a conditional `UPDATE ... WHERE revoked_at IS NULL AND expires_at > now
+      AND uses < max_uses`; if no row changes, the token is stale (expired, revoked or used up).
+10. **`Store.Enroll`, part 2: may this key become a runner?**
+    4. Refuse the key if it already belongs to an operator (checked only now, after the token
+       proved valid, so a caller without a token learns nothing about operator keys).
+    5. Read the fleet name, then insert the runner with the **token's** labels and status
+       `pending` (or `active` if the token was made with `-approve`), and write the audit row
+       `enroll.join` (source `enroll`).
+
+    Because it is all one transaction, a failure at the last step (say, the name is taken) rolls
+    back the token use too: nothing is consumed on any error.
+11. **Identical errors.** Unknown id, wrong secret, expired, revoked, used up, malformed token, and
+    a token that pins a different host key all return the same `errJoinRefused`
+    (`unauthenticated`, "join refused"). The real reason is logged on central only. Only a name or
+    key conflict returns `conflict`. So someone probing with guessed tokens cannot learn which ids
+    exist. Failed joins are logged, not audited, so a flood of bad tokens cannot fill the audit
+    table.
+12. Central writes the framed answer `{fleet, runner, status}`, closes the channel and the connection
+    (one request, one response).
+13. Back on the runner, `runner.Join` writes `known_hosts` (a line `central.example.com:2222 ssh-ed25519
+    AAAA...` holding the **verified** key) with `writeAtomic` (temp file, fsync, rename), and only
+    then `runner.yaml`. `runnerJoin` prints the status; if it is not `active`, it says an admin must
+    approve the runner.
+
+**Why `pending` by default?** A join token is a bearer secret: anyone holding it can enrol. If it
+leaks, the worst outcome is a pending runner nobody approved, which can heartbeat but never receive
+work. See flow 5.
+
+---
+
+## 4. A runner connects, heartbeats and is registered
+
+**In one sentence:** `mirafleet runner run` dials central, proves its key, sends a first heartbeat
+(an "I am alive" message), and only then is registered as a live session that can receive work.
+
+```mermaid
+sequenceDiagram
+  participant Runner as runner.Runner
+  participant Server as central.Server (serveRunner)
+  participant KeyAuth as auth.KeyAuth
+  participant sqlite as sqlite.DB
+  participant Registry as registry.Registry
+
+  Runner->>Server: dial, SSH handshake as user runner (host key from known_hosts)
+  Server->>KeyAuth: Authenticate(user runner, key)
+  KeyAuth->>sqlite: GetRunnerByKey
+  KeyAuth-->>Server: principal runner (denied if revoked)
+  Runner->>Server: global request heartbeat@mirafleet (first one)
+  Server->>sqlite: GetRunnerByID (current status)
+  Server->>Registry: Register(id, name, fleet, conn, status, hb)
+  Registry-->>Server: session (or ErrTombstoned)
+  Server->>sqlite: TouchRunner(last_seen_at, info) via toucher
+  Server-->>Runner: reply true
+  loop every 15 s
+    Runner->>Server: heartbeat@mirafleet
+    Server->>Registry: Session.Heartbeat(hb)
+  end
+```
+
+*Look at the `GetRunnerByID` message: the status is read again from the database at the moment of
+registration, not reused from login.*
+
+1. **`runnerRun`** loads `runner.yaml` (`runner.LoadConfig`: unknown fields are an error), the key
+   (`keys.LoadSigner`), the allowlist (`actions.Load`) and opens `<data>/audit.jsonl`
+   (`audit.Open`, mode `0600`). Then `runner.New(...).Run(ctx)`.
+2. **`Runner.session`** dials with a 10 s dial timeout and a 30 s deadline for the handshake, using
+   SSH user `runner`, its key, and `keys.PinnedHostKeys(known_hosts)` as the host-key callback. The
+   known-hosts file is read on every attempt, and a key that is not listed is refused.
+3. **Central authenticates.** `KeyAuth.Authenticate` for user `runner` looks the key up
+   (`GetRunnerByKey`). Unknown key: denied. A runner whose status is `revoked`: denied. Pending and
+   disabled runners are allowed to connect (they are visible, but cannot run actions). The peer
+   sees only a generic denial; real errors are logged on central.
+4. **`Server.handle`** decodes the principal (`auth.Decode`, which fails closed on missing or
+   garbled values) and, for runners and operators, calls `hs.markAuthed(remote)`: from now on that
+   source IP is exempt from the *per-IP* handshake cap while this connection lives. `dispatch`
+   sends it to **`serveRunner`**.
+5. `serveRunner` starts `rejectChannels` (runners may not open channels), arms a **guard timer** of
+   `StaleAfter` (45 s): a connection that never sends a valid heartbeat is closed. Then it loops
+   over global requests; anything other than `heartbeat@mirafleet` gets reply `false`.
+6. The runner installs its `exec@mirafleet` handler *before* its first heartbeat, then sends the first
+   heartbeat immediately (`Runner.heartbeat`: it waits up to 2 x `HeartbeatEvery` for the reply and
+   closes the connection on timeout). That is why central registers a runner only on its **first
+   heartbeat**: by then the runner is ready to accept an exec channel.
+7. **`Server.register`** reloads the runner by id (`GetRunnerByID`), maps its status
+   (`registryStatus`: active, pending, disabled; revoked has none and is refused) and calls
+   **`Registry.Register`**. Under one registry lock it:
+   - refuses an id that has a **tombstone** (`ErrTombstoned`);
+   - lets a status recorded by `SetStatus` override the one passed in (this closes the race where
+     an admin approves the runner between the database read and the registration);
+   - inserts the session, replacing and closing an older session for the same id ("the new
+     connection wins");
+   - starts the `watch` goroutine (a lightweight background thread of Go code) that closes a connection silent for longer than `StaleAfter`.
+   If registration fails, the runner gets reply `false` and the connection is closed.
+8. **Recording `last_seen_at`.** `claimEdge` allows at most one connect write per `TouchInterval/10`
+   (30 s) per runner, so a runner that flaps cannot hammer the database. The write itself goes
+   through a `toucher`: a one-slot mailbox drained by a background goroutine, so a slow database
+   never delays the heartbeat reply. `touchRunner` stores `hostname`, `os`, `arch` and `version`
+   (each clipped to 256 bytes) and the time.
+9. **Later heartbeats** call `Session.Heartbeat` (in-memory, free) and only write to the store when
+   `TouchInterval` (5 min) has passed since the last write. A runner that is online for a week costs
+   a few thousand tiny writes, not millions.
+10. **Disconnect.** When the connection ends, the deferred function calls `Registry.Unregister`,
+    marks the disconnect edge and queues a final `last_seen_at` write in the background.
+11. The heartbeat's `labels` are informational only. The authoritative labels are the ones from the
+    join token, stored by `Store.Enroll`.
+
+---
+
+## 5. Approve, disable, enable
+
+**In one sentence:** Dana changes a runner's stored status, and central updates the live session to
+match, in that order.
+
+All four lifecycle operations (`approve`, `disable`, `enable`, `revoke`) go through one function,
+`Service.lifecycle`. This section covers the three that keep the connection; revoke is flow 8.
+
+```mermaid
+stateDiagram-v2
+  [*] --> pending: join (token without -approve)
+  [*] --> active: join (token with -approve)
+  pending --> active: approve
+  active --> disabled: disable
+  disabled --> active: enable
+  pending --> revoked: revoke
+  active --> revoked: revoke
+  disabled --> revoked: revoke
+  revoked --> [*]
+```
+
+*Look at `revoked`: nothing leaves it. A revoked runner key can never be enrolled again.*
+
+```mermaid
+sequenceDiagram
+  participant adminCLI as adminCLI
+  participant Server as central.Server (adminConn)
+  participant Service as service.Service
+  participant sqlite as sqlite.DB
+  participant Registry as registry.Registry
+
+  adminCLI->>Server: runner.lifecycle {fleet:dev, runner:build-1, op:approve}
+  Server->>Service: handleRunnerLifecycle -> Lifecycle
+  Service->>Service: authorize (policy + admin kind)
+  Service->>sqlite: GetRunner(dev/build-1)
+  Service->>Service: from-set and store.CanTransition
+  Service->>sqlite: SetRunnerStatus(id, from, to, now, audit runner.approve)
+  sqlite-->>Service: runner with new status
+  Service->>Registry: SetStatus(id, active)
+  Service-->>adminCLI: runner dev/build-1 is active
+```
+
+*Look at the order: the database commit comes first, the live session is updated second.*
+
+1. `mirafleet central runner approve dev/build-1` becomes the admin-socket call `runner.lifecycle`
+   with `op` set to one of `api.OpApprove`, `OpDisable`, `OpEnable`, `OpRevoke`. It is an admin
+   method, so it exists only on the admin socket, never on `api@mirafleet`. A prompt-injected AI
+   agent cannot approve its own runner, because it has no way to ask.
+2. **`Service.lifecycle`** calls `authorize(..., adminOnly=true)`, picks the allowed "from" statuses
+   and the target (`approve`: pending to active; `disable`: active to disabled; `enable`: disabled
+   to active), parses `dev/build-1` with `store.ParseRef` and loads the runner with `GetRunner` (which
+   hides revoked runners).
+3. It checks the current status is in the allowed "from" set **and** `store.CanTransition` agrees,
+   otherwise it answers `conflict` ("runner is active: cannot approve"). That is how a double
+   approve is harmless.
+4. It builds the audit event `runner.approve` with params `from` and `to`, and calls
+   **`Store.SetRunnerStatus`**: one transaction that re-reads the status, updates it (with
+   `updated_at`) and inserts the audit row. If something else changed the status in between, the
+   transaction returns a conflict instead of overwriting.
+5. Only after the commit does it call **`Registry.SetStatus(id, status)`**. This records the desired
+   status *even if the runner is offline* (the `statuses` map; the next `Register` applies it) and
+   updates the live session if there is one. If `SetStatus` fails, the service **kicks** the session:
+   the runner reconnects and registers with the status in the database. Fail closed.
+6. **What each state means for work.**
+   - `pending`: the runner may heartbeat, so it shows as online, but `RunAction` refuses with
+     `conflict` ("runner is pending") and `Registry.Exec` would return `ErrPending` anyway.
+   - `disabled`: the connection stays up. New `action.run` calls are refused (`conflict`), but an
+     action that already started is **not** interrupted: `RunAction` checked the status once at the
+     start and the registry's status gate is only consulted when an exec begins.
+   - `active`: runs actions.
+
+---
+
+## 6. An operator registers with the rotating code
+
+**In one sentence:** `alice` and `bob` get access with a short-lived code that Dana reads off
+central, without Dana ever handling their keys.
+
+![Operator registration: rotating 60 s code, HMAC, two operators in one window](diagrams/operator-register.svg)
+
+*Look at the clock: the code changes every 60 seconds, and any number of operators can use the
+current one.*
+
+1. Central keeps a 32-byte secret in SQLite, never logged. Only Dana (the admin) can read codes.
+2. Each 60 s window `s` (unix seconds / 60) has its own code: base32(HMAC-SHA256(secret, s)) + HASH.
+3. alice runs `mcp login` with the code Dana gave her. Central recomputes this window's code and compares.
+4. bob uses the same code in the same window and is accepted too. Codes are not single-use.
+5. The window ends. The next window `s+1` has a brand-new code.
+6. bob tries the old code in the next window: refused, with the same error as any wrong code.
+7. HASH is central's host-key hash, so the code also pins central: no TOFU at first login.
+
+### In detail
+
+First Dana shows the code:
+
+```mermaid
+sequenceDiagram
+  participant adminCLI as adminCLI
+  participant Service as service.Service
+  participant tokens as tokens
+  participant sqlite as sqlite.DB
+
+  adminCLI->>Service: operator.code
+  Service->>sqlite: GetSetting registration_secret
+  Service->>tokens: Code(secret, Step(now), hostKey)
+  Service->>sqlite: RecordAudit operator.code (who, when - not the code)
+  Service-->>adminCLI: code mfr1..., seconds left, host fingerprint
+```
+
+*Look at the audit message: it records who showed a code and when, never the code itself.*
+
+Then Dana tells alice the code out of band (chat or voice, within the window), and alice registers:
+
+```mermaid
+sequenceDiagram
+  participant mcpLogin as mcpLogin (alice)
+  participant apiclient as apiclient.Register
+  participant Server as central.Server (serveEnroll)
+  participant Service as service.Service
+  participant tokens as tokens
+  participant sqlite as sqlite.DB
+
+  mcpLogin->>mcpLogin: readSecret (stdin), keys.Generate operator_ed25519
+  mcpLogin->>apiclient: Register(addr, code, name, signer)
+  apiclient->>Server: handshake as user enroll, host key pinned by code hash
+  apiclient->>Server: register@mirafleet, enroll.register frame
+  Server->>Service: Register(code, name, key)
+  Service->>sqlite: GetSetting registration_secret
+  Service->>tokens: VerifyCode(secret, now, body)
+  Service->>sqlite: RegisterOperator(name, key, audit)
+  sqlite-->>Service: operator active (created or idempotent)
+  Service-->>mcpLogin: {operator, status: active}
+  mcpLogin->>mcpLogin: pinHost, SaveContexts (current = alice)
+```
+
+*Look at the `VerifyCode` message: the code is derived and checked by central itself, so there is
+no clock to keep in sync with the laptop.*
+
+1. **Showing the code.** `mirafleet central operator code` calls `operator.code`.
+   `Service.OperatorCode` loads the 32-byte secret (`GetSetting`), computes the current step
+   (`tokens.Step(now)` = unix seconds / 60) and returns `tokens.Code(secret, step, hostKey)`. The
+   code is `mfr1.` + the first 26 characters of base32(HMAC-SHA256(secret, `"mirafleet-register-v1"` +
+   step)) + `.` + the host-key hash, plus `SecondsLeft` and central's host-key fingerprint. Showing a
+   code is **audited** (`operator.code`: who, when) and the audit write happens first: if it fails,
+   the code is **not** returned. The code itself is never put in the audit row.
+2. Dana passes the code to `alice` in any way she likes (chat, voice). A leaked code is
+   useless once its 60-second window ends.
+3. **`mcpLogin`** on Alice's laptop (`mirafleet mcp login central.example.com:2222 -name alice -code -`)
+   requires `-code -`, validates the address and name, refuses on Windows (the key loader fails
+   closed there), reads the code from stdin, creates the config dir (`opconf.EnsureDir`, `0700`) and
+   generates `operator_ed25519` if it is missing (key comment = the name).
+4. **`apiclient.Register`** parses the code only to get its host-key hash, pins central with
+   `PinnedHash`, connects as user `enroll`, opens `register@mirafleet` and sends
+   `enroll.register{code, name}`. The path through `Server.handle` and `serveEnroll` is the same as
+   in flow 3 steps 5 to 7, with `ChanRegister` instead of `ChanJoin`.
+5. **`Service.Register`**: principal must be `enroll`; the key must be Ed25519; the name must be a
+   valid operator name; `tokens.ParseCode` must succeed; the code's host-key hash must equal central's.
+6. **`tokens.VerifyCode(secret, now, body)`** recomputes the code for the *current* step and compares it
+   in constant time. Previous and future steps are refused, so the window is exactly the 60 seconds
+   of the step. Verification has no side effects, so **the same code verifies any number of times** in
+   its step. That is deliberate: `alice` and `bob` can both register with the code shown at 10:03:12, as
+   long as they both arrive before 10:04:00. Anything wrong (malformed, wrong host, wrong step, secret
+   missing) returns the identical `errRegisterRefused` ("registration refused"), with the real
+   reason in central's log.
+7. **`Store.RegisterOperator`** inserts an `active` operator and its audit row (`enroll.register`,
+   source `enroll`, subject = name, params = key fingerprint) in one transaction. It is idempotent per
+   key: an already active key returns the existing operator with `created=false`. In that case the
+   service still writes an audit row (message "already registered") through `RecordAudit`, so a
+   repeat registration is never invisible. Conflicts: the key belongs to a revoked operator, or to a
+   runner (a key may be a runner's or an operator's, never both, checked inside the transaction), or
+   the name is held by a different active operator, or the key is registered under another name.
+8. **No approval step.** Only Dana, on the central host, can read the code, so having it *is* the
+   approval. There is no pending operator state.
+9. Back on the laptop, `pinHost` writes central's verified key into `known_hosts` (replacing any
+   older line for the same address) and `SaveContexts` records `alice -> central.example.com:2222`
+   as the current context. Later calls (`mcp api ...`) use `apiclient.KnownHosts`, so the pin from
+   registration protects every future connection.
+10. `central operator rotate-secret` replaces the secret (`PutSetting`, audited), which invalidates
+    every code anyone was holding. Already-registered operators are unaffected.
+
+```mermaid
+stateDiagram-v2
+  [*] --> active: register with the current code
+  active --> active: register again, same key and name (idempotent, audited)
+  active --> revoked: central operator revoke
+  revoked --> [*]
+```
+
+*Look at `revoked`: the key is dead. Registering the same key again is a conflict, but the name can be
+given to a new key.*
+
+---
+
+## 7. `action.run`, end to end
+
+**In one sentence:** alice asks `db-1` in `prod` to tail its logs, and the request crosses every
+layer and every check, leaving two audit rows on central and two lines on the runner. This is the
+most important flow in the system.
+
+![action.run through every layer and back, with both audit rows](diagrams/action-run.svg)
+
+*Look at the two audit rows: one written before anything runs (`start`), one after (`ok` or a
+failure outcome), both with the same `request_id`.*
+
+1. alice's agent calls `action.run` (`prod/db-1`, `tail-logs`, `lines=200`) through `mirafleet mcp`.
+2. `mcp` sends one frame (4-byte length + JSON) on an `api@` channel. The operator method table routes it.
+3. `service.RunAction` checks policy, fleet mode, confirm "prod" (guarded fleet's name), runner active.
+4. The audit row "start" is written first. If that fails, nothing runs (fail closed).
+5. `registry.Exec` opens an `exec@` channel on the runner's own connection and sends the request.
+6. The runner's actions guard checks `tail-logs` and regex-checks `lines=200` into an argv.
+7. The process runs (no shell, own process group, timeout). The result JSON goes back.
+8. The audit row "outcome" is written with the same `request_id`.
+9. The response frame returns the same way: exit code, stdout, stderr.
+
+### In detail
+
+The command, from alice's laptop (the MCP server of milestone M5 will wrap this same call). The
+`"confirm":"prod"` is required because `prod` is a guarded fleet:
+
+```
+mirafleet mcp api action.run '{"fleet":"prod","runner":"db-1","action":"tail-logs","params":{"lines":"200"},"confirm":"prod"}'
+```
+
+Part 1: connect and authenticate.
+
+```mermaid
+sequenceDiagram
+  participant mcpAPI as mcpAPI (alice)
+  participant Client as apiclient.Client
+  participant Server as central.Server
+  participant serveOperator as serveOperator
+  participant sqlite as sqlite.DB
+
+  mcpAPI->>Client: Dial(addr, user operator, key, KnownHosts)
+  Client->>Server: SSH handshake (host key pinned, ed25519 only)
+  Server->>Server: hsLimiter, HandshakeTimeout, KeyAuth (operator, not revoked)
+  Server->>serveOperator: dispatch (principal operator alice)
+  serveOperator->>sqlite: GetOperatorByID, TouchOperator (still active?)
+```
+
+*Look at the last message: even after login, central re-checks that alice is still active.*
+
+Part 2: from the channel to the "start" audit row.
+
+```mermaid
+sequenceDiagram
+  participant Client as apiclient.Client
+  participant serveOperator as serveOperator
+  participant methodTable as methodTable
+  participant Service as service.Service
+  participant TablePolicy as policy.TablePolicy
+  participant sqlite as sqlite.DB
+
+  Client->>serveOperator: open api@mirafleet, write request frame
+  serveOperator->>serveOperator: channel allow-list, semaphore (max 8)
+  serveOperator->>serveOperator: serveAPIChannel: ReadRequestTimeout, ParseRequest
+  serveOperator->>methodTable: serve(req)
+  methodTable->>methodTable: allowed = IsOperatorMethod, handler found
+  methodTable->>Service: handleActionRun -> RunAction
+  Service->>TablePolicy: authorize (operator current status active?)
+  Service->>sqlite: GetFleet, GetRunner
+  Service->>Service: mode, confirm, status active checks
+  Service->>sqlite: RecordAudit (outcome start, params, request_id)
+```
+
+*Look at the last message: nothing has been sent to the runner yet, but the "start" row already exists.*
+
+Part 3: service to the runner's guard and back.
+
+```mermaid
+sequenceDiagram
+  participant Service as service.Service
+  participant Registry as registry.Registry
+  participant Runner as runner.Runner (serveExec)
+  participant Set as actions.Set
+  participant audit as audit.Writer (audit.jsonl)
+  participant sqlite as sqlite.DB
+  participant Client as apiclient.Client
+
+  Service->>Registry: Exec(ctx with timeout, runner id, ExecRequest)
+  Registry->>Registry: Get (online, not kicked, not stale), status gate
+  Registry->>Runner: OpenChannel exec@mirafleet (ExecRequest as channel data)
+  Runner->>Runner: json parse, semaphore (max 4), Accept
+  Runner->>audit: Log action, params, outcome start
+  Runner->>Set: Run -> Plan (allowlist, params, regex) -> execArgv
+  Set-->>Runner: Result (stdout, stderr, exit code, duration)
+  Runner->>audit: Log outcome ok or failed or timeout or refused
+  Runner-->>Registry: write ExecResult JSON, CloseWrite
+  Registry-->>Service: ExecResult (max 8 MiB read)
+  Service->>sqlite: RecordAudit (outcome ok, exit_code, duration, same request_id)
+  Service-->>Client: ActionRunResult via api@mirafleet response frame
+```
+
+*Look at the runner's two lines in `audit.jsonl`: they are written before the result is sent
+back to central.*
+
+### The checks, in order
+
+Every gate, with the code that implements it. There are 23, in four groups. The order is
+deliberate: cheap checks that need no secrets and cause no side effects come first, and the first
+write (the start audit row) comes only after every precondition holds.
+
+#### A. Before and during the handshake (gates 1 to 6)
+
+Nothing here has run any business logic yet. The goal is to refuse floods, impostors and revoked
+keys as cheaply as possible.
+
+| # | Gate | Where | If it fails |
+|---|---|---|---|
+| 1 | Request fits in 64 KiB | `apiclient.callOn` (client) and `api.ReadFrame` (server, before allocating) | `too_large` |
+| 2 | Pre-handshake caps | `hsLimiter.acquire`: global `MaxHandshakes`, per-IP `MaxHandshakesPerIP` (unless this IP has an authenticated connection) | Connection closed before any cryptography |
+| 3 | Handshake finishes in `HandshakeTimeout` | `Server.handle` sets a connection deadline | Dropped; slot released |
+| 4 | Host key is the pinned one | client: `apiclient.KnownHosts` | Client refuses to continue |
+| 5 | Ed25519 key, user `operator`, key in `operators`, not revoked | `KeyAuth.Authenticate`; `MaxAuthTries` 3 | Opaque `auth.ErrDenied` |
+| 6 | Operator is *still* active | `serveOperator`: `GetOperatorByID` after `OperatorConns.add` (closes the add-after-kick window) | Connection closed |
+#### B. Protocol shape (gates 7 to 11)
+
+The connection is trusted as "alice", but the bytes she sends are not: are they the right kind of
+channel, the right size, valid JSON, and a method her kind of caller may use?
+
+| # | Gate | Where | If it fails |
+|---|---|---|---|
+| 7 | Channel type allowed | `channelAllowed(KindOperator, "api@mirafleet")` | Channel rejected |
+| 8 | At most 8 channels open | `sem` of size `api.MaxChannelsPerConn` | `ResourceShortage` |
+| 9 | Request arrives in 10 s, strict JSON | `api.ReadRequestTimeout`, `ParseRequest` (`v` must be 1, no unknown fields, id 1-128 bytes) | `timeout`, `bad_request`, `unsupported_version` |
+| 10 | Method is an operator method | `methodTable.allowed = api.IsOperatorMethod` | `forbidden` (admin/enroll methods are also logged) |
+| 11 | Params decode strictly | `api.DecodeParams` in `handleActionRun` | `bad_request` |
+#### C. Business rules (gates 12 to 18)
+
+Now the service decides whether this particular action on this particular runner is allowed.
+
+| # | Gate | Where | If it fails |
+|---|---|---|---|
+| 12 | Policy: operator is active *now* | `Service.authorize` loads the operator's current status; `TablePolicy` allows only `hello`, `fleets.list`, `runners.list`, `action.run` | `forbidden`, and the denial is audited |
+| 13 | Kind is operator or admin | direct check in `RunAction` (independent of policy) | `forbidden`, audited |
+| 14 | `prod/db-1` is a valid ref; action name 1-64 bytes; at most 32 params, key <= 64 B, value <= 4 KiB; `timeout_s` not negative | `store.ParseRef`, `api.ValidateActionParams`, `ValidateTimeoutS` | `bad_request` |
+| 15 | Timeout clamp | `api.ActionTimeout`: default 2 min, max 10 min | (clamped, not refused) |
+| 16 | Fleet exists and is in `actions` mode | `Store.GetFleet` | `not_found` / `conflict` |
+| 17 | Guarded fleet: `confirm` equals the fleet name | `RunAction` (`f.Confirm && confirm != f.Name`) | `bad_request`, audited as `denied` |
+| 18 | Runner exists (not revoked) and its stored status is `active` | `Store.GetRunner` | `not_found` / `conflict` ("runner is pending") |
+#### D. Audit, then the runner (gates 19 to 23)
+
+The audit row comes first. After that, the last gates are enforced on the runner itself, by code
+central cannot change.
+
+| # | Gate | Where | If it fails |
+|---|---|---|---|
+| 19 | **Start audit row written** | `Store.RecordAudit` | If it fails, **nothing is executed**: `unavailable` ("audit unavailable") |
+| 20 | Runner is online (registered, not kicked, heartbeat within 45 s) and its live status is `active` | `Registry.Get`, `Registry.Exec` | Outcome `error`, "runner unavailable" |
+| 21 | Runner has a free slot | `Runner.sem` of size `MaxExec` (default 4) | Channel rejected, runner logs a `refused` audit line |
+| 22 | Action is defined in `actions.yaml`, no unknown params, no missing params, each value fully matches its regex, no leading `-` unless allowed | `actions.Set.Plan` | `ExecResult.Refused`; central answers `bad_request` "refused by runner: ..." |
+| 23 | No shell, minimal environment, own process group, deadline, 1 MiB output cap | `actions.execArgv` | Process killed; `timed_out` |
+
+**Why is a missing `confirm` `bad_request` but a policy failure `forbidden`?** `forbidden` means
+"you, as a caller, may not do this at all", which is a statement about who is asking. A missing or
+wrong `confirm` is different: alice is allowed to run actions, but this particular request is
+incomplete for a guarded fleet, which is a statement about the request. The caller can fix it by
+resending with `"confirm":"prod"`. (Both are audited, so a script that keeps forgetting is visible.)
+
+### Walkthrough
+
+1. **Dial.** `mcpAPI` reads `contexts.yaml` to find the current central, loads the operator key and
+   calls `apiclient.Dial` with `apiclient.KnownHosts(known_hosts)`. If the host key is not pinned,
+   the call fails. It never asks "do you trust this host?" (the `Prompt` helper refuses anything
+   but an interactive terminal).
+2. **Authenticate on central** (gates 2 to 5). `Server.handle` builds the `Principal` for user
+   `operator`, `markAuthed`, and `dispatch` calls `serveOperator`.
+3. **`serveOperator`** creates a context tied to the connection (`sconn.Wait` cancels it when the
+   connection ends), registers the connection in `OperatorConns` (so a revoke can find it), then
+   re-reads the operator (gate 6) and calls `TouchOperator` to record `last_seen_at`.
+4. **Open a channel.** `Client.Call` opens an `api@mirafleet` channel, writes one frame (4-byte
+   big-endian length, then JSON `{"v":1,"id":"...","method":"action.run","params":{...}}`; the
+   smallest example, `hello`, is worked out byte by byte in [section 7.3](07-protocols.md#73-framing-the-4-byte-length-prefix))
+   and waits for one frame back. Cancelling the call closes the channel; one request per channel.
+5. **`serveAPIChannel`** reads and parses the request (gate 9), then arms `context.AfterFunc`
+   so that closing the channel cancels the request context. A half-close (the client says "no more
+   input") does **not** cancel; only a full close or a dead connection does.
+6. **`methodTable.serve`** runs gates 10 and 11, then calls `handleActionRun`, which calls
+   **`Service.RunAction`** with the principal, the source `api`, and the request context. `action.run`
+   has no table-level timeout (`timeout` returns 0); the service applies its own.
+7. **`RunAction` checks** (gates 12 to 18), in the order of the table. The order is not an accident:
+   cheap, local, no-side-effect checks first; the first write (the start audit row) only after every
+   precondition holds.
+8. **Start audit row** (gate 19). `RunAction` generates a 128-bit random `request_id`
+   (`newRequestID`) and writes an `AuditEvent` with source `api`, actor kind `operator`, actor
+   `alice`, remote address, fleet `prod`, runner `db-1`, subject `tail-logs`, action `action.run`,
+   params `{lines: 200}` and outcome `start`. If the database cannot take this row, the action does
+   not run: *no row, no exec*. Without that rule a database outage would turn into unaudited
+   commands.
+9. **Exec.** `RunAction` derives `ectx` from the request context with the clamped timeout and calls
+   `Registry.Exec`. `Exec` finds the live session (gate 20), checks its status, and calls `execOn`:
+   `conn.OpenChannel("exec@mirafleet", payload)` where the payload is the JSON `ExecRequest{action,
+   params}`. This is the channel opened *back* over the connection the runner itself made. Opening a
+   channel cannot be cancelled by Go's SSH library, so `execOn` runs it in a goroutine and closes any
+   channel that opens late.
+10. **Runner: `serveExec`.** Parses the request (a bad payload is rejected), takes a slot from the
+    semaphore (gate 21; if full, it writes a `refused` line to `audit.jsonl` and rejects the
+    channel), accepts the channel, and ties the action's lifetime to the channel: a goroutine
+    copies and discards any input, and when the channel closes (central gave up) it cancels the
+    action. It then logs `{action, params, outcome: start}` to its JSONL file.
+11. **The guard.** `execute` calls `actions.Set.Run` -> `Plan` (gate 22): unknown action, an extra
+    parameter, a missing parameter without a default, a value that does not fully match its regex
+    (`\A(?:pattern)\z`, so authors cannot accidentally leave it unanchored), or a value starting
+    with `-` (option injection, unless `allow_leading_dash`) all produce a `RefusedError`. Otherwise
+    `Plan` substitutes the values into the argv template in a **single pass**: a value that itself
+    contains `{{x}}` is never re-expanded. So `tail-logs` with `lines=200` becomes
+    `["/usr/bin/journalctl", "-u", "gitlab-runner", "-n", "200"]`.
+12. **`execArgv`** (gate 23) starts the process with `exec.CommandContext` -- an argv list, never a
+    shell -- with only `PATH` (a fixed path) and `LANG=C` in its environment, working directory `/`,
+    its own process group (`Setpgid`), stdout and stderr limited to 1 MiB **combined**, and a
+    deadline (`actions.yaml` `timeout`, default 60 s). When the deadline passes or the context is
+    cancelled, `killTree` sends SIGKILL to the whole group, so a grandchild process cannot survive.
+13. **Runner audit and reply.** The runner writes the outcome line to `audit.jsonl` **before** it
+    writes the result to the channel: `refused`, `timeout`, `failed` (non-zero exit) or `ok`. Then
+    `encodeResult` marshals an `ExecResult` (if it would exceed 8 MiB it is replaced by a small
+    error result), writes it and calls `CloseWrite`.
+14. **Central reads the result.** `execOn` reads at most `transport.MaxResultBytes` (8 MiB) plus one
+    byte; more than that is an error ("result too large"). A result that does not parse is an
+    error. A guard refusal comes back as a *result* with `Refused` set, not as an error.
+15. **Outcome row.** `RunAction` maps what happened to an outcome:
+
+    | Situation | Outcome | Wire answer |
+    |---|---|---|
+    | Runner kicked (revoke) | `cancelled`, message "runner revoked" | `unavailable` |
+    | Our deadline passed, caller still waiting | `timeout`, "timed out" | `timeout` |
+    | Caller's request was cancelled | `cancelled`, "request cancelled" | `unavailable` |
+    | Runner offline or channel failed | `error`, "runner unavailable" | `unavailable` |
+    | Guard refused | `error`, "refused by runner: ..." (clipped to 200 bytes, control characters removed) | `bad_request` |
+    | Action ran (any exit code) | `ok`, exit code stored; `timeout` if the runner killed it for time | the result |
+
+    Note that on central, `ok` means "the action ran and reported an exit code", even when that
+    code is non-zero; the code is in `exit_code`. On the runner's own file a non-zero exit is
+    `failed`. The outcome row copies the start row (same `request_id`), drops the params (already
+    in the start row) and uses the runner's reported duration if there is one.
+16. **The outcome write survives cancellation.** It uses `context.WithoutCancel(ctx)` with its own
+    10 s limit (`outcomeWriteTimeout`), so a cancelled request still gets its row. If that write
+    fails it is only logged: the command already ran, and refusing to say so would not undo it.
+17. **Answer.** The handler returns `ActionRunResult{exit_code, stdout, stderr, truncated, duration_ms,
+    request_id}`. `methodTable.serve` wraps it with `api.NewResult`; `writeResponseTimeout` writes
+    the frame and closes the connection if the write stalls for `api.WriteTimeout` (10 s), so a
+    client that stops reading cannot pin a handler forever. `Client.callOn` checks the version and
+    that the response id matches the request id, and `mcpAPI` prints indented JSON.
+
+**The two audit rows (central).**
+
+| id | action | actor | fleet/runner | subject | params | outcome | exit_code | request_id |
+|---|---|---|---|---|---|---|---|---|
+| 1041 | `action.run` | `operator` `alice` (source `api`) | `prod` / `db-1` | `tail-logs` | `{"lines":"200"}` | `start` | none | `9f1c…e07a` |
+| 1042 | `action.run` | `operator` `alice` (source `api`) | `prod` / `db-1` | `tail-logs` | none | `ok` | `0` | `9f1c…e07a` (same) |
+
+Rows 1041 and 1042 are not adjacent in a busy system, but `request_id` ties them together. The table is
+append-only: triggers abort any update or delete. The runner's `audit.jsonl` holds the matching pair
+(`start`, then `ok`) with the same action and params but no `request_id`.
+
+**Why two rows?** The start row proves *intent* even if central crashes mid-command. The outcome row
+proves *result*. A start row with no outcome row tells an investigator "something began and we never
+learned how it ended".
+
+---
+
+## 8. Revoking a runner while an action is in flight
+
+**In one sentence:** Dana revokes `dev/build-1` at the moment alice's `restart-service` is running
+on it, and the revoke must be immediate and must not leave a running process behind.
+
+![Revoke: tombstone, kick, in-flight cancel, commit, reconnect refused](diagrams/revoke.svg)
+
+*Look at the order: tombstone first, kick second, commit third. At no moment can the runner
+slip back in.*
+
+1. Dana runs `central runner revoke dev/build-1`. The CLI sends `runner.lifecycle` (op `revoke`) over the admin socket.
+2. Tombstone: build-1's id goes into the registry, so no new session can slip in during the commit.
+3. Kick: the session context is cancelled and the runner's SSH connection is closed.
+4. In-flight action cancelled: the runner kills the process group; the outcome row says `cancelled`.
+5. Commit: `status = revoked` and the audit row are written in one transaction.
+6. The runner redials. Auth finds a revoked key and refuses it: it never gets a session.
+
+### In detail
+
+Part 1: central marks the runner dead and wakes the in-flight call.
+
+```mermaid
+sequenceDiagram
+  participant Service as service.Service
+  participant Registry as registry.Registry
+  participant Conn as runner SSH connection
+  participant RunAction as RunAction (alice's call)
+  participant sqlite as sqlite.DB
+
+  Note over RunAction,Registry: Registry.Exec is blocked reading the exec channel
+  Service->>Service: lifecycle(revoke): authorize, GetRunner, CanTransition
+  Service->>Registry: Tombstone(id)
+  Service->>Registry: Kick(id, "runner revoked")
+  Registry->>Registry: session ctx cancelled with KickError
+  Registry->>Conn: Close
+  Registry-->>RunAction: Exec returns context.Cause = KickError
+  RunAction->>sqlite: RecordAudit (outcome cancelled, "runner revoked")
+```
+
+*Look at the order of the two registry calls: tombstone, then kick.*
+
+Part 2: the runner kills the process, central commits, and the runner is refused when it returns.
+
+```mermaid
+sequenceDiagram
+  participant Service as service.Service
+  participant sqlite as sqlite.DB
+  participant Conn as runner SSH connection
+  participant Runner as runner.Runner
+  participant Proc as action process group
+
+  Conn-->>Runner: connection lost, session context cancelled
+  Runner->>Proc: cmd.Cancel -> killTree (SIGKILL to the group)
+  Runner->>Runner: audit.jsonl: outcome failed, exit_code -1
+  Service->>sqlite: SetRunnerStatus(id, from, revoked, audit runner.revoke)
+  sqlite-->>Service: committed
+  Runner->>Conn: reconnect after backoff
+  Conn-->>Runner: auth denied (status revoked)
+```
+
+*Look at the three places the process dies from: the cancelled context on central, the closed
+channel on the runner, and the closed connection. Any one is enough.*
+
+1. **`Service.lifecycle`** with `op = revoke`: `authorize` (admin only), the "from" set is
+   pending, active or disabled (a second revoke answers `not_found`, because `GetRunner` hides revoked runners), and the audit event gets the
+   message `RevokeReason` = "runner revoked".
+2. **`Registry.Tombstone(id)`** adds the runner's database id to an in-memory set. Ids come from
+   `AUTOINCREMENT` and are never reused, so a tombstone can never accidentally block a different,
+   later runner. After this line, `Registry.Register` refuses the id (`ErrTombstoned`), under the same
+   lock that guards the sessions. This closes the window between "the runner authenticated" and "the
+   database says revoked".
+3. **`Registry.Kick(id, reason)`** finds the session and calls `s.cancel(&KickError{Reason})`, then
+   `conn.Close()`. The registry lock is **not** held while closing a connection (the package
+   comment forbids holding it across network I/O).
+4. **The in-flight call wakes up.** `Registry.Exec` linked the session context to its exec
+   context with `context.AfterFunc(sess.ctx, cancel)`, so the cancel closes the exec channel and
+   `execOn` returns. `Exec` notices that the *caller's* context is fine but the *session's* is not, and
+   returns `context.Cause(sess.ctx)`, the `*KickError`.
+5. **`RunAction`** recognises the `KickError` (`errors.As`) and writes the outcome row
+   `cancelled` with the message "runner revoked", then returns `unavailable: runner revoked` to Alice.
+   Her tool sees why it stopped.
+6. **On the runner**, the connection drop ends `session`; its deferred `cancel()` cancels the context
+   that every `serveExec` derives from. Also, the closed channel ends the goroutine copying
+   `io.Copy(io.Discard, ch)`, which cancels the action. `exec.Cmd.Cancel` calls `killTree`:
+   SIGKILL to the process **group**, so the shell-free child and any grandchild die. The runner's
+   `audit.jsonl` records `failed` with exit code -1 (the channel is gone, so the result never
+   reaches central; central already has its own `cancelled` row).
+7. **Commit.** `Store.SetRunnerStatus` moves the runner to `revoked` and writes `runner.revoke`
+   in one transaction (`synchronous=FULL`, so it survives power loss). The tombstone **stays**
+   after a successful commit: `registry.Status` has no "revoked" value, so the tombstone is what keeps
+   the id out of the live registry. Tombstones live only in memory, which is safe because after a
+   restart a revoked runner is refused at authentication by its database status.
+8. **If the commit fails**, `lifecycle` removes the tombstone only if a fresh read proves the
+   runner is *not* revoked (`ClearTombstone`). If the read also fails, it keeps the tombstone:
+   fail closed.
+9. **The runner reconnects** (flow 10). Two outcomes. If the commit has finished, `KeyAuth` sees
+   `StatusRevoked` and denies the key at the handshake. If the commit is still in flight, the key
+   still authenticates, but the first heartbeat reaches `Registry.Register`, which refuses the
+   tombstoned id; `serveRunner` replies `false` and closes the connection. Either way the runner
+   never regains a session. It will keep retrying with growing backoff, because it cannot tell
+   "revoked" from "temporarily refused".
+10. The revoked runner disappears from `runners.list` (`ListRunners` excludes revoked) and its name
+    can be reused by a new runner with a *new key*. The old key can never re-enrol: `runners.pubkey`
+    stays `UNIQUE` even for revoked rows.
+
+---
+
+## 9. Revoking an operator
+
+**In one sentence:** Dana revokes `bob` while he has a long action running, and central commits the
+change first and only then cuts his connections.
+
+She runs `mirafleet central operator revoke bob`.
+
+```mermaid
+sequenceDiagram
+  participant adminCLI as adminCLI
+  participant Service as service.Service
+  participant sqlite as sqlite.DB
+  participant OperatorConns as central.OperatorConns
+  participant serveOperator as serveOperator (bob's connection)
+  participant RunAction as RunAction
+  participant Registry as registry.Registry
+
+  adminCLI->>Service: operator.revoke {name: bob} (Dana)
+  Service->>sqlite: RevokeOperator(name, now, audit operator.revoke)
+  sqlite-->>Service: operator (status revoked), committed
+  Service->>OperatorConns: KickOperator(id, "operator revoked")
+  OperatorConns->>serveOperator: Close each ssh.ServerConn
+  serveOperator->>serveOperator: connection ctx cancelled (sconn.Wait)
+  serveOperator->>RunAction: request ctx cancelled
+  RunAction->>Registry: Exec ctx cancelled -> channel closed, runner kills process
+  RunAction->>sqlite: RecordAudit (outcome cancelled, "request cancelled")
+  Note over adminCLI,Registry: Bob reconnects: KeyAuth sees status revoked, denied
+```
+
+*Look at the order: commit first, kick second. A revoked key can never authenticate again.*
+
+1. **`Service.RevokeOperator`** (admin only) validates the name and calls `Store.RevokeOperator`,
+   which flips the operator to `revoked` and writes the audit row in one transaction.
+2. Only after the commit it calls `OperatorConns.KickOperator(id, reason)`. `OperatorConns` keeps
+   a set of live `ssh.ServerConn` per operator id; `KickOperator` copies the set under the lock and
+   closes the connections **after releasing the lock**.
+3. Closing the connection ends `sconn.Wait()` in `serveOperator`, which cancels the connection
+   context. Every `serveAPIChannel` and every `RunAction` derived from it is cancelled. For Bob's
+   running action, `Registry.Exec`'s context ends, the exec channel closes, and the runner kills the
+   process group, exactly as in flow 8, step 6.
+4. The outcome row says `cancelled`, message "request cancelled" (not "runner revoked": the runner
+   is fine, the *caller* is gone).
+5. **The race.** Bob could authenticate *just before* the commit, and `OperatorConns.add` could run
+   *after* the kick. Then the kick would find nothing to close. That is why `serveOperator` re-reads
+   the operator by id right after `add` and closes the connection if it is no longer active. Revoke
+   commits before it kicks, so either the kick or this check catches every connection.
+6. After revoke, `KeyAuth.Authenticate` (user `operator`) returns `ErrDenied` for Bob's key. If he
+   registers again with the same key, the store answers `conflict` (the key belongs to a revoked
+   operator). A new key under the name `bob` is allowed, because the unique index on names covers only
+   non-revoked operators.
+
+> **Why the orders differ**
+>
+> - **Runner revoke: tombstone, then kick, then commit** (`Service.lifecycle`). Runners reconnect
+>   *on their own* with backoff, and a reconnecting runner can authenticate and register at any
+>   moment, including while the commit is still in flight. So central first marks the id dead in
+>   memory (the tombstone), then kicks the live session, and only then commits. If the commit
+>   fails, the tombstone is cleared again, but only if a fresh read proves the runner is not revoked.
+> - **Operator revoke: commit, then kick** (`Service.RevokeOperator`). An operator's status is
+>   re-read from the database on **every request**, so the moment the commit lands, no new request
+>   can succeed. The kick only has to cut the connections that were already open. There is no
+>   in-memory mark to maintain because the database is the mark.
+>
+> The shared idea: close every gap through which the revoked party could act. For a runner the gap
+> is its own auto-reconnect; for an operator, the gap is only connections that already exist.
+
+---
+
+## 10. Reconnect, backoff and stale heartbeats
+
+**In one sentence:** when the network fails, the runner retries with growing, jittered delays and
+central drops sessions that go quiet, so both ends recover without anyone's help.
+
+```mermaid
+sequenceDiagram
+  participant Runner as runner.Runner (Run loop)
+  participant Server as central.Server (serveRunner)
+  participant Registry as registry.Registry
+
+  Runner->>Server: session 1: connected, heartbeats acked
+  Note over Runner,Server: network cable pulled, no TCP reset
+  Runner->>Server: heartbeat (no reply)
+  Runner->>Runner: wait 2 x 15 s then client.Close
+  Registry->>Registry: watch: no heartbeat for 45 s -> conn.Close
+  Server->>Registry: Unregister(session)
+  Runner->>Runner: backoff 1 s (+/-20 %), dial fails
+  Runner->>Runner: backoff 2 s, 4 s, 8 s ... up to 60 s
+  Runner->>Server: dial succeeds, handshake, first heartbeat
+  Server->>Registry: Register (replaces any old session for this id)
+  Runner->>Runner: stays up 30 s with an acked heartbeat -> backoff resets to 1 s
+```
+
+*Look at the last step: only a connection that proved itself healthy resets the backoff.*
+
+**Runner side** (`Runner.Run` and `Runner.session`):
+
+1. `Run` loops until its context ends. After each `session` it waits `jitter(backoff)`, a random
+   value within +/-20 % of the current backoff, so a hundred runners that lost the same central do
+   not all reconnect in the same second. Then `backoff = min(backoff*2, BackoffMax)`.
+   Defaults: `BackoffMin` 1 s, `BackoffMax` 60 s.
+2. The backoff resets to the minimum **only** if `session` reports `healthy`: a heartbeat was
+   acknowledged **and** the connection lasted at least `HealthyAfter` (30 s). A central that accepts
+   TCP and SSH but fails right after (say, it refuses to register the runner) would otherwise let
+   the runner hammer it once per second.
+3. `Runner.heartbeat` waits at most `2 x HeartbeatEvery` (30 s) for each reply. On a timeout it
+   closes the client, so the loop reconnects instead of waiting on a half-dead TCP connection
+   forever. `client.Wait()` returning also ends the session ("connection lost").
+
+**Central side** (`registry.Registry` and `serveRunner`):
+
+4. A session records the time of its last heartbeat (`lastSeen`). `Registry.stale` is true when that
+   is older than `StaleAfter` = 3 x 15 s = **45 s**. The `watch` goroutine checks every
+   `StaleAfter/6` (7.5 s) and **closes the connection** of a stale session. Closing it makes
+   `serveRunner`'s loop end, which runs the deferred `Unregister`.
+5. A stale session is *offline immediately*, even before the watcher notices: `Registry.Get` returns
+   nil for it, and `Snapshot` reports `Online: false`. So `action.run` to a silent runner fails fast
+   with "runner unavailable" and `runners.list` shows it offline.
+6. **A new connection wins.** If the runner reconnects before the old session is noticed as dead,
+   `Registry.Register` replaces the old session, cancels its context and closes its connection. An
+   action that was in flight on the old connection ends as `error` ("runner unavailable").
+7. A connection that never sends a valid heartbeat is closed by `serveRunner`'s guard timer after
+   `StaleAfter`.
+
+```mermaid
+stateDiagram-v2
+  [*] --> offline
+  offline --> online: first heartbeat registered
+  online --> online: heartbeat within 45 s
+  online --> offline: disconnect, stale 45 s, kicked, or replaced
+```
+
+*Look at how online/offline is separate from `pending`/`active`: a runner has both a lifecycle status
+(stored) and a presence (live, in the registry).*
+
+---
+
+## 11. Central shuts down
+
+**In one sentence:** on SIGINT (Ctrl-C) or SIGTERM, central stops accepting, waits for in-flight
+requests to finish their audit rows, then closes the database and releases the lock.
+
+```mermaid
+sequenceDiagram
+  participant OS as operating system
+  participant centralRun as centralRun
+  participant runningCentral as runningCentral.Close
+  participant Server as central.Server
+  participant sqlite as sqlite.DB
+
+  OS->>centralRun: SIGTERM, ctx done
+  centralRun->>runningCentral: deferred Close
+  runningCentral->>runningCentral: cancel() (admin listener loop stops)
+  runningCentral->>Server: Close: closed=true, close listener, connections, handshakes, admin
+  Server->>Server: wg.Wait for every handler to return
+  Server-->>runningCentral: handlers done (in-flight actions audited as cancelled)
+  runningCentral->>sqlite: Close
+  runningCentral->>runningCentral: release data-dir lock
+```
+
+*Look at the order: connections drain before the database closes, and the lock is released last.*
+
+1. `signal.NotifyContext` turns SIGINT or SIGTERM into `ctx.Done()`, so `centralRun` returns from
+   `<-ctx.Done()` and its `defer rc.Close()` runs.
+2. **`runningCentral.Close`** runs four steps in this order: `cancel()` (stops the admin accept loop),
+   `srv.Close()`, `d.db.Close()` and the lock `release()`.
+3. **`Server.Close`** sets `closed` under its mutex (so no new connection can be tracked: `track`
+   and `Close` use the same lock, which removes a WaitGroup race), closes the SSH listener, every
+   established `ssh.ServerConn`, every connection still in handshake and the admin listener and its
+   connections, and then **waits** (`wg.Wait`) for all handler goroutines.
+4. **In-flight work.** Closing an operator's connection cancels its requests, so an `action.run` in
+   progress ends with an outcome row `cancelled` ("request cancelled"). That row is written with
+   `context.WithoutCancel` *inside the handler*, and the handler is part of the wait group, so it is
+   written before the database closes. Closing a runner's connection also kills the runner's process
+   group for that action.
+5. `ServeAdmin`'s accept loop removes `admin.sock` on its way out, but only if the file is still the
+   one it created (it compares device and inode), so a new central that started quickly does not
+   lose its socket.
+6. Then the database closes and the lock is released. A new `central run` can start immediately.
+7. **What the runners do:** their connection drops, and they follow flow 10: retry with backoff while
+   central is down, then reconnect and re-register. Operators see errors from `mcp api` until central
+   is back. Tombstones are lost on restart, but that is safe: revoked runners are refused by their
+   stored status at the handshake.
+8. One caveat: the background `toucher` goroutines that write `last_seen_at` are not in the wait
+   group (they exist so a slow database never delays a heartbeat). A write still queued at shutdown can
+   fail against a closed database; it only produces a log line.
+
+---
+
+## Lifecycle at a glance
+
+| Thing | States | Changed by | Effect on live connections |
+|---|---|---|---|
+| Runner (stored) | `pending`, `active`, `disabled`, `revoked` | join; `approve`, `disable`, `enable`, `revoke` on central | approve/enable/disable: status updated in place, connection stays. Revoke: kicked. |
+| Runner (live) | offline, online (registered, heartbeat < 45 s) | connect, heartbeat, disconnect, stale | n/a |
+| Operator | `active`, `revoked` | `mcp login` with a valid code; `operator revoke` | revoke: connections closed, in-flight actions cancelled |
+| Join token | usable until used up, expired or revoked | `token create`, `token revoke`, enroll | n/a |
+| Registration code | valid for its 60 s step | time; `rotate-secret` invalidates all | n/a |
+
+## Failure: what you see and what the system does
+
+| Failure | What you see | What the system does |
+|---|---|---|
+| Runner's network drops (no TCP reset) | `runners.list` shows it offline within 45 s; `action.run` answers `unavailable` ("runner unavailable") | Central closes the stale session; the runner times out its own heartbeat and redials with backoff (flow 10). |
+| Central restarts | Operators get errors from `mcp api` until it is back; runners show offline then online | In-flight actions end as `cancelled`; runners reconnect and re-register (flow 11). |
+| Wrong or unknown join token | `join refused` (identical for every cause) | Nothing is consumed or stored; the real reason is logged on central only (flow 3). |
+| Central presents an unexpected host key at join | Client aborts with a host-key mismatch before sending the token | The token never leaves the runner (flow 3). |
+| Registration code from the previous 60 s window | `registration refused` | Nothing stored; ask Dana for a fresh code (flow 6). |
+| Guarded fleet and no `confirm` | `bad_request`: fleet requires `confirm` to equal the fleet name | A `denied` audit row; nothing runs (flow 7). |
+| Runner is `pending` or `disabled` | `conflict`: "runner is pending" or "runner is disabled" | No start row, nothing runs (flows 5 and 7). |
+| Audit database cannot take the start row | `unavailable`: "audit unavailable" | Nothing runs: no row, no exec (flow 7). |
+| Action not in `actions.yaml`, or a parameter does not match its regex | `bad_request`: "refused by runner: ..." | The runner writes a `refused` line; the process is never started (flow 7). |
+| Action runs too long | `timeout` | The runner kills the whole process group (flow 7). |
+| Runner revoked mid-action | `unavailable`: "runner revoked" | Process killed, `cancelled` row, runner refused when it returns (flow 8). |
+| Operator revoked mid-action | The connection closes | Request cancelled, runner kills the process, `cancelled` row (flow 9). |
+| Central crashes after the start row | A start row with no outcome row | Investigators read it as "something began and we never learned how it ended" (flow 7). |
+
+## Check your understanding
+
+1. In flow 3, why does it matter that the host-key pin is checked during the SSH handshake and not
+   after the token is sent?
+2. `bob` registers at 10:03:59 with a code that was shown at 10:03:12. Does it work? What if he
+   tries at 10:04:01?
+3. In `RunAction`, why is the start audit row written before the call to `Registry.Exec`, and what
+   happens if writing it fails?
+4. An admin disables `db-1` while a 5-minute action is running on it. Does the action stop? What
+   about when the admin revokes `db-1` instead?
+5. After `central operator revoke bob`, Bob's laptop is still connected for a fraction of a second.
+   Which two mechanisms make sure it does not stay connected?
+
+<details>
+<summary>Answers</summary>
+
+1. The token is a bearer secret. If the pin were checked afterwards, a fake central (a
+   man-in-the-middle) would already have received the token and could use it. `PinnedHash` runs as
+   the SSH host-key callback, so on a mismatch the handshake aborts and the token is never sent.
+2. At 10:03:59 it works: the code is valid for the whole step 10:03:00 to 10:03:59, and the
+   same code verifies repeatedly. At 10:04:01 it is refused: `VerifyCode` only accepts the code of
+   the current step, and the step changed. Bob gets the identical "registration refused" error and
+   must ask the admin for the new code.
+3. The start row records intent before any side effect. If it cannot be written (database
+   unavailable), `RunAction` returns `unavailable` ("audit unavailable") and nothing is executed:
+   no row, no exec. Otherwise an outage of the database would silently create unaudited commands.
+4. Disable does not stop it. `RunAction` checked the status once at the start, and the registry's
+   status gate only runs when an exec begins; the connection stays up and the action finishes.
+   New `action.run` calls are refused with `conflict`. Revoke does stop it: `Tombstone` and `Kick`
+   cancel the session context, the exec channel closes, the runner kills the process group, and the
+   outcome row says `cancelled` with message "runner revoked".
+5. Central closes his open connections right after committing the revoke, and a re-check catches
+   any connection that slipped in around the commit. In detail: `Service.RevokeOperator` commits the revoked status and then `OperatorConns.KickOperator` closes
+   every tracked connection, which cancels the in-flight requests. For a connection that
+   authenticated just before the commit and was added to `OperatorConns` after the kick,
+   `serveOperator` re-reads the operator right after `add` and closes the connection if it is not
+   active. New connections are refused by `KeyAuth` because the stored status is `revoked`.
+
+</details>
+
+Next: [5. Security](05-security.md).

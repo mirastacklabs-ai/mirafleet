@@ -1,0 +1,566 @@
+# 2. Background: the ideas mirafleet builds on
+
+## What you will learn
+
+- Public-key cryptography and Ed25519, and why every mirafleet identity is a key pair.
+- How SSH works (host keys, user keys, users, channels, requests) and why mirafleet uses it
+  instead of HTTP.
+- Host-key pinning versus trust-on-first-use, hashes, HMAC and constant-time comparison, and how
+  mirafleet's rotating registration code differs from a 6-digit authenticator code.
+- SQLite transactions and WAL, Go `context` cancellation, rate limiting, containers, MCP, and
+  Unix sockets with file permissions.
+
+Each section ends with **Why mirafleet needs this**. You can read the sections in any order and
+come back when a later chapter mentions one. Terms are also in the [glossary](glossary.md).
+
+---
+
+## 2.1 Public-key cryptography and Ed25519
+
+**The problem.** Two programs on the internet need to prove who they are, without ever sending a
+password across the wire (where someone could copy it).
+
+**The idea.** You make a **key pair**: two linked numbers.
+
+- The **private key** stays secret on your machine. Never shared.
+- The **public key** can be given to anyone.
+
+Two things work with the pair:
+
+- **Signing.** Only the private key can create a *signature* on a message. Anyone with the public
+  key can check that signature. If it checks out, the signer must hold the private key.
+- (Encryption also exists, but for our purposes we only need signing and, inside SSH, **key
+  agreement**: two sides combine their keys to agree on a fresh shared secret that encrypts the
+  connection, without ever sending that secret.)
+
+Think of the signature as a stamp only you can make, and of the public key as a *stamp checker*
+you hand out: anyone can use the checker to see whether a stamp is genuine, but the checker cannot
+make new stamps, so nobody can forge yours.
+
+```mermaid
+sequenceDiagram
+    participant A as Alice's laptop (holds private key)
+    participant C as Central (holds Alice's public key)
+    C->>A: "Sign this challenge (unique to this session)"
+    A->>C: signature made with private key
+    C->>C: check signature with stored public key
+    Note over C: valid means Alice holds the private key
+```
+
+**Ed25519** is one particular signature algorithm. It is fast, has small keys (32 bytes for the
+public key, and a 32-byte secret **seed**: the random number the private key is built from) and
+no knobs to set wrong. In SSH it is called
+`ssh-ed25519`. mirafleet accepts **only** Ed25519 keys: RSA, ECDSA and certificates are refused
+for every SSH user. One algorithm means less code, fewer mistakes and no weak-parameter risk.
+
+**A fingerprint** is a short hash (see [section 2.4](#24-hashes-hmac-and-constant-time-comparison))
+of a public key, such as `SHA256:Zm9v...`. It is a short name humans can compare. mirafleet
+stores each key's fingerprint beside the key. The **host-key hash** inside tokens (section 2.3) is
+the SHA-256 of the key in its SSH wire form (the exact bytes SSH sends for the key), written in
+base64url without padding: always 43 characters.
+
+**Why mirafleet needs this.** Every identity is a key pair. Runners and operators each generate
+their own; central has one too (its **host key**). There are no passwords. Revoking a runner is
+"stop accepting this public key". See `internal/keys` for generation, loading and permission
+checks.
+
+---
+
+## 2.2 SSH
+
+### What SSH is
+
+**SSH** (Secure Shell) is a protocol for an authenticated, encrypted connection between two
+machines. Most people know it as `ssh user@server` for a remote terminal, but a remote terminal
+is just one use. SSH really provides:
+
+1. An encrypted, integrity-protected **connection** between a **client** and a **server**.
+2. **Authentication** of the server (by its host key) and of the client (by its user key).
+3. Many independent **channels** multiplexed over that one connection (several conversations
+   share one wire, each tagged so the messages stay apart).
+4. **Requests**: small control messages on the connection or on a channel.
+
+### The parts, one by one
+
+- **Server and client.** The server listens; the client dials. Careful: "server" here means
+  *the side that accepted the connection*. In mirafleet, central is the SSH server for both
+  runners and operators, even though the runner later does the work.
+- **Host key.** The server's own key pair. In the handshake the server proves it holds the host
+  private key. The client compares the host public key with what it expects. This stops someone
+  impersonating the server (see [pinning](#23-host-key-pinning-versus-trust-on-first-use)).
+- **User key.** The client's key pair. The server checks the client's signature against a list
+  of keys it accepts. This is "public-key authentication".
+- **SSH user.** A name the client sends, such as `alice` or `root`. In normal SSH this maps to an
+  operating-system account. **In mirafleet it is a role label** and never maps to an OS account:
+  `runner`, `operator` or `enroll`. The role decides what the connection may do.
+- **Channel.** A numbered, bidirectional byte stream inside the connection, with a *type* string.
+  Normal SSH has `session` (terminal) and `direct-tcpip` (port forward). mirafleet defines its
+  own types: `api@mirafleet`, `exec@mirafleet`, `join@mirafleet`, `register@mirafleet`. The `@`
+  suffix is the SSH convention for private, non-standard names. The server (or client) may
+  refuse any channel type, and mirafleet refuses everything it does not list.
+- **Request.** A control message. A **global request** belongs to the whole connection, for
+  example mirafleet's `heartbeat@mirafleet` from runner to central. A **channel request** belongs
+  to one channel (like "start a shell" or "set window size"); mirafleet does not use these.
+
+```mermaid
+flowchart LR
+    R["Client: runner on db-1<br/>user key + user 'runner'"]
+    C["Server: central<br/>host key"]
+    R -->|"TCP connect (outbound)"| C
+    C -->|"proves host key"| R
+    R -->|"signs with runner key"| C
+    R -->|"global request: heartbeat@mirafleet"| C
+    C -->|"opens channel exec@mirafleet (back down the same connection)"| R
+```
+
+The last arrow is important: **either side may open channels once the connection exists**. That
+is how central sends work to a runner without ever dialling in.
+
+### Why SSH instead of HTTP?
+
+We could have built an HTTPS API. We chose SSH, via `golang.org/x/crypto/ssh` running inside the
+binary (no OpenSSH installation needed), for these reasons:
+
+| Need | HTTP | SSH |
+|---|---|---|
+| Identity per client with no passwords | needs tokens, cookies or mutual TLS (both sides present certificates) with a CA (certificate authority, the body that signs certificates) and its tooling | public keys are built in |
+| Server pushes work to a client behind NAT | needs polling, long-poll, websockets | open a channel on the existing connection |
+| Mutual authentication | two separate mechanisms | one handshake |
+| Many parallel requests, cancel by closing | HTTP/2 streams or separate sockets | channels, and close = cancel |
+| Small, well-reviewed surface | large (TLS, cookies, CORS (browser rules about which web pages may call an API), ...) | small, and the Go library is widely used |
+
+The cost is that you cannot call it with `curl` and that SSH libraries need care. One lesson from
+a real CVE (a public id for a known security bug): the way you keep a caller's identity during
+login matters. mirafleet takes it only from the finished connection and reloads the principal from
+the database by id (explained in 5.3.4).
+
+**Why mirafleet needs this.** SSH gives it: pinned server identity, per-client keys, outbound-only
+runners, and cheap multiplexing. See [chapter 7](07-protocols.md).
+
+---
+
+## 2.3 Host-key pinning versus trust-on-first-use
+
+Suppose Alice's first connection to `central.example.com:2222` meets a stranger instead: an
+attacker who intercepts the traffic and answers with *their* host key. This is a
+**man-in-the-middle** attack. How does the client know the key is central's?
+
+**Trust on first use (TOFU).** The default for plain `ssh`: the first time, the client shows the
+fingerprint and asks "Are you sure?". Most people type yes. The key is saved in `known_hosts`
+and later changes cause a loud warning. The weakness is the first connection: the attacker wins
+if they are there at that moment, and humans rarely compare fingerprints.
+
+**Pinning.** The client is told the expected key (or its hash) *beforehand*, from a source it
+trusts, and refuses any other key, with no prompt. There is no first-time hole.
+
+mirafleet pins everywhere:
+
+- A **join token** ends with the SHA-256 hash of central's host key:
+  `mfj1.<id>.<secret>.<host-key-hash>`.
+- A **registration code** also ends with it: `mfr1.<code>.<host-key-hash>`.
+- The client checks central's host key against that hash during the handshake. A mismatch aborts
+  the connection before any secret is sent. It writes `known_hosts` afterwards so later
+  reconnects keep checking the same key.
+- There is **no TOFU fallback** and no prompt, even when there is no terminal.
+
+An example with Acme: Dana generates the token on central and sends it to the `db-1` admin by a
+channel she trusts (her password manager, say). An attacker on the network can see the traffic
+but cannot change the token, so cannot swap the host key. If the attacker presents their own key,
+`db-1` sees the hash mismatch and stops, *without handing over the secret*.
+
+**Why mirafleet needs this.** A runner would otherwise hand its join secret and later its
+identity to a fake central, which could then give it any work. Pinning from the credential makes
+the credential itself the trust anchor. See `internal/apiclient/hostkey.go` and
+`internal/tokens`.
+
+---
+
+## 2.4 Hashes, HMAC and constant-time comparison
+
+### Hash
+
+A **hash function** (here SHA-256) turns any input into a fixed 32-byte output, with three
+properties: the same input always gives the same output, you cannot go backwards from output to
+input, and a tiny change in input changes the output completely.
+
+Example (shortened): `sha256("hello") = 2cf24d...`.
+
+Uses in mirafleet:
+
+- The **host-key hash** inside tokens (a short, comparable stand-in for the public key).
+- **Storing secrets safely.** Central stores only `SHA-256(secret)` of each join-token secret.
+  If the database leaks, the attacker still does not have the usable secret. Normally you would
+  use a slow password hash such as bcrypt, but that exists to slow down guessing of *human*
+  passwords. Here the secret is 32 random bytes (256 bits), which cannot be guessed, so a fast
+  hash is fine.
+
+### HMAC
+
+A plain hash can be computed by anyone. An **HMAC** (hash-based message authentication code)
+mixes a **secret key** into the hash: `HMAC(secret, message)`. Only someone who knows the
+secret can produce, or check, the result. It proves "this came from someone with the secret".
+
+mirafleet's registration code is `HMAC-SHA256(secret, "mirafleet-register-v1" || step)` where `||`
+means "followed by" and `step` is the current minute number. The fixed text
+`mirafleet-register-v1` is a **domain-separation label**: it makes sure a value computed for this
+purpose can never be reused for another purpose that uses the same secret.
+
+### Constant-time comparison
+
+When you compare a presented secret with the expected one using ordinary `==`, the comparison
+stops at the first different byte. An attacker who can time the answer precisely might learn how
+many leading bytes were right and so guess a secret byte by byte. This is a **timing attack**.
+
+A **constant-time comparison** always examines every byte and takes the same time. In Go that is
+`crypto/subtle.ConstantTimeCompare`. mirafleet uses it for join-token secrets and registration
+codes (`internal/tokens`). Even for an *unknown* token id, central compares against a dummy hash
+so that "no such token" and "wrong secret" take the same time and return the same error. Without
+that, an attacker could tell which token ids exist.
+
+**Why mirafleet needs this.** Tokens and codes are the only things standing between an anonymous
+caller and a new identity, so they get the full treatment: random, hashed at rest, compared in
+constant time, identical errors.
+
+---
+
+## 2.5 TOTP-style rotating codes
+
+### How an authenticator app works
+
+**TOTP** (time-based one-time password, RFC 6238) is what the 6-digit code in an authenticator
+app is. Both sides share a secret. Each computes
+
+```
+code = truncate( HMAC(secret, floor(unix_time / 30)) )  →  6 digits
+```
+
+The number `floor(unix_time / 30)` is the **time step**; it changes every 30 seconds, so the code
+does too. No network is needed between the two sides; each recomputes the code. Servers usually
+accept the previous and next step to tolerate clock drift.
+
+### How mirafleet's code differs
+
+| | Authenticator app | mirafleet registration code |
+|---|---|---|
+| Step length | 30 s | **60 s** |
+| Length | 6 digits (about 20 bits) | **128 bits**, base32 text (26 characters) |
+| Who checks | a server that must tolerate clock drift between devices | **central, which both issues and checks**, so no clock skew |
+| Neighbouring steps | usually accepted | **only the current step**; the previous one is refused |
+| Reuse | typically once per step per user | **not single-use**: many operators may use the same code within its window |
+| Pins server | no | ends with the host-key hash |
+| Format | `123456` | `mfr1.<26 chars>.<host-key-hash>` |
+
+Why so long? A 6-digit code has only a million possibilities and is safe in an authenticator
+because the attacker must also know the username and password and is rate-limited. Here the code
+alone grants a *new identity*, so brute force inside 60 seconds must be impossible: 128 bits is
+far beyond reach, and the enroll connection is also rate-limited.
+
+Why no approval step? Only someone with admin access on the central host can read the code (via
+the local admin socket). So possession of a valid code *is* the approval. A leaked code is useless
+once its 60-second window ends. If you suspect the underlying secret leaked, run
+`mirafleet central operator rotate-secret`; every outstanding code stops working.
+
+The code is time-derived, so central need not store codes. It stores one 32-byte secret in the
+`settings` table. The code body is `base32(HMAC-SHA256(secret, label || step))`, cut to 26
+characters (130 bits of text, 128 bits of entropy).
+
+Compare with the join token: a token is **random and stored** (hashed), single-use by default, and
+lives up to 24 hours. A registration code is **derived**, shared, and lives 60 seconds.
+
+**Why mirafleet needs this.** Operators are people on laptops; they need a quick way to enrol
+without a password and without admin approval queues. A rotating code lets an admin say "here is
+the code, you have a minute" over a call or chat.
+
+---
+
+## 2.6 SQLite, transactions and WAL
+
+### SQLite
+
+**SQLite** is a database that is just a library plus one file. There is no separate database
+server. Central uses it through `modernc.org/sqlite`, a pure-Go translation, so the build stays
+`CGO_ENABLED=0` (no C compiler) and the binary remains static. SQL is the language for asking the
+database questions, for example `SELECT name FROM runners WHERE status = 'active'`.
+
+### Transactions
+
+A **transaction** groups several changes so they all happen or none do. Example: when a runner
+joins, central must (a) increase the token's `uses` and (b) insert the runner. If the machine
+crashed between them you could burn a token and get no runner, or worse, get a runner without
+using the token. Wrapped in one transaction, both succeed or both roll back. This property is
+called **atomicity**.
+
+```mermaid
+flowchart LR
+    B["BEGIN"] -->|"step 1"| U["UPDATE join_tokens<br/>SET uses = uses + 1<br/>WHERE uses is below max_uses"]
+    U -->|"step 2"| I["INSERT runner"]
+    I -->|"success"| K["COMMIT: both visible"]
+    I -->|"error"| X["ROLLBACK: neither visible"]
+```
+
+mirafleet leans on this in several places:
+
+- **Single-use tokens.** The `UPDATE ... WHERE uses < max_uses` is a *conditional update*. If
+  twenty runners race with the same token, the database lets exactly one `UPDATE` change a row
+  (`RowsAffected = 1`). A test starts 20 goroutines (Go's lightweight concurrent functions, explained in 2.7) at once and checks that exactly one wins.
+- **Audit with the change.** A state change and its audit row are written in the same
+  transaction, so you can never have a change without its record, or the reverse.
+- **Fail closed.** For an action, the `start` audit row is written first. If writing it fails,
+  the action does not run.
+
+### WAL and durability
+
+By default SQLite writes changes by modifying the database file directly. In **WAL** mode
+(write-ahead logging) a change is first appended to a separate log file (`-wal`) and merged
+later. The benefit: readers do not block the writer and the writer does not block readers.
+
+Central also asks SQLite to wait until each commit is really on disk before reporting
+"committed" (`synchronous(FULL)`). This matters: a committed **revoke** must survive a power cut,
+or a revoked runner could come back. The full list of settings, the two connection pools (one
+writer, several readers) and why they exist are in [section 6.9](06-data-model.md#69-connection-pools-and-pragmas).
+
+**Migrations** are numbered SQL files (`internal/store/sqlite/migrations/NNNN_*.sql`) embedded in
+the binary and applied in order, once each, tracking progress in `PRAGMA user_version`. They only
+go forward. If the database is *newer* than the binary, central refuses to start rather than
+guess.
+
+**Why mirafleet needs this.** Revoke, token use and audit must be atomic and durable. SQLite gives
+that with no extra server to install. Details: [chapter 6](06-data-model.md).
+
+---
+
+## 2.7 Go `context` cancellation
+
+Go programs are full of **goroutines**: lightweight concurrent functions. When the caller loses
+interest ("the user hit Ctrl-C", "the connection closed", "the timeout passed"), how do the
+goroutines doing the work learn to stop?
+
+The standard answer is `context.Context`. A context is a value passed down through function
+calls. It carries a *cancellation signal* and optionally a *deadline*. You create child contexts
+from parents; **cancelling a parent cancels all its children**.
+
+```go
+ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+defer cancel()                    // always release resources
+res, err := runAction(ctx, ...)   // runAction must watch ctx.Done()
+
+// inside runAction, in a select:
+select {
+case <-ctx.Done():                // fired by cancel(), by the timeout, or by the parent
+    killProcess()
+    return ctx.Err()              // context.Canceled or context.DeadlineExceeded
+case out := <-done:
+    return out
+}
+```
+
+```mermaid
+flowchart TD
+    S["session context<br/>(the runner's connection)"] -->|"child of"| R["request context<br/>(one action.run)"]
+    R -->|"child of"| E["exec context<br/>(timeout min(timeout_s, 10m))"]
+    K["kick / revoke"] -->|"cancel()"| S
+    E -->|"Done() fires"| P["runner kills the process group"]
+```
+
+A **process group** is a set of Unix processes that can be signalled as one. The runner starts
+each action in its own group, so one kill signal stops the process and any children it started
+(a child left running would outlive its "cancelled" action).
+
+**Why revoke relies on it.** When Dana revokes `db-1` while a long action is running, three
+things must happen quickly: the connection closes, the waiting `action.run` call stops, and the
+process on the runner dies. mirafleet gives each runner session its own context, and each
+`action.run` derives its context from **both** the request and the session. Revoke cancels the
+session context. The cancellation flows down, the exec channel closes, and on the runner the
+process group is killed. The audit row ends with outcome `cancelled` and message
+`runner revoked`. Without contexts you would have to pass stop flags by hand, and miss one.
+
+Similarly, an operator who closes their `api@mirafleet` channel (cancel = close the channel)
+cancels their action. A half-close does not cancel; only a full close does.
+
+Rules of thumb: always take `ctx` as the first parameter of anything that blocks, always call
+the `cancel` function, never store a context in a struct that outlives the request (the session
+context is the deliberate exception), and use `errors.Is(err, context.Canceled)` to recognise it.
+
+**Why mirafleet needs this.** "Revoke is immediate" is a promise made with contexts. See
+`internal/central/registry` and `internal/service/exec.go`.
+
+---
+
+## 2.8 Rate limiting (token bucket)
+
+Anyone on the network can open a TCP connection to central. Some defences must act *before* the
+expensive cryptography. The classic simple limiter is called a **token bucket**. To avoid confusion with join tokens and
+MCP tokens, this guide calls it a **permit bucket**: a bucket holds up to N permits and refills
+at a steady rate; each request takes one permit; with an empty bucket, the request is refused.
+
+A numeric example, using the `enroll` limit of 10 connections per minute per source IP:
+
+1. The bucket starts full: 10 permits. A script opens 10 enroll connections in one second and
+   takes all 10.
+2. The 11th attempt finds the bucket empty and is refused at once. Cost to central: almost
+   nothing, because no cryptography has run.
+3. The bucket refills at 1 permit every 6 seconds (10 per minute), so one more connection is
+   allowed 6 seconds later, and so on.
+
+mirafleet applies this to several things: in-progress SSH handshakes, `enroll` connections
+per minute and the time allowed to finish each. The defaults live in `internal/central/central.go`
+and the **one table of all limits** is in [section 7.9](07-protocols.md).
+
+Source addresses are counted per IP, except that IPv6 is bucketed by **/64**. A /64 is an address
+block whose first 64 bits are fixed; one host or home network usually owns a whole /64, which is
+about 2^64 addresses. A per-address bucket would let one attacker rotate through billions of
+addresses for free. These are basic limits; an internet-facing central should still sit behind a
+firewall.
+
+**Why mirafleet needs this.** Enrolment is the one door open to unauthenticated callers.
+
+---
+
+## 2.9 Containers, containerd and OpenSandbox
+
+This section is background for **M3 (planned)**. Nothing here runs yet.
+
+A **container** is a normal Linux process that the kernel has fenced in: it sees its own file
+system, its own process list and optional CPU and memory limits. It is lighter than a virtual
+machine because it shares the host's kernel. An **image** is the packaged file system a container
+starts from (for example "Ubuntu with Go installed").
+
+**containerd** is the low-level program that actually pulls images and runs containers on a Linux
+host. Kubernetes uses it, and so does the Docker package. The product's workspaces (M3) use
+containerd through its Go client; our developer tooling runs in Docker containers (colima on
+macOS). The Docker ecosystem is supported; there is no hard dependency on Docker's commercial
+products. Using containerd directly keeps the runtime dependency small and works on Kubernetes
+nodes. mirafleet's containers will live in their own containerd *namespace* called `mirafleet`,
+away from Kubernetes' `k8s.io`.
+
+Planned workspace mode. Every name in this picture (`workspace_open`, the `workspace@mirafleet`
+channel, `read_file`, `write_file`) is **planned (M3)**; none exists in the code yet:
+
+```mermaid
+flowchart LR
+    A["Claude session"] -->|"workspace_open"| C["Central picks a runner<br/>with a free slot"]
+    C -->|"workspace@mirafleet channel"| R["Runner"]
+    R -->|"create container, bind-mount dir at /workspace"| W["container (sleep infinity)"]
+    A -->|"exec / read_file / write_file"| W
+    A -->|"workspace_close"| X["container and directory deleted"]
+```
+
+**OpenSandbox** is a separate open-source sandbox service. M3 offers it as an *opt-in* second
+executor, behind the same runner-side Go interface (`WorkspaceExecutor`). The runner would speak
+to it over HTTPS only (never plain HTTP, even on loopback), pinning its certificate, with no SDK
+linked in. The key design rule: the agent's own API keys never enter the sandbox. See
+[../M3.md](../M3.md).
+
+**Why mirafleet needs this.** Actions mode is a menu; coding needs freedom. A container gives
+freedom whose mistakes stay in a box.
+
+---
+
+## 2.10 MCP and harnesses
+
+An AI **agent** is a loop: a language model reads the situation, picks a *tool* to call, reads
+the result, and repeats. A **harness** is the program that hosts that loop and connects it to the
+tools: Claude Code, opencode and Kilo Code are harnesses.
+
+**MCP** (Model Context Protocol) is a standard way for a harness to discover and call tools. An
+**MCP server** is a small program that advertises tools ("name, description, input fields") and
+runs them when asked. A harness launches it as a child process and talks to it over its standard
+input and output (**stdio**), exchanging JSON messages.
+
+mirafleet's planned MCP tools (M5; none exist yet): `list_fleets`, `list_runners`, `run_action`
+(which maps to the API method `action.run`), and (with M3) `workspace_open`, `exec`, `read_file`,
+`write_file`, `workspace_close`.
+
+The architecture rule: **the core is harness-agnostic.** The MCP server must be fully usable with
+*no* harness-specific hooks. Hooks (scripts a harness runs at events like session start or before
+a tool call) only add convenience, and live only under `integrations/<harness>/`. Safety cannot
+depend on them, because another harness may not have them.
+
+**Status today.** `mirafleet mcp login` and `mirafleet mcp api` exist (M2). The stdio MCP server
+itself is M5.
+
+**Why mirafleet needs this.** MCP is how an agent gets any capability at all. Using the open
+standard means one implementation serves every harness.
+
+---
+
+## 2.11 Unix sockets, file permissions and umask
+
+### Unix domain sockets
+
+A **Unix domain socket** is a connection endpoint that is a *file* (for example
+`<data>/admin.sock`) rather than a network port. Only processes on the same machine can use it,
+and the operating system can tell the server **who connected**: the connecting process's user id
+(its **peer UID**). That is hard to fake. On Linux the server reads it from the socket itself
+(`SO_PEERCRED`).
+
+mirafleet's **admin socket** has two layers of protection:
+
+1. File permissions `0600`: only the owner can open the file.
+2. A peer UID check: the connecting process's UID must equal central's own UID, checked
+   **before anything is read** from the connection.
+
+The admin CLI (`mirafleet central runner revoke ...`) is a client of the *running* central
+through this socket. That is needed so revoke reaches live connections held in central's memory.
+Only `central init` runs offline.
+
+### Permissions and umask
+
+Unix files have **permission bits** for owner, group and others: read (4), write (2), execute
+(1). `0600` means "owner read and write, nobody else". `0700` for a directory means "only the
+owner may enter".
+
+**umask** is a per-process mask removing bits from newly created files. The arithmetic: a
+file is requested with permission `0666`, and the new file gets `0666 & ~077`. `077` are the group and others bits; `~` flips them, so the mask keeps
+only the owner bits and the result is `0600`. Central sets `umask 077` at start, so everything
+it creates (database, `-wal`, `-shm`, socket) is born owner-only. Without it a file would be created with, say, `0644` and could be readable by others
+for a moment before being fixed: a race. The admin socket is also created under `umask 077`, so it
+is never briefly world-accessible. Key files are checked for loose permissions and refused if so
+(`internal/keys/perm_unix.go`). On Windows, key protection will use access-control lists (ACLs);
+until M5 the key loader fails closed (`mirafleet mcp` builds on Windows; it runs there from M5).
+
+Related habit: tokens and codes are read from standard input (`-token -`, `-code -`), **never**
+from command-line arguments, because arguments show up in shell history and in the process list
+(`ps`) for every user.
+
+**Why mirafleet needs this.** The admin socket is the only way to approve runners or revoke
+anything. Locking it to the central's own user is what makes "admin" mean something.
+
+---
+
+## Check your understanding
+
+1. A runner has a private key and central has its public key. What does the runner prove during
+   login, and why can an eavesdropper not replay it?
+2. Why does `runner join` abort if central's host key does not match the token's hash, even though
+   no password has been sent yet?
+3. Two operators use the same registration code, one at 10:03:12 and one at 10:03:52. Does the
+   second one succeed? What if a third tries the same code text at 10:04:05?
+4. Why must a revoke and its audit row be in a single database transaction, and why is
+   `synchronous(FULL)` used?
+5. In your own words: how does cancelling one context kill a process on a remote machine? And
+   why are join tokens read from stdin rather than from a command-line argument?
+
+<details>
+<summary>Answers</summary>
+
+1. It proves it holds the private key by signing a challenge that is unique to this session (in
+   SSH, data that includes the session id). A signature made for one session is useless in
+   another, so replaying it fails.
+2. A mismatch means the server is not the central the token was minted for (possibly an
+   attacker). Aborting before sending the secret means the secret is never exposed to the
+   impostor. There is no prompt and no TOFU fallback.
+3. Yes, the second one works. Both times are in the same 60 s step (10:03:00 to 10:03:59), the
+   code is valid for that whole step and it is not single-use. The third attempt at 10:04:05 is
+   in the next step, so the old code is refused: only the current step is accepted, and the
+   admin must read a fresh code. (Steps follow the clock, `floor(unix_seconds / 60)`, not the
+   moment the code was first shown.)
+4. Atomicity: you never have a revoked runner without its audit row, or an audit row without a
+   revoke. FULL sync means the commit is on disk before it is reported, so a power cut cannot
+   un-revoke a runner.
+5. The session context is the parent of each request's exec context. Cancelling it makes the
+   waiting call return, the exec channel closes, and the runner, noticing the channel close,
+   kills the process group. Tokens come from stdin because command-line arguments are visible in
+   shell history and in `ps` output; stdin is not.
+
+</details>

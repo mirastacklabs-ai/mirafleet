@@ -25,7 +25,7 @@ All dependencies must meet the permissive license policy in [CLAUDE.md](../CLAUD
   a bad parameter, and survives a runner reconnect.
 
 ## M2 — Central core
-**Status: done (pending final review).** Detailed plan, decisions and steps: [M2.md](M2.md).
+**Status: done (13 Nov 2026).** Detailed plan, decisions and steps: [M2.md](M2.md).
 The "M2 done when" scenario is `TestM2Done` in `internal/central/m2_done_test.go`.
 - SQLite store behind a `Store` interface. Fleets, runners, join tokens, operators, audit.
 - Enrollment (`token create`, `runner join`), runner lifecycle, operator registration with a

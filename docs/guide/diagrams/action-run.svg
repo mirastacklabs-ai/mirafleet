@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 580" width="840" height="580" role="img" aria-labelledby="t d">
+<title id="t">One action.run through every layer</title>
+<desc id="d">A request goes from the operator through the api@ channel, the dispatch method table and service.RunAction, which writes a start audit row, then registry.Exec opens an exec@ channel to the runner, where the actions guard validates it and the process runs. The result returns, an outcome audit row is written and the response frame goes back to the operator.</desc>
+<style>
+:root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
+@media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
+svg{--T:13.5s;--slot:1.5s}
+.bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
+.pn{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.bx{fill:#F6F5F1;fill:var(--band,#F6F5F1);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
+.ttl{font:600 21px Oswald,"Arial Narrow",Arial,sans-serif;text-transform:uppercase;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.h{font-weight:600;letter-spacing:.08em;text-transform:uppercase;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.m{fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.b{font-weight:700;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.ln{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none}
+.ahp{fill:#00695F;fill:var(--accent,#00695F)}
+.dot{fill:#FF671F;fill:var(--signal,#FF671F)}
+.bdg{fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.bt{font-weight:700;fill:#FFFFFF;fill:var(--bg,#FFFFFF);text-anchor:middle}
+.chw{fill:#FBEFDC;fill:var(--warnbg,#FBEFDC);stroke:#8A5300;stroke:var(--warn,#8A5300)}
+.cho{fill:#E0F0EE;fill:var(--okbg,#E0F0EE);stroke:#00695F;stroke:var(--ok,#00695F)}
+.tw{fill:#8A5300;fill:var(--warn,#8A5300);font-weight:700}
+.to{fill:#00695F;fill:var(--ok,#00695F);font-weight:700}
+.rule{stroke:#FF671F;stroke:var(--signal,#FF671F);stroke-width:2}
+.pk{display:none}
+@media (prefers-reduced-motion:no-preference){
+.st{animation:lit var(--T) linear infinite both;animation-delay:calc((var(--i) - 1) * var(--slot))}
+.pk{display:inline;animation:mv var(--T) linear infinite}
+}
+@keyframes lit{0%{opacity:.25}1%{opacity:1}10.1%{opacity:1}11.11%{opacity:.25}100%{opacity:.25}}
+@keyframes mv{0%,11.11%{transform:translate(80px,92px)}16%,22.22%{transform:translate(295px,92px)}27%,33.33%{transform:translate(535px,92px)}38%,44.44%{transform:translate(760px,92px)}47%,55.56%{transform:translate(650px,225px)}61%,66.67%{transform:translate(760px,243px)}70%{transform:translate(760px,310px)}74%,77.78%{transform:translate(535px,310px)}83%,88.89%{transform:translate(760px,128px)}97%,100%{transform:translate(80px,128px)}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0,0L10,5L0,10z"/></marker></defs>
+<rect class="bg" width="840" height="580"/>
+<text class="ttl" x="10" y="32">One action.run, every layer</text>
+<line class="rule" x1="10" y1="42" x2="70" y2="42"/>
+
+<!-- row A -->
+<rect class="pn" x="10" y="60" width="140" height="110" rx="4"/>
+<text class="h" x="20" y="80">Operator</text>
+<text x="20" y="102">Claude Code</text>
+<text class="m" x="20" y="120">mirafleet mcp</text>
+<text class="b" x="20" y="146">action.run</text>
+<text class="m" x="20" y="162">tail-logs</text>
+
+<rect class="pn" x="210" y="60" width="170" height="110" rx="4"/>
+<text class="h" x="220" y="80">Central</text>
+<text x="220" y="102">api@ channel</text>
+<text x="220" y="120">dispatch:</text>
+<text class="m" x="220" y="138">operator method</text>
+<text class="m" x="220" y="154">table</text>
+
+<rect class="pn" x="440" y="60" width="190" height="110" rx="4"/>
+<text class="b" x="450" y="80">service.RunAction</text>
+<text x="450" y="102">policy allows?</text>
+<text x="450" y="120">fleet mode: actions</text>
+<text x="450" y="138">confirm: "prod"</text>
+<text x="450" y="156">runner is active?</text>
+
+<rect class="pn" x="690" y="60" width="140" height="110" rx="4"/>
+<text class="h" x="700" y="80">Audit</text>
+<g class="st" style="--i:4"><rect class="chw" x="700" y="88" width="120" height="24" rx="2"/><text class="tw" x="710" y="105">start</text></g>
+<g class="st" style="--i:8"><rect class="cho" x="700" y="118" width="120" height="24" rx="2"/><text class="to" x="710" y="135">outcome</text></g>
+<text class="m" x="700" y="160">same request_id</text>
+
+<!-- row B -->
+<rect class="pn" x="440" y="200" width="190" height="130" rx="4"/>
+<text class="b" x="450" y="220">registry.Exec</text>
+<text x="450" y="242">opens exec@ on the</text>
+<text x="450" y="260">runner's own SSH</text>
+<text x="450" y="278">connection, then</text>
+<text x="450" y="296">waits for result</text>
+
+<rect class="pn" x="690" y="200" width="140" height="140" rx="4"/>
+<text class="h" x="700" y="218">Runner db-1</text>
+<rect class="bx" x="700" y="226" width="120" height="46" rx="2"/>
+<text class="b" x="708" y="244">guard</text>
+<text class="m" x="708" y="262">argv + regex</text>
+<rect class="bx" x="700" y="288" width="120" height="44" rx="2"/>
+<text class="b" x="708" y="306">process</text>
+<text class="m" x="708" y="322">no shell</text>
+
+<!-- arrows -->
+<g class="st" style="--i:1"><circle class="bdg" cx="138" cy="70" r="11"/><text class="bt" x="138" y="74.5">1</text></g>
+<g class="st" style="--i:2">
+<line class="ln" x1="152" y1="92" x2="208" y2="92" marker-end="url(#ah)"/>
+<text x="156" y="76">frame</text>
+<circle class="bdg" cx="180" cy="92" r="11"/><text class="bt" x="180" y="96.5">2</text>
+</g>
+<g class="st" style="--i:3">
+<line class="ln" x1="382" y1="92" x2="438" y2="92" marker-end="url(#ah)"/>
+<text x="394" y="76">call</text>
+<circle class="bdg" cx="410" cy="92" r="11"/><text class="bt" x="410" y="96.5">3</text>
+</g>
+<g class="st" style="--i:4">
+<line class="ln" x1="632" y1="92" x2="688" y2="92" marker-end="url(#ah)"/>
+<text x="638" y="76">start</text>
+<circle class="bdg" cx="660" cy="92" r="11"/><text class="bt" x="660" y="96.5">4</text>
+</g>
+<g class="st" style="--i:5">
+<line class="ln" x1="535" y1="172" x2="535" y2="198" marker-end="url(#ah)"/>
+<line class="ln" x1="632" y1="225" x2="688" y2="225" marker-end="url(#ah)"/>
+<text x="548" y="190">Exec</text>
+<text x="640" y="217">exec@</text>
+<circle class="bdg" cx="512" cy="185" r="11"/><text class="bt" x="512" y="189.5">5</text>
+</g>
+<g class="st" style="--i:6"><circle class="bdg" cx="806" cy="236" r="11"/><text class="bt" x="806" y="240.5">6</text></g>
+<g class="st" style="--i:7">
+<line class="ln" x1="760" y1="274" x2="760" y2="286" marker-end="url(#ah)"/>
+<line class="ln" x1="688" y1="310" x2="632" y2="310" marker-end="url(#ah)"/>
+<text x="640" y="302">result</text>
+<circle class="bdg" cx="806" cy="304" r="11"/><text class="bt" x="806" y="308.5">7</text>
+</g>
+<g class="st" style="--i:8">
+<line class="ln" x1="632" y1="128" x2="688" y2="128" marker-end="url(#ah)"/>
+<text x="648" y="152">end</text>
+<circle class="bdg" cx="660" cy="128" r="11"/><text class="bt" x="660" y="132.5">8</text>
+</g>
+<g class="st" style="--i:9">
+<line class="ln" x1="438" y1="128" x2="382" y2="128" marker-end="url(#ah)"/>
+<line class="ln" x1="208" y1="128" x2="152" y2="128" marker-end="url(#ah)"/>
+<text x="156" y="152">reply</text>
+<circle class="bdg" cx="180" cy="128" r="11"/><text class="bt" x="180" y="132.5">9</text>
+</g>
+<circle class="dot pk" cx="0" cy="0" r="7"/>
+
+<!-- steps -->
+<text class="h" x="10" y="368">Steps</text>
+<g class="st" style="--i:1"><text x="10" y="392"><tspan class="b">1</tspan> alice's agent calls action.run (prod/db-1, tail-logs, lines=200) through mirafleet mcp.</text></g>
+<g class="st" style="--i:2"><text x="10" y="412"><tspan class="b">2</tspan> mcp sends one frame (4-byte length + JSON) on an api@ channel. The operator method table routes it.</text></g>
+<g class="st" style="--i:3"><text x="10" y="432"><tspan class="b">3</tspan> service.RunAction checks policy, fleet mode, confirm "prod" (guarded fleet's name), runner active.</text></g>
+<g class="st" style="--i:4"><text x="10" y="452"><tspan class="b">4</tspan> The audit row "start" is written first. If that fails, nothing runs (fail closed).</text></g>
+<g class="st" style="--i:5"><text x="10" y="472"><tspan class="b">5</tspan> registry.Exec opens an exec@ channel on the runner's own connection and sends the request.</text></g>
+<g class="st" style="--i:6"><text x="10" y="492"><tspan class="b">6</tspan> The runner's actions guard checks tail-logs and regex-checks lines=200 into an argv.</text></g>
+<g class="st" style="--i:7"><text x="10" y="512"><tspan class="b">7</tspan> The process runs (no shell, own process group, timeout). The result JSON goes back.</text></g>
+<g class="st" style="--i:8"><text x="10" y="532"><tspan class="b">8</tspan> The audit row "outcome" is written with the same request_id.</text></g>
+<g class="st" style="--i:9"><text x="10" y="552"><tspan class="b">9</tspan> The response frame returns the same way: exit code, stdout, stderr.</text></g>
+</svg>

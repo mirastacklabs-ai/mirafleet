@@ -243,7 +243,7 @@ type AuditEvent struct {
 // the clock (injectable in tests).
 //
 // Key disjointness (a key may belong to a runner or an operator, never both, §4a) is enforced
-// in the service on enrol and register, not in the store.
+// by the store, inside the Enroll and RegisterOperator transactions in internal/store/sqlite.
 type Store interface {
 	// CreateFleet inserts a fleet and returns it with ID and CreatedAt (= now) set. ErrInvalid
 	// if the mode is invalid or the name does not satisfy FleetNameRE. Atomic with ev.

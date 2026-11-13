@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 492" width="840" height="492" role="img" aria-labelledby="t d">
+<title id="t">Revoking a runner</title>
+<desc id="d">Dana, the admin, revokes dev/build-1. Central adds a tombstone, kicks the connection, cancels the in-flight action so the runner kills its process group, commits status revoked with an audit row, and then refuses the runner when it reconnects.</desc>
+<style>
+:root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
+@media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
+svg{--T:12s;--slot:2s}
+.bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
+.pn{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.bx{fill:#F6F5F1;fill:var(--band,#F6F5F1);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
+.ttl{font:600 21px Oswald,"Arial Narrow",Arial,sans-serif;text-transform:uppercase;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.h{font-weight:600;letter-spacing:.12em;text-transform:uppercase;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.m{fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.b{font-weight:700;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.ln{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none}
+.lnd{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.lnb{stroke:#B42318;stroke:var(--bad,#B42318);stroke-width:2;fill:none}
+.ahp{fill:#00695F;fill:var(--accent,#00695F)}
+.dot{fill:#FF671F;fill:var(--signal,#FF671F)}
+.bdg{fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.bt{font-weight:700;fill:#FFFFFF;fill:var(--bg,#FFFFFF);text-anchor:middle}
+.chw{fill:#FBEFDC;fill:var(--warnbg,#FBEFDC);stroke:#8A5300;stroke:var(--warn,#8A5300)}
+.chb{fill:#FDE8E6;fill:var(--badbg,#FDE8E6);stroke:#B42318;stroke:var(--bad,#B42318)}
+.cho{fill:#E0F0EE;fill:var(--okbg,#E0F0EE);stroke:#00695F;stroke:var(--ok,#00695F)}
+.tw{fill:#8A5300;fill:var(--warn,#8A5300);font-weight:700}
+.tb{fill:#B42318;fill:var(--bad,#B42318);font-weight:700}
+.to{fill:#00695F;fill:var(--ok,#00695F);font-weight:700}
+.rule{stroke:#FF671F;stroke:var(--signal,#FF671F);stroke-width:2}
+.pk{display:none}
+@media (prefers-reduced-motion:no-preference){
+.st{animation:lit var(--T) linear infinite both;animation-delay:calc((var(--i) - 1) * var(--slot))}
+.pk{display:inline;animation:mv var(--T) linear infinite}
+}
+@keyframes lit{0%{opacity:.25}1%{opacity:1}15.5%{opacity:1}16.67%{opacity:.25}100%{opacity:.25}}
+@keyframes mv{0%{transform:translate(85px,100px)}9%,16.67%{transform:translate(330px,93px)}22%,33.33%{transform:translate(330px,148px)}40%,50%{transform:translate(590px,110px)}55%,66.67%{transform:translate(725px,175px)}72%,83.33%{transform:translate(330px,246px)}83.4%{transform:translate(725px,265px)}95%,100%{transform:translate(588px,265px)}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0,0L10,5L0,10z"/></marker></defs>
+<rect class="bg" width="840" height="492"/>
+<text class="ttl" x="10" y="32">Revoking a runner</text>
+<line class="rule" x1="10" y1="42" x2="70" y2="42"/>
+
+<!-- admin -->
+<rect class="pn" x="10" y="56" width="150" height="110" rx="4"/>
+<text class="h" x="20" y="78">Dana's CLI</text>
+<text x="20" y="100">central runner</text>
+<text x="20" y="118">revoke</text>
+<text class="b" x="20" y="138">dev/build-1</text>
+
+<!-- central -->
+<rect class="pn" x="220" y="56" width="340" height="250" rx="4"/>
+<text class="h" x="232" y="76">Central</text>
+<rect class="bx" x="230" y="84" width="320" height="30" rx="2"/>
+<text x="240" y="104">Service.Lifecycle(revoke)</text>
+<rect class="bx" x="230" y="124" width="320" height="86" rx="2"/>
+<text class="m" x="240" y="140">registry (in memory)</text>
+<g class="st" style="--i:2"><rect class="chw" x="240" y="146" width="210" height="16" rx="2"/><text class="tw" x="246" y="159">tombstone: build-1</text></g>
+<g class="st" style="--i:3"><rect class="chb" x="240" y="166" width="270" height="16" rx="2"/><text class="tb" x="246" y="179">session cancelled, conn closed</text></g>
+<g class="st" style="--i:4"><rect class="chb" x="240" y="186" width="250" height="16" rx="2"/><text class="tb" x="246" y="199">exec context cancelled</text></g>
+<rect class="bx" x="230" y="220" width="320" height="76" rx="2"/>
+<text class="m" x="240" y="236">SQLite (one transaction)</text>
+<g class="st" style="--i:5"><rect class="chb" x="240" y="242" width="210" height="16" rx="2"/><text class="tb" x="246" y="255">status = revoked</text>
+<rect class="cho" x="240" y="264" width="270" height="16" rx="2"/><text class="to" x="246" y="277">audit row: runner.revoke</text></g>
+
+<!-- runner -->
+<rect class="pn" x="620" y="56" width="210" height="250" rx="4"/>
+<text class="h" x="632" y="76">Runner build-1</text>
+<text x="632" y="102">dialled out to central</text>
+<text class="m" x="632" y="120">(its only connection)</text>
+<rect class="bx" x="630" y="142" width="190" height="70" rx="2"/>
+<text x="640" y="162">running action</text>
+<text class="m" x="640" y="178">sleep 300</text>
+<g class="st" style="--i:4"><rect class="chb" x="640" y="184" width="170" height="20" rx="2"/><text class="tb" x="646" y="199">process group killed</text></g>
+<rect class="bx" x="630" y="232" width="190" height="64" rx="2"/>
+<text x="640" y="252">reconnect, runner key</text>
+<g class="st" style="--i:6"><rect class="chb" x="640" y="262" width="170" height="24" rx="2"/><text class="tb" x="646" y="279">refused at auth</text></g>
+
+<!-- arrows -->
+<g class="st" style="--i:1">
+<line class="ln" x1="162" y1="100" x2="218" y2="100" marker-end="url(#ah)"/>
+<text x="168" y="88">revoke</text>
+<circle class="bdg" cx="190" cy="128" r="11"/><text class="bt" x="190" y="132.5">1</text>
+</g>
+<g class="st" style="--i:2"><circle class="bdg" cx="534" cy="153" r="11"/><text class="bt" x="534" y="157.5">2</text></g>
+<g class="st" style="--i:3">
+<line class="ln" x1="562" y1="110" x2="618" y2="110"/>
+<line class="lnb" x1="582" y1="102" x2="598" y2="118"/><line class="lnb" x1="598" y1="102" x2="582" y2="118"/>
+<text x="566" y="96">kick</text>
+<circle class="bdg" cx="590" cy="136" r="11"/><text class="bt" x="590" y="140.5">3</text>
+</g>
+<g class="st" style="--i:4">
+<line class="lnd" x1="562" y1="175" x2="618" y2="175" marker-end="url(#ah)"/>
+<text x="566" y="165">close</text>
+<circle class="bdg" cx="590" cy="198" r="11"/><text class="bt" x="590" y="202.5">4</text>
+</g>
+<g class="st" style="--i:5"><circle class="bdg" cx="534" cy="251" r="11"/><text class="bt" x="534" y="255.5">5</text></g>
+<g class="st" style="--i:6">
+<line class="ln" x1="618" y1="265" x2="604" y2="265"/>
+<line class="lnb" x1="576" y1="257" x2="592" y2="273"/><line class="lnb" x1="592" y1="257" x2="576" y2="273"/>
+<text x="566" y="248">redial</text>
+<circle class="bdg" cx="590" cy="290" r="11"/><text class="bt" x="590" y="294.5">6</text>
+</g>
+<circle class="dot pk" cx="0" cy="0" r="7"/>
+
+<!-- steps -->
+<text class="h" x="10" y="346">Steps</text>
+<g class="st" style="--i:1"><text x="10" y="370"><tspan class="b">1</tspan> Dana runs central runner revoke dev/build-1. The CLI sends runner.lifecycle (op revoke) over the admin socket.</text></g>
+<g class="st" style="--i:2"><text x="10" y="390"><tspan class="b">2</tspan> Tombstone: build-1's id goes into the registry, so no new session can slip in during the commit.</text></g>
+<g class="st" style="--i:3"><text x="10" y="410"><tspan class="b">3</tspan> Kick: the session context is cancelled and the runner's SSH connection is closed.</text></g>
+<g class="st" style="--i:4"><text x="10" y="430"><tspan class="b">4</tspan> In-flight action cancelled: the runner kills the process group; the outcome row says cancelled.</text></g>
+<g class="st" style="--i:5"><text x="10" y="450"><tspan class="b">5</tspan> Commit: status = revoked and the audit row are written in one transaction.</text></g>
+<g class="st" style="--i:6"><text x="10" y="470"><tspan class="b">6</tspan> The runner redials. Auth finds a revoked key and refuses it: it never gets a session.</text></g>
+</svg>

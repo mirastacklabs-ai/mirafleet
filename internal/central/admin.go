@@ -4,7 +4,7 @@ package central
 // and speaks the internal/api framing: one framed request, one framed response per connection
 // (docs/M2.md §1.5). Access control (unix only; central is linux-only): socket mode 0600,
 // created under umask 077, plus a peer-UID check on every connection BEFORE anything is read.
-// The 0700 data dir is enforced by keys.EnsureDir in the server wiring, not here. On non-unix
+// The 0700 data dir is enforced by keys.EnsureDir (called from prepareDataDir in cmd/mirafleet/central_linux.go), not here. On non-unix
 // OSes admin_other.go fails closed (listen errors, peers are rejected); on unix OSes other than
 // linux/darwin admin_peer_other.go rejects every peer.
 //

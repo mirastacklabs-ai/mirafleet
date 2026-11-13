@@ -1,0 +1,492 @@
+# Glossary
+
+Every term used in the mirafleet guide and code, alphabetical. Each entry has a short plain
+definition and a link to the chapter that explains it properly. Examples use the Acme running
+example (central `central.example.com:2222`, fleets `dev` and `prod`, runners `build-1` and
+`db-1`, operators `alice` and `bob`).
+
+Jump to: [A](#a) [B](#b) [C](#c) [D](#d) [E](#e) [F](#f) [G](#g) [H](#h) [I](#i) [J](#j)
+[K](#k) [L](#l) [M](#m) [N](#n) [O](#o) [P](#p) [R](#r) [S](#s) [T](#t) [U](#u) [W](#w) [Y](#y)
+and [symbols](#symbols)
+
+## Symbols
+
+**/64.** An IPv6 address block: the first 64 bits are fixed, so one block holds about 2^64
+addresses. One home or server network usually owns a whole /64, so central counts IPv6 clients
+per /64, not per single address. See [chapter 2](02-background.md#28-rate-limiting-token-bucket).
+
+## A
+
+**Action.** A named, pre-approved command that a runner may run, defined in `actions.yaml`, for
+example `tail-logs`. An action is an argv array plus optional validated parameters and a timeout.
+See [chapter 3](03-architecture.md) and [chapter 5](05-security.md).
+
+**actions mode.** A fleet mode in which only named actions from the runner's `actions.yaml` can
+run (no arbitrary commands). Built today. See [chapter 1](01-what-is-mirafleet.md#14-two-fleet-modes).
+
+**actions.yaml.** The runner-side file listing every action the runner will perform. It lives on
+the machine being protected and is the security boundary. See [chapter 5](05-security.md).
+
+**Actions guard.** See [guard](#g).
+
+**Admin.** The person (in our examples, Dana) or, later, the GUI that manages central: creates
+fleets and tokens, approves and revokes runners, reads the registration code. Admin work happens
+only on central. The admin is not an operator. See [chapter 10](10-operations.md).
+
+**Admin socket.** A Unix socket `<data>/admin.sock` on the central host. The `mirafleet central ...`
+commands talk to the running central through it. See [chapter 7](07-protocols.md) and
+[chapter 2](02-background.md#211-unix-sockets-file-permissions-and-umask).
+
+**api@mirafleet.** The SSH channel type operators use to send JSON requests to central
+(`hello`, `fleets.list`, `runners.list`, `action.run`). Nothing else is reachable on it. See
+[chapter 7](07-protocols.md).
+
+**Append-only.** A table that allows inserts but never changes or deletes. The `audit` table
+enforces this with database triggers. See [chapter 6](06-data-model.md).
+
+**argv.** The list of strings a program is started with: the program name, then one string per
+argument (`["journalctl", "-u", "gitlab-runner"]`). No shell is involved, so no string can be
+re-read as extra commands. See [chapter 5](05-security.md).
+
+**Atomic / atomicity.** A group of changes that either all happen or none do, typically inside one
+database transaction. See [chapter 2](02-background.md#26-sqlite-transactions-and-wal).
+
+**Audit / audit row.** A permanent record of who did what, when and with what outcome. Each
+`action.run` writes a `start` row before dispatch and an outcome row after, sharing a
+`request_id`. See [chapter 6](06-data-model.md) and [chapter 4](04-flows.md).
+
+**AuditSink.** The Go interface for recording audit events (`Record(ctx, Event) error`). Central
+uses the SQLite store; the runner writes JSON lines to a file. See [chapter 8](08-code-tour.md).
+
+**AuthProvider.** The Go interface that turns an SSH public key into a principal. One of four
+"enterprise seams". See [chapter 8](08-code-tour.md).
+
+## B
+
+**Backoff.** Waiting longer after each failed reconnect attempt. The runner starts at 1 s and
+doubles up to 60 s (with about 20% random jitter), resetting after a connection stays healthy for
+30 s. See [chapter 3](03-architecture.md).
+
+**base32 / base64url.** Ways to write binary bytes as text. A registration code body is base32;
+secrets and hashes in tokens are base64url. See [chapter 7](07-protocols.md).
+
+**Bearer secret.** A secret that works for whoever holds it, with no further proof (a join token
+is one). Anyone who copies it can use it, so it is random, hashed at rest and short-lived. See
+[chapter 5](05-security.md).
+
+**Big-endian.** Writing the most significant byte first. The 4-byte frame length is big-endian.
+See [chapter 7](07-protocols.md).
+
+## C
+
+**Cancel / cancellation.** Telling running work to stop, in Go through a `context`. Revoke
+cancels in-flight actions; the audit outcome is `cancelled`. See
+[chapter 2](02-background.md#27-go-context-cancellation).
+
+**Central.** The one server per network that runners and operators connect to. It authenticates
+everyone, applies policy, relays work and keeps the database and audit log. Linux only. See
+[chapter 1](01-what-is-mirafleet.md#13-the-three-roles) and [chapter 3](03-architecture.md).
+
+**Channel (SSH).** A numbered stream inside an SSH connection with a type string. mirafleet's
+types: `api@mirafleet`, `exec@mirafleet`, `join@mirafleet`, `register@mirafleet`. See
+[chapter 2](02-background.md#22-ssh) and [chapter 7](07-protocols.md).
+
+**CLI.** Command-line interface: the `mirafleet` program and its subcommands. See
+[chapter 9](09-dev-setup-and-testing.md).
+
+**Confirm / confirm guard.** On a fleet created with `-confirm`, `action.run` must carry a
+`confirm` string equal to the fleet's name (such as `"prod"`). It is a typed second check, not a
+boolean. See [chapter 5](05-security.md).
+
+**Constant-time comparison.** Comparing two secrets in time that does not depend on how many
+bytes match, to avoid timing attacks. See
+[chapter 2](02-background.md#24-hashes-hmac-and-constant-time-comparison).
+
+**Container.** A fenced-in Linux process with its own file system view and resource limits. Used
+by workspace mode (planned, M3). See [chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
+
+**containerd.** The Linux program that runs containers. The product's workspaces (M3) use it
+through its Go client; our developer tooling runs in Docker containers (colima on macOS). Planned
+for M3. See [chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
+
+**context (Go).** A value carrying cancellation and deadlines through function calls. See
+[chapter 2](02-background.md#27-go-context-cancellation).
+
+**context (contexts.yaml).** A different thing with the same word: a named connection setting
+(central address and pinned host-key hash) in the operator's `contexts.yaml`, like a `kubectl`
+context. See [chapter 8](08-code-tour.md).
+
+**CVE.** "Common Vulnerabilities and Exposures": a public id for a known security bug, such as
+CVE-2024-45337 in the Go SSH library. See [chapter 5](05-security.md).
+
+## D
+
+**Data dir.** The directory where central keeps its state (default `/var/lib/mirafleet/central`):
+host key, SQLite database, admin socket, lock file. A runner has its own data dir with
+`runner.yaml`, key and `known_hosts`. See [chapter 10](10-operations.md).
+
+**Data-dir lock.** An exclusive `flock` on `<data>/central.lock` so a second central cannot use
+the same directory. See [chapter 10](10-operations.md).
+
+**Deny by default.** Anything not explicitly allowed is refused. The policy engine and the
+runner's guard both work this way. See [chapter 5](05-security.md).
+
+**Disabled.** A runner status: still connected and visible, finishes in-flight work, but takes no
+new work. `enable` reverses it. See [chapter 6](06-data-model.md).
+
+**DTO (data transfer object).** A plain struct that only carries data across a boundary (for
+example the JSON shape of an API reply), with no logic. See [chapter 3](03-architecture.md).
+
+**Domain separation.** Putting a fixed label (`mirafleet-register-v1`) into a hash or HMAC input so
+the result cannot be reused for another purpose. See
+[chapter 2](02-background.md#24-hashes-hmac-and-constant-time-comparison).
+
+**Double gate (now three gates).** The method table and the policy are two
+independent gates; admin-only calls add a direct check of the caller's kind as a third. Admin
+methods are absent from the operator method table, and the policy denies them as well. See
+[chapter 5](05-security.md).
+
+## E
+
+**Ed25519.** The public-key signature algorithm mirafleet uses (SSH name `ssh-ed25519`); the only
+key type accepted. See [chapter 2](02-background.md#21-public-key-cryptography-and-ed25519).
+
+**Enroll (SSH user).** The SSH user for brand-new, not-yet-known callers. It may open exactly one
+channel (`join@mirafleet` or `register@mirafleet`), within 30 s, rate-limited. See
+[chapter 7](07-protocols.md).
+
+**Enrolment / enroll.** Becoming known to central: a runner by `runner join`, an operator by
+`mcp login`. See [chapter 4](04-flows.md).
+
+**Envelope.** The JSON wrapper around every API message: `{"v":1,"id","method","params"}` for
+requests and `{"v":1,"id","result"}` or `{"error":{...}}` for responses. See
+[chapter 7](07-protocols.md).
+
+**Error code.** One of `bad_request unauthenticated forbidden not_found conflict unavailable
+too_large timeout unsupported_version internal`. See [chapter 7](07-protocols.md).
+
+**exec@mirafleet.** The channel type central opens toward a runner (over the runner's own
+connection) to run an action. See [chapter 7](07-protocols.md).
+
+**Executor.** The runner-side component that actually runs work. Actions mode runs argv on the
+host. In workspace mode (planned), a `WorkspaceExecutor` runs commands in containers (containerd
+or OpenSandbox). See [chapter 3](03-architecture.md).
+
+## F
+
+**Fail closed.** When something goes wrong, refuse rather than allow. Example: if the `start`
+audit row cannot be written, the action does not run. See [chapter 5](05-security.md).
+
+**flock.** A Unix file lock. Central takes an exclusive `flock` on `<data>/central.lock`; the
+kernel drops it if the process dies, so a crash never leaves a stale lock. See
+[chapter 10](10-operations.md).
+
+**Foreign key.** A database column that must point at an existing row in another table (a
+runner's `fleet_id` must be a real fleet). The database refuses changes that would break it. See
+[chapter 6](06-data-model.md).
+
+**Front end.** A way into central's one `Service` layer: the operator API (`api@mirafleet`), the
+admin socket, and the enroll channels. Each authenticates its own way, then calls the same
+service code. See [chapter 3](03-architecture.md).
+
+**Fingerprint.** A short hash of a public key (like `SHA256:...`) used to name and compare keys.
+Stored beside each key. See [chapter 2](02-background.md#21-public-key-cryptography-and-ed25519).
+
+**Fleet.** A named group of runners and the unit of isolation: `dev`, `prod`. A runner belongs to
+exactly one fleet; each fleet has a mode (`actions` or `workspace`). See
+[chapter 6](06-data-model.md).
+
+**Frame.** One length-prefixed message: 4 bytes (big-endian) giving the JSON length, then the
+JSON. See [chapter 7](07-protocols.md).
+
+## G
+
+**goroutine.** A lightweight concurrent function in Go, started with `go f()`. Thousands can run
+at once; a context tells them when to stop. See [chapter 2](02-background.md#27-go-context-cancellation).
+
+**Guard (actions guard).** The code in `internal/actions` on the runner that checks an action
+name and its parameters against `actions.yaml`, then runs it without a shell. This is the
+security boundary. See [chapter 5](05-security.md).
+
+## H
+
+**Harness.** The program that hosts an AI agent and its tools: Claude Code, opencode, Kilo Code.
+See [chapter 2](02-background.md#210-mcp-and-harnesses).
+
+**Harness-agnostic.** Core behaviour and safety do not depend on any one harness's features;
+harness-specific code lives only in `integrations/<harness>/`. See
+[chapter 2](02-background.md#210-mcp-and-harnesses).
+
+**Hash.** A fixed-size fingerprint of data (SHA-256 here); one-way. See
+[chapter 2](02-background.md#24-hashes-hmac-and-constant-time-comparison).
+
+**Heartbeat.** A `heartbeat@mirafleet` SSH global request the runner sends every 15 s with its
+hostname, OS, architecture, version and labels. Open and heartbeating means online. Heartbeats
+stay in memory. See [chapter 7](07-protocols.md).
+
+**HMAC.** A hash mixed with a secret key, so only secret holders can create or verify it. See
+[chapter 2](02-background.md#24-hashes-hmac-and-constant-time-comparison).
+
+**`hello`.** The simplest API method: it takes at most a client name hint and returns the
+operator's name, the protocol versions central speaks and the server name. It also fails if the
+operator is no longer active, so it doubles as a "does my login still work?" test. See [chapter 7](07-protocols.md).
+
+**Host key.** An SSH server's own key pair. Central's host key is created by `central init`;
+clients pin its hash. See [chapter 2](02-background.md#23-host-key-pinning-versus-trust-on-first-use).
+
+## I
+
+**Idempotent.** Doing it twice has the same effect as once. Re-registering an already active
+operator key is idempotent (but still audited). See [chapter 4](04-flows.md).
+
+**Image (container).** The packaged file system a container starts from. Planned (M3). See
+[chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
+
+**In-flight.** Currently running. "In-flight actions are cancelled on revoke." See
+[chapter 4](04-flows.md).
+
+## J
+
+**JSON.** A text format for structured data: `{"v":1,"method":"hello"}`. Every API message is
+JSON. See [chapter 7](07-protocols.md).
+
+**Join token.** A credential `mfj1.<id>.<secret>.<host-key-hash>` that lets one runner enrol. Single
+use by default, 24 h lifetime, maximum 30 days. Central stores only a SHA-256 of the secret. See
+[chapter 4](04-flows.md) and [chapter 5](05-security.md).
+
+**join@mirafleet.** The enroll-channel type a runner uses to present a join token. See
+[chapter 7](07-protocols.md).
+
+## K
+
+**Kick.** Closing a live connection from central's side (as part of revoke or operator revoke).
+See [chapter 4](04-flows.md).
+
+**known_hosts.** A file recording the pinned host key. Written by `runner join` and `mcp login`
+after the first, pinned connection. See [chapter 2](02-background.md#23-host-key-pinning-versus-trust-on-first-use).
+
+## L
+
+**Labels.** Key/value tags on a runner (such as `role=jump`). Labels set by a join token are
+trusted; labels a runner reports in heartbeats are informational only. See
+[chapter 6](06-data-model.md).
+
+**Lifecycle states.** `pending -> active -> disabled -> revoked`. Only `active` runners run
+actions. See [chapter 6](06-data-model.md).
+
+**Lifecycle (operations).** `approve`, `disable`, `enable`, `revoke`; available only on central,
+never over `api@mirafleet`. See [chapter 5](05-security.md).
+
+## M
+
+**MCP (Model Context Protocol).** A standard for an agent harness to discover and call tools,
+spoken over stdio. mirafleet's MCP server is planned for M5. See
+[chapter 2](02-background.md#210-mcp-and-harnesses).
+
+**Migration.** A numbered SQL file that moves the database schema forward one version. Embedded
+in the binary; forward-only; a newer database than the binary fails closed. See
+[chapter 6](06-data-model.md).
+
+**Milestone (M1-M6).** A stage of the build plan. See [chapter 1](01-what-is-mirafleet.md#18-milestones-and-current-status)
+and [../PLAN.md](../PLAN.md).
+
+**Mode (fleet).** `actions` or `workspace`. See [chapter 1](01-what-is-mirafleet.md#14-two-fleet-modes).
+
+## N
+
+**NAT.** Network address translation: a router hides many machines behind one address and blocks
+inbound connections. Outbound-only runners work through it. See
+[chapter 1](01-what-is-mirafleet.md#12-what-mirafleet-does).
+
+**nerdctl.** A command-line tool for containerd with Docker-like commands. Alternative to the Docker CLI in the dev
+scripts (`MIRAFLEET_CTR=nerdctl` on a Linux host with containerd). See [chapter 9](09-dev-setup-and-testing.md).
+
+## O
+
+**Operator.** A registered person: in practice, one Ed25519 key on one machine (alice's laptop)
+that central knows by a name such as `alice`. Operators use fleets; they do not manage central.
+Acme's operators: `alice`, `bob`. They connect with SSH user `operator`, which is a role label
+shared by all of them; it is not the same thing as the operator named `alice`. See
+[chapter 3](03-architecture.md).
+
+**Orchestrator.** The agent side of the system as a whole: Claude Code plus its plugin plus
+`mirafleet mcp`. Related words: the **harness** is the app that hosts the agent (Claude Code); the
+**agent** is the model-driven loop inside it; the **operator** is the registered key the agent
+acts through; the **admin** is a different person who runs central. See
+[chapter 1](01-what-is-mirafleet.md#13-the-three-roles).
+
+**outcome.** The second audit row of an action run (for example `ok`, `error`, `cancelled`, `timeout`, `denied`),
+written after the work ends and sharing the `request_id` of the `start` row. See
+[chapter 6](06-data-model.md).
+
+**OpenSandbox.** An open-source sandbox service; an opt-in second workspace executor in M3,
+reached over pinned HTTPS only. See [../M3.md](../M3.md) and
+[chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
+
+**Outbound-only.** All connections start from the runner or operator toward central; nothing
+dials in to a runner. See [chapter 1](01-what-is-mirafleet.md#12-what-mirafleet-does).
+
+## P
+
+**Partial index.** A database index that covers only rows matching a condition (for example only
+non-revoked keys), so it can enforce "unique among live rows". See [chapter 6](06-data-model.md).
+
+**Peer UID.** The user id of the process on the other end of a Unix socket, as reported by the
+kernel. Central requires it to equal its own before reading from the admin socket. See
+[chapter 2](02-background.md#211-unix-sockets-file-permissions-and-umask).
+
+**Pending.** A runner status after join: connected and heartbeating, but may never run actions
+until approved (unless the token had `-approve`). See [chapter 6](06-data-model.md).
+
+**Pinning (host-key).** Checking the server's key against a hash known beforehand, refusing
+anything else, with no prompt. See
+[chapter 2](02-background.md#23-host-key-pinning-versus-trust-on-first-use).
+
+**Policy / PolicyEngine.** The Go interface `Authorize(ctx, Principal, Action, Resource)` that
+decides whether a principal may do something. The OSS table: local admin may do everything; an
+active operator may only call `hello`, list methods and `action.run`; all else denied. See
+[chapter 5](05-security.md).
+
+**Process group.** A set of Unix processes that can be signalled together. The runner starts each
+action in its own group so a timeout or revoke can kill the process and any children it spawned.
+See [chapter 5](05-security.md).
+
+**Principal.** The authenticated identity behind a request: `admin` (local socket, `local:uid=N`),
+an operator, or a runner. See [chapter 5](05-security.md).
+
+**Prompt injection.** An attack where text the agent reads (a log line, a web page) contains
+instructions that trick the agent. mirafleet limits the damage with the guard, confirm and by
+keeping lifecycle off the operator API. See [chapter 1](01-what-is-mirafleet.md#11-the-problem).
+
+**Public key / private key.** The shareable and secret halves of a key pair. See
+[chapter 2](02-background.md#21-public-key-cryptography-and-ed25519).
+
+## R
+
+**Rate limit.** A cap on how often something may happen, using a token bucket. See
+[chapter 2](02-background.md#28-rate-limiting-token-bucket).
+
+**Registration code.** `mfr1.<code>.<host-key-hash>`: a rotating, TOTP-style code an admin reads
+from central so operators can register. Valid for one 60 s step, not single-use. See
+[chapter 2](02-background.md#25-totp-style-rotating-codes) and [chapter 4](04-flows.md).
+
+**register@mirafleet.** The enroll-channel type an operator uses to present a registration code.
+See [chapter 7](07-protocols.md).
+
+**Registry.** In-memory table of live runner sessions in `internal/central/registry`, keyed by
+database id. Holds the tombstones and the cancel functions. Not the same as the database. See
+[chapter 3](03-architecture.md) and [chapter 4](04-flows.md).
+
+**Request id.** An id shared by the `start` and outcome audit rows of one action run. See
+[chapter 6](06-data-model.md).
+
+**Revoke.** Permanently ending a runner's (or operator's) access: tombstone, kick, cancel
+in-flight, commit, refuse reconnect. A revoked key never re-enrols. See [chapter 4](04-flows.md).
+
+**Role.** What a connection may do, selected by its SSH user: runner, operator or enroll. See
+[chapter 7](07-protocols.md).
+
+**Rotate-secret.** `mirafleet central operator rotate-secret` replaces the registration secret,
+invalidating every outstanding code. See [chapter 10](10-operations.md).
+
+**Runner.** The program on each fleet server that dials out to central and runs approved
+actions. See [chapter 1](01-what-is-mirafleet.md#13-the-three-roles).
+
+**runner.yaml.** The runner's own config file written by `runner join` in its data dir (mode
+0600). See [chapter 10](10-operations.md).
+
+## S
+
+**Seam (interface seam).** A Go interface left in the OSS code so an enterprise feature can plug
+in later: `Store`, `AuthProvider`, `PolicyEngine`, `AuditSink`. See
+[chapter 8](08-code-tour.md).
+
+**SIEM.** "Security information and event management": a product that collects logs from many
+systems for security teams. Enterprise audit export to a SIEM is an interface seam, not built.
+See [chapter 12](12-why-mirafleet.md).
+
+**Slow loris.** An attack that opens many connections and sends data very slowly to tie up the
+server. Handshake and enroll time limits defend against it. See [chapter 5](05-security.md).
+
+**source.** Which front end a call came from, recorded in the audit row: `cli` (admin socket),
+`api` (operator), `enroll` (join or register), `system` (central itself); `gui` is reserved for
+M4. See [chapter 6](06-data-model.md).
+
+**Symlink.** A file that points to another path. Opening a key file through a symlink could be
+steered to a different file, so key loading refuses symlinks (`O_NOFOLLOW`). See
+[chapter 4](04-flows.md).
+
+**Service (`internal/service`).** The single code path used by CLI, API and (later) GUI and MCP
+for every operation. See [chapter 3](03-architecture.md).
+
+**Session context.** The Go context tied to one runner connection; cancelling it kicks the
+runner and stops its work. See [chapter 2](02-background.md#27-go-context-cancellation).
+
+**SQLite.** An embedded database in a single file; used through the pure-Go `modernc.org/sqlite`.
+See [chapter 2](02-background.md#26-sqlite-transactions-and-wal).
+
+**SSH.** The Secure Shell protocol: encrypted, authenticated connections with channels. See
+[chapter 2](02-background.md#22-ssh).
+
+**SSH user.** In mirafleet, a role label (`runner`, `operator`, `enroll`), not an operating-system
+account. See [chapter 7](07-protocols.md).
+
+**Static binary.** One executable with no shared libraries to install (`CGO_ENABLED=0`). See
+[chapter 1](01-what-is-mirafleet.md#17-platforms).
+
+**stdio.** Standard input and output; how tokens are passed in (`-token -`) and how MCP servers
+talk to harnesses. See [chapter 2](02-background.md#210-mcp-and-harnesses).
+
+**Step (time step).** `floor(unix_seconds / 60)`: the number of the current minute, input to the
+registration code. See [chapter 2](02-background.md#25-totp-style-rotating-codes).
+
+**Store.** The Go interface for persistence, with domain-level atomic operations; the SQLite
+implementation lives in `internal/store/sqlite`. See [chapter 6](06-data-model.md).
+
+## T
+
+**TOFU (trust on first use).** Accepting a server's key the first time and warning only if it
+changes. mirafleet does **not** use it. See
+[chapter 2](02-background.md#23-host-key-pinning-versus-trust-on-first-use).
+
+**Token bucket.** A rate-limiting scheme with a refilling bucket of permits. See
+[chapter 2](02-background.md#28-rate-limiting-token-bucket).
+
+**Trigger (database).** SQL that the database runs automatically on insert, update or delete.
+The `audit` table uses triggers that reject every update and delete. See
+[chapter 6](06-data-model.md).
+
+**Tombstone.** A mark in the registry that a runner id is revoked, added *before* the database
+commit so a racing reconnect cannot sneak in; removed if the commit fails. See
+[chapter 4](04-flows.md).
+
+**TOTP (time-based one-time password).** A code computed from a shared secret and the current
+time step. mirafleet's registration code is TOTP-style but long and with 60 s steps. See
+[chapter 2](02-background.md#25-totp-style-rotating-codes).
+
+**Transaction.** A group of database changes that commit or roll back together. See
+[chapter 2](02-background.md#26-sqlite-transactions-and-wal).
+
+## U
+
+**umask.** A per-process mask removing permission bits from newly created files; central uses
+`077`. The arithmetic: a file requested as `0666` becomes `0666 & ~077 = 0600` (owner only). See [chapter 2](02-background.md#211-unix-sockets-file-permissions-and-umask).
+
+**Unix domain socket.** A local-only connection endpoint that is a file. See
+[chapter 2](02-background.md#211-unix-sockets-file-permissions-and-umask).
+
+## W
+
+**WAL (write-ahead log).** SQLite mode where changes go to a log file first so readers and the
+writer do not block each other. See [chapter 2](02-background.md#26-sqlite-transactions-and-wal).
+
+**Workspace.** A per-session container with its own directory where an agent may run any command
+(planned, M3). See [chapter 1](01-what-is-mirafleet.md#14-two-fleet-modes).
+
+**workspace mode.** The fleet mode for workspaces. Stored today; the feature is planned (M3).
+See [../M3.md](../M3.md).
+
+## Y
+
+**YAML.** A human-friendly text format for config files, using indentation (`actions.yaml`,
+`runner.yaml`, `contexts.yaml`). See [chapter 1](01-what-is-mirafleet.md#14-two-fleet-modes).

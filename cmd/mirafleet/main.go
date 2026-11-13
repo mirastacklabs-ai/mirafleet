@@ -1,7 +1,8 @@
 // mirafleet: central | runner | central exec. See docs/ARCHITECTURE.md.
 //
-// Central and runner wiring lives in server_linux.go (server_other.go fails closed elsewhere), so
-// darwin and windows binaries never link SQLite.
+// Central init/run wiring lives in central_linux.go and the runner commands (join/run) in
+// server_linux.go; server_other.go fails closed elsewhere, so darwin and windows binaries never
+// link SQLite.
 package main
 
 import (
