@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
-	"net"
 	"sync"
 	"time"
 
@@ -37,7 +36,7 @@ func (s *Server) serveEnroll(sconn *ssh.ServerConn, p auth.Principal, accepted t
 	defer deadline.Stop()
 	go ssh.DiscardRequests(reqs)
 
-	key, err := enrollKey(sconn)
+	key, err := enrollKey(sconn, p)
 	if err != nil {
 		s.cfg.Logf("enroll connection from %s: %v", p.Remote, err)
 		return
@@ -80,8 +79,9 @@ func (s *Server) serveEnroll(sconn *ssh.ServerConn, p auth.Principal, accepted t
 	}
 }
 
-// enrollKey recovers the key presented at authentication (stored by the auth callback).
-func enrollKey(sconn *ssh.ServerConn) (ssh.PublicKey, error) {
+// enrollKey recovers the key presented at authentication (stored by the auth callback) and
+// cross-checks it against the authenticated principal's fingerprint; a mismatch fails closed (D-07).
+func enrollKey(sconn *ssh.ServerConn, p auth.Principal) (ssh.PublicKey, error) {
 	if sconn.Permissions == nil {
 		return nil, errors.New("missing permissions")
 	}
@@ -93,6 +93,9 @@ func enrollKey(sconn *ssh.ServerConn) (ssh.PublicKey, error) {
 	if err != nil || k.Type() != ssh.KeyAlgoED25519 {
 		return nil, errors.New("invalid presented key")
 	}
+	if p.Fingerprint == "" || ssh.FingerprintSHA256(k) != p.Fingerprint {
+		return nil, errors.New("presented key does not match the authenticated key")
+	}
 	return k, nil
 }
 
@@ -101,7 +104,7 @@ func (s *Server) serveEnrollChannel(ctx context.Context, ch ssh.Channel, typ str
 	if err != nil {
 		if !errors.Is(err, io.EOF) {
 			s.cfg.Logf("enroll from %s: bad request: %v", p.Remote, err)
-			api.WriteResponse(ch, api.NewError(id, api.AsError(err)))
+			writeResponseTimeout(ch, ch, api.NewError(id, api.AsError(err)))
 		}
 		return
 	}
@@ -111,7 +114,7 @@ func (s *Server) serveEnrollChannel(ctx context.Context, ch ssh.Channel, typ str
 	if resp.Error != nil {
 		s.cfg.Logf("enroll from %s: %s refused (%s)", p.Remote, req.Method, resp.Error.Code)
 	}
-	if err := api.WriteResponse(ch, resp); err != nil {
+	if err := writeResponseTimeout(ch, ch, resp); err != nil {
 		s.cfg.Logf("enroll from %s: write response: %v", p.Remote, err)
 	}
 }
@@ -155,6 +158,8 @@ type ipLimiter struct {
 	rate float64 // tokens per minute, also the burst
 	now  func() time.Time
 
+	max int // hard cap on len(m)
+
 	mu sync.Mutex
 	m  map[string]*bucket
 }
@@ -165,25 +170,28 @@ type bucket struct {
 }
 
 func newIPLimiter(perMin int, now func() time.Time) *ipLimiter {
-	return &ipLimiter{rate: float64(perMin), now: now, m: map[string]*bucket{}}
+	return &ipLimiter{rate: float64(perMin), now: now, max: maxBuckets, m: map[string]*bucket{}}
 }
 
-// maxBuckets bounds the table; when exceeded, fully refilled (idle) buckets are dropped.
+// maxBuckets is the hard cap of the table. At the cap, fully refilled (idle) buckets are dropped
+// first; if none is idle the least recently used bucket is evicted, so the table never grows
+// past the cap whatever the source addresses.
 const maxBuckets = 4096
 
-// allow reports whether a connection from remote (host:port) may proceed.
+// allow reports whether a connection from remote (host:port) may proceed. IPv6 sources share a
+// bucket per /64.
 func (l *ipLimiter) allow(remote string) bool {
-	ip, _, err := net.SplitHostPort(remote)
-	if err != nil {
-		ip = remote
-	}
+	ip := ipKey(remote)
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	b := l.m[ip]
 	if b == nil {
-		if len(l.m) >= maxBuckets {
+		if len(l.m) >= l.max {
 			l.prune(now)
+		}
+		if len(l.m) >= l.max {
+			l.evictOldest()
 		}
 		b = &bucket{tokens: l.rate, last: now}
 		l.m[ip] = b
@@ -207,4 +215,16 @@ func (l *ipLimiter) prune(now time.Time) {
 			delete(l.m, k)
 		}
 	}
+}
+
+// evictOldest drops the least recently used bucket. Caller holds l.mu.
+func (l *ipLimiter) evictOldest() {
+	var oldest string
+	var at time.Time
+	for k, b := range l.m {
+		if oldest == "" || b.last.Before(at) {
+			oldest, at = k, b.last
+		}
+	}
+	delete(l.m, oldest)
 }

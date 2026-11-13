@@ -466,53 +466,6 @@ func TestAPIChannelCap(t *testing.T) {
 	}
 }
 
-func TestRevokeOperatorKillsInflightAction(t *testing.T) {
-	e := newEnv(t, "r1")
-	e.addOperator("op")
-	e.startRunner("r1")
-	e.waitOnline("r1")
-	cl := e.opClient("op")
-	ctx := tctx(t)
-
-	errc := make(chan error, 1)
-	go func() {
-		_, err := cl.ActionRun(ctx, api.ActionRunParams{Fleet: testFleet, Runner: "r1", Action: "long"})
-		errc <- err
-	}()
-	waitFor(t, func() bool {
-		for _, ev := range e.auditRows() {
-			if ev.Action == api.MethodActionRun && ev.Outcome == service.OutcomeStart {
-				return true
-			}
-		}
-		return false
-	})
-	_, err := e.svc.RevokeOperator(ctx, e.admin, service.SourceCLI, "op")
-	must(t, err)
-	select {
-	case err := <-errc:
-		if err == nil {
-			t.Fatal("action survived operator revoke")
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("in-flight action not cancelled")
-	}
-	waitFor(t, func() bool {
-		for _, ev := range e.auditRows() {
-			if ev.Action == api.MethodActionRun && ev.Outcome == service.OutcomeCancelled {
-				return true
-			}
-		}
-		return false
-	})
-	if _, err := cl.Hello(ctx, ""); err == nil {
-		t.Fatal("revoked operator connection still works")
-	}
-	if _, err := e.dial(transport.UserOperator, "op"); err == nil {
-		t.Fatal("revoked operator reconnected")
-	}
-}
-
 func TestRunnerLastSeenOnHeartbeatInterval(t *testing.T) {
 	e := newEnvOpts(t, 15*time.Second, func(c *Config) { c.TouchInterval = 60 * time.Millisecond }, "r1")
 	e.startRunner("r1")

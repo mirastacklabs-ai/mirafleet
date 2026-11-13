@@ -10,6 +10,7 @@ import (
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
+	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
 
 // serveOperator is the operator role: api@mirafleet channels only, at most
@@ -20,12 +21,29 @@ func (s *Server) serveOperator(sconn *ssh.ServerConn, p auth.Principal, chans <-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { sconn.Wait(); cancel() }()
-	defer s.cfg.Operators.add(p.ID, sconn)()
 	go ssh.DiscardRequests(reqs) // operators send no global requests we honour
 
+	if s.beforeOperatorAdd != nil {
+		s.beforeOperatorAdd(p)
+	}
+	defer s.cfg.Operators.add(p.ID, sconn)()
+
+	// An operator revoked after authentication but before the add above was not kicked (the kick
+	// found no connection to close): reload by id and drop the connection unless still active.
+	// Revoke commits before it kicks, so from here on either the kick or this check catches it.
 	tctx, tcancel := context.WithTimeout(ctx, storeTimeout)
+	op, err := s.cfg.Store.GetOperatorByID(tctx, p.ID)
+	if err != nil || op.Status != store.OperatorActive {
+		tcancel()
+		s.cfg.Logf("operator %q (id %d) no longer active after authentication; closing connection", p.Name, p.ID)
+		return
+	}
 	if err := s.cfg.Store.TouchOperator(tctx, p.ID, s.cfg.Now()); err != nil {
 		s.cfg.Logf("touch operator %d: %v", p.ID, err)
+		if errors.Is(err, store.ErrNotFound) {
+			tcancel()
+			return
+		}
 	}
 	tcancel()
 
@@ -50,37 +68,41 @@ func (s *Server) serveOperator(sconn *ssh.ServerConn, p auth.Principal, chans <-
 			<-sem
 			continue
 		}
-		go ssh.DiscardRequests(creqs)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			s.serveAPIChannel(ctx, ch, table, cc)
+			s.serveAPIChannel(ctx, ch, creqs, table, cc)
 		}()
 	}
 	cancel()
 }
 
 // serveAPIChannel handles one request on one channel: read, dispatch, respond, close. The
-// request context ends when the connection ctx ends or the peer closes the channel.
-func (s *Server) serveAPIChannel(connCtx context.Context, ch ssh.Channel, table *methodTable, cc *callCtx) {
+// request context ends when the connection ctx ends or the peer FULLY closes the channel. A
+// half-close (CloseWrite after the request, EOF on our read side) only means "no more input":
+// the request still runs and its response is still written (D-06). Full closure is observed as
+// the channel's request stream ending (the mux closes it when the peer's close arrives).
+func (s *Server) serveAPIChannel(connCtx context.Context, ch ssh.Channel, creqs <-chan *ssh.Request, table *methodTable, cc *callCtx) {
 	defer ch.Close()
+	ctx, cancel := context.WithCancel(connCtx)
+	defer cancel()
+	go func() { ssh.DiscardRequests(creqs); cancel() }()
+
 	req, id, err := api.ReadRequestTimeout(ch, ch)
 	if err != nil {
 		if !errors.Is(err, io.EOF) {
-			api.WriteResponse(ch, api.NewError(id, api.AsError(err)))
+			writeResponseTimeout(ch, ch, api.NewError(id, api.AsError(err)))
 		}
 		return
 	}
-	ctx, cancel := context.WithCancel(connCtx)
-	defer cancel()
 	// Closing the channel unblocks a stalled write; the peer closing it cancels the request.
 	stop := context.AfterFunc(ctx, func() { ch.Close() })
 	defer stop()
-	go func() { io.Copy(io.Discard, ch); cancel() }()
+	go io.Copy(io.Discard, ch) // keep the window open; stray input after the request is ignored
 
 	resp := table.serve(ctx, cc, req)
-	if err := api.WriteResponse(ch, resp); err != nil {
+	if err := writeResponseTimeout(ch, ch, resp); err != nil {
 		s.cfg.Logf("api: write response to %q: %v", cc.p.Name, err)
 	}
 }

@@ -20,7 +20,8 @@ All dependencies must meet the permissive license policy in [CLAUDE.md](../CLAUD
   a bad parameter, and survives a runner reconnect.
 
 ## M2 — Central core
-Detailed plan, decisions and steps: [M2.md](M2.md).
+**Status: done (pending final review).** Detailed plan, decisions and steps: [M2.md](M2.md).
+The "M2 done when" scenario is `TestM2Done` in `internal/central/m2_done_test.go`.
 - SQLite store behind a `Store` interface. Fleets, runners, join tokens, operators, audit.
 - Enrollment (`token create`, `runner join`), runner lifecycle, operator registration with a
   rotating TOTP-style code from central (no approval step).
@@ -36,6 +37,9 @@ Detailed plan, decisions and steps: [M2.md](M2.md).
   internet-facing central.
 
 ## M3 — Workspaces
+Decisions: [M3.md](M3.md) (executor interface; opt-in OpenSandbox executor, HTTPS-only).
+- `WorkspaceExecutor` interface on the runner; executors: containerd (default) and OpenSandbox
+  (opt-in per fleet, stdlib HTTPS with pinned certs, no SDK).
 - containerd executor (namespace `mirafleet`), workspace dir, open/exec/file/close,
   resource limits, `concurrent: N`, scheduling with sticky sessions, TTL reaper.
 - Integration tests build-tagged `linux && integration` (need a real containerd; on macOS run in
@@ -107,4 +111,6 @@ syft are MIT or Apache-2.0).
 - Module path is `github.com/mirastacklabs-ai/mirafleet`.
 - Dev toolchain is container-only (`scripts/dev.sh`, Docker CLI; colima Docker runtime on macOS).
 - LICENSE (Apache-2.0), NOTICE and README disclaimer added. Branding approved in docs/BRAND.md.
-- Next: M2 (central core, SQLite store). Central and runner are Linux only; `mcp` is cross-platform.
+- M2 built (store, join tokens, rotating operator registration codes, lifecycle on central only,
+  `api@mirafleet`, admin socket, CLI, `runner join`, `mcp login|api`); done pending final review.
+- Next: M3 (workspaces). Central and runner are Linux only; `mcp` is cross-platform.

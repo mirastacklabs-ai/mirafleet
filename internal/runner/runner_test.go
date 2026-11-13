@@ -126,9 +126,12 @@ func TestBackoffGrowsWhenConnectionNeverHealthy(t *testing.T) {
 	if len(ts) < 5 {
 		t.Fatalf("only %d connections", len(ts))
 	}
-	first, last := ts[1].Sub(ts[0]), ts[4].Sub(ts[3]) // nominal 50ms vs 400ms (+-20%)
-	if last < 2*first {
-		t.Fatalf("backoff did not grow: first gap %v, fourth gap %v", first, last)
+	// Only lower bounds are asserted: host load can delay a reconnect but never shorten a wait,
+	// so these cannot flake. Nominal gaps are 50, 100, 200, 400ms (jitter -20% at worst); a
+	// constant 50ms backoff would give a ~200ms total.
+	last, total := ts[4].Sub(ts[3]), ts[4].Sub(ts[0])
+	if last < 320*time.Millisecond || total < 600*time.Millisecond {
+		t.Fatalf("backoff did not grow: fourth gap %v (want >= 320ms), total %v (want >= 600ms)", last, total)
 	}
 }
 

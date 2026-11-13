@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -22,13 +23,24 @@ func listenUnix(path string) (net.Listener, error) {
 	return net.Listen("unix", path)
 }
 
+// Seam for tests: the peer-credential getter (atomic: accept loops of earlier servers may still
+// be reading it). Production code never changes it.
+var peerUIDFunc atomic.Pointer[func(*net.UnixConn) (uint32, error)]
+
+func init() { f := peerUID; peerUIDFunc.Store(&f) }
+
+// setPeerUIDFunc swaps the getter and returns the previous one (tests only).
+func setPeerUIDFunc(f func(*net.UnixConn) (uint32, error)) (prev func(*net.UnixConn) (uint32, error)) {
+	return *peerUIDFunc.Swap(&f)
+}
+
 // checkPeer requires the connecting process to run as the same UID as this process.
 func checkPeer(c net.Conn) error {
 	uc, ok := c.(*net.UnixConn)
 	if !ok {
 		return errors.New("not a unix connection")
 	}
-	uid, err := peerUID(uc)
+	uid, err := (*peerUIDFunc.Load())(uc)
 	if err != nil {
 		return fmt.Errorf("peer credentials: %w", err)
 	}

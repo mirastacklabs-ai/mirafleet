@@ -7,23 +7,55 @@ import (
 	"testing"
 )
 
+// goDeps lists the import paths the binary links for goos.
+func goDeps(t *testing.T, goos string) []string {
+	t.Helper()
+	cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", ".")
+	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list for %s: %v\n%s", goos, err, out)
+	}
+	return strings.Fields(string(out))
+}
+
+func linksSQLite(pkg string) bool {
+	return strings.HasPrefix(pkg, "modernc.org/") || strings.HasSuffix(pkg, "internal/store/sqlite")
+}
+
+// requireGo skips when the go tool is missing, except in CI, where a missing tool must fail the
+// test instead of silently disabling the check.
+func requireGo(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatal("go tool not available but CI is set: this check must not be skipped in CI")
+		}
+		t.Skip("go tool not available")
+	}
+}
+
 // darwin and windows binaries must never link SQLite (docs/M2.md §1.9): central and runner
 // wiring lives in server_linux.go only.
 func TestNoSQLiteOnNonLinux(t *testing.T) {
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("go tool not available")
-	}
+	requireGo(t)
 	for _, goos := range []string{"darwin", "windows"} {
-		cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", ".")
-		cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("go list for %s: %v\n%s", goos, err, out)
-		}
-		for _, pkg := range strings.Fields(string(out)) {
-			if strings.HasPrefix(pkg, "modernc.org/") || strings.HasSuffix(pkg, "internal/store/sqlite") {
+		for _, pkg := range goDeps(t, goos) {
+			if linksSQLite(pkg) {
 				t.Errorf("%s binary links %s", goos, pkg)
 			}
 		}
 	}
+}
+
+// Positive control: the linux binary does link SQLite. Without it, a broken `go list` filter (or
+// moved wiring) would make TestNoSQLiteOnNonLinux pass vacuously.
+func TestLinuxLinksSQLite(t *testing.T) {
+	requireGo(t)
+	for _, pkg := range goDeps(t, "linux") {
+		if linksSQLite(pkg) {
+			return
+		}
+	}
+	t.Fatal("linux binary links no SQLite package: the non-linux check proves nothing")
 }

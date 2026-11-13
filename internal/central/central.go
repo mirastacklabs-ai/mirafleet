@@ -12,8 +12,10 @@ package central
 import (
 	"encoding/base64"
 	"errors"
+	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -47,6 +49,13 @@ type Config struct {
 	TouchInterval time.Duration
 	// Now is the clock for last_seen writes and the rate limiter. Zero means time.Now.
 	Now func() time.Time
+
+	// MaxHandshakesPerIP caps SSH handshakes in progress per source IP (IPv6: per /64); excess
+	// connections are closed before any handshake work. Zero means DefaultMaxHandshakesPerIP.
+	MaxHandshakesPerIP int
+	// MaxHandshakes caps handshakes in progress across all sources. Zero means
+	// DefaultMaxHandshakes.
+	MaxHandshakes int
 }
 
 // Defaults for the optional Config fields.
@@ -54,6 +63,9 @@ const (
 	DefaultEnrollRatePerMin = 10
 	DefaultEnrollDeadline   = 30 * time.Second
 	DefaultTouchInterval    = 5 * time.Minute
+
+	DefaultMaxHandshakesPerIP = 64
+	DefaultMaxHandshakes      = 512
 )
 
 // extPubKey carries the base64 SSH wire form of the presented key for enroll connections (the
@@ -65,12 +77,42 @@ type Server struct {
 	cfg     Config
 	ssh     *ssh.ServerConfig
 	limiter *ipLimiter
+	hs      *hsLimiter
+	hsDrops atomic.Int64 // refused pre-handshake connections, for sampled logging
 
-	mu     sync.Mutex
-	ln     net.Listener
-	conns  map[*ssh.ServerConn]struct{}
-	wg     sync.WaitGroup
-	closed bool
+	// beforeOperatorAdd is a test seam: called after an operator authenticated and before it is
+	// registered in OperatorConns (the add-after-kick window). Set before Start.
+	beforeOperatorAdd func(auth.Principal)
+
+	mu    sync.Mutex
+	ln    net.Listener
+	conns map[*ssh.ServerConn]struct{}
+	// closers are connections still in handshake and the admin listeners/connections; Close
+	// closes them so it never waits for a slow peer or an idle listener.
+	closers map[io.Closer]struct{}
+	wg      sync.WaitGroup
+	closed  bool
+
+	edgeMu sync.Mutex
+	edgeAt map[int64]time.Time // last connect/disconnect store write per runner id
+}
+
+// track registers c to be closed by Close. It reports false (and registers nothing) once the
+// server is closed.
+func (s *Server) track(c io.Closer) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
+	}
+	s.closers[c] = struct{}{}
+	return true
+}
+
+func (s *Server) untrack(c io.Closer) {
+	s.mu.Lock()
+	delete(s.closers, c)
+	s.mu.Unlock()
 }
 
 // New validates cfg and returns a Server that has not started listening.
@@ -104,6 +146,12 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.MaxHandshakesPerIP <= 0 {
+		cfg.MaxHandshakesPerIP = DefaultMaxHandshakesPerIP
+	}
+	if cfg.MaxHandshakes <= 0 {
+		cfg.MaxHandshakes = DefaultMaxHandshakes
+	}
 	ka := &auth.KeyAuth{Store: cfg.Store, Logf: cfg.Logf}
 	base := auth.PublicKeyCallback(ka)
 	pkcb := func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
@@ -120,7 +168,8 @@ func New(cfg Config) (*Server, error) {
 	}
 	sc.AddHostKey(cfg.HostKey)
 	return &Server{cfg: cfg, ssh: sc, limiter: newIPLimiter(cfg.EnrollRatePerMin, cfg.Now),
-		conns: map[*ssh.ServerConn]struct{}{}}, nil
+		hs:    newHSLimiter(cfg.MaxHandshakesPerIP, cfg.MaxHandshakes),
+		conns: map[*ssh.ServerConn]struct{}{}, closers: map[io.Closer]struct{}{}}, nil
 }
 
 // Start binds the listener and serves in the background. It returns the bound address.
@@ -157,6 +206,9 @@ func (s *Server) Close() {
 	for c := range s.conns {
 		c.Close()
 	}
+	for c := range s.closers {
+		c.Close()
+	}
 	s.mu.Unlock()
 	s.wg.Wait()
 }
@@ -165,11 +217,28 @@ const handshakeTimeout = 30 * time.Second
 
 func (s *Server) handle(nc net.Conn) {
 	accepted := time.Now()
+	remote := nc.RemoteAddr().String()
+	release, reason, ok := s.hs.acquire(remote)
+	if !ok {
+		nc.Close()
+		// Sampled: a flood must not also flood the log.
+		if n := s.hsDrops.Add(1); n == 1 || n%100 == 0 {
+			s.cfg.Logf("connection from %s refused before handshake: %s (%d refused so far)", remote, reason, n)
+		}
+		return
+	}
+	defer release()
+	if !s.track(nc) {
+		nc.Close()
+		return
+	}
 	nc.SetDeadline(time.Now().Add(handshakeTimeout))
 	sconn, chans, reqs, err := ssh.NewServerConn(nc, s.ssh)
+	s.untrack(nc)
+	release()
 	if err != nil {
 		nc.Close()
-		s.cfg.Logf("handshake from %s failed: %v", nc.RemoteAddr(), err)
+		s.cfg.Logf("handshake from %s failed: %v", remote, err)
 		return
 	}
 	nc.SetDeadline(time.Time{})

@@ -165,6 +165,9 @@ func TestRevokeRunnerDuringLongAction(t *testing.T) {
 	}
 }
 
+// TestRevokeOperatorDuringAction is the single end-to-end operator-revoke test (it absorbed the
+// former TestRevokeOperatorKillsInflightAction): in-flight action cancelled, connection and key
+// dead, audit rows correct.
 func TestRevokeOperatorDuringAction(t *testing.T) {
 	e := newEnv(t, "r1")
 	op := e.addOperator("op1")

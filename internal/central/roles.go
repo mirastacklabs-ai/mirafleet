@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/ssh"
 
@@ -70,6 +72,10 @@ func registryStatus(st store.Status) (registry.Status, bool) {
 
 // serveRunner is the runner role: heartbeats register a session keyed by the runner's store id.
 // Pending runners may heartbeat; the registry refuses exec for them.
+//
+// Store touches (last_seen_at/info) never delay a heartbeat reply: they are handed to a
+// per-connection worker that keeps only the newest pending value (coalescing), and the
+// connect/disconnect writes of a flapping runner are throttled (see claimEdge).
 func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
 	reg := s.cfg.Registry
 	staleAfter := reg.StaleAfter()
@@ -80,6 +86,7 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 	var lastHB transport.Heartbeat
 	var lastTouch time.Time
 	var registered atomic.Bool
+	var tc *toucher
 	guard := time.AfterFunc(staleAfter, func() {
 		if !registered.Load() {
 			s.cfg.Logf("runner %q (id %d) silent for >%s; closing connection", p.Name, p.ID, staleAfter)
@@ -90,7 +97,10 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 	defer func() {
 		if sess != nil {
 			reg.Unregister(sess)
-			s.touchRunner(p.ID, lastHB) // D-02: last_seen/info on disconnect
+			tc.stop() // no touch may race the final one
+			if s.claimEdge(p.ID, s.cfg.Now()) {
+				s.touchRunner(p.ID, lastHB) // D-02: last_seen/info on disconnect
+			}
 		}
 	}()
 	for r := range reqs {
@@ -103,6 +113,7 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			r.Reply(false, nil)
 			continue
 		}
+		now := s.cfg.Now()
 		if sess == nil {
 			// Register on first heartbeat: by then the runner has installed its channel handler.
 			var err error
@@ -114,18 +125,81 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 				continue
 			}
 			registered.Store(true)
-			lastHB, lastTouch = hb, time.Now()
-			s.touchRunner(p.ID, hb) // D-02: last_seen/info on register
+			tc = s.startToucher(p.ID)
+			lastHB = hb
+			if s.claimEdge(p.ID, now) {
+				lastTouch = now
+				tc.put(hb) // D-02: last_seen/info on register
+			} else {
+				// Throttled: the next heartbeat after the edge gap does the write instead.
+				lastTouch = now.Add(s.edgeGap() - s.cfg.TouchInterval)
+			}
 		} else {
 			sess.Heartbeat(hb)
 			lastHB = hb
-			if time.Since(lastTouch) >= s.cfg.TouchInterval {
-				lastTouch = time.Now()
-				s.touchRunner(p.ID, hb)
+			if now.Sub(lastTouch) >= s.cfg.TouchInterval {
+				lastTouch = now
+				tc.put(hb)
 			}
 		}
 		r.Reply(true, nil)
 	}
+}
+
+// toucher writes a runner's last_seen/info to the store off the heartbeat path. It holds at most
+// one pending heartbeat: a newer one replaces an unwritten older one. put has a single caller.
+type toucher struct {
+	ch   chan transport.Heartbeat
+	done chan struct{}
+}
+
+func (s *Server) startToucher(id int64) *toucher {
+	t := &toucher{ch: make(chan transport.Heartbeat, 1), done: make(chan struct{})}
+	go func() {
+		defer close(t.done)
+		for hb := range t.ch {
+			s.touchRunner(id, hb)
+		}
+	}()
+	return t
+}
+
+func (t *toucher) put(hb transport.Heartbeat) {
+	select {
+	case t.ch <- hb:
+		return
+	default:
+	}
+	select { // full: drop the stale pending value, keep the newest
+	case <-t.ch:
+	default:
+	}
+	select {
+	case t.ch <- hb:
+	default:
+	}
+}
+
+// stop lets the worker finish its pending write and waits for it.
+func (t *toucher) stop() { close(t.ch); <-t.done }
+
+// edgeGap is the minimum spacing of connect/disconnect writes per runner.
+func (s *Server) edgeGap() time.Duration { return s.cfg.TouchInterval / 10 }
+
+// claimEdge reports whether a connect/disconnect store write for runner id may happen now, and
+// records it if so. A runner flapping faster than edgeGap costs the store at most one edge write
+// per gap; periodic heartbeat writes are unaffected and still refresh last_seen.
+func (s *Server) claimEdge(id int64, now time.Time) bool {
+	s.edgeMu.Lock()
+	defer s.edgeMu.Unlock()
+	if last, ok := s.edgeAt[id]; ok && now.Sub(last) < s.edgeGap() {
+		return false
+	}
+	if s.edgeAt == nil {
+		s.edgeAt = map[int64]time.Time{}
+	}
+	s.edgeAt[id] = now
+	return true
 }
 
 // register reloads the runner from the store by id (its CURRENT status, not the one captured at
@@ -157,8 +231,25 @@ const storeTimeout = 5 * time.Second
 func (s *Server) touchRunner(id int64, hb transport.Heartbeat) {
 	ctx, cancel := context.WithTimeout(context.Background(), storeTimeout)
 	defer cancel()
-	info := map[string]string{"hostname": hb.Hostname, "os": hb.OS, "arch": hb.Arch, "version": hb.Version}
+	info := map[string]string{"hostname": clip(hb.Hostname), "os": clip(hb.OS), "arch": clip(hb.Arch), "version": clip(hb.Version)}
 	if err := s.cfg.Store.TouchRunner(ctx, id, s.cfg.Now(), info); err != nil {
 		s.cfg.Logf("touch runner %d: %v", id, err)
 	}
+}
+
+// maxInfoValue bounds each heartbeat-supplied info value stored for a runner, so an oversized
+// hostname can never push the info blob over the store's limit and block last_seen updates.
+const maxInfoValue = 256
+
+// clip returns s cut to at most maxInfoValue bytes on a rune boundary, invalid UTF-8 dropped.
+func clip(s string) string {
+	s = strings.ToValidUTF8(s, "")
+	if len(s) <= maxInfoValue {
+		return s
+	}
+	n := maxInfoValue
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

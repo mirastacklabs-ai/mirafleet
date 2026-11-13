@@ -3,10 +3,39 @@
 Let an AI coding agent drive fleets of servers through one central server, the way a CI server
 drives GitLab runners. Works with Claude Code first, and with any MCP-capable harness.
 
-> **Status:** early development (milestone M1 of 6). Not ready for production use.
+> **Status:** early development (milestone M2 of 6 built). Not ready for production use.
 
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Plan: [docs/PLAN.md](docs/PLAN.md)
+
+## Quickstart (current state)
+
+Central and runner run on Linux; `mirafleet mcp` also builds for macOS and Windows. Tokens and
+codes are read from stdin (`-`), never passed in argv.
+
+```bash
+# On the central host
+mirafleet central init -listen 0.0.0.0:2222
+mirafleet central run &                          # or run it under your service manager
+mirafleet central fleet create uat -mode actions
+mirafleet central token create -fleet uat        # prints a join token once
+
+# On each runner
+echo "$JOIN_TOKEN" | mirafleet runner join central.example.com:2222 -name jump1 -token -
+mirafleet runner run -actions /etc/mirafleet/actions.yaml
+
+# Back on central
+mirafleet central runner approve uat/jump1
+mirafleet central operator code                  # rotating code, valid for 60 seconds
+
+# On the operator's machine
+echo "$REGISTRATION_CODE" | mirafleet mcp login central.example.com:2222 -name alice -code -
+mirafleet mcp api fleets.list
+mirafleet mcp api action.run '{"fleet":"uat","runner":"jump1","action":"hello"}'
+```
+
+Runner lifecycle (`approve`, `disable`, `enable`, `revoke`) and all other admin commands exist
+only on central. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#enrollment).
 
 ## License
 

@@ -20,10 +20,14 @@ func TestCheckPeerAcceptsSameUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
+	done := make(chan struct{}) // releases the dialing goroutine when the test ends
+	finished := make(chan struct{})
+	defer func() { close(done); <-finished }()
 	go func() {
+		defer close(finished)
 		if c, err := net.Dial("unix", ln.Addr().String()); err == nil {
 			defer c.Close()
-			<-make(chan struct{})
+			<-done
 		}
 	}()
 	c, err := ln.Accept()

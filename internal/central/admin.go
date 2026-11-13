@@ -90,9 +90,20 @@ func (s *Server) ServeAdmin(ctx context.Context, path string) error {
 		ln.Close()
 		return err
 	}
+	// The accept loop owns a WaitGroup slot, taken here before it is spawned: Server.Close can
+	// therefore never run Wait concurrently with an Add from a zero counter, and the loop's
+	// own Add for each connection happens while it still holds its slot.
+	s.wg.Add(1)
+	if !s.track(ln) {
+		s.wg.Done()
+		ln.Close()
+		return errors.New("central: server closed")
+	}
 	go func() { <-ctx.Done(); ln.Close(); os.Remove(path) }()
 	table := adminTable()
 	go func() {
+		defer s.wg.Done()
+		defer s.untrack(ln)
 		for {
 			c, err := ln.Accept()
 			if err != nil {
@@ -104,8 +115,16 @@ func (s *Server) ServeAdmin(ctx context.Context, path string) error {
 				c.Close()
 				continue
 			}
+			if !s.track(c) {
+				c.Close()
+				return
+			}
 			s.wg.Add(1) // Server.Close waits for in-flight admin calls
-			go func() { defer s.wg.Done(); s.adminConn(ctx, c, table) }()
+			go func() {
+				defer s.wg.Done()
+				defer s.untrack(c)
+				s.adminConn(ctx, c, table)
+			}()
 		}
 	}()
 	return nil
@@ -147,15 +166,58 @@ func (s *Server) adminConn(ctx context.Context, c net.Conn, table *methodTable) 
 		}
 		return
 	}
-	// The peer closing the connection cancels the request (e.g. Ctrl-C of `central exec`).
+	// The peer closing the connection cancels the request (e.g. Ctrl-C of `central exec`). A
+	// half-close (shutdown of the peer's write side after the request) does NOT: it only means
+	// "no more input", and the response is still written (D-06).
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go func() { io.Copy(io.Discard, c); cancel() }()
+	go watchPeerClose(rctx, c, cancel)
 
 	// checkPeer required the peer to run as our own UID.
 	cc := &callCtx{p: auth.LocalAdmin(os.Getuid()), src: table.src, svc: s.cfg.Service, st: s.cfg.Store,
 		logf: s.cfg.Logf, state: &connState{}}
-	if err := api.WriteResponse(c, table.serve(rctx, cc, req)); err != nil {
+	if err := writeResponseTimeout(c, c, table.serve(rctx, cc, req)); err != nil {
 		s.cfg.Logf("admin socket: write response: %v", err)
 	}
+}
+
+// peerClosedPollEvery is how often watchPeerClose re-checks a half-closed connection.
+const peerClosedPollEvery = 100 * time.Millisecond
+
+// watchPeerClose calls cancel when the peer fully closes c. Reading until EOF drains stray input;
+// a read error (reset) means the peer is gone. EOF alone is ambiguous (half-close or full
+// close), so after it the socket is polled for a hang-up until ctx ends.
+func watchPeerClose(ctx context.Context, c net.Conn, cancel context.CancelFunc) {
+	if _, err := io.Copy(io.Discard, c); err != nil {
+		cancel()
+		return
+	}
+	uc, ok := c.(*net.UnixConn)
+	if !ok {
+		cancel()
+		return
+	}
+	t := time.NewTicker(peerClosedPollEvery)
+	defer t.Stop()
+	for {
+		if peerClosed(uc) {
+			cancel()
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// writeResponseTimeout writes resp to w and closes c if the write has not finished within
+// api.WriteTimeout (D-09). ssh.Channel has no write deadline, so a peer that stops reading would
+// otherwise pin the handler (and its channel slot) forever; closing the channel unblocks the
+// write. It is also safe on net.Conn, where WriteResponse additionally applies a real deadline.
+func writeResponseTimeout(w io.Writer, c io.Closer, resp *api.Response) error {
+	t := time.AfterFunc(api.WriteTimeout, func() { c.Close() })
+	defer t.Stop()
+	return api.WriteResponse(w, resp)
 }

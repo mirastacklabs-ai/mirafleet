@@ -42,11 +42,25 @@ SSH is implemented in-process with `golang.org/x/crypto/ssh`. No OpenSSH sshd, a
   JSON payload (hostname, OS, arch, version, labels, load, free workspace slots). A connection
   that is open and heartbeating means the runner is online.
 - **Central → runner:** central opens channels *back over the runner's own connection*
-  (channel types `exec@mirafleet`, `file@mirafleet`, `workspace@mirafleet`). The runner
-  accepts only these types; there is no shell, port forwarding or other channel.
+  (channel types `exec@mirafleet`; `file@mirafleet` and `workspace@mirafleet` arrive with M3).
+  The runner accepts only these types; there is no shell, port forwarding or other channel.
 - **Orchestrator → central:** the orchestrator connects with an operator key and makes
-  JSON requests on an `api@mirafleet` channel (list fleets, list runners, open workspace,
-  exec, read/write file, close workspace).
+  JSON requests on `api@mirafleet` channels (see [Channels and the API](#channels-and-the-api)).
+  Today: list fleets, list runners, run action. Workspace methods arrive with M3.
+
+### SSH users and channels
+
+The SSH user selects the role; the role selects the channels the connection may open. Keys are
+`ssh-ed25519` only. Anything not in the table is refused.
+
+| SSH user | Authenticates as | Channels / requests |
+|---|---|---|
+| `runner` | an enrolled runner key (not revoked) | sends `heartbeat@mirafleet`; central opens `exec@mirafleet` toward it |
+| `operator` | an active operator key | opens `api@mirafleet` |
+| `enroll` | any ed25519 key (30 s deadline, rate-limited per source address) | exactly one of `join@mirafleet` (token) or `register@mirafleet` (registration code), then closed |
+
+Identity travels only in the SSH `Permissions` of the authenticated connection and is reloaded by
+id per request. Unknown or revoked keys are rejected for every user except `enroll`.
 
 **Central executes; operators never reach runners directly.** Runners trust exactly one key,
 central's. Operators only need access to central. Every command passes through central, so
@@ -82,19 +96,100 @@ one code path:
 | GUI (served by central) | Runners screen → Revoke |
 | CLI on central | `mirafleet central runner revoke <fleet>/<runner>` |
 
-Revoke takes effect immediately. Central marks the key revoked, closes the runner's live
-connection, cancels in-flight work, and rejects every later login. Disable keeps the connection
-but refuses new work. Every change is audited with who made it and from which front end.
+- **Revoke is immediate.** Central adds a tombstone for the runner id, cancels the session
+  context, closes the live connection, then commits `status=revoked` (and the audit row) in one
+  transaction. In-flight actions are cancelled (the runner kills the process group; audit outcome
+  `cancelled`, message `runner revoked`) and every later login is rejected at auth. Revoked
+  keys never re-enrol; revoked names can be reused.
+- **Disable lets in-flight work finish.** The connection stays up and visible, but new work is
+  refused. `enable` reverses it.
+- **Pending** runners may heartbeat but never exec. Only `active` runners run actions.
+- Revoking an operator (also central only) closes their connections and cancels their execs.
 
-Keeping lifecycle off the operator API means a prompt injection in command output cannot talk
-an agent into approving or revoking runners, whatever the orchestrator config says.
+Every change is audited with who made it and from which front end (`cli`, `api`, `gui`, `enroll`,
+`system`). Keeping lifecycle off the operator API means a prompt injection in command output
+cannot talk an agent into approving or revoking runners, whatever the orchestrator config says.
+
+## Central core
+
+Detail and rationale: [M2.md](M2.md).
+
+### Store
+
+SQLite through `modernc.org/sqlite` (pure Go, so `CGO_ENABLED=0` holds) behind the `Store`
+interface, which exposes domain-level atomic operations rather than SQL. WAL mode, one writer
+connection plus a small read-only pool, `synchronous=FULL` so a committed revoke survives power
+loss, files `0600`. Migrations are embedded and forward-only; a database newer than the binary
+fails closed. The `audit` table is append-only (triggers abort updates and deletes). State changes
+write their audit row in the same transaction; an action writes a `start` row before dispatch
+(no row, no exec) and an outcome row after. Heartbeats stay in memory; `last_seen_at` is written
+on connect, disconnect and at most every 5 minutes. A data-dir lock keeps a second central off the
+same directory.
+
+### Join tokens and registration codes
+
+| | Format | Used by | Lifetime |
+|---|---|---|---|
+| Join token | `mfj1.<id>.<secret>.<host-key-hash>` | a runner, once, to enrol | single use by default, TTL 24h (max 30d, `-uses N` capped); never unlimited |
+| Registration code | `mfr1.<code>.<host-key-hash>` | any number of operators, to register | valid only within its 60 s time step |
+
+- Both end in the SHA-256 hash of central's host key, so the client pins central from the
+  credential itself. There is no trust-on-first-use.
+- Join tokens: only a SHA-256 of the 32-byte secret is stored; consumption is a conditional
+  update in the same transaction as the runner insert. Joining yields `pending` (or `active` with
+  `token create -approve`). Token labels are trusted; heartbeat labels are informational.
+- Registration codes are TOTP-style: HMAC-SHA256 over the 60 s time step with a 32-byte secret in
+  the store, 128 bits long, so they cannot be brute-forced inside their window. Central both
+  issues and checks the code, so there is no clock skew. The code is not single use: any number of
+  operators can register with the current code, and a registration needs no further approval
+  because only an admin on central can read the code. `operator rotate-secret` invalidates all
+  outstanding codes. Showing a code and every registration are audited; the code itself never is.
+- Secrets and codes go on stdin (`-token -`, `-code -`), never in argv or shell history, and are
+  never logged or audited.
+
+### Channels and the API
+
+`api@mirafleet` (operators) carries one request per channel: cancel is closing the channel,
+concurrency is more channels. Frames are a 4-byte big-endian length plus JSON, with the length
+checked before allocation. Requests are `{"v":1,"id","method","params"}` (unknown fields
+rejected); responses are `{"v":1,"id","result"}` or `{"error":{"code","message"}}`. Error codes:
+`bad_request unauthenticated forbidden not_found conflict unavailable too_large timeout
+unsupported_version internal`.
+
+Limits: request 64 KiB and read within 10 s; `action.run` timeout min(`timeout_s`, 10 min),
+default 2 min; at most 8 concurrent channels per operator connection; at most 32 params
+(key 64 B, value 4 KiB).
+
+| Method set | Methods | Reachable on |
+|---|---|---|
+| Operator | `hello`, `fleets.list`, `runners.list`, `action.run` | `api@mirafleet`, admin socket |
+| Enrol | `enroll.join`, `enroll.register` | `join@mirafleet`, `register@mirafleet` only |
+| Admin | `fleet.create`, `token.*`, `runner.lifecycle`, `operator.*`, `audit.list` | local admin socket only |
+
+Admin and enrol methods are never dispatched on `api@mirafleet`, whatever the principal (the
+method table and the policy are independent gates). `PolicyEngine` denies by default; an active
+operator may only call the operator set.
+
+### Local admin socket
+
+`<data>/admin.sock` (`0600`) speaks the same framing, limits and dispatcher as `api@mirafleet`,
+as principal `admin`. The peer UID must equal central's before anything is read. It exists so
+that lifecycle changes reach live connections: the `mirafleet central ...` admin commands are
+clients of the running central. Only `central init` runs offline.
+
+### Platforms
+
+`central` and `runner` are Linux only and refuse to start elsewhere; their wiring lives in
+`server_linux.go`, so darwin and windows binaries never link SQLite. `mirafleet mcp` builds for
+linux, darwin and windows (Windows key protection lands in M5; until then the key loader fails
+closed).
 
 ## Fleet modes
 
 | Mode | Use | What runs | Executor |
 |---|---|---|---|
 | `actions` | ops, typically prod | only named actions from the runner's `actions.yaml` | host shell, as the runner user |
-| `workspace` | coding, typically dev/uat | any command, inside the session's workspace container | containerd |
+| `workspace` | coding, typically dev/uat | any command, inside the session's workspace container | containerd (default) or OpenSandbox (opt-in) |
 
 ### Actions mode
 
@@ -123,6 +218,9 @@ several orchestrators can work on different projects on the same runner at once.
 - **Executor:** containerd, through its Go client. There is no Docker Engine dependency. It works
   on Kubernetes nodes and on hosts with the `docker.io` package (which runs on containerd).
   Workspaces live in the containerd namespace `mirafleet`, away from the kubelet's `k8s.io`.
+  Executors sit behind one runner-side interface; an opt-in OpenSandbox executor talks to a
+  node-local OpenSandbox over pinned HTTPS only, so agent API keys never enter the sandbox
+  (see [M3.md](M3.md)).
 - **Layout:** host dir `/var/lib/mirafleet/ws/<workspace-id>/` is bind-mounted at `/workspace`
   in a long-lived container (`sleep infinity`) created from the fleet's default image or the
   image requested. Commands run via containerd exec with `cwd=/workspace`.
@@ -188,18 +286,19 @@ One admin account, created on first start.
 
 ```bash
 # on central, or in the GUI
-mirafleet central token create --fleet uat --labels role=jump,region=eu
-# on the runner
-mirafleet runner join central.corp:2222 <token>   # generates key, pins host key, installs systemd unit
+mirafleet central fleet create uat -mode actions
+mirafleet central token create -fleet uat -labels role=jump,region=eu     # prints the token once
+# on the runner (token on stdin; generates a key, pins central's host key from the token)
+mirafleet runner join central.example.com:2222 -name jump1 -token -
+mirafleet central runner approve uat/jump1                                # unless token create -approve
 # on central, or in the GUI: current operator registration code (rotates every 60 s)
 mirafleet central operator code
-# operator, on their machine (code read from stdin; pins central's host key from the code)
-mirafleet mcp login central.corp:2222 -name alice -code -
+# operator, on their machine (code on stdin; pins central's host key from the code)
+mirafleet mcp login central.example.com:2222 -name alice -code -
 ```
 
-Operator registration codes are TOTP-style: HMAC-SHA256 over a 60-second time step with a secret
-held by central, 128 bits long, and valid only within its 60-second window. Any number of
-operators can register with the current code; a leaked code is worthless once its window ends. Details: [M2.md](M2.md) §1.3.
+Join tokens and registration codes are described under
+[Join tokens and registration codes](#join-tokens-and-registration-codes).
 
 ## Security summary
 

@@ -46,6 +46,11 @@ type methodTable struct {
 func (t *methodTable) serve(ctx context.Context, c *callCtx, req *api.Request) *api.Response {
 	if !t.allowed(req.Method) {
 		if api.IsAdminMethod(req.Method) || api.IsEnrollMethod(req.Method) || api.IsOperatorMethod(req.Method) {
+			// Principal and method only, never params. Attempts at admin/enroll methods through
+			// a channel that must not carry them are worth a log line (D-12).
+			if api.IsAdminMethod(req.Method) || api.IsEnrollMethod(req.Method) {
+				c.logf("api: %s %q attempted forbidden method %q", c.p.Kind, c.p.Name, req.Method)
+			}
 			return api.NewError(req.ID, api.Errorf(api.CodeForbidden, "forbidden"))
 		}
 		return api.NewError(req.ID, api.Errorf(api.CodeBadRequest, "unknown method"))
