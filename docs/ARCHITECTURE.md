@@ -191,15 +191,15 @@ One admin account, created on first start.
 mirafleet central token create --fleet uat --labels role=jump,region=eu
 # on the runner
 mirafleet runner join central.corp:2222 <token>   # generates key, pins host key, installs systemd unit
-# on central, or in the GUI: current operator registration code (rotates every 60 s, single-use)
+# on central, or in the GUI: current operator registration code (rotates every 60 s)
 mirafleet central operator code
 # operator, on their machine (code read from stdin; pins central's host key from the code)
 mirafleet mcp login central.corp:2222 -name alice -code -
 ```
 
 Operator registration codes are TOTP-style: HMAC-SHA256 over a 60-second time step with a secret
-held by central, 128 bits long, valid for the current and previous step, and single-use. A leaked
-code is worthless within two minutes. Details: [M2.md](M2.md) §1.3.
+held by central, 128 bits long, and valid only within its 60-second window. Any number of
+operators can register with the current code; a leaked code is worthless once its window ends. Details: [M2.md](M2.md) §1.3.
 
 ## Security summary
 
