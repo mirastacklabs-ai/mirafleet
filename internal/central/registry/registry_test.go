@@ -344,15 +344,15 @@ func TestRecordedStatusAppliedOnRegister(t *testing.T) {
 	}
 }
 
-func TestGetByNameFollowsRegisterUnregister(t *testing.T) {
+func TestGetFollowsRegisterUnregister(t *testing.T) {
 	r := newReg()
 	s, _ := reg(t, r, 1, StatusActive)
-	if r.GetByName("r") != s {
-		t.Fatal("lookup by name failed")
+	if r.Get(1) != s {
+		t.Fatal("lookup by id failed")
 	}
 	r.Unregister(s)
-	if r.GetByName("r") != nil {
-		t.Fatal("name survived unregister")
+	if r.Get(1) != nil {
+		t.Fatal("session survived unregister")
 	}
 }
 
@@ -475,20 +475,7 @@ func TestStressConcurrent(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("deadlock")
 	}
-	// Invariants at rest: the name index matches the sessions, and a tombstone+kick leaves
-	// nothing live.
-	r.mu.Lock()
-	for name, id := range r.byName {
-		if s := r.sessions[id]; s == nil || s.Name != name {
-			t.Errorf("byName[%q]=%d inconsistent", name, id)
-		}
-	}
-	for id, s := range r.sessions {
-		if r.byName[s.Name] != id {
-			t.Errorf("session %d missing from byName", id)
-		}
-	}
-	r.mu.Unlock()
+	// Invariant at rest: a tombstone+kick leaves nothing live.
 	for id := int64(0); id < 4; id++ {
 		r.Tombstone(id)
 		r.Kick(id, "end")

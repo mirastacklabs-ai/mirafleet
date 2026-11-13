@@ -8,6 +8,20 @@ const (
 	ReqHeartbeat = "heartbeat@mirafleet"
 )
 
+// Channel types opened toward central (operators on api@, enrolling peers on join@/register@).
+const (
+	ChanAPI      = "api@mirafleet"
+	ChanJoin     = "join@mirafleet"
+	ChanRegister = "register@mirafleet"
+)
+
+// SSH users: the user name binds the role a key may authenticate as (docs/M2.md §1.3).
+const (
+	UserOperator = "operator"
+	UserEnroll   = "enroll"
+	UserRunner   = "runner"
+)
+
 // MaxResultBytes is the largest encoded ExecResult central will read. Runners cap stdout+stderr
 // combined at 1 MiB; JSON escaping can expand a byte to at most 6 bytes (\u00XX / \ufffd), so the
 // worst case is ~6 MiB plus a few bytes of framing, safely under this limit.

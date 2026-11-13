@@ -103,63 +103,6 @@ func LoadSigner(path string) (ssh.Signer, error) {
 // RunnerNameRE is the allowed shape of a runner name (the key comment).
 var RunnerNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
-// Authorized is one accepted line of an authorized-runners file.
-type Authorized struct {
-	Key  ssh.PublicKey
-	Name string
-	Line int
-}
-
-// ParseAuthorized parses an authorized_keys-format file body line by line. Blank and '#' lines
-// are skipped. Bad lines (unparsable, options present, not ssh-ed25519, invalid name) are
-// reported in errs with their line number and do not affect good lines. A name mapped to more
-// than one distinct key is refused entirely (all its lines dropped, one error reported): two
-// hosts must never be able to answer to the same name.
-func ParseAuthorized(data []byte) (ok []Authorized, errs []error) {
-	var all []Authorized
-	for i, raw := range strings.Split(string(data), "\n") {
-		n := i + 1
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		k, comment, opts, rest, err := ssh.ParseAuthorizedKey([]byte(line))
-		switch {
-		case err != nil:
-			errs = append(errs, fmt.Errorf("line %d: %w", n, err))
-		case len(opts) > 0:
-			errs = append(errs, fmt.Errorf("line %d: key options are not allowed", n))
-		case len(bytes.TrimSpace(rest)) > 0:
-			errs = append(errs, fmt.Errorf("line %d: trailing data after key", n))
-		case k.Type() != ssh.KeyAlgoED25519:
-			errs = append(errs, fmt.Errorf("line %d: key type %s not allowed (only ssh-ed25519)", n, k.Type()))
-		case !RunnerNameRE.MatchString(comment):
-			errs = append(errs, fmt.Errorf("line %d: invalid runner name %q (must match %s)", n, comment, RunnerNameRE))
-		default:
-			all = append(all, Authorized{k, comment, n})
-		}
-	}
-	byName := map[string]map[string]bool{}
-	for _, a := range all {
-		if byName[a.Name] == nil {
-			byName[a.Name] = map[string]bool{}
-		}
-		byName[a.Name][string(a.Key.Marshal())] = true
-	}
-	reported := map[string]bool{}
-	for _, a := range all {
-		if len(byName[a.Name]) > 1 {
-			if !reported[a.Name] {
-				reported[a.Name] = true
-				errs = append(errs, fmt.Errorf("line %d: duplicate runner name %q is used by %d different keys; refusing that name for all of them", a.Line, a.Name, len(byName[a.Name])))
-			}
-			continue
-		}
-		ok = append(ok, a)
-	}
-	return ok, errs
-}
-
 // PinnedHostKeys returns an ssh.HostKeyCallback that accepts only keys listed in a
 // known-hosts-style file. Each line is "<host>[,<host>...] <keytype> <base64> [comment]"
 // where host is the dialed address (host:port) or "*". Hashed entries are not supported.

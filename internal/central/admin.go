@@ -1,13 +1,16 @@
 package central
 
-// Local admin mechanism (M1): `mirafleet central` listens on a unix socket in its data dir
-// (admin.sock). `mirafleet central exec` connects, writes ONE JSON AdminRequest line and reads
-// ONE JSON AdminResponse line. Access control (unix only; central is linux-only): socket mode
-// 0600, created under umask 077, plus a peer-UID check on every connection. The 0700 data dir
-// is enforced by keys.EnsureDir in main.go, not here. On non-unix OSes admin_other.go fails
-// closed (listen errors, peers are rejected); on unix OSes other than linux/darwin
-// admin_peer_other.go rejects every peer. This is replaced by the operator-facing
-// api@mirafleet channel in M2.
+// Local admin mechanism (M1 framing, kept until S9 re-bases it on internal/api): `mirafleet
+// central` listens on a unix socket in its data dir (admin.sock). `mirafleet central exec`
+// connects, writes ONE JSON AdminRequest line and reads ONE JSON AdminResponse line. Access
+// control (unix only; central is linux-only): socket mode 0600, created under umask 077, plus a
+// peer-UID check on every connection. The 0700 data dir is enforced by keys.EnsureDir in the
+// server wiring, not here. On non-unix OSes admin_other.go fails closed (listen errors, peers are
+// rejected); on unix OSes other than linux/darwin admin_peer_other.go rejects every peer.
+//
+// Since S7a the exec goes through service.RunAction as the local admin principal (policy, fleet
+// mode, confirm, start/outcome audit rows in the store), so the runner is addressed as
+// "fleet/runner".
 
 import (
 	"bufio"
@@ -19,17 +22,25 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
+	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
+	"github.com/mirastacklabs-ai/mirafleet/internal/service"
+	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
 
+// adminTimeoutS is the action.run timeout the admin socket asks for (the service caps it).
+const adminTimeoutS = 600
+
 type AdminRequest struct {
-	Runner string                `json:"runner"`
-	Exec   transport.ExecRequest `json:"exec"`
+	Runner  string            `json:"runner"` // fleet/runner
+	Action  string            `json:"action"`
+	Params  map[string]string `json:"params,omitempty"`
+	Confirm string            `json:"confirm,omitempty"` // must equal the fleet name on guarded fleets
 }
 
 type AdminResponse struct {
-	Result *transport.ExecResult `json:"result,omitempty"`
-	Error  string                `json:"error,omitempty"`
+	Result *api.ActionRunResult `json:"result,omitempty"`
+	Error  string               `json:"error,omitempty"`
 }
 
 // ServeAdmin serves the admin socket until ctx is done.
@@ -76,26 +87,31 @@ func (s *Server) adminConn(ctx context.Context, c net.Conn) {
 	}
 	if err != nil {
 		resp.Error = "bad request: " + err.Error()
+	} else if ref, rerr := store.ParseRef(req.Runner); rerr != nil {
+		resp.Error = "bad request: " + rerr.Error()
 	} else {
 		xctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
-		res, err := s.Exec(xctx, req.Runner, req.Exec)
+		// checkPeer required the peer to run as our own UID.
+		res, err := s.cfg.Service.RunAction(xctx, auth.LocalAdmin(os.Getuid()), service.SourceCLI,
+			ref.Fleet, ref.Runner, req.Action, req.Params, adminTimeoutS, req.Confirm)
 		if err != nil {
 			resp.Error = err.Error()
+		} else {
+			resp.Result = &res
 		}
-		resp.Result = res
 	}
 	json.NewEncoder(c).Encode(resp)
 }
 
 // AdminExec is the client side used by `mirafleet central exec`.
-func AdminExec(sock, runner string, req transport.ExecRequest) (*transport.ExecResult, error) {
+func AdminExec(sock string, req AdminRequest) (*api.ActionRunResult, error) {
 	c, err := net.DialTimeout("unix", sock, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
 	defer c.Close()
-	if err := json.NewEncoder(c).Encode(AdminRequest{Runner: runner, Exec: req}); err != nil {
+	if err := json.NewEncoder(c).Encode(req); err != nil {
 		return nil, err
 	}
 	var resp AdminResponse

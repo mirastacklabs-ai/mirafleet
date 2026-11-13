@@ -9,6 +9,7 @@ import (
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/tokens"
+	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
 // Join enrols a runner with a join token (user "enroll", channel join@mirafleet). central's host
@@ -20,7 +21,7 @@ func Join(ctx context.Context, addr, token, name string, labels map[string]strin
 		return nil, nil, errors.New("invalid join token")
 	}
 	var res api.EnrollJoinResult
-	hk, err := enroll(ctx, addr, hash, signer, ChanJoin, api.MethodEnrollJoin,
+	hk, err := enroll(ctx, addr, hash, signer, transport.ChanJoin, api.MethodEnrollJoin,
 		api.EnrollJoinParams{Token: token, Name: name, Labels: labels}, &res)
 	if err != nil {
 		return nil, nil, err
@@ -37,7 +38,7 @@ func Register(ctx context.Context, addr, code, name string, signer ssh.Signer) (
 		return nil, nil, errors.New("invalid registration code")
 	}
 	var res api.EnrollRegisterResult
-	hk, err := enroll(ctx, addr, hash, signer, ChanRegister, api.MethodEnrollRegister,
+	hk, err := enroll(ctx, addr, hash, signer, transport.ChanRegister, api.MethodEnrollRegister,
 		api.EnrollRegisterParams{Code: code, Name: name}, &res)
 	if err != nil {
 		return nil, nil, err
@@ -55,7 +56,7 @@ func enroll(ctx context.Context, addr, hash string, signer ssh.Signer, chanType,
 		seen = k
 		return nil
 	}
-	cl, err := Dial(ctx, addr, UserEnroll, signer, cb)
+	cl, err := Dial(ctx, addr, transport.UserEnroll, signer, cb)
 	if err != nil {
 		return nil, err
 	}

@@ -26,7 +26,7 @@ import (
 
 type Config struct {
 	Central    string // host:port
-	Name       string // SSH user; informational (central names runners by key comment)
+	Name       string // informational only: the SSH user is always "runner"; central names runners by store id
 	Signer     ssh.Signer
 	KnownHosts string // known-hosts-style file pinning central's host key
 	Actions    *actions.Set
@@ -109,7 +109,7 @@ func (r *Runner) session(ctx context.Context) (healthy bool, err error) {
 	}
 	nc.SetDeadline(time.Now().Add(30 * time.Second))
 	cc, chans, reqs, err := ssh.NewClientConn(nc, r.cfg.Central, &ssh.ClientConfig{
-		User:            r.cfg.Name,
+		User:            transport.UserRunner,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(r.cfg.Signer)},
 		HostKeyCallback: keys.PinnedHostKeys(r.cfg.KnownHosts),
 		Timeout:         30 * time.Second,

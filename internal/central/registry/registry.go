@@ -88,7 +88,6 @@ type Registry struct {
 
 	mu         sync.Mutex
 	sessions   map[int64]*Session
-	byName     map[string]int64 // name -> id of the current session
 	tombstones map[int64]struct{}
 	statuses   map[int64]Status // desired status per id, recorded by SetStatus even when offline
 }
@@ -103,9 +102,12 @@ func New(opt Options) (*Registry, error) {
 	if opt.Logf == nil {
 		opt.Logf = func(string, ...any) {}
 	}
-	return &Registry{opt: opt, sessions: map[int64]*Session{}, byName: map[string]int64{},
+	return &Registry{opt: opt, sessions: map[int64]*Session{},
 		tombstones: map[int64]struct{}{}, statuses: map[int64]Status{}}, nil
 }
+
+// StaleAfter is the heartbeat silence after which a session is offline.
+func (r *Registry) StaleAfter() time.Duration { return r.opt.StaleAfter }
 
 // Session is one runner's live connection.
 type Session struct {
@@ -173,11 +175,7 @@ func (r *Registry) Register(id int64, name, fleet string, conn Conn, status Stat
 		s.status = rec // not yet shared, so no s.mu needed
 	}
 	old := r.sessions[id]
-	if old != nil && r.byName[old.Name] == id {
-		delete(r.byName, old.Name)
-	}
 	r.sessions[id] = s
-	r.byName[name] = id
 	r.mu.Unlock()
 	if old != nil {
 		r.end(old, errors.New("replaced by a newer connection"))
@@ -193,9 +191,6 @@ func (r *Registry) Unregister(s *Session) {
 	cur := r.sessions[s.ID] == s
 	if cur {
 		delete(r.sessions, s.ID)
-		if r.byName[s.Name] == s.ID {
-			delete(r.byName, s.Name)
-		}
 	}
 	r.mu.Unlock()
 	r.end(s, errors.New("unregistered"))
@@ -236,17 +231,6 @@ func (r *Registry) Get(id int64) *Session {
 		return nil
 	}
 	return s
-}
-
-// GetByName returns the live session registered under name, or nil.
-func (r *Registry) GetByName(name string) *Session {
-	r.mu.Lock()
-	id, ok := r.byName[name]
-	r.mu.Unlock()
-	if !ok {
-		return nil
-	}
-	return r.Get(id)
 }
 
 // Kick cancels the session context and closes its connection. The registry lock is not held

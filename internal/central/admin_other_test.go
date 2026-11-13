@@ -9,7 +9,7 @@ import (
 )
 
 func TestAdminFailsClosedOnNonUnix(t *testing.T) {
-	s := New(Config{Logf: t.Logf})
+	s := &Server{cfg: Config{Logf: t.Logf}}
 	if err := s.ServeAdmin(context.Background(), filepath.Join(t.TempDir(), "admin.sock")); err == nil {
 		t.Fatal("ServeAdmin must fail on non-unix")
 	}

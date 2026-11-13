@@ -1,78 +1,12 @@
 package keys
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"golang.org/x/crypto/ssh"
 )
-
-func newLine(t *testing.T, comment string) string {
-	t.Helper()
-	l, err := Generate(t.TempDir(), "k", comment)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return l
-}
-
-func TestParseAuthorizedSkipsJunkWithoutLockout(t *testing.T) {
-	good := newLine(t, "r1")
-	data := "# header\n\n" + good + "\n   \n# trailing comment\n"
-	ok, errs := ParseAuthorized([]byte(data))
-	if len(ok) != 1 || ok[0].Name != "r1" || len(errs) != 0 {
-		t.Fatalf("%+v %v", ok, errs)
-	}
-}
-
-func TestParseAuthorizedBadLinesReportedWithNumber(t *testing.T) {
-	good := newLine(t, "r1")
-	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	ek, _ := ssh.NewPublicKey(&ec.PublicKey)
-	data := strings.Join([]string{
-		good,                               // 1 ok
-		"garbage line",                     // 2 bad
-		`command="id" ` + newLine(t, "r2"), // 3 options
-		PubLine(ek, "ecdsa"),               // 4 wrong type
-		newLine(t, "Bad Name"),             // 5 invalid name
-		newLine(t, ""),                     // 6 no name
-		newLine(t, "r3"),                   // 7 ok
-	}, "\n")
-	ok, errs := ParseAuthorized([]byte(data))
-	if len(ok) != 2 || ok[0].Name != "r1" || ok[1].Name != "r3" || ok[1].Line != 7 {
-		t.Fatalf("%+v", ok)
-	}
-	if len(errs) != 5 {
-		t.Fatalf("%v", errs)
-	}
-	for i, ln := range []string{"line 2", "line 3", "line 4", "line 5", "line 6"} {
-		if !strings.HasPrefix(errs[i].Error(), ln+":") {
-			t.Errorf("err %d = %v, want prefix %s", i, errs[i], ln)
-		}
-	}
-}
-
-func TestParseAuthorizedDuplicateNameRefused(t *testing.T) {
-	a, b, c := newLine(t, "dup"), newLine(t, "dup"), newLine(t, "solo")
-	ok, errs := ParseAuthorized([]byte(a + "\n" + b + "\n" + c + "\n" + a + "\n"))
-	if len(ok) != 1 || ok[0].Name != "solo" {
-		t.Fatalf("dup name must be refused for every key: %+v", ok)
-	}
-	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "duplicate runner name") {
-		t.Fatalf("%v", errs)
-	}
-	// The same key listed twice under one name is harmless.
-	ok, errs = ParseAuthorized([]byte(c + "\n" + c + "\n"))
-	if len(ok) != 2 || len(errs) != 0 {
-		t.Fatalf("%+v %v", ok, errs)
-	}
-}
 
 func TestRunnerNameRE(t *testing.T) {
 	for _, n := range []string{"a", "web-01.prod_x", "0abc"} {

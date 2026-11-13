@@ -16,17 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
-)
-
-// Channel types and SSH users spoken to central. Defined here (not in internal/transport) so
-// this package adds nothing to the shared file.
-const (
-	ChanAPI      = "api@mirafleet"
-	ChanJoin     = "join@mirafleet"
-	ChanRegister = "register@mirafleet"
-
-	UserOperator = "operator"
-	UserEnroll   = "enroll"
+	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
 // HandshakeTimeout bounds TCP connect plus SSH handshake and authentication. Variable so tests
@@ -89,7 +79,7 @@ func (c *Client) Close() error { return c.c.Close() }
 // nil to discard the result. A wire error is returned as *api.Error. Cancelling ctx closes the
 // channel and returns ctx.Err().
 func (c *Client) Call(ctx context.Context, method string, params, result any) error {
-	return callOn(ctx, c.c, ChanAPI, method, params, result)
+	return callOn(ctx, c.c, transport.ChanAPI, method, params, result)
 }
 
 func newID() (string, error) {

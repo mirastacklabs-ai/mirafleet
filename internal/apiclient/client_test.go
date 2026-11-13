@@ -16,11 +16,12 @@ import (
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/tokens"
+	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
 func dialFake(t *testing.T, f *fakeServer) *Client {
 	t.Helper()
-	c, err := Dial(context.Background(), f.addr, UserOperator, newSigner(t), ssh.FixedHostKey(f.hostKey))
+	c, err := Dial(context.Background(), f.addr, transport.UserOperator, newSigner(t), ssh.FixedHostKey(f.hostKey))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +31,7 @@ func dialFake(t *testing.T, f *fakeServer) *Client {
 
 func TestCallAndHelpers(t *testing.T) {
 	f := startFake(t, func(typ string, ch ssh.Channel, req *api.Request) {
-		if typ != ChanAPI || req == nil {
+		if typ != transport.ChanAPI || req == nil {
 			t.Errorf("chan %q req %v", typ, req)
 			return
 		}
@@ -78,7 +79,7 @@ func TestCallAndHelpers(t *testing.T) {
 	if !errors.As(err, &ae) || ae.Code != api.CodeNotFound {
 		t.Fatalf("got %v", err)
 	}
-	if f.lastUser() != UserOperator {
+	if f.lastUser() != transport.UserOperator {
 		t.Fatal(f.lastUser())
 	}
 	// Concurrent calls each get their own channel.
@@ -177,7 +178,7 @@ func TestCallRejectsOversizedRequest(t *testing.T) {
 }
 
 func TestDialRequiresHostKeyCallback(t *testing.T) {
-	if _, err := Dial(context.Background(), "127.0.0.1:1", UserOperator, newSigner(t), nil); err == nil {
+	if _, err := Dial(context.Background(), "127.0.0.1:1", transport.UserOperator, newSigner(t), nil); err == nil {
 		t.Fatal("nil callback accepted")
 	}
 }
@@ -185,7 +186,7 @@ func TestDialRequiresHostKeyCallback(t *testing.T) {
 func TestJoinPinned(t *testing.T) {
 	var got api.EnrollJoinParams
 	f := startFake(t, func(typ string, ch ssh.Channel, req *api.Request) {
-		if typ != ChanJoin || req.Method != api.MethodEnrollJoin {
+		if typ != transport.ChanJoin || req.Method != api.MethodEnrollJoin {
 			t.Errorf("%s %s", typ, req.Method)
 		}
 		api.DecodeParams(req.Params, &got)
@@ -205,7 +206,7 @@ func TestJoinPinned(t *testing.T) {
 	if !bytes.Equal(hk.Marshal(), f.hostKey.Marshal()) {
 		t.Fatal("host key not returned")
 	}
-	if f.lastUser() != UserEnroll {
+	if f.lastUser() != transport.UserEnroll {
 		t.Fatal(f.lastUser())
 	}
 }
@@ -213,7 +214,7 @@ func TestJoinPinned(t *testing.T) {
 func TestRegisterPinned(t *testing.T) {
 	var got api.EnrollRegisterParams
 	f := startFake(t, func(typ string, ch ssh.Channel, req *api.Request) {
-		if typ != ChanRegister || req.Method != api.MethodEnrollRegister {
+		if typ != transport.ChanRegister || req.Method != api.MethodEnrollRegister {
 			t.Errorf("%s %s", typ, req.Method)
 		}
 		api.DecodeParams(req.Params, &got)
