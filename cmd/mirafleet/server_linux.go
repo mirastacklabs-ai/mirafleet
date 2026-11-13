@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/actions"
+	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/audit"
 	"github.com/mirastacklabs-ai/mirafleet/internal/central"
 	"github.com/mirastacklabs-ai/mirafleet/internal/central/registry"
@@ -20,6 +21,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/policy"
 	"github.com/mirastacklabs-ai/mirafleet/internal/runner"
 	"github.com/mirastacklabs-ai/mirafleet/internal/service"
+	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store/sqlite"
 )
 
@@ -116,7 +118,14 @@ func centralExec(args []string) error {
 		}
 		params[k] = v
 	}
-	res, err := central.AdminExec(adminSock(*data), central.AdminRequest{Runner: fs.Arg(0), Action: fs.Arg(1), Params: params, Confirm: *confirm})
+	ref, err := store.ParseRef(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	var res api.ActionRunResult
+	err = central.AdminCall(adminSock(*data), api.MethodActionRun, api.ActionRunParams{
+		Fleet: ref.Fleet, Runner: ref.Runner, Action: fs.Arg(1), Params: params,
+		TimeoutS: central.AdminActionTimeoutS, Confirm: *confirm}, &res)
 	if err != nil {
 		return err
 	}

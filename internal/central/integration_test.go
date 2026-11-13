@@ -630,14 +630,19 @@ func TestAdminSocket(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	must(t, e.srv.ServeAdmin(ctx, sock))
-	res, err := AdminExec(sock, AdminRequest{Runner: testFleet + "/r1", Action: "hello", Params: map[string]string{"name": "adm"}})
+	run := func(fleet, runner string, params map[string]string) (api.ActionRunResult, error) {
+		var res api.ActionRunResult
+		err := AdminCall(sock, api.MethodActionRun, api.ActionRunParams{Fleet: fleet, Runner: runner, Action: "hello", Params: params}, &res)
+		return res, err
+	}
+	res, err := run(testFleet, "r1", map[string]string{"name": "adm"})
 	if err != nil || strings.TrimSpace(res.Stdout) != "hello adm" {
 		t.Fatalf("%+v %v", res, err)
 	}
-	if _, err := AdminExec(sock, AdminRequest{Runner: testFleet + "/ghost", Action: "hello"}); err == nil {
+	if _, err := run(testFleet, "ghost", nil); err == nil {
 		t.Fatal("want error for unknown runner")
 	}
-	if _, err := AdminExec(sock, AdminRequest{Runner: "ghost", Action: "hello"}); err == nil {
+	if _, err := run("", "ghost", nil); err == nil {
 		t.Fatal("want error for a malformed runner reference")
 	}
 	// The exec went through the service: start + outcome rows attributed to the admin.

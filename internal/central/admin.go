@@ -1,22 +1,21 @@
 package central
 
-// Local admin mechanism (M1 framing, kept until S9 re-bases it on internal/api): `mirafleet
-// central` listens on a unix socket in its data dir (admin.sock). `mirafleet central exec`
-// connects, writes ONE JSON AdminRequest line and reads ONE JSON AdminResponse line. Access
-// control (unix only; central is linux-only): socket mode 0600, created under umask 077, plus a
-// peer-UID check on every connection. The 0700 data dir is enforced by keys.EnsureDir in the
-// server wiring, not here. On non-unix OSes admin_other.go fails closed (listen errors, peers are
-// rejected); on unix OSes other than linux/darwin admin_peer_other.go rejects every peer.
+// Local admin socket: `mirafleet central` listens on a unix socket in its data dir (admin.sock)
+// and speaks the internal/api framing: one framed request, one framed response per connection
+// (docs/M2.md §1.5). Access control (unix only; central is linux-only): socket mode 0600,
+// created under umask 077, plus a peer-UID check on every connection BEFORE anything is read.
+// The 0700 data dir is enforced by keys.EnsureDir in the server wiring, not here. On non-unix
+// OSes admin_other.go fails closed (listen errors, peers are rejected); on unix OSes other than
+// linux/darwin admin_peer_other.go rejects every peer.
 //
-// Since S7a the exec goes through service.RunAction as the local admin principal (policy, fleet
-// mode, confirm, start/outcome audit rows in the store), so the runner is addressed as
-// "fleet/runner".
+// The principal is auth.LocalAdmin(uid) with source cli; every call goes through the service
+// (policy, validation, audit). The request size limit is enforced by api.ReadRequestTimeout
+// before any decoding.
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"syscall"
@@ -25,22 +24,45 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 	"github.com/mirastacklabs-ai/mirafleet/internal/service"
-	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
 
-// adminTimeoutS is the action.run timeout the admin socket asks for (the service caps it).
-const adminTimeoutS = 600
+// AdminActionTimeoutS is the action.run timeout the CLI asks for (the service caps it).
+const AdminActionTimeoutS = 600
 
-type AdminRequest struct {
-	Runner  string            `json:"runner"` // fleet/runner
-	Action  string            `json:"action"`
-	Params  map[string]string `json:"params,omitempty"`
-	Confirm string            `json:"confirm,omitempty"` // must equal the fleet name on guarded fleets
-}
-
-type AdminResponse struct {
-	Result *api.ActionRunResult `json:"result,omitempty"`
-	Error  string               `json:"error,omitempty"`
+// adminTable is the admin-socket table: every admin method plus the operator methods useful to
+// an admin. Enroll methods and hello are never served here.
+func adminTable() *methodTable {
+	return &methodTable{
+		src: service.SourceCLI,
+		allowed: func(m string) bool {
+			switch m {
+			case api.MethodFleetsList, api.MethodRunnersList, api.MethodActionRun:
+				return true
+			}
+			return api.IsAdminMethod(m)
+		},
+		handlers: map[string]handler{
+			api.MethodFleetsList:           handleFleetsList,
+			api.MethodRunnersList:          handleRunnersList,
+			api.MethodActionRun:            handleActionRun,
+			api.MethodFleetCreate:          handleFleetCreate,
+			api.MethodTokenCreate:          handleTokenCreate,
+			api.MethodTokenList:            handleTokenList,
+			api.MethodTokenRevoke:          handleTokenRevoke,
+			api.MethodRunnerLifecycle:      handleRunnerLifecycle,
+			api.MethodOperatorCode:         handleOperatorCode,
+			api.MethodOperatorRotateSecret: handleOperatorRotateSecret,
+			api.MethodOperatorList:         handleOperatorList,
+			api.MethodOperatorRevoke:       handleOperatorRevoke,
+			api.MethodAuditList:            handleAuditList,
+		},
+		timeout: func(m string) time.Duration {
+			if m == api.MethodActionRun {
+				return 0
+			}
+			return api.ListTimeout
+		},
+	}
 }
 
 // ServeAdmin serves the admin socket until ctx is done.
@@ -60,66 +82,44 @@ func (s *Server) ServeAdmin(ctx context.Context, path string) error {
 		return err
 	}
 	go func() { <-ctx.Done(); ln.Close(); os.Remove(path) }()
+	table := adminTable()
 	go func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
+			// Peer check first: nothing is read from a foreign peer.
 			if err := checkPeer(c); err != nil {
 				s.cfg.Logf("admin socket: rejected connection: %v", err)
 				c.Close()
 				continue
 			}
-			go s.adminConn(ctx, c)
+			s.wg.Add(1) // Server.Close waits for in-flight admin calls
+			go func() { defer s.wg.Done(); s.adminConn(ctx, c, table) }()
 		}
 	}()
 	return nil
 }
 
-func (s *Server) adminConn(ctx context.Context, c net.Conn) {
+func (s *Server) adminConn(ctx context.Context, c net.Conn, table *methodTable) {
 	defer c.Close()
-	var req AdminRequest
-	line, err := bufio.NewReader(c).ReadBytes('\n')
-	var resp AdminResponse
-	if err == nil {
-		err = json.Unmarshal(line, &req)
-	}
+	req, id, err := api.ReadRequestTimeout(c, c)
 	if err != nil {
-		resp.Error = "bad request: " + err.Error()
-	} else if ref, rerr := store.ParseRef(req.Runner); rerr != nil {
-		resp.Error = "bad request: " + rerr.Error()
-	} else {
-		xctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-		defer cancel()
-		// checkPeer required the peer to run as our own UID.
-		res, err := s.cfg.Service.RunAction(xctx, auth.LocalAdmin(os.Getuid()), service.SourceCLI,
-			ref.Fleet, ref.Runner, req.Action, req.Params, adminTimeoutS, req.Confirm)
-		if err != nil {
-			resp.Error = err.Error()
-		} else {
-			resp.Result = &res
+		if !errors.Is(err, io.EOF) {
+			api.WriteResponse(c, api.NewError(id, api.AsError(err)))
 		}
+		return
 	}
-	json.NewEncoder(c).Encode(resp)
-}
+	// The peer closing the connection cancels the request (e.g. Ctrl-C of `central exec`).
+	rctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() { io.Copy(io.Discard, c); cancel() }()
 
-// AdminExec is the client side used by `mirafleet central exec`.
-func AdminExec(sock string, req AdminRequest) (*api.ActionRunResult, error) {
-	c, err := net.DialTimeout("unix", sock, 5*time.Second)
-	if err != nil {
-		return nil, err
+	// checkPeer required the peer to run as our own UID.
+	cc := &callCtx{p: auth.LocalAdmin(os.Getuid()), src: table.src, svc: s.cfg.Service, st: s.cfg.Store,
+		logf: s.cfg.Logf, state: &connState{}}
+	if err := api.WriteResponse(c, table.serve(rctx, cc, req)); err != nil {
+		s.cfg.Logf("admin socket: write response: %v", err)
 	}
-	defer c.Close()
-	if err := json.NewEncoder(c).Encode(req); err != nil {
-		return nil, err
-	}
-	var resp AdminResponse
-	if err := json.NewDecoder(c).Decode(&resp); err != nil {
-		return nil, err
-	}
-	if resp.Error != "" {
-		return resp.Result, errors.New(resp.Error)
-	}
-	return resp.Result, nil
 }
