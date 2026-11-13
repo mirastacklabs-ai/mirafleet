@@ -15,6 +15,7 @@ package central
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -66,12 +67,20 @@ func adminTable() *methodTable {
 }
 
 // ServeAdmin serves the admin socket until ctx is done.
+//
+// The caller MUST hold the exclusive data-dir lock (`<data>/central.lock`, see cmd/mirafleet)
+// for as long as the socket is served: stale-socket removal below is only race-free under that
+// lock, because no other central can then be starting on the same directory. As defence in
+// depth the existing socket is dialled first and removed only if the dial is refused (nothing
+// is listening) and it really is a socket.
 func (s *Server) ServeAdmin(ctx context.Context, path string) error {
 	ln, err := listenUnix(path) // created under umask 077: never briefly world-accessible
 	if errors.Is(err, syscall.EADDRINUSE) {
-		// Stale socket from a previous run. Removed only after a real bind attempt, so the
-		// fail-closed (non-unix) path never deletes anything.
-		os.Remove(path)
+		// Removed only after a real bind attempt, so the fail-closed (non-unix) path never
+		// deletes anything.
+		if err := removeStaleSocket(path); err != nil {
+			return err
+		}
 		ln, err = listenUnix(path)
 	}
 	if err != nil {
@@ -99,6 +108,33 @@ func (s *Server) ServeAdmin(ctx context.Context, path string) error {
 			go func() { defer s.wg.Done(); s.adminConn(ctx, c, table) }()
 		}
 	}()
+	return nil
+}
+
+// removeStaleSocket deletes path when it is a unix socket nobody listens on. A live listener
+// (successful dial) or any non-refusal dial error leaves it alone and fails.
+func removeStaleSocket(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // vanished meanwhile: the retry binds
+		}
+		return err
+	}
+	if fi.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("admin socket path %s exists and is not a socket", path)
+	}
+	c, err := net.DialTimeout("unix", path, time.Second)
+	if err == nil {
+		c.Close()
+		return fmt.Errorf("admin socket %s is in use by a running central", path)
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		return fmt.Errorf("admin socket %s: %w", path, err)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 

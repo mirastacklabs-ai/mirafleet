@@ -22,16 +22,14 @@ func main() {
 		if err = requireServerOS("central"); err != nil {
 			break
 		}
-		if len(os.Args) > 2 && os.Args[2] == "exec" {
-			err = centralExec(os.Args[3:])
-		} else {
-			err = centralRun(os.Args[2:])
-		}
+		err = centralMain(os.Args[2:])
 	case "runner":
 		if err = requireServerOS("runner"); err != nil {
 			break
 		}
-		err = runnerRun(os.Args[2:])
+		err = runnerMain(os.Args[2:])
+	case "mcp":
+		err = mcpMain(os.Args[2:], os.Stdin, os.Stdout)
 	case "version":
 		fmt.Println(version)
 	default:
@@ -53,9 +51,23 @@ func requireServerOS(what string) error {
 
 func usage() {
 	fmt.Fprint(os.Stderr, `usage:
-  mirafleet central [-data DIR] [-listen ADDR] [-init]
-  mirafleet central exec [-data DIR] [-confirm FLEET] <fleet/runner> <action> [k=v...]
-  mirafleet runner  [-data DIR] [-central ADDR] [-name NAME] [-actions FILE] [-labels k=v,...] [-init]
+  mirafleet central init [-data DIR] [-listen ADDR]
+  mirafleet central run [-data DIR] [-listen ADDR]
+  mirafleet central fleet create NAME [-mode actions|workspace] [-confirm]
+  mirafleet central fleet list [-json]
+  mirafleet central token create -fleet F [-labels k=v,...] [-approve] [-uses N] [-ttl DURATION]
+  mirafleet central token list [-fleet F] [-json]
+  mirafleet central token revoke ID
+  mirafleet central runner list [-fleet F] [-json]
+  mirafleet central runner approve|disable|enable|revoke FLEET/RUNNER
+  mirafleet central operator code | rotate-secret | list [-json] | revoke NAME
+  mirafleet central exec FLEET/RUNNER ACTION [k=v...] [-confirm FLEET]
+  mirafleet central audit [-since ID] [-limit N] [-json]
+  (admin commands take [-data DIR], default /var/lib/mirafleet/central)
+  mirafleet runner join ADDR -name NAME [-data DIR] -token -
+  mirafleet runner run [-data DIR] [-actions FILE]
+  mirafleet mcp login ADDR -name NAME -code -
+  mirafleet mcp api METHOD [JSON]
   mirafleet version
 `)
 	os.Exit(2)

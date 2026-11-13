@@ -8,6 +8,6 @@ import "errors"
 // dependencies (SQLite); main also refuses through requireServerOS, so this is defence in depth.
 var errServerOnly = errors.New("central and runner are supported on linux only")
 
+func centralInit([]string) error { return errServerOnly }
 func centralRun([]string) error  { return errServerOnly }
-func centralExec([]string) error { return errServerOnly }
-func runnerRun([]string) error   { return errServerOnly }
+func runnerMain([]string) error  { return errServerOnly }
