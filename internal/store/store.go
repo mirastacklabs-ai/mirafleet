@@ -20,10 +20,12 @@ var (
 	// Enroll it also covers a wrong token secret (indistinguishable from an unknown id); the
 	// service must map Enroll's ErrNotFound and ErrStale to one identical joiner-facing error.
 	ErrNotFound = errors.New("store: not found")
-	// ErrInvalid: input failed validation (name shape, mode, MaxUses < 1, empty "from" status
-	// set, zero audit time). The service maps it to bad_request.
+	// ErrInvalid: input failed validation (name shape, mode, malformed token id or secret hash,
+	// MaxUses < 1, expiry not after now, empty key or fingerprint or setting key/value, oversize
+	// runner info, empty "from" status set, zero audit time). It describes the shape of the
+	// caller's input, never a token's existence. The service maps it to bad_request.
 	ErrInvalid = errors.New("store: invalid input")
-	// ErrConflict: a uniqueness or state precondition failed (duplicate name or key, revoked key
+	// ErrConflict: a UNIQUE/PRIMARY KEY or state precondition failed (duplicate name or key, revoked key
 	// re-enrolling, status transition whose "from" set no longer matches).
 	ErrConflict = errors.New("store: conflict")
 	// ErrStale: the join token is expired, revoked or used up.
@@ -263,7 +265,7 @@ type Store interface {
 	// GetRunnerByID returns the runner (any status) by id, or ErrNotFound.
 	GetRunnerByID(ctx context.Context, id int64) (Runner, error)
 	// TouchRunner records last_seen_at (= seen) and info for a runner. Not audited (high
-	// frequency); ErrNotFound if the id does not exist. Never changes status.
+	// frequency); ErrNotFound if the id does not exist. Never changes status. ErrInvalid if the info JSON exceeds 16 KiB.
 	TouchRunner(ctx context.Context, id int64, seen time.Time, info map[string]string) error
 
 	// Enroll consumes one use of the join token and inserts newRunner in a single transaction.
@@ -277,7 +279,8 @@ type Store interface {
 	// Unknown id and wrong secret both return ErrNotFound. The service maps ErrNotFound and
 	// ErrStale to one identical joiner-facing error. newRunner.FleetID/Fleet/Labels/Status are
 	// taken from the token (active if AutoApprove, else pending); the caller supplies Name,
-	// PubKey, Fingerprint. ErrInvalid on a bad runner name. ErrConflict if the name is taken by
+	// PubKey, Fingerprint. ErrInvalid on a bad runner name, an empty PubKey or Fingerprint, or a
+	// secretHash that is not 32 bytes (checked before any lookup). ErrConflict if the name is taken by
 	// a non-revoked runner in the fleet or the key is already known (including revoked keys,
 	// which never re-enrol); nothing is consumed on any error. Writes ev.
 	Enroll(ctx context.Context, tokenID string, secretHash []byte, now time.Time, newRunner Runner, ev AuditEvent) (Runner, error)
@@ -288,8 +291,9 @@ type Store interface {
 	SetRunnerStatus(ctx context.Context, id int64, from []Status, to Status, now time.Time, ev AuditEvent) (Runner, error)
 
 	// CreateToken inserts a join token (SecretHash, TokenID, Fleet name, MaxUses and ExpiresAt
-	// set by the caller) and returns it with ID and CreatedAt (= now). ErrInvalid if
-	// MaxUses < 1. Atomic with ev. ErrNotFound if the fleet is unknown; ErrConflict on
+	// set by the caller) and returns it with ID and CreatedAt (= now). ErrInvalid unless SecretHash is 32 bytes,
+	// TokenID is 16 lowercase hex chars, MaxUses >= 1 and ExpiresAt is after now. The returned
+	// token has SecretHash zeroed (nil). Atomic with ev. ErrNotFound if the fleet is unknown; ErrConflict on
 	// duplicate TokenID.
 	CreateToken(ctx context.Context, t JoinToken, now time.Time, ev AuditEvent) (JoinToken, error)
 	// RevokeToken sets revoked_at (= now) for tokenID if not already set, atomically with ev.

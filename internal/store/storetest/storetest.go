@@ -1,0 +1,740 @@
+// Package storetest is the conformance suite every store.Store implementation must pass.
+package storetest
+
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/mirastacklabs-ai/mirafleet/internal/store"
+)
+
+var t0 = time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+
+// Run executes the suite; newStore must return a fresh, empty store (closed via t.Cleanup).
+func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("Fleets", func(t *testing.T) { fleets(t, newStore(t)) })
+	t.Run("Audit", func(t *testing.T) { audit(t, newStore(t)) })
+	t.Run("Enroll", func(t *testing.T) { enroll(t, newStore(t)) })
+	t.Run("EnrollRaceSingleUse", func(t *testing.T) { enrollRace(t, newStore(t), 1, 1) })
+	t.Run("EnrollRaceMultiUse", func(t *testing.T) { enrollRace(t, newStore(t), 3, 3) })
+	t.Run("Runners", func(t *testing.T) { runners(t, newStore(t)) })
+	t.Run("Tokens", func(t *testing.T) { tokens(t, newStore(t)) })
+	t.Run("Operators", func(t *testing.T) { operators(t, newStore(t)) })
+	t.Run("Settings", func(t *testing.T) { settings(t, newStore(t)) })
+	t.Run("Validation", func(t *testing.T) { validation(t, newStore(t)) })
+	t.Run("ContextCancelled", func(t *testing.T) { ctxCancelled(t, newStore(t)) })
+}
+
+func ev(action string) store.AuditEvent {
+	return store.AuditEvent{Source: "cli", ActorKind: "admin", Actor: "root", Action: action, Outcome: "ok"}
+}
+
+func fleets(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	if _, err := s.GetFleet(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetFleet missing: %v", err)
+	}
+	if l, err := s.ListFleets(ctx); err != nil || len(l) != 0 {
+		t.Fatalf("empty ListFleets = %v, %v", l, err)
+	}
+
+	f, err := s.CreateFleet(ctx, store.Fleet{Name: "web", Mode: store.ModeActions, Confirm: true}, t0, ev("fleet.create"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.ID == 0 || f.Name != "web" || f.Mode != store.ModeActions || !f.Confirm || !f.CreatedAt.Equal(t0) {
+		t.Fatalf("created = %+v", f)
+	}
+	got, err := s.GetFleet(ctx, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != f.ID || !got.Confirm || got.Mode != store.ModeActions || !got.CreatedAt.Equal(t0) || got.RunnerCount != 0 {
+		t.Fatalf("got = %+v", got)
+	}
+	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "db", Mode: store.ModeWorkspace}, t0.Add(time.Second), ev("fleet.create")); err != nil {
+		t.Fatal(err)
+	}
+	l, err := s.ListFleets(ctx)
+	if err != nil || len(l) != 2 || l[0].Name != "db" || l[1].Name != "web" || l[0].Confirm {
+		t.Fatalf("ListFleets = %+v, %v", l, err)
+	}
+
+	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "web", Mode: store.ModeActions}, t0, ev("fleet.create")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate: %v", err)
+	}
+	for _, bad := range []store.Fleet{
+		{Name: "", Mode: store.ModeActions},
+		{Name: "Upper", Mode: store.ModeActions},
+		{Name: "a/b", Mode: store.ModeActions},
+		{Name: "ok", Mode: "bogus"},
+		{Name: "ok", Mode: ""},
+	} {
+		if _, err := s.CreateFleet(ctx, bad, t0, ev("fleet.create")); !errors.Is(err, store.ErrInvalid) {
+			t.Fatalf("%+v: want ErrInvalid, got %v", bad, err)
+		}
+	}
+
+	// Atomic with audit: one row per successful create, none for failures.
+	evs, err := s.ListAudit(ctx, 0, 100)
+	if err != nil || len(evs) != 2 {
+		t.Fatalf("audit after fleets = %d, %v", len(evs), err)
+	}
+	if !evs[0].Time.Equal(t0) {
+		t.Fatalf("zero ev.Time should default to now, got %v", evs[0].Time)
+	}
+}
+
+func audit(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	if _, err := s.RecordAudit(ctx, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("zero time: %v", err)
+	}
+	code := 3
+	full := store.AuditEvent{
+		ID: 999, Time: t0, Source: "api", ActorKind: "operator", Actor: "alice", Remote: "1.2.3.4",
+		Fleet: "web", Runner: "r1", Subject: "s", Action: "action.run",
+		Params: map[string]string{"a": "b"}, Outcome: "ok", ExitCode: &code, DurationMS: 42,
+		Message: "m", RequestID: "req1",
+	}
+	id, err := s.RecordAudit(ctx, full)
+	if err != nil || id <= 0 {
+		t.Fatalf("RecordAudit = %d, %v", id, err)
+	}
+	got, err := s.ListAudit(ctx, 0, 10)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("ListAudit = %v, %v", got, err)
+	}
+	g := got[0]
+	if g.ID != id || !g.Time.Equal(t0) || g.Params["a"] != "b" || g.ExitCode == nil || *g.ExitCode != 3 ||
+		g.DurationMS != 42 || g.Actor != "alice" || g.RequestID != "req1" || g.Fleet != "web" || g.Message != "m" {
+		t.Fatalf("round trip = %+v", g)
+	}
+	// nil ExitCode stays nil; empty params stay empty.
+	id2, err := s.RecordAudit(ctx, store.AuditEvent{Time: t0.Add(time.Second), Action: "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id2 <= id {
+		t.Fatalf("ids not increasing: %d then %d", id, id2)
+	}
+	got, _ = s.ListAudit(ctx, id, 10)
+	if len(got) != 1 || got[0].ID != id2 || got[0].ExitCode != nil || len(got[0].Params) != 0 {
+		t.Fatalf("second = %+v", got)
+	}
+
+	for i := 0; i < 5; i++ {
+		if _, err := s.RecordAudit(ctx, store.AuditEvent{Time: t0, Action: fmt.Sprint("n", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _ = s.ListAudit(ctx, 0, 3)
+	if len(got) != 3 || got[0].ID != id {
+		t.Fatalf("limit 3 = %d rows", len(got))
+	}
+	rest, _ := s.ListAudit(ctx, got[2].ID, 100)
+	if len(rest) != 4 {
+		t.Fatalf("since = %d rows, want 4", len(rest))
+	}
+	for i := 1; i < len(rest); i++ {
+		if rest[i].ID <= rest[i-1].ID {
+			t.Fatal("not ascending")
+		}
+	}
+	if none, err := s.ListAudit(ctx, rest[len(rest)-1].ID, 10); err != nil || len(none) != 0 {
+		t.Fatalf("past end = %v, %v", none, err)
+	}
+	// Huge limit is capped, not an error.
+	if _, err := s.ListAudit(ctx, 0, 1<<30); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func auditCount(t *testing.T, s store.Store) int {
+	t.Helper()
+	evs, err := s.ListAudit(context.Background(), 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(evs)
+}
+
+func secretHash(secret string) []byte { h := sha256.Sum256([]byte(secret)); return h[:] }
+
+func mkFleet(t *testing.T, s store.Store, name string) store.Fleet {
+	t.Helper()
+	f, err := s.CreateFleet(context.Background(), store.Fleet{Name: name, Mode: store.ModeActions}, t0, ev("fleet.create"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func mkToken(t *testing.T, s store.Store, fleet, id, secret string, max int, auto bool, exp time.Time) store.JoinToken {
+	t.Helper()
+	tok, err := s.CreateToken(context.Background(), store.JoinToken{
+		TokenID: id, SecretHash: secretHash(secret), Fleet: fleet, Labels: map[string]string{"env": "prod"},
+		AutoApprove: auto, MaxUses: max, ExpiresAt: exp, CreatedBy: "root",
+	}, t0, ev("token.create"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tok
+}
+
+func newRunner(name string, key byte) store.Runner {
+	return store.Runner{Name: name, PubKey: []byte{key, 1, 2, 3}, Fingerprint: fmt.Sprintf("SHA256:%d", key)}
+}
+
+func uses(t *testing.T, s store.Store, fleet string) int {
+	t.Helper()
+	l, err := s.ListTokens(context.Background(), fleet)
+	if err != nil || len(l) == 0 {
+		t.Fatalf("ListTokens: %v %v", l, err)
+	}
+	return l[0].Uses
+}
+
+func enroll(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	now := t0.Add(time.Minute)
+	mkFleet(t, s, "web")
+	exp := t0.Add(time.Hour)
+	mkToken(t, s, "web", "aaaaaaaaaaaaaaaa", "sec", 5, false, exp)
+	base := auditCount(t, s)
+
+	r, err := s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("sec"), now, newRunner("r1", 1), ev("runner.enrol"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ID == 0 || r.Fleet != "web" || r.Status != store.StatusPending || r.Labels["env"] != "prod" ||
+		r.JoinTokenID == nil || !r.CreatedAt.Equal(now) || !r.LastSeenAt.IsZero() || r.Name != "r1" {
+		t.Fatalf("enrolled = %+v", r)
+	}
+	if uses(t, s, "web") != 1 || auditCount(t, s) != base+1 {
+		t.Fatal("uses/audit after enrol")
+	}
+
+	// Wrong secret and unknown id: ErrNotFound, nothing consumed, no audit.
+	if _, err := s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("bad"), now, newRunner("r2", 2), ev("x")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("wrong secret: %v", err)
+	}
+	if _, err := s.Enroll(ctx, "bbbbbbbbbbbbbbbb", secretHash("sec"), now, newRunner("r2", 2), ev("x")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown id: %v", err)
+	}
+	// Bad name; duplicate live name; duplicate key. Nothing consumed.
+	if _, err := s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("sec"), now, newRunner("Bad Name", 3), ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("bad name: %v", err)
+	}
+	if _, err := s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("sec"), now, newRunner("r1", 4), ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("dup name: %v", err)
+	}
+	if _, err := s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("sec"), now, newRunner("r9", 1), ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("dup key: %v", err)
+	}
+	if uses(t, s, "web") != 1 || auditCount(t, s) != base+1 {
+		t.Fatalf("failed enrols consumed uses=%d audit=%d", uses(t, s, "web"), auditCount(t, s))
+	}
+
+	// Revoked name reusable by a NEW key; the revoked key never enrols again.
+	if _, err := s.SetRunnerStatus(ctx, r.ID, []store.Status{store.StatusPending}, store.StatusRevoked, now, ev("runner.revoke")); err != nil {
+		t.Fatal(err)
+	}
+	r2, err := s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("sec"), now, newRunner("r1", 5), ev("runner.enrol"))
+	if err != nil || r2.ID == r.ID {
+		t.Fatalf("reuse name: %+v %v", r2, err)
+	}
+	if _, err := s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("sec"), now, newRunner("r7", 1), ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("revoked key re-enrol: %v", err)
+	}
+	if uses(t, s, "web") != 2 {
+		t.Fatalf("uses = %d, want 2", uses(t, s, "web"))
+	}
+
+	// Auto-approve token yields an active runner.
+	mkToken(t, s, "web", "cccccccccccccccc", "s2", 1, true, exp)
+	a, err := s.Enroll(ctx, "cccccccccccccccc", secretHash("s2"), now, newRunner("auto", 6), ev("runner.enrol"))
+	if err != nil || a.Status != store.StatusActive {
+		t.Fatalf("auto: %+v %v", a, err)
+	}
+
+	// Expired (at exactly expires_at), revoked and used-up tokens: ErrStale, nothing consumed.
+	mkToken(t, s, "web", "dddddddddddddddd", "s3", 2, true, exp)
+	if _, err := s.Enroll(ctx, "dddddddddddddddd", secretHash("s3"), exp, newRunner("e1", 7), ev("x")); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("expired: %v", err)
+	}
+	if _, err := s.Enroll(ctx, "cccccccccccccccc", secretHash("s2"), now, newRunner("e2", 8), ev("x")); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("used up: %v", err)
+	}
+	if err := s.RevokeToken(ctx, "dddddddddddddddd", now, ev("token.revoke")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Enroll(ctx, "dddddddddddddddd", secretHash("s3"), now, newRunner("e3", 9), ev("x")); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("revoked: %v", err)
+	}
+	all, _ := s.ListTokens(ctx, "web")
+	if all[2].Uses != 0 {
+		t.Fatalf("stale token consumed: %+v", all[2])
+	}
+	if _, err := s.GetRunnerByKey(ctx, newRunner("", 7).PubKey); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("stale enrol left a runner: %v", err)
+	}
+}
+
+func enrollRace(t *testing.T, s store.Store, maxUses, wantOK int) {
+	ctx := context.Background()
+	mkFleet(t, s, "web")
+	mkToken(t, s, "web", "eeeeeeeeeeeeeeee", "sec", maxUses, true, t0.Add(time.Hour))
+	base := auditCount(t, s)
+	const n = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := s.Enroll(ctx, "eeeeeeeeeeeeeeee", secretHash("sec"), t0, newRunner(fmt.Sprint("r", i), byte(i)), ev("runner.enrol"))
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	ok, stale := 0, 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, store.ErrStale):
+			stale++
+		default:
+			t.Errorf("unexpected: %v", err)
+		}
+	}
+	if ok != wantOK || stale != n-wantOK {
+		t.Fatalf("ok=%d stale=%d, want %d/%d", ok, stale, wantOK, n-wantOK)
+	}
+	if u := uses(t, s, "web"); u != wantOK {
+		t.Fatalf("uses = %d", u)
+	}
+	rs, _ := s.ListRunners(ctx, "web", true)
+	if len(rs) != wantOK || auditCount(t, s) != base+wantOK {
+		t.Fatalf("runners=%d audit=%d", len(rs), auditCount(t, s)-base)
+	}
+}
+
+func runners(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	now := t0.Add(time.Minute)
+	mkFleet(t, s, "web")
+	mkFleet(t, s, "db")
+	mkToken(t, s, "web", "ffffffffffffffff", "sec", 10, false, t0.Add(time.Hour))
+	if _, err := s.ListRunners(ctx, "nope", false); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ListRunners unknown fleet: %v", err)
+	}
+	if l, err := s.ListRunners(ctx, "db", false); err != nil || len(l) != 0 {
+		t.Fatalf("empty list: %v %v", l, err)
+	}
+	var rs []store.Runner
+	for i, n := range []string{"b", "a", "c"} {
+		r, err := s.Enroll(ctx, "ffffffffffffffff", secretHash("sec"), now, newRunner(n, byte(i+1)), ev("runner.enrol"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rs = append(rs, r)
+	}
+	l, _ := s.ListRunners(ctx, "web", false)
+	if len(l) != 3 || l[0].Name != "a" || l[1].Name != "b" || l[2].Name != "c" {
+		t.Fatalf("order: %+v", l)
+	}
+	// Lifecycle: pending->active ok; active->pending not allowed; wrong from set -> conflict.
+	base := auditCount(t, s)
+	b := rs[0]
+	got, err := s.SetRunnerStatus(ctx, b.ID, []store.Status{store.StatusPending}, store.StatusActive, now.Add(time.Second), ev("runner.approve"))
+	if err != nil || got.Status != store.StatusActive || !got.UpdatedAt.Equal(now.Add(time.Second)) || !got.CreatedAt.Equal(now) {
+		t.Fatalf("approve: %+v %v", got, err)
+	}
+	if _, err := s.SetRunnerStatus(ctx, b.ID, []store.Status{store.StatusPending}, store.StatusActive, now, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("stale from: %v", err)
+	}
+	if _, err := s.SetRunnerStatus(ctx, b.ID, []store.Status{store.StatusActive}, store.StatusPending, now, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("bad transition: %v", err)
+	}
+	if _, err := s.SetRunnerStatus(ctx, b.ID, nil, store.StatusDisabled, now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("empty from: %v", err)
+	}
+	if _, err := s.SetRunnerStatus(ctx, b.ID, []store.Status{"bogus"}, store.StatusDisabled, now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("bad from: %v", err)
+	}
+	if _, err := s.SetRunnerStatus(ctx, 9999, []store.Status{store.StatusActive}, store.StatusDisabled, now, ev("x")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown id: %v", err)
+	}
+	if _, err := s.SetRunnerStatus(ctx, b.ID, []store.Status{store.StatusActive}, store.StatusDisabled, now, ev("runner.disable")); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount(t, s) != base+2 {
+		t.Fatalf("audit rows = %d, want %d", auditCount(t, s), base+2)
+	}
+	if _, err := s.SetRunnerStatus(ctx, b.ID, []store.Status{store.StatusDisabled}, store.StatusRevoked, now, ev("runner.revoke")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetRunnerStatus(ctx, b.ID, []store.Status{store.StatusRevoked}, store.StatusActive, now, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("revoked is terminal: %v", err)
+	}
+
+	// Getters: revoked hidden from GetRunner/list, visible by key/id/includeRevoked.
+	if _, err := s.GetRunner(ctx, store.Ref{Fleet: "web", Runner: "b"}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetRunner revoked: %v", err)
+	}
+	if g, err := s.GetRunnerByKey(ctx, b.PubKey); err != nil || g.ID != b.ID || g.Status != store.StatusRevoked {
+		t.Fatalf("ByKey: %+v %v", g, err)
+	}
+	if g, err := s.GetRunnerByID(ctx, b.ID); err != nil || g.Fingerprint != b.Fingerprint {
+		t.Fatalf("ByID: %+v %v", g, err)
+	}
+	if _, err := s.GetRunnerByID(ctx, 9999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ByID missing: %v", err)
+	}
+	if _, err := s.GetRunnerByKey(ctx, []byte("nope")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ByKey missing: %v", err)
+	}
+	if l, _ := s.ListRunners(ctx, "web", false); len(l) != 2 {
+		t.Fatalf("live list = %d", len(l))
+	}
+	if l, _ := s.ListRunners(ctx, "web", true); len(l) != 3 {
+		t.Fatalf("full list = %d", len(l))
+	}
+	fl, _ := s.ListFleets(ctx)
+	if fl[1].Name != "web" || fl[1].RunnerCount != 2 {
+		t.Fatalf("RunnerCount: %+v", fl)
+	}
+
+	// Touch: sets last seen + info, not audited, never changes status.
+	a := rs[1]
+	base = auditCount(t, s)
+	seen := now.Add(time.Hour)
+	if err := s.TouchRunner(ctx, a.ID, seen, map[string]string{"os": "linux"}); err != nil {
+		t.Fatal(err)
+	}
+	g, _ := s.GetRunner(ctx, store.Ref{Fleet: "web", Runner: "a"})
+	if !g.LastSeenAt.Equal(seen) || g.Info["os"] != "linux" || g.Status != store.StatusPending || auditCount(t, s) != base {
+		t.Fatalf("touched: %+v", g)
+	}
+	if err := s.TouchRunner(ctx, 9999, seen, nil); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("touch unknown: %v", err)
+	}
+}
+
+func tokens(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	mkFleet(t, s, "web")
+	mkFleet(t, s, "db")
+	exp := t0.Add(time.Hour)
+	if _, err := s.CreateToken(ctx, store.JoinToken{TokenID: "1111111111111111", SecretHash: secretHash("a"), Fleet: "nope", MaxUses: 1, ExpiresAt: exp}, t0, ev("x")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown fleet: %v", err)
+	}
+	if _, err := s.CreateToken(ctx, store.JoinToken{TokenID: "1111111111111111", SecretHash: secretHash("a"), Fleet: "web", MaxUses: 0, ExpiresAt: exp}, t0, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("max uses 0: %v", err)
+	}
+	if auditCount(t, s) != 2 {
+		t.Fatalf("failed creates audited: %d", auditCount(t, s))
+	}
+	tk := mkToken(t, s, "web", "1111111111111111", "a", 2, true, exp)
+	if tk.SecretHash != nil {
+		t.Fatal("CreateToken returned the secret hash")
+	}
+	if tk.ID == 0 || tk.Uses != 0 || !tk.CreatedAt.Equal(t0) || tk.FleetID == 0 || tk.Fleet != "web" {
+		t.Fatalf("created = %+v", tk)
+	}
+	if _, err := s.CreateToken(ctx, store.JoinToken{TokenID: "1111111111111111", SecretHash: secretHash("b"), Fleet: "db", MaxUses: 1, ExpiresAt: exp}, t0, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("dup token id: %v", err)
+	}
+	mkToken(t, s, "db", "2222222222222222", "b", 1, false, exp)
+
+	all, err := s.ListTokens(ctx, "")
+	if err != nil || len(all) != 2 || all[0].TokenID != "1111111111111111" || all[1].TokenID != "2222222222222222" {
+		t.Fatalf("all = %+v %v", all, err)
+	}
+	for _, x := range all {
+		if x.SecretHash != nil {
+			t.Fatal("ListTokens exposed SecretHash")
+		}
+	}
+	if !all[0].AutoApprove || all[0].MaxUses != 2 || all[0].Labels["env"] != "prod" || !all[0].ExpiresAt.Equal(exp) ||
+		all[0].CreatedBy != "root" || !all[0].RevokedAt.IsZero() || all[0].Fleet != "web" {
+		t.Fatalf("round trip = %+v", all[0])
+	}
+	if l, _ := s.ListTokens(ctx, "db"); len(l) != 1 || l[0].TokenID != "2222222222222222" {
+		t.Fatalf("by fleet = %+v", l)
+	}
+
+	base := auditCount(t, s)
+	rt := t0.Add(time.Minute)
+	if err := s.RevokeToken(ctx, "1111111111111111", rt, ev("token.revoke")); err != nil {
+		t.Fatal(err)
+	}
+	// Idempotent: second revoke writes no event and keeps the first time.
+	if err := s.RevokeToken(ctx, "1111111111111111", rt.Add(time.Hour), ev("token.revoke")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeToken(ctx, "9999999999999999", rt, ev("x")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown: %v", err)
+	}
+	if auditCount(t, s) != base+1 {
+		t.Fatalf("audit rows = %d, want %d", auditCount(t, s), base+1)
+	}
+	l, _ := s.ListTokens(ctx, "web")
+	if !l[0].RevokedAt.Equal(rt) || l[0].Usable(t0) {
+		t.Fatalf("revoked = %+v", l[0])
+	}
+}
+
+func operators(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	key := func(b byte) []byte { return []byte{b, 9, 9} }
+	if _, _, err := s.RegisterOperator(ctx, "Bad Name", key(1), "fp1", t0, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("bad name: %v", err)
+	}
+	if auditCount(t, s) != 0 {
+		t.Fatal("failed register audited")
+	}
+	a, created, err := s.RegisterOperator(ctx, "alice", key(1), "fp1", t0, ev("operator.register"))
+	if err != nil || !created || a.ID == 0 || a.Status != store.OperatorActive || a.Name != "alice" ||
+		!a.CreatedAt.Equal(t0) || !a.LastSeenAt.IsZero() {
+		t.Fatalf("register: %+v %v %v", a, created, err)
+	}
+	// Idempotent per key, even with a different requested name; no audit row.
+	again, created, err := s.RegisterOperator(ctx, "other", key(1), "fp1", t0.Add(time.Second), ev("operator.register"))
+	if err != nil || created || again.ID != a.ID || again.Name != "alice" {
+		t.Fatalf("idempotent: %+v %v %v", again, created, err)
+	}
+	if auditCount(t, s) != 1 {
+		t.Fatalf("audit rows = %d, want 1", auditCount(t, s))
+	}
+	// Name held by a different active operator.
+	if _, _, err := s.RegisterOperator(ctx, "alice", key(2), "fp2", t0, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("name taken: %v", err)
+	}
+	b, _, err := s.RegisterOperator(ctx, "bob", key(2), "fp2", t0.Add(time.Minute), ev("operator.register"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, get := range map[string]func() (store.Operator, error){
+		"key":  func() (store.Operator, error) { return s.GetOperatorByKey(ctx, key(1)) },
+		"id":   func() (store.Operator, error) { return s.GetOperatorByID(ctx, a.ID) },
+		"name": func() (store.Operator, error) { return s.GetOperatorByName(ctx, "alice") },
+	} {
+		if op, err := get(); err != nil || op.ID != a.ID || op.Fingerprint != "fp1" || string(op.PubKey) != string(key(1)) {
+			t.Fatalf("getter by %s: %+v %v", name, op, err)
+		}
+	}
+	if _, err := s.GetOperatorByKey(ctx, key(7)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ByKey missing: %v", err)
+	}
+	if _, err := s.GetOperatorByID(ctx, 9999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ByID missing: %v", err)
+	}
+	if _, err := s.GetOperatorByName(ctx, "zed"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ByName missing: %v", err)
+	}
+
+	base := auditCount(t, s)
+	seen := t0.Add(time.Hour)
+	if err := s.TouchOperator(ctx, a.ID, seen); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TouchOperator(ctx, 9999, seen); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("touch unknown: %v", err)
+	}
+	g, _ := s.GetOperatorByID(ctx, a.ID)
+	if !g.LastSeenAt.Equal(seen) || g.Status != store.OperatorActive || auditCount(t, s) != base {
+		t.Fatalf("touched: %+v", g)
+	}
+
+	rt := t0.Add(2 * time.Hour)
+	r, err := s.RevokeOperator(ctx, "alice", rt, ev("operator.revoke"))
+	if err != nil || r.Status != store.OperatorRevoked || !r.UpdatedAt.Equal(rt) {
+		t.Fatalf("revoke: %+v %v", r, err)
+	}
+	if _, err := s.RevokeOperator(ctx, "alice", rt, ev("x")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("revoke twice: %v", err)
+	}
+	if auditCount(t, s) != base+1 {
+		t.Fatalf("audit rows = %d, want %d", auditCount(t, s), base+1)
+	}
+	if _, err := s.GetOperatorByName(ctx, "alice"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ByName revoked: %v", err)
+	}
+	if g, err := s.GetOperatorByKey(ctx, key(1)); err != nil || g.Status != store.OperatorRevoked {
+		t.Fatalf("ByKey revoked: %+v %v", g, err)
+	}
+	// Revoked key can never register again, under any name; the name is free for a new key.
+	if _, _, err := s.RegisterOperator(ctx, "alice", key(1), "fp1", t0, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("revoked key: %v", err)
+	}
+	if _, _, err := s.RegisterOperator(ctx, "fresh", key(1), "fp1", t0, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("revoked key new name: %v", err)
+	}
+	a2, created, err := s.RegisterOperator(ctx, "alice", key(3), "fp3", t0, ev("operator.register"))
+	if err != nil || !created || a2.ID == a.ID {
+		t.Fatalf("name reuse: %+v %v %v", a2, created, err)
+	}
+
+	live, _ := s.ListOperators(ctx, false)
+	if len(live) != 2 || live[0].ID != b.ID || live[1].ID != a2.ID {
+		t.Fatalf("live = %+v", live)
+	}
+	full, _ := s.ListOperators(ctx, true)
+	if len(full) != 3 || full[0].ID != a.ID {
+		t.Fatalf("full = %+v", full)
+	}
+}
+
+func settings(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	if _, err := s.GetSetting(ctx, "k"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+	if err := s.CreateSetting(ctx, "k", []byte("v1"), t0, ev("setting.create")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateSetting(ctx, "k", []byte("v2"), t0, ev("setting.create")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("create twice: %v", err)
+	}
+	if v, err := s.GetSetting(ctx, "k"); err != nil || string(v) != "v1" {
+		t.Fatalf("get = %q %v", v, err)
+	}
+	if auditCount(t, s) != 1 {
+		t.Fatalf("audit rows = %d, want 1", auditCount(t, s))
+	}
+	if err := s.PutSetting(ctx, "k", []byte("v3"), t0, ev("setting.put")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutSetting(ctx, "new", []byte{0, 1, 2}, t0, ev("setting.put")); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := s.GetSetting(ctx, "k"); string(v) != "v3" {
+		t.Fatalf("overwrite = %q", v)
+	}
+	if v, _ := s.GetSetting(ctx, "new"); string(v) != "\x00\x01\x02" {
+		t.Fatalf("binary = %q", v)
+	}
+	if auditCount(t, s) != 3 {
+		t.Fatalf("audit rows = %d, want 3", auditCount(t, s))
+	}
+}
+
+func validation(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	mkFleet(t, s, "web")
+	exp := t0.Add(time.Hour)
+	good := store.JoinToken{TokenID: "1234567890abcdef", SecretHash: secretHash("a"), Fleet: "web", MaxUses: 1, ExpiresAt: exp}
+	base := auditCount(t, s)
+
+	for name, mut := range map[string]func(*store.JoinToken){
+		"short hash":     func(j *store.JoinToken) { j.SecretHash = j.SecretHash[:31] },
+		"nil hash":       func(j *store.JoinToken) { j.SecretHash = nil },
+		"long hash":      func(j *store.JoinToken) { j.SecretHash = append(j.SecretHash, 0) },
+		"short id":       func(j *store.JoinToken) { j.TokenID = "abc" },
+		"upper-case id":  func(j *store.JoinToken) { j.TokenID = "1234567890ABCDEF" },
+		"non-hex id":     func(j *store.JoinToken) { j.TokenID = "zzzzzzzzzzzzzzzz" },
+		"zero expiry":    func(j *store.JoinToken) { j.ExpiresAt = time.Time{} },
+		"expiry == now":  func(j *store.JoinToken) { j.ExpiresAt = t0 },
+		"expiry in past": func(j *store.JoinToken) { j.ExpiresAt = t0.Add(-time.Second) },
+		"max uses 0":     func(j *store.JoinToken) { j.MaxUses = 0 },
+	} {
+		j := good
+		j.SecretHash = append([]byte(nil), good.SecretHash...)
+		mut(&j)
+		if _, err := s.CreateToken(ctx, j, t0, ev("x")); !errors.Is(err, store.ErrInvalid) {
+			t.Errorf("CreateToken %s: want ErrInvalid, got %v", name, err)
+		}
+	}
+	if _, err := s.CreateToken(ctx, good, t0, ev("token.create")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Enroll: input-shape errors, before any lookup (even for an unknown id).
+	for name, call := range map[string]func() error{
+		"short secret hash": func() error {
+			_, err := s.Enroll(ctx, good.TokenID, []byte("short"), t0, newRunner("r1", 1), ev("x"))
+			return err
+		},
+		"short secret hash, unknown id": func() error {
+			_, err := s.Enroll(ctx, "ffffffffffffffff", nil, t0, newRunner("r1", 1), ev("x"))
+			return err
+		},
+		"empty key": func() error {
+			r := newRunner("r1", 1)
+			r.PubKey = nil
+			_, err := s.Enroll(ctx, good.TokenID, secretHash("a"), t0, r, ev("x"))
+			return err
+		},
+		"empty fingerprint": func() error {
+			r := newRunner("r1", 1)
+			r.Fingerprint = ""
+			_, err := s.Enroll(ctx, good.TokenID, secretHash("a"), t0, r, ev("x"))
+			return err
+		},
+		"operator empty key": func() error {
+			_, _, err := s.RegisterOperator(ctx, "alice", nil, "fp", t0, ev("x"))
+			return err
+		},
+		"operator empty fingerprint": func() error {
+			_, _, err := s.RegisterOperator(ctx, "alice", []byte{1}, "", t0, ev("x"))
+			return err
+		},
+		"create setting empty key": func() error { return s.CreateSetting(ctx, "", []byte("v"), t0, ev("x")) },
+		"create setting nil value": func() error { return s.CreateSetting(ctx, "k", nil, t0, ev("x")) },
+		"put setting empty key":    func() error { return s.PutSetting(ctx, "", []byte("v"), t0, ev("x")) },
+		"put setting empty value":  func() error { return s.PutSetting(ctx, "k", []byte{}, t0, ev("x")) },
+	} {
+		if err := call(); !errors.Is(err, store.ErrInvalid) {
+			t.Errorf("%s: want ErrInvalid, got %v", name, err)
+		}
+	}
+	if uses(t, s, "web") != 0 || auditCount(t, s) != base+1 {
+		t.Fatalf("invalid calls had effects: uses=%d audit=%d (base %d)", uses(t, s, "web"), auditCount(t, s), base)
+	}
+
+	// TouchRunner caps info size.
+	r, err := s.Enroll(ctx, good.TokenID, secretHash("a"), t0, newRunner("r1", 1), ev("runner.enrol"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TouchRunner(ctx, r.ID, t0, map[string]string{"blob": strings.Repeat("x", 17<<10)}); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("oversize info: %v", err)
+	}
+	if err := s.TouchRunner(ctx, r.ID, t0, map[string]string{"blob": strings.Repeat("x", 8<<10)}); err != nil {
+		t.Fatalf("8 KiB info: %v", err)
+	}
+}
+
+func ctxCancelled(t *testing.T, s store.Store) {
+	mkFleet(t, s, "web")
+	base := auditCount(t, s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.GetFleet(ctx, "web"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("read with cancelled ctx: %v", err)
+	}
+	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "db", Mode: store.ModeActions}, t0, ev("fleet.create")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("write with cancelled ctx: %v", err)
+	}
+	if _, err := s.GetFleet(context.Background(), "db"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cancelled write left a fleet: %v", err)
+	}
+	if auditCount(t, s) != base {
+		t.Fatal("cancelled write left an audit row")
+	}
+	// The store still works afterwards.
+	if _, err := s.CreateFleet(context.Background(), store.Fleet{Name: "db", Mode: store.ModeActions}, t0, ev("fleet.create")); err != nil {
+		t.Fatal(err)
+	}
+}

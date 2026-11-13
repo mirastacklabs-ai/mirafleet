@@ -2,8 +2,11 @@
 // Ed25519 key (listed in a flat authorized_keys-format file; the key comment is the runner
 // name). Central then opens exec@mirafleet channels back over the runner's own connection.
 //
-// Package boundaries for later milestones: the key lookup (authorize) becomes the AuthProvider/
-// Store, the in-memory registry becomes Store-backed, and audit.Writer becomes an AuditSink.
+// Live sessions live in internal/central/registry, keyed by runner id and also indexed by name.
+// M1 shim (until the store-backed auth of M2 S7a): the runner id is the key's line number in the
+// authorized-runners file; it travels in the verified ssh.Permissions and is read only after the
+// handshake has authenticated the peer. Later steps replace the file with the store and the
+// audit.Writer with an audit.Sink.
 package central
 
 import (
@@ -11,16 +14,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/audit"
+	"github.com/mirastacklabs-ai/mirafleet/internal/central/registry"
 	"github.com/mirastacklabs-ai/mirafleet/internal/keys"
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
@@ -45,27 +50,16 @@ type RunnerInfo struct {
 	Since     time.Time
 }
 
-type session struct {
-	name  string
-	conn  *ssh.ServerConn
-	since time.Time
-
-	mu       sync.Mutex
-	hb       transport.Heartbeat
-	lastSeen time.Time
-	ready    bool // set by the first heartbeat; exec is only allowed once ready
-}
-
 type Server struct {
 	cfg Config
 	ssh *ssh.ServerConfig
 
-	mu      sync.Mutex
-	ln      net.Listener
-	runners map[string]*session
-	conns   map[*ssh.ServerConn]struct{}
-	wg      sync.WaitGroup
-	closed  bool
+	mu     sync.Mutex
+	ln     net.Listener
+	reg    *registry.Registry
+	conns  map[*ssh.ServerConn]struct{}
+	wg     sync.WaitGroup
+	closed bool
 }
 
 func New(cfg Config) *Server {
@@ -75,7 +69,12 @@ func New(cfg Config) *Server {
 	if cfg.HeartbeatEvery <= 0 {
 		cfg.HeartbeatEvery = 15 * time.Second
 	}
-	s := &Server{cfg: cfg, runners: map[string]*session{}, conns: map[*ssh.ServerConn]struct{}{}}
+	s := &Server{cfg: cfg, conns: map[*ssh.ServerConn]struct{}{}}
+	reg, err := registry.New(registry.Options{StaleAfter: 3 * cfg.HeartbeatEvery, Logf: cfg.Logf})
+	if err != nil {
+		panic(err) // unreachable: HeartbeatEvery is defaulted above, so StaleAfter > 0
+	}
+	s.reg = reg
 	sc := &ssh.ServerConfig{PublicKeyCallback: s.authorize}
 	sc.AddHostKey(cfg.HostKey)
 	s.ssh = sc
@@ -94,7 +93,10 @@ func (s *Server) authorize(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissi
 	}
 	for _, a := range entries {
 		if string(a.Key.Marshal()) == string(key.Marshal()) {
-			return &ssh.Permissions{Extensions: map[string]string{"runner": a.Name}}, nil
+			// M1 shim: the id is the key's line number in the flat file (stable until edited).
+			// Only returned here; this callback runs before the signature is verified, so it
+			// must not write any server state.
+			return &ssh.Permissions{Extensions: map[string]string{"runner": a.Name, "runner_id": strconv.Itoa(a.Line)}}, nil
 		}
 	}
 	return nil, errors.New("unknown runner key")
@@ -162,18 +164,32 @@ func (s *Server) handle(nc net.Conn) {
 		s.mu.Unlock()
 	}()
 
-	name := sconn.Permissions.Extensions["runner"]
-	sess := &session{name: name, conn: sconn, since: time.Now()}
+	name, id, ok := runnerIdentity(sconn.Permissions)
+	if !ok {
+		s.cfg.Logf("handshake from %s: missing or invalid runner identity; closing", nc.RemoteAddr())
+		return // the deferred Close drops the connection
+	}
 	// Runners never open channels toward central.
 	go func() {
 		for nch := range chans {
 			nch.Reject(ssh.UnknownChannelType, "channels from runners are not accepted")
 		}
 	}()
-	defer s.deregister(sess)
-	stopWatch := make(chan struct{})
-	defer close(stopWatch)
-	go s.watch(sess, stopWatch)
+	// A connection that never heartbeats is never registered; close it after the stale window.
+	var sess *registry.Session
+	var registered atomic.Bool
+	guard := time.AfterFunc(s.staleAfter(), func() {
+		if !registered.Load() {
+			s.cfg.Logf("runner %q silent for >%s; closing connection", name, s.staleAfter())
+			sconn.Close()
+		}
+	})
+	defer guard.Stop()
+	defer func() {
+		if sess != nil {
+			s.reg.Unregister(sess)
+		}
+	}()
 	for r := range reqs {
 		if r.Type != transport.ReqHeartbeat {
 			r.Reply(false, nil)
@@ -184,95 +200,57 @@ func (s *Server) handle(nc net.Conn) {
 			r.Reply(false, nil)
 			continue
 		}
-		s.heartbeat(sess, hb)
+		if sess == nil {
+			// Register on first heartbeat: by then the runner has installed its channel handler.
+			// The registry refuses tombstoned ids. TODO(S7a): status/fleet come from the store.
+			var err error
+			sess, err = s.reg.Register(id, name, "", sconn, registry.StatusActive, hb)
+			if err != nil {
+				s.cfg.Logf("runner %q refused: %v", name, err)
+				r.Reply(false, nil)
+				sconn.Close()
+				continue
+			}
+			registered.Store(true)
+			s.cfg.Logf("runner %q online (%s/%s)", name, hb.OS, hb.Arch)
+		} else {
+			sess.Heartbeat(hb)
+		}
 		r.Reply(true, nil)
 	}
 }
 
+// runnerIdentity reads the runner name and id from verified permissions (strict: canonical
+// decimal, id > 0, name non-empty). The M1 shim uses its own extension keys, not auth.Decode.
+func runnerIdentity(p *ssh.Permissions) (name string, id int64, ok bool) {
+	if p == nil || p.Extensions == nil {
+		return "", 0, false
+	}
+	name = p.Extensions["runner"]
+	raw := p.Extensions["runner_id"]
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if name == "" || err != nil || id <= 0 || strconv.FormatInt(id, 10) != raw {
+		return "", 0, false
+	}
+	return name, id, true
+}
+
 func (s *Server) staleAfter() time.Duration { return 3 * s.cfg.HeartbeatEvery }
-
-// lastActivity is the last heartbeat, or the connect time if none arrived yet.
-func (sess *session) lastActivity() time.Time {
-	sess.mu.Lock()
-	defer sess.mu.Unlock()
-	if sess.lastSeen.IsZero() {
-		return sess.since
-	}
-	return sess.lastSeen
-}
-
-func (s *Server) stale(sess *session) bool { return time.Since(sess.lastActivity()) > s.staleAfter() }
-
-// watch closes the connection of a runner that stopped heartbeating (dead peer, half-open TCP).
-func (s *Server) watch(sess *session, stop <-chan struct{}) {
-	t := time.NewTicker(max(s.cfg.HeartbeatEvery/2, time.Millisecond))
-	defer t.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-t.C:
-			if s.stale(sess) {
-				s.cfg.Logf("runner %q silent for >%s; closing connection", sess.name, s.staleAfter())
-				sess.conn.Close()
-				return
-			}
-		}
-	}
-}
-
-func (s *Server) heartbeat(sess *session, hb transport.Heartbeat) {
-	sess.mu.Lock()
-	first := !sess.ready
-	sess.hb, sess.lastSeen, sess.ready = hb, time.Now(), true
-	sess.mu.Unlock()
-	if !first {
-		return
-	}
-	// Register on first heartbeat: by then the runner has installed its channel handler.
-	s.mu.Lock()
-	old := s.runners[sess.name]
-	s.runners[sess.name] = sess
-	s.mu.Unlock()
-	if old != nil && old != sess {
-		old.conn.Close() // the new connection wins (e.g. runner reconnected after a silent drop)
-	}
-	s.cfg.Logf("runner %q online (%s/%s)", sess.name, hb.OS, hb.Arch)
-}
-
-func (s *Server) deregister(sess *session) {
-	s.mu.Lock()
-	if s.runners[sess.name] == sess {
-		delete(s.runners, sess.name)
-		s.cfg.Logf("runner %q offline", sess.name)
-	}
-	s.mu.Unlock()
-}
 
 // Runners returns a snapshot of online runners, sorted by name.
 func (s *Server) Runners() []RunnerInfo {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	var out []RunnerInfo
-	for _, r := range s.runners {
-		if s.stale(r) {
-			continue
+	for _, si := range s.reg.Snapshot() {
+		if si.Online {
+			out = append(out, RunnerInfo{si.Name, si.Info, si.LastHeartbeat, si.Since})
 		}
-		r.mu.Lock()
-		out = append(out, RunnerInfo{r.name, r.hb, r.lastSeen, r.since})
-		r.mu.Unlock()
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-func (s *Server) sessionFor(name string) *session {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if r := s.runners[name]; r != nil && !s.stale(r) {
-		return r
-	}
-	return nil
+func (s *Server) sessionFor(name string) *registry.Session {
+	return s.reg.GetByName(name)
 }
 
 // Exec asks a runner to run an action over a channel opened on the runner's own connection.
@@ -302,52 +280,5 @@ func (s *Server) exec(ctx context.Context, runner string, req transport.ExecRequ
 	if sess == nil {
 		return nil, fmt.Errorf("runner %q is not online", runner)
 	}
-	payload, _ := json.Marshal(req)
-	// OpenChannel itself cannot be cancelled: run it aside and give up on ctx. If it opens late,
-	// the orphan channel is closed.
-	type opened struct {
-		ch   ssh.Channel
-		reqs <-chan *ssh.Request
-		err  error
-	}
-	done := make(chan opened, 1)
-	go func() {
-		ch, reqs, err := sess.conn.OpenChannel(transport.ChanExec, payload)
-		done <- opened{ch, reqs, err}
-	}()
-	var o opened
-	select {
-	case o = <-done:
-	case <-ctx.Done():
-		go func() {
-			if late := <-done; late.err == nil {
-				late.ch.Close()
-				go ssh.DiscardRequests(late.reqs)
-			}
-		}()
-		return nil, ctx.Err()
-	}
-	if o.err != nil {
-		return nil, fmt.Errorf("open exec channel: %w", o.err)
-	}
-	ch := o.ch
-	go ssh.DiscardRequests(o.reqs)
-	defer ch.Close()
-	stop := context.AfterFunc(ctx, func() { ch.Close() })
-	defer stop()
-	data, err := io.ReadAll(io.LimitReader(ch, transport.MaxResultBytes+1))
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > transport.MaxResultBytes {
-		return nil, fmt.Errorf("result too large: runner sent more than %d bytes", transport.MaxResultBytes)
-	}
-	var res transport.ExecResult
-	if err := json.Unmarshal(data, &res); err != nil {
-		return nil, fmt.Errorf("runner sent no valid result (%d bytes)", len(data))
-	}
-	return &res, nil
+	return s.reg.Exec(ctx, sess.ID, req)
 }

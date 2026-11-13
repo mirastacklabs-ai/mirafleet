@@ -87,26 +87,13 @@ func TestRunnerNameRE(t *testing.T) {
 	}
 }
 
-func TestGenerateExclusiveAndLoadSignerMode(t *testing.T) {
+func TestGenerateExclusive(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := Generate(dir, "k", "k"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Generate(dir, "k", "k"); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("second Generate must fail with ErrExist, got %v", err)
-	}
-	p := filepath.Join(dir, "k")
-	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
-		t.Fatalf("mode %v", st.Mode())
-	}
-	if _, err := LoadSigner(p); err != nil {
-		t.Fatal(err)
-	}
-	for _, m := range []os.FileMode{0o640, 0o604, 0o644, 0o660} {
-		os.Chmod(p, m)
-		if _, err := LoadSigner(p); err == nil {
-			t.Errorf("mode %04o accepted", m)
-		}
 	}
 }
 

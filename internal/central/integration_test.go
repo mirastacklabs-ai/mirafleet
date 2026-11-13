@@ -287,7 +287,7 @@ func TestRunnerReconnectsAfterDroppedConnection(t *testing.T) {
 	e.startRunner("r1")
 	e.waitOnline("r1")
 	old := e.srv.sessionFor("r1")
-	old.conn.Close()
+	old.Conn().Close()
 	waitFor(t, func() bool { s := e.srv.sessionFor("r1"); return s != nil && s != old })
 	res, err := e.exec("r1", "hello", "name", "back")
 	if err != nil || strings.TrimSpace(res.Stdout) != "hello back" {
@@ -301,7 +301,7 @@ func TestChannelRestrictions(t *testing.T) {
 	e.waitOnline("r1")
 
 	// Runner side: central tries other channel types over the runner's connection.
-	conn := e.srv.sessionFor("r1").conn
+	conn := e.srv.sessionFor("r1").Conn()
 	for _, typ := range []string{"session", "direct-tcpip", "file@mirafleet", "workspace@mirafleet", "x11"} {
 		_, _, err := conn.OpenChannel(typ, nil)
 		var oe *ssh.OpenChannelError
@@ -524,5 +524,24 @@ func TestAdminSocketPermissionsAndPeer(t *testing.T) {
 	must(t, err)
 	if st.Mode().Perm() != 0o600 {
 		t.Fatalf("socket mode %v", st.Mode())
+	}
+}
+
+func TestRunnerIdentityFailsClosed(t *testing.T) {
+	ext := func(name, id string) *ssh.Permissions {
+		return &ssh.Permissions{Extensions: map[string]string{"runner": name, "runner_id": id}}
+	}
+	if n, id, ok := runnerIdentity(ext("a", "3")); !ok || n != "a" || id != 3 {
+		t.Fatalf("good identity rejected: %q %d %v", n, id, ok)
+	}
+	bad := []*ssh.Permissions{
+		nil, {}, ext("", "3"), ext("a", ""), ext("a", "0"), ext("a", "-1"),
+		ext("a", "x"), ext("a", "03"), ext("a", "+3"), ext("a", "3 "),
+		{Extensions: map[string]string{"runner": "a"}},
+	}
+	for i, p := range bad {
+		if _, _, ok := runnerIdentity(p); ok {
+			t.Errorf("case %d accepted", i)
+		}
 	}
 }

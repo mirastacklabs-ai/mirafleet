@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync/atomic"
 	"time"
 )
 
@@ -62,7 +61,47 @@ const (
 	MethodOperatorList         = "operator.list"
 	MethodOperatorRevoke       = "operator.revoke"
 	MethodAuditList            = "audit.list"
+
+	// Enrol methods (join@mirafleet / register@mirafleet, user "enroll" only).
+	MethodEnrollJoin     = "enroll.join"
+	MethodEnrollRegister = "enroll.register"
 )
+
+// IsEnrollMethod reports whether m is routable on the enroll channels. Disjoint from
+// IsOperatorMethod and IsAdminMethod.
+func IsEnrollMethod(m string) bool {
+	switch m {
+	case MethodEnrollJoin, MethodEnrollRegister:
+		return true
+	}
+	return false
+}
+
+// EnrollJoinParams is the enroll.join request (channel join@mirafleet).
+type EnrollJoinParams struct {
+	Token  string            `json:"token"`
+	Name   string            `json:"name"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// EnrollJoinResult reports the runner's resulting status ("pending" or "active").
+type EnrollJoinResult struct {
+	Fleet  string `json:"fleet"`
+	Runner string `json:"runner"`
+	Status string `json:"status"`
+}
+
+// EnrollRegisterParams is the enroll.register request (channel register@mirafleet).
+type EnrollRegisterParams struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+// EnrollRegisterResult reports the operator's resulting status ("active").
+type EnrollRegisterResult struct {
+	Operator string `json:"operator"`
+	Status   string `json:"status"`
+}
 
 // IsOperatorMethod reports whether m is routable on api@mirafleet. Backed by a switch so the
 // set is immutable at runtime.
@@ -301,16 +340,15 @@ func readRequest(r io.Reader, closer io.Closer) (req *Request, id string, err er
 			defer d.SetReadDeadline(time.Time{})
 		}
 	}
-	var fired atomic.Bool
+	var t *time.Timer
 	if closer != nil {
-		t := time.AfterFunc(RequestTimeout, func() {
-			fired.Store(true)
-			closer.Close()
-		})
-		defer t.Stop()
+		t = time.AfterFunc(RequestTimeout, func() { closer.Close() })
 	}
 	payload, ferr := ReadFrame(r, MaxRequestBytes)
-	if fired.Load() {
+	// Stop right after the read: if it reports false the timer already fired (or is firing), so
+	// the closer may be closed and the read must count as timed out. If true, the timer can
+	// never close the channel after this function returns a request.
+	if t != nil && !t.Stop() {
 		return nil, "", Errorf(CodeTimeout, "request not received within %s", RequestTimeout)
 	}
 	switch {

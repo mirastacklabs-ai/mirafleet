@@ -394,3 +394,55 @@ func FuzzReadRequest(f *testing.F) {
 		}
 	})
 }
+
+// slowReader delivers its data only after d, so the arrival timer fires first.
+type slowReader struct {
+	r io.Reader
+	d time.Duration
+}
+
+func (s *slowReader) Read(p []byte) (int, error) {
+	time.Sleep(s.d)
+	return s.r.Read(p)
+}
+
+// A request that completes after the timer fired must report a timeout, and a successful
+// return must never be followed by a close from the timer. Not parallel: mutates RequestTimeout.
+func TestReadRequestTimerNeverClosesAfterSuccess(t *testing.T) {
+	old := RequestTimeout
+	RequestTimeout = 20 * time.Millisecond
+	defer func() { RequestTimeout = old }()
+	for _, delay := range []time.Duration{0, 60 * time.Millisecond} {
+		var closed atomic.Bool
+		cl := closerFunc(func() error { closed.Store(true); return nil })
+		sr := &slowReader{r: bytes.NewReader(frame(`{"v":1,"id":"a","method":"hello"}`)), d: delay}
+		req, _, err := ReadRequestTimeout(sr, cl)
+		if err == nil {
+			if req == nil {
+				t.Fatal("nil request")
+			}
+			time.Sleep(60 * time.Millisecond)
+			if closed.Load() {
+				t.Fatal("timer closed the channel after a successful read")
+			}
+			continue
+		}
+		var ae *Error
+		if !errors.As(err, &ae) || ae.Code != CodeTimeout {
+			t.Fatalf("delay %s: got %v", delay, err)
+		}
+	}
+}
+
+func TestEnrollMethodsDisjoint(t *testing.T) {
+	for _, m := range []string{MethodEnrollJoin, MethodEnrollRegister} {
+		if !IsEnrollMethod(m) || IsOperatorMethod(m) || IsAdminMethod(m) {
+			t.Errorf("%s misclassified", m)
+		}
+	}
+	for _, m := range []string{MethodHello, MethodActionRun, MethodFleetCreate, MethodAuditList, "", "enroll"} {
+		if IsEnrollMethod(m) {
+			t.Errorf("%q routable on enroll", m)
+		}
+	}
+}

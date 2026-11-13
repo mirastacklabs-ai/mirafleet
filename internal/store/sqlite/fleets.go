@@ -1,0 +1,92 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/mirastacklabs-ai/mirafleet/internal/store"
+)
+
+// CreateFleet inserts a fleet and its audit event in one transaction.
+func (d *DB) CreateFleet(ctx context.Context, f store.Fleet, now time.Time, ev store.AuditEvent) (store.Fleet, error) {
+	if !store.ValidFleetName(f.Name) {
+		return store.Fleet{}, fmt.Errorf("%w: fleet name must match %s", store.ErrInvalid, store.FleetNameRE)
+	}
+	if !f.Mode.Valid() {
+		return store.Fleet{}, fmt.Errorf("%w: fleet mode must be actions or workspace", store.ErrInvalid)
+	}
+	if ev.Time.IsZero() {
+		ev.Time = now
+	}
+	out := store.Fleet{Name: f.Name, Mode: f.Mode, Confirm: f.Confirm, CreatedAt: now.UTC().Truncate(time.Millisecond)}
+	err := d.withTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `INSERT INTO fleets (name, mode, confirm, created_at) VALUES (?,?,?,?)`,
+			f.Name, string(f.Mode), f.Confirm, now.UnixMilli())
+		if err != nil {
+			if isUnique(err) {
+				return fmt.Errorf("%w: fleet %q already exists", store.ErrConflict, f.Name)
+			}
+			return err
+		}
+		if out.ID, err = res.LastInsertId(); err != nil {
+			return err
+		}
+		_, err = insertAuditTx(ctx, tx, ev)
+		return err
+	})
+	if err != nil {
+		return store.Fleet{}, err
+	}
+	return out, nil
+}
+
+func scanFleet(sc interface{ Scan(...any) error }, withCount bool) (store.Fleet, error) {
+	var (
+		f    store.Fleet
+		mode string
+		ts   int64
+	)
+	dst := []any{&f.ID, &f.Name, &mode, &f.Confirm, &ts}
+	if withCount {
+		dst = append(dst, &f.RunnerCount)
+	}
+	if err := sc.Scan(dst...); err != nil {
+		return store.Fleet{}, err
+	}
+	f.Mode = store.Mode(mode)
+	f.CreatedAt = time.UnixMilli(ts).UTC()
+	return f, nil
+}
+
+// GetFleet returns the fleet by name.
+func (d *DB) GetFleet(ctx context.Context, name string) (store.Fleet, error) {
+	f, err := scanFleet(d.reader.QueryRowContext(ctx,
+		`SELECT id, name, mode, confirm, created_at FROM fleets WHERE name = ?`, name), false)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.Fleet{}, fmt.Errorf("%w: fleet", store.ErrNotFound)
+	}
+	return f, err
+}
+
+// ListFleets returns all fleets by name with the non-revoked runner count, in one query.
+func (d *DB) ListFleets(ctx context.Context) ([]store.Fleet, error) {
+	rows, err := d.reader.QueryContext(ctx, `SELECT f.id, f.name, f.mode, f.confirm, f.created_at,
+ (SELECT COUNT(*) FROM runners r WHERE r.fleet_id = f.id AND r.status <> 'revoked')
+ FROM fleets f ORDER BY f.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.Fleet
+	for rows.Next() {
+		f, err := scanFleet(rows, true)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}

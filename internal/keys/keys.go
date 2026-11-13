@@ -17,7 +17,9 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// EnsureDir creates dir with mode 0700 and tightens it to 0700 if it already exists.
+// EnsureDir creates dir with mode 0700 and tightens it to 0700 if it already exists. On Windows
+// os.Chmod(0700) is effectively a no-op (it only toggles the read-only attribute); owner-only
+// DACLs arrive with M5, and until then the Windows key loader fails closed.
 func EnsureDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -88,8 +90,8 @@ func LoadSigner(path string) (ssh.Signer, error) {
 	if err != nil {
 		return nil, err
 	}
-	if st.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("private key %s has mode %04o; it must not be accessible to group or others (chmod 600)", path, st.Mode().Perm())
+	if err := checkPrivateKeyPerm(path, st); err != nil {
+		return nil, err
 	}
 	b, err := io.ReadAll(f)
 	if err != nil {

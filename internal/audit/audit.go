@@ -19,6 +19,15 @@ type Event struct {
 	ExitCode   int               `json:"exit_code"`
 	DurationMS int64             `json:"duration_ms"`
 	Message    string            `json:"message,omitempty"`
+
+	// Central-side attribution; all omitted when empty so runner JSONL is unchanged.
+	Source    string `json:"source,omitempty"`
+	ActorKind string `json:"actor_kind,omitempty"`
+	Actor     string `json:"actor,omitempty"`
+	Remote    string `json:"remote,omitempty"`
+	Fleet     string `json:"fleet,omitempty"`
+	Subject   string `json:"subject,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
 }
 
 type Writer struct {
@@ -42,16 +51,21 @@ func (a *Writer) Log(e Event) {
 	if a == nil {
 		return
 	}
+	_ = a.write(e)
+}
+
+func (a *Writer) write(e Event) error {
 	if e.Time.IsZero() {
 		e.Time = time.Now().UTC()
 	}
 	b, err := json.Marshal(e)
 	if err != nil {
-		return
+		return err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.w.Write(append(b, '\n'))
+	_, err = a.w.Write(append(b, 0x0a))
+	return err
 }
 
 func (a *Writer) Close() error {
