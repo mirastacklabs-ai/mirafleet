@@ -10,6 +10,7 @@
 package central
 
 import (
+	"encoding/base64"
 	"errors"
 	"net"
 	"sync"
@@ -34,11 +35,36 @@ type Config struct {
 	// be the service's OperatorConns.
 	Operators *OperatorConns
 	Logf      func(format string, args ...any)
+
+	// EnrollRatePerMin limits enroll connections per source IP (token bucket, burst = rate).
+	// Zero means DefaultEnrollRatePerMin.
+	EnrollRatePerMin int
+	// EnrollDeadline is the whole-connection lifetime of an enroll connection. Zero means
+	// DefaultEnrollDeadline.
+	EnrollDeadline time.Duration
+	// TouchInterval is the minimum gap between heartbeat-driven last_seen/info writes of a
+	// runner. Zero means DefaultTouchInterval.
+	TouchInterval time.Duration
+	// Now is the clock for last_seen writes and the rate limiter. Zero means time.Now.
+	Now func() time.Time
 }
 
+// Defaults for the optional Config fields.
+const (
+	DefaultEnrollRatePerMin = 10
+	DefaultEnrollDeadline   = 30 * time.Second
+	DefaultTouchInterval    = 5 * time.Minute
+)
+
+// extPubKey carries the base64 SSH wire form of the presented key for enroll connections (the
+// enrol service needs the key itself, not only its fingerprint). Set in the auth callback, i.e.
+// only for the key whose signature the handshake verified.
+const extPubKey = "mirafleet-pubkey"
+
 type Server struct {
-	cfg Config
-	ssh *ssh.ServerConfig
+	cfg     Config
+	ssh     *ssh.ServerConfig
+	limiter *ipLimiter
 
 	mu     sync.Mutex
 	ln     net.Listener
@@ -66,14 +92,35 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
+	if cfg.EnrollRatePerMin <= 0 {
+		cfg.EnrollRatePerMin = DefaultEnrollRatePerMin
+	}
+	if cfg.EnrollDeadline <= 0 {
+		cfg.EnrollDeadline = DefaultEnrollDeadline
+	}
+	if cfg.TouchInterval <= 0 {
+		cfg.TouchInterval = DefaultTouchInterval
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
 	ka := &auth.KeyAuth{Store: cfg.Store, Logf: cfg.Logf}
+	base := auth.PublicKeyCallback(ka)
+	pkcb := func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+		perms, err := base(meta, key)
+		if err == nil && meta.User() == string(auth.KindEnroll) {
+			perms.Extensions[extPubKey] = base64.StdEncoding.EncodeToString(key.Marshal())
+		}
+		return perms, err
+	}
 	sc := &ssh.ServerConfig{
-		PublicKeyCallback:       auth.PublicKeyCallback(ka),
+		PublicKeyCallback:       pkcb,
 		PublicKeyAuthAlgorithms: []string{ssh.KeyAlgoED25519},
 		MaxAuthTries:            3,
 	}
 	sc.AddHostKey(cfg.HostKey)
-	return &Server{cfg: cfg, ssh: sc, conns: map[*ssh.ServerConn]struct{}{}}, nil
+	return &Server{cfg: cfg, ssh: sc, limiter: newIPLimiter(cfg.EnrollRatePerMin, cfg.Now),
+		conns: map[*ssh.ServerConn]struct{}{}}, nil
 }
 
 // Start binds the listener and serves in the background. It returns the bound address.
@@ -117,6 +164,7 @@ func (s *Server) Close() {
 const handshakeTimeout = 30 * time.Second
 
 func (s *Server) handle(nc net.Conn) {
+	accepted := time.Now()
 	nc.SetDeadline(time.Now().Add(handshakeTimeout))
 	sconn, chans, reqs, err := ssh.NewServerConn(nc, s.ssh)
 	if err != nil {
@@ -146,5 +194,5 @@ func (s *Server) handle(nc net.Conn) {
 		s.cfg.Logf("handshake from %s: missing or invalid identity; closing", nc.RemoteAddr())
 		return
 	}
-	s.dispatch(sconn, p, chans, reqs)
+	s.dispatch(sconn, p, accepted, chans, reqs)
 }

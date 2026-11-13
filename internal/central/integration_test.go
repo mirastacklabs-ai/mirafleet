@@ -61,6 +61,7 @@ type env struct {
 	ops        *OperatorConns
 	admin      auth.Principal
 	ids        map[string]int64 // runner name -> store id (test bookkeeping only)
+	cfgMod     func(*Config)
 	tokenN     int
 
 	logMu sync.Mutex
@@ -91,9 +92,14 @@ func newEnv(t *testing.T, runnerNames ...string) *env {
 
 // newEnvHB is newEnv with a custom heartbeat interval (the registry's stale window is 3x it).
 func newEnvHB(t *testing.T, hb time.Duration, runnerNames ...string) *env {
+	return newEnvOpts(t, hb, nil, runnerNames...)
+}
+
+// newEnvOpts is newEnvHB with a hook that tweaks the central Config before it starts.
+func newEnvOpts(t *testing.T, hb time.Duration, mod func(*Config), runnerNames ...string) *env {
 	t.Helper()
 	ctx := context.Background()
-	e := &env{t: t, dir: t.TempDir(), ids: map[string]int64{}, admin: auth.LocalAdmin(os.Getuid())}
+	e := &env{t: t, dir: t.TempDir(), cfgMod: mod, ids: map[string]int64{}, admin: auth.LocalAdmin(os.Getuid())}
 	if _, err := keys.Generate(e.dir, "host", "host"); err != nil {
 		t.Fatal(err)
 	}
@@ -181,8 +187,12 @@ func (e *env) addRunner(name string, status store.Status) store.Runner {
 
 func (e *env) startCentral(listen string) {
 	e.t.Helper()
-	srv, err := New(Config{Listen: listen, HostKey: e.hostSigner, Store: e.db, Service: e.svc,
-		Registry: e.reg, Operators: e.ops, Logf: e.logf})
+	cfg := Config{Listen: listen, HostKey: e.hostSigner, Store: e.db, Service: e.svc,
+		Registry: e.reg, Operators: e.ops, Logf: e.logf}
+	if e.cfgMod != nil {
+		e.cfgMod(&cfg)
+	}
+	srv, err := New(cfg)
 	must(e.t, err)
 	addr, err := srv.Start()
 	must(e.t, err)
@@ -579,40 +589,6 @@ func TestChannelAllowList(t *testing.T) {
 	for _, c := range cases {
 		if got := channelAllowed(c.kind, c.typ); got != c.want {
 			t.Errorf("channelAllowed(%s, %s) = %v, want %v", c.kind, c.typ, got, c.want)
-		}
-	}
-}
-
-// Until S7b, operator and enroll connections authenticate but are closed; a revoked operator
-// key is rejected at auth.
-func TestOperatorAndEnrollNotServedYet(t *testing.T) {
-	e := newEnv(t)
-	ctx := context.Background()
-	for _, name := range []string{"op", "gone"} {
-		pub, err := keys.Generate(e.dir, name, name)
-		must(t, err)
-		pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pub))
-		must(t, err)
-		_, _, err = e.db.RegisterOperator(ctx, name, pk.Marshal(), ssh.FingerprintSHA256(pk), time.Now(), auditEv("operator.register"))
-		must(t, err)
-	}
-	_, err := e.db.RevokeOperator(ctx, "gone", time.Now(), auditEv("operator.revoke"))
-	must(t, err)
-
-	if _, err := e.dial(transport.UserOperator, "gone"); err == nil {
-		t.Fatal("revoked operator key authenticated")
-	}
-	for _, c := range []struct{ user, key string }{{transport.UserOperator, "op"}, {transport.UserEnroll, "op"}} {
-		cl, err := e.dial(c.user, c.key)
-		if err != nil {
-			t.Fatalf("%s: %v", c.user, err)
-		}
-		closed := make(chan struct{})
-		go func() { cl.Wait(); close(closed) }()
-		select {
-		case <-closed:
-		case <-time.After(5 * time.Second):
-			t.Fatalf("%s connection was not closed", c.user)
 		}
 	}
 }

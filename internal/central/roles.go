@@ -29,27 +29,27 @@ func channelAllowed(k auth.Kind, typ string) bool { return allowedChannels[k][ty
 
 // dispatch hands an authenticated connection to its role. It returns when the connection is
 // done; the caller closes it.
-func (s *Server) dispatch(sconn *ssh.ServerConn, p auth.Principal, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
+func (s *Server) dispatch(sconn *ssh.ServerConn, p auth.Principal, accepted time.Time, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
 	switch p.Kind {
 	case auth.KindRunner:
 		s.serveRunner(sconn, p, chans, reqs)
-	case auth.KindOperator, auth.KindEnroll:
-		// TODO(S7b): operators get api@mirafleet, enroll peers join@/register@. Until then the
-		// connection is closed.
-		s.cfg.Logf("%s connection from %s refused: role not served yet", p.Kind, sconn.RemoteAddr())
+	case auth.KindOperator:
+		s.serveOperator(sconn, p, chans, reqs)
+	case auth.KindEnroll:
+		s.serveEnroll(sconn, p, accepted, chans, reqs)
 	default:
 		s.cfg.Logf("connection from %s: unknown principal kind %q; closing", sconn.RemoteAddr(), p.Kind)
 	}
 }
 
-// rejectChannels rejects every channel the peer opens that its role does not allow.
+// rejectChannels rejects every channel the peer opens (used for runners, whose allow-list is
+// empty; operators and enroll peers have their own channel loops).
 func rejectChannels(k auth.Kind, chans <-chan ssh.NewChannel) {
 	for nch := range chans {
 		if !channelAllowed(k, nch.ChannelType()) {
 			nch.Reject(ssh.UnknownChannelType, "channel type not allowed")
 			continue
 		}
-		// TODO(S7b): allowed channels get real handlers; no role is served with one yet.
 		nch.Reject(ssh.Prohibited, "not supported")
 	}
 }
@@ -77,6 +77,8 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 	go rejectChannels(auth.KindRunner, chans)
 	// A connection that never heartbeats is never registered; close it after the stale window.
 	var sess *registry.Session
+	var lastHB transport.Heartbeat
+	var lastTouch time.Time
 	var registered atomic.Bool
 	guard := time.AfterFunc(staleAfter, func() {
 		if !registered.Load() {
@@ -88,6 +90,7 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 	defer func() {
 		if sess != nil {
 			reg.Unregister(sess)
+			s.touchRunner(p.ID, lastHB) // D-02: last_seen/info on disconnect
 		}
 	}()
 	for r := range reqs {
@@ -111,8 +114,15 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 				continue
 			}
 			registered.Store(true)
+			lastHB, lastTouch = hb, time.Now()
+			s.touchRunner(p.ID, hb) // D-02: last_seen/info on register
 		} else {
 			sess.Heartbeat(hb)
+			lastHB = hb
+			if time.Since(lastTouch) >= s.cfg.TouchInterval {
+				lastTouch = time.Now()
+				s.touchRunner(p.ID, hb)
+			}
 		}
 		r.Reply(true, nil)
 	}
@@ -138,4 +148,17 @@ func (s *Server) register(sconn *ssh.ServerConn, p auth.Principal, hb transport.
 	}
 	s.cfg.Logf("runner %s (id %d, %s) online (%s/%s)", r.Ref(), r.ID, r.Status, hb.OS, hb.Arch)
 	return sess, nil
+}
+
+// storeTimeout bounds the best-effort last_seen writes.
+const storeTimeout = 5 * time.Second
+
+// touchRunner records last_seen_at and info for a runner (D-02). Failures are logged only.
+func (s *Server) touchRunner(id int64, hb transport.Heartbeat) {
+	ctx, cancel := context.WithTimeout(context.Background(), storeTimeout)
+	defer cancel()
+	info := map[string]string{"hostname": hb.Hostname, "os": hb.OS, "arch": hb.Arch, "version": hb.Version}
+	if err := s.cfg.Store.TouchRunner(ctx, id, s.cfg.Now(), info); err != nil {
+		s.cfg.Logf("touch runner %d: %v", id, err)
+	}
 }
