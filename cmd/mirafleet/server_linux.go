@@ -23,7 +23,10 @@ import (
 // offline.
 const heartbeatEvery = 15 * time.Second
 
-const defaultRunnerData = "/var/lib/mirafleet/runner"
+const (
+	defaultRunnerData  = "/var/lib/mirafleet/runner"
+	defaultActionsFile = "/etc/mirafleet/actions.yaml"
+)
 
 func runnerMain(args []string) error {
 	if len(args) > 0 {
@@ -32,9 +35,15 @@ func runnerMain(args []string) error {
 			return runnerJoin(args[1:], os.Stdin, os.Stdout)
 		case "run":
 			return runnerRun(args[1:])
+		case "tls-init":
+			return runnerTLSInit(args[1:], os.Stdout)
+		case "tls-front":
+			return runnerTLSFront(args[1:])
+		case "workspace":
+			return runnerWorkspace(args[1:], os.Stdout, time.Now())
 		}
 	}
-	return errors.New("usage: mirafleet runner join ADDR -name NAME [-data DIR] -token -  |  mirafleet runner run [-data DIR] [-actions FILE]")
+	return errors.New("usage: mirafleet runner join ADDR -name NAME [-data DIR] -token -  |  run [-data DIR] [-actions FILE | -workspace FILE]  |  tls-init  |  tls-front  |  workspace list|prune")
 }
 
 func runnerJoin(args []string, stdin io.Reader, stdout io.Writer) error {
@@ -81,9 +90,18 @@ func runnerJoin(args []string, stdin io.Reader, stdout io.Writer) error {
 func runnerRun(args []string) error {
 	fs := flag.NewFlagSet("runner run", flag.ContinueOnError)
 	data := fs.String("data", defaultRunnerData, "data directory")
-	actFile := fs.String("actions", "/etc/mirafleet/actions.yaml", "actions.yaml path")
+	actFile := fs.String("actions", defaultActionsFile, "actions.yaml path (actions mode, the default)")
+	wsFile := fs.String("workspace", "", "workspace.yaml path (workspace mode; exclusive with -actions)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if given["actions"] && given["workspace"] {
+		return errors.New("runner run: -actions and -workspace are mutually exclusive (one runner, one mode)")
+	}
+	if given["workspace"] && *wsFile == "" {
+		return errors.New("runner run: -workspace needs a file")
 	}
 	cfg, err := runner.LoadConfig(*data)
 	if err != nil {
@@ -93,8 +111,28 @@ func runnerRun(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load runner key: %w", err)
 	}
-	acts, err := actions.Load(*actFile)
-	if err != nil {
+	rcfg := runner.Config{
+		Central: cfg.Central, Name: cfg.Name, Signer: signer, KnownHosts: runner.KnownHostsPath(*data),
+		Version: version, Logf: logf, HeartbeatEvery: heartbeatEvery,
+	}
+	if given["workspace"] {
+		wc, ex, err := loadWorkspace(*wsFile, cfg)
+		if err != nil {
+			return err
+		}
+		defer ex.Close()
+		rcfg.Workspace, rcfg.WorkspaceConfig = ex, wc
+		logf("runner %q (fleet %s) -> %s, workspace mode: %s executor, %d slot(s), owner %s",
+			cfg.Name, cfg.Fleet, cfg.Central, wc.Executor, wc.Concurrent, ownerName(cfg))
+	} else {
+		acts, err := actions.Load(*actFile)
+		if err != nil {
+			return err
+		}
+		rcfg.Actions = acts
+		logf("runner %q (fleet %s) -> %s, actions: %s", cfg.Name, cfg.Fleet, cfg.Central, strings.Join(acts.Names(), ","))
+	}
+	if err := rcfg.Validate(); err != nil {
 		return err
 	}
 	al, err := audit.Open(filepath.Join(*data, "audit.jsonl"))
@@ -102,12 +140,11 @@ func runnerRun(args []string) error {
 		return err
 	}
 	defer al.Close()
+	rcfg.Audit = al
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	logf("runner %q (fleet %s) -> %s, actions: %s", cfg.Name, cfg.Fleet, cfg.Central, strings.Join(acts.Names(), ","))
-	runner.New(runner.Config{
-		Central: cfg.Central, Name: cfg.Name, Signer: signer, KnownHosts: runner.KnownHostsPath(*data),
-		Actions: acts, Version: version, Audit: al, Logf: logf, HeartbeatEvery: heartbeatEvery,
-	}).Run(ctx)
+	if err := runner.New(rcfg).Run(ctx); err != nil && ctx.Err() == nil {
+		return err // a configuration error; cancellation is the normal way out
+	}
 	return nil
 }

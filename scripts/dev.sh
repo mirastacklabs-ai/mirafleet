@@ -99,7 +99,9 @@ integration)
 	# the container (tmpfs) and vanishes with it. Tests use no network; images are built at test time.
 	# Test binaries are mounted read-only. Exit status is the tests' exit status.
 	# Add packages that carry integration tests to ITEST_PKGS (space separated).
-	ITEST_PKGS="${MIRAFLEET_ITEST_PKGS:-./internal/workspace/ctrd}"
+	# ./cmd/mirafleet carries the built-binary end-to-end test (TestIntegration*): the mirafleet
+	# binary itself is built below into /out/mirafleet and handed to it as MIRAFLEET_TEST_BIN.
+	ITEST_PKGS="${MIRAFLEET_ITEST_PKGS:-./internal/workspace/ctrd ./cmd/mirafleet}"
 	# docker:28-dind supplies runc 1.3.3 and the userland (its bundled containerd 1.7.28 is NOT
 	# used: the harness runs containerd 2.x built from go.mod, with its matching shim, from
 	# /itest). Pinned by tag and multi-arch index digest.
@@ -119,6 +121,8 @@ integration)
 			n=$(echo "$p" | sed "s|^\./||; s|/|_|g")
 			go test -c -tags integration -o "/out/$n.test" "$p"
 		done
+		# the real, static mirafleet binary for the built-binary end-to-end test
+		go build -o /out/mirafleet ./cmd/mirafleet
 		# containerd daemon + runc shim, built statically from the SAME module version as go.mod
 		# (the version is read from it). The daemon needs many modules that the repo go.mod does not
 		# list, so it is built in a scratch module under /tmp; go.mod/go.sum are never touched and
@@ -165,10 +169,15 @@ CFG
 			sleep 0.3
 		done
 		export MIRAFLEET_TEST_CONTAINERD_SOCK=/run/containerd/containerd.sock
+		export MIRAFLEET_TEST_BIN=/itest/mirafleet
 		rc=0
 		for b in /itest/*.test; do
 			echo "== $b"
-			"$b" -test.v -test.timeout 10m || rc=$?
+			# cmd_mirafleet.test also holds the (non-integration) unit tests, which the normal
+			# gate already runs; here only the built-binary end-to-end tests.
+			run=""
+			case "$b" in */cmd_mirafleet.test) run="-test.run ^TestIntegration" ;; esac
+			"$b" -test.v -test.timeout 10m $run || rc=$?
 		done
 		[ $rc -eq 0 ] || { echo "--- containerd log tail" >&2; tail -n 30 /tmp/containerd.log >&2; }
 		kill $cpid 2>/dev/null || :

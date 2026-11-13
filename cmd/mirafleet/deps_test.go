@@ -77,21 +77,15 @@ func TestNoContainerdOnNonLinux(t *testing.T) {
 	}
 }
 
-// Positive control for TestNoContainerdOnNonLinux. Nothing in cmd imports ctrd yet (S0), so this
-// checks ./internal/workspace/ctrd directly. TODO(M3 wiring): once server_linux.go imports ctrd,
-// switch it to goDeps(t, "linux") so it also proves the binary links containerd.
+// Positive control for TestNoContainerdOnNonLinux: the linux cmd/mirafleet binary itself links
+// containerd (runner_ws_linux.go imports ctrd). Without it a broken `go list` filter, or wiring
+// moved to a file that is not linux-only, would make the non-linux check pass vacuously.
 func TestLinuxLinksContainerd(t *testing.T) {
 	requireGo(t)
-	cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", "./../../internal/workspace/ctrd")
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go list ctrd: %v\n%s", err, out)
-	}
-	for _, pkg := range strings.Fields(string(out)) {
+	for _, pkg := range goDeps(t, "linux") {
 		if linksContainerd(pkg) {
 			return
 		}
 	}
-	t.Fatal("linux ctrd links no containerd package: the non-linux check proves nothing")
+	t.Fatal("linux binary links no containerd package: the non-linux check proves nothing")
 }

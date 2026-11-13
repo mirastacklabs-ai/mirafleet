@@ -563,6 +563,9 @@ type FleetWorkspaceInfo struct {
 	DefaultImage string   `json:"default_image"`
 	Images       []string `json:"images"`
 	Network      string   `json:"network"` // "none" or "egress"
+	// Config is the complete config, set on the admin socket only (the CLI's `fleet workspace
+	// set` needs it to send a full replace). Operators never see it.
+	Config *WorkspaceConfig `json:"config,omitempty"`
 }
 type FleetsListResult struct {
 	Fleets []FleetInfo `json:"fleets"`

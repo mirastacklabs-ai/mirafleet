@@ -22,7 +22,7 @@ func handleFleetCreate(ctx context.Context, c *callCtx, req *api.Request) (any, 
 	if err != nil {
 		return nil, err
 	}
-	return api.FleetCreateResult{Fleet: api.FleetInfo{Name: f.Name, Mode: string(f.Mode), Confirm: f.Confirm, Runners: f.RunnerCount}}, nil
+	return api.FleetCreateResult{Fleet: fleetInfo(f, c.p.Kind == auth.KindAdmin)}, nil
 }
 
 func handleTokenCreate(ctx context.Context, c *callCtx, req *api.Request) (any, error) {
@@ -203,4 +203,43 @@ func workspaceFromAPI(w *api.WorkspaceConfig) *store.WorkspaceConfig {
 		ExecDefault:  sec(w.ExecDefaultS),
 		ExecMax:      sec(w.ExecMaxS),
 	}
+}
+
+// workspaceToAPI is the inverse of workspaceFromAPI (durations back to seconds).
+func workspaceToAPI(w *store.WorkspaceConfig) *api.WorkspaceConfig {
+	if w == nil {
+		return nil
+	}
+	sec := func(d time.Duration) int { return int(d / time.Second) }
+	return &api.WorkspaceConfig{
+		Executor:     string(w.Executor),
+		DefaultImage: w.DefaultImage,
+		Images:       w.Images,
+		Pull:         string(w.Pull),
+		Network:      string(w.Network),
+		Egress:       w.Egress,
+		CPUMilli:     w.CPUMilli,
+		MemoryMB:     w.MemoryMB,
+		Pids:         w.Pids,
+		TmpfsMB:      w.TmpfsMB,
+		DiskMB:       w.DiskMB,
+		IdleTTLS:     sec(w.IdleTTL),
+		MaxTTLS:      sec(w.MaxTTL),
+		ExecDefaultS: sec(w.ExecDefault),
+		ExecMaxS:     sec(w.ExecMax),
+	}
+}
+
+// fleetInfo maps a fleet to its DTO. Workspace fleets carry the operator-visible subset; the
+// complete config (Config) is added for admins only.
+func fleetInfo(f store.Fleet, admin bool) api.FleetInfo {
+	fi := api.FleetInfo{Name: f.Name, Mode: string(f.Mode), Confirm: f.Confirm, Runners: f.RunnerCount}
+	if f.Workspace != nil {
+		fi.Workspace = &api.FleetWorkspaceInfo{DefaultImage: f.Workspace.DefaultImage,
+			Images: f.Workspace.Images, Network: string(f.Workspace.Network)}
+		if admin {
+			fi.Workspace.Config = workspaceToAPI(f.Workspace)
+		}
+	}
+	return fi
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 	"github.com/mirastacklabs-ai/mirafleet/internal/service"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
@@ -226,7 +227,7 @@ func handleFleetWorkspaceSet(ctx context.Context, c *callCtx, req *api.Request) 
 	if err != nil {
 		return nil, err
 	}
-	return api.FleetWorkspaceSetResult{Fleet: api.FleetInfo{Name: f.Name, Mode: string(f.Mode), Confirm: f.Confirm, Runners: f.RunnerCount}}, nil
+	return api.FleetWorkspaceSetResult{Fleet: fleetInfo(f, c.p.Kind == auth.KindAdmin)}, nil
 }
 
 func handleWorkspaceAdminList(ctx context.Context, c *callCtx, req *api.Request) (any, error) {

@@ -165,7 +165,7 @@ func handleFleetsList(ctx context.Context, c *callCtx, req *api.Request) (any, e
 	}
 	out := api.FleetsListResult{Fleets: make([]api.FleetInfo, len(fs))}
 	for i, f := range fs {
-		out.Fleets[i] = api.FleetInfo{Name: f.Name, Mode: string(f.Mode), Confirm: f.Confirm, Runners: f.RunnerCount}
+		out.Fleets[i] = fleetInfo(f, c.p.Kind == auth.KindAdmin)
 	}
 	return out, nil
 }
@@ -181,7 +181,8 @@ func handleRunnersList(ctx context.Context, c *callCtx, req *api.Request) (any, 
 	}
 	out := api.RunnersListResult{Runners: make([]api.RunnerInfo, len(vs))}
 	for i, v := range vs {
-		ri := api.RunnerInfo{Name: v.Name, Status: string(v.Status), Online: v.Online, Labels: v.Labels}
+		ri := api.RunnerInfo{Name: v.Name, Status: string(v.Status), Online: v.Online, Labels: v.Labels,
+			Slots: v.Slots, FreeSlots: v.FreeSlots, Executor: v.Executor}
 		if !v.LastSeenAt.IsZero() {
 			t := v.LastSeenAt
 			ri.LastSeen = &t

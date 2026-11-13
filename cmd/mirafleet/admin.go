@@ -62,7 +62,10 @@ func (c *adminCLI) run(args []string) error {
 	sub, rest := args[0], args[1:]
 	switch sub {
 	case "fleet":
-		return c.group(sub, rest, map[string]func([]string) error{"create": c.fleetCreate, "list": c.fleetList})
+		return c.group(sub, rest, map[string]func([]string) error{"create": c.fleetCreate, "list": c.fleetList,
+			"workspace": c.fleetWorkspace})
+	case "workspace":
+		return c.group(sub, rest, map[string]func([]string) error{"list": c.workspaceList, "kill": c.workspaceKill})
 	case "token":
 		return c.group(sub, rest, map[string]func([]string) error{"create": c.tokenCreate, "list": c.tokenList, "revoke": c.tokenRevoke})
 	case "runner":
@@ -176,6 +179,7 @@ func (c *adminCLI) fleetCreate(args []string) error {
 	fs, data := c.flags("fleet create")
 	mode := fs.String("mode", "actions", "fleet mode: actions or workspace")
 	confirm := fs.Bool("confirm", false, "guarded fleet: exec needs -confirm FLEET")
+	wf := addWSFlags(fs)
 	pos, err := adminParse(fs, args)
 	if err != nil {
 		return err
@@ -183,8 +187,19 @@ func (c *adminCLI) fleetCreate(args []string) error {
 	if err := adminWantArgs("fleet create", pos, 1, "one NAME"); err != nil {
 		return err
 	}
+	params := api.FleetCreateParams{Name: pos[0], Mode: *mode, Confirm: *confirm}
+	if len(wf.given()) > 0 {
+		if *mode != "workspace" {
+			return fmt.Errorf("%w: fleet create: workspace flags need -mode workspace", errAdminUsage)
+		}
+		cfg, err := wf.apply(api.WorkspaceConfig{})
+		if err != nil {
+			return err
+		}
+		params.Workspace = &cfg
+	}
 	var res api.FleetCreateResult
-	if err := c.call(adminSock(*data), api.MethodFleetCreate, api.FleetCreateParams{Name: pos[0], Mode: *mode, Confirm: *confirm}, &res); err != nil {
+	if err := c.call(adminSock(*data), api.MethodFleetCreate, params, &res); err != nil {
 		return err
 	}
 	fmt.Fprintf(c.out, "fleet %s created (mode %s, confirm %v)\n", res.Fleet.Name, res.Fleet.Mode, res.Fleet.Confirm)

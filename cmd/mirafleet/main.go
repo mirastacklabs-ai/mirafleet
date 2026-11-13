@@ -59,7 +59,13 @@ func usage() {
   mirafleet central init [-data DIR] [-listen ADDR]
   mirafleet central run [-data DIR] [-listen ADDR]
   mirafleet central fleet create NAME [-mode actions|workspace] [-confirm]
+        [-executor containerd|opensandbox] [-image REF] [-images REF,...] [-pull POLICY]
+        [-network none|egress] [-egress HOST:PORT,...] [-cpus N] [-memory 4GiB] [-pids N]
+        [-tmpfs 512MiB] [-disk 10GiB] [-idle-ttl 24h] [-max-ttl 168h] [-exec-timeout 2m] [-exec-max 30m]
+  mirafleet central fleet workspace set NAME <the workspace flags above>
   mirafleet central fleet list [-json]
+  mirafleet central workspace list [-fleet F] [-json]
+  mirafleet central workspace kill ID
   mirafleet central token create -fleet F [-labels k=v,...] [-approve] [-uses N] [-ttl DURATION]
   mirafleet central token list [-fleet F] [-json]
   mirafleet central token revoke ID
@@ -70,9 +76,13 @@ func usage() {
   mirafleet central audit [-since ID] [-limit N] [-json]
   (admin commands take [-data DIR], default /var/lib/mirafleet/central)
   mirafleet runner join ADDR -name NAME [-data DIR] -token -
-  mirafleet runner run [-data DIR] [-actions FILE]
+  mirafleet runner run [-data DIR] [-actions FILE | -workspace FILE]
+  mirafleet runner tls-init -dir DIR [-days N]
+  mirafleet runner tls-front [-listen 127.0.0.1:8443] [-upstream 127.0.0.1:8080] -dir DIR
+  mirafleet runner workspace list [-data DIR] [-workspace FILE]
+  mirafleet runner workspace prune [-data DIR] [-workspace FILE] (-all | older than max_age) -yes
   mirafleet mcp login ADDR -name NAME -code -
-  mirafleet mcp api METHOD [JSON]
+  mirafleet mcp api METHOD [JSON] [-in FILE] [-out FILE]
   mirafleet version
 `)
 	os.Exit(2)

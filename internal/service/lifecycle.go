@@ -18,6 +18,11 @@ type RunnerView struct {
 	store.Runner
 	Online        bool
 	LastHeartbeat time.Time // zero when not connected
+	// Workspace runners (zero otherwise): advertised slots, slots not held by a live workspace
+	// row, and the executor name, all from the latest heartbeat and the store.
+	Slots     int
+	FreeSlots int
+	Executor  string
 }
 
 // ListRunners lists a fleet's non-revoked runners merged with the registry snapshot. Allowed
@@ -38,6 +43,7 @@ func (s *Service) ListRunners(ctx context.Context, p auth.Principal, src Source,
 		live[si.ID] = si
 	}
 	out := make([]RunnerView, len(rs))
+	var ids []int64
 	for i, r := range rs {
 		v := RunnerView{Runner: r}
 		if si, ok := live[r.ID]; ok {
@@ -46,8 +52,23 @@ func (s *Service) ListRunners(ctx context.Context, p auth.Principal, src Source,
 			if si.LastHeartbeat.After(v.LastSeenAt) {
 				v.LastSeenAt = si.LastHeartbeat
 			}
+			if si.Slots > 0 {
+				v.Slots, v.Executor, v.FreeSlots = si.Slots, si.Executor, si.Slots
+				ids = append(ids, r.ID)
+			}
 		}
 		out[i] = v
+	}
+	if len(ids) > 0 {
+		held, err := s.st.CountLiveWorkspaces(ctx, ids)
+		if err != nil {
+			return nil, s.fail("count workspaces", err)
+		}
+		for i := range out {
+			if out[i].Slots > 0 {
+				out[i].FreeSlots = max(0, out[i].Slots-held[out[i].ID])
+			}
+		}
 	}
 	return out, nil
 }
