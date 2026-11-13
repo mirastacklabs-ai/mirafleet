@@ -2,7 +2,8 @@
 
 Design: [ARCHITECTURE.md](ARCHITECTURE.md). Module: `github.com/mirastacklabs-ai/mirafleet`.
 One static binary (`CGO_ENABLED=0`). Dependencies kept small:
-`golang.org/x/crypto/ssh`, `modernc.org/sqlite` (pure Go), `gopkg.in/yaml.v3`,
+`golang.org/x/crypto/ssh`, `golang.org/x/sys` (unix/windows syscalls), `modernc.org/sqlite`
+(pure Go), `gopkg.in/yaml.v3`,
 `github.com/containerd/containerd/v2` (M3), `github.com/modelcontextprotocol/go-sdk` (M5).
 CLI uses the standard library (`flag` with subcommands).
 All dependencies must meet the permissive license policy in [CLAUDE.md](../CLAUDE.md).
@@ -36,7 +37,7 @@ All dependencies must meet the permissive license policy in [CLAUDE.md](../CLAUD
 - containerd executor (namespace `mirafleet`), workspace dir, open/exec/file/close,
   resource limits, `concurrent: N`, scheduling with sticky sessions, TTL reaper.
 - Integration tests build-tagged `linux && integration` (need a real containerd; on macOS run in
-  a Linux VM such as Lima).
+  the colima `mirafleet` VM, containerd runtime).
 
 ## M4 — Admin GUI
 - `html/template` + htmx (vendored, embedded). Screens per ARCHITECTURE.md. Admin bootstrap on
@@ -57,7 +58,8 @@ All dependencies must meet the permissive license policy in [CLAUDE.md](../CLAUD
   the permissive allowlist in CLAUDE.md, generated third-party licenses file per release.
 - One git tag drives every channel below, so all versions stay in lockstep.
 
-**Binary (`mirafleet central | runner | mcp`)**, built by goreleaser for linux/darwin × amd64/arm64:
+**Binary (`mirafleet central | runner | mcp`)**, built by goreleaser for linux/darwin/windows ×
+amd64/arm64 (Windows: zip archives, `.exe`, no systemd units):
 | Channel | Audience | Notes |
 |---|---|---|
 | GitHub Releases | everyone | tarballs, checksums, SBOM, cosign keyless signatures, build provenance |
@@ -85,8 +87,33 @@ syft are MIT or Apache-2.0).
 - No secrets in the repo. Test keys are generated at test time.
 - Any background waiter must also exit on failure or when the job dies.
 
+## Cross-platform (all milestones)
+Every binary and package targets linux, darwin and windows × amd64/arm64; `scripts/dev.sh cross`
+builds and vets all six. containerd workspaces (M3) are Linux-only by nature: on darwin/windows the
+runner reports the workspace capability as unavailable and still serves guarded actions.
+`cross` proves compilation only; tests run on linux. **Today central and runner are supported on
+linux and darwin only; Windows is unsupported until Q20–Q24 are fixed** (fix before calling M2 done):
+- **Q20 (P1)** `central/admin_other.go`: on non-unix the admin socket fails open — no peer check,
+  and chmod/umask do nothing on Windows, so any local user can drive every runner. Stopgap: fail
+  closed (`ServeAdmin` errors on `!unix`). Fix: owner-only DACL on the socket/pipe plus caller SID
+  check. Also correct the `admin.go` header comment.
+- **Q21 (P2)** `actions/kill_other.go`: on non-unix a timeout kills only the direct child, and the
+  post-`Wait` cleanup leaks grandchildren. Use a Job Object (`x/sys/windows`) with kill-on-close.
+- **Q22 (P1)** `keys/keys.go`: key, host-key, data-dir and audit protection relies on Unix mode
+  bits. Windows reports 0666, so `LoadSigner` always refuses and created files are unprotected.
+  Fix: `keys_windows.go` that sets and checks an owner-only DACL.
+- **Q23 (P1)** `actions/actions.go`: the actions guard is Unix-shaped (`/usr/...` fixed PATH, exec-bit
+  lookup, `cmd.Dir="/"`, env without `SystemRoot`, only `/` rejected in bare names). Fix: per-OS
+  path/env/lookup in `actions_windows.go`, reject `\` and drive prefixes; until then the runner
+  refuses to start on Windows.
+- **Q24 (P2)** `cmd/mirafleet/main.go`: Unix default paths (`/var/lib`, `/etc`) and SIGTERM-only
+  shutdown. Fix: `%ProgramData%\mirafleet` defaults, `os.Interrupt` on Windows, service mode later.
+- Dev script nits (P2/P3): pin the Go image by digest; run `go`/`shell` as the host UID; align
+  `shell` flags with `run`; also run `CGO_ENABLED=0 go test ./...` alongside `-race`.
+
 ## Status (13 Nov 2026)
-- M1 built, reviewed and fixed (Q01–Q10, Q14–Q18); tests pass. **Not committed yet.** Next step:
-  first commit, staging files by name.
+- M1 built, reviewed and fixed (Q01–Q10, Q14–Q18); committed and pushed to `main`.
+- Module path is `github.com/mirastacklabs-ai/mirafleet`.
+- Dev toolchain is container-only (`scripts/dev.sh`, colima VM `mirafleet`, containerd runtime).
 - LICENSE (Apache-2.0), NOTICE and README disclaimer added. Branding approved in docs/BRAND.md.
-- Then: M2 (central core).
+- Next: Q20/Q21, then M2 (central core, SQLite store).
