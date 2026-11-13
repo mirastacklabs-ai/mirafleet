@@ -20,12 +20,14 @@ All dependencies must meet the permissive license policy in [CLAUDE.md](../CLAUD
   a bad parameter, and survives a runner reconnect.
 
 ## M2 — Central core
+Detailed plan, decisions and steps: [M2.md](M2.md).
 - SQLite store behind a `Store` interface. Fleets, runners, join tokens, operators, audit.
-- Enrollment (`token create`, `runner join`), runner lifecycle, operator login and approval.
-- `api@mirafleet` channel for operators: list fleets/runners, run action.
+- Enrollment (`token create`, `runner join`), runner lifecycle, operator registration with a
+  rotating TOTP-style code from central (no approval step).
+- `api@mirafleet` channel for operators: list fleets/runners, run action. Nothing else.
 - Interfaces: `Store`, `AuthProvider`, `PolicyEngine`, `AuditSink` (OSS implementations only).
-- Lifecycle service on central with one code path behind the CLI, the GUI (M4) and the
-  `runner_lifecycle` MCP tool (M5). Revoke immediately rejects the key, closes the live
+- Lifecycle service on central with one code path behind the CLI and the GUI (M4), both on
+  central only; never exposed over `api@mirafleet` or MCP. Revoke immediately rejects the key, closes the live
   connection and cancels in-flight work (Q11). Every change is audited with its source.
 - Carried over from the M1 review: size and time limits on admin requests (Q12).
 - Deployment assumption: each fleet node talks to exactly one central, and each central owns

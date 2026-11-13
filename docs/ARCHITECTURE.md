@@ -61,7 +61,7 @@ central
       ├── runner      name, labels, status, last heartbeat, concurrency
       ├── join token  one-time or multi-use, expiry, labels to apply
       └── workspace   session id, orchestrator, runner, image, created, last used
-operator              name, public key, status (pending | active | revoked)
+operator              name, public key, status (active | revoked)
 audit                 time, operator, fleet, runner, workspace, command/action, exit, duration
 ```
 
@@ -73,22 +73,21 @@ Per-fleet grants are an enterprise feature.
 it joins. A disabled runner stays connected (visible) but refuses work. A revoked runner's key is
 rejected.
 
-Lifecycle changes (approve, disable, enable, revoke) are operations on central. They are
-exposed through three equivalent front ends that share one code path:
+Lifecycle changes (approve, disable, enable, revoke) are operations on central, and **only on
+central**: they are never exposed to operators over `api@mirafleet` or MCP. Two front ends share
+one code path:
 
 | Front end | Example |
 |---|---|
-| GUI | Runners screen → Revoke |
+| GUI (served by central) | Runners screen → Revoke |
 | CLI on central | `mirafleet central runner revoke <fleet>/<runner>` |
-| Orchestrator (MCP) | `runner_lifecycle(fleet, runner, action="revoke", confirm="<fleet>/<runner>")` |
 
 Revoke takes effect immediately. Central marks the key revoked, closes the runner's live
 connection, cancels in-flight work, and rejects every later login. Disable keeps the connection
 but refuses new work. Every change is audited with who made it and from which front end.
 
-Lifecycle tools are off by default in `mirafleet mcp` (`lifecycle_tools: true` in the
-orchestrator config turns them on) and always require the `confirm` argument. Without these
-guards, a prompt injection in command output could talk an agent into revoking runners.
+Keeping lifecycle off the operator API means a prompt injection in command output cannot talk
+an agent into approving or revoking runners, whatever the orchestrator config says.
 
 ## Fleet modes
 
@@ -166,7 +165,6 @@ as hooks. Hooks only add convenience.
 | `exec` | run a command in the session's workspace |
 | `read_file` / `write_file` | file access inside the workspace |
 | `workspace_close` | release the workspace |
-| `runner_lifecycle` | approve, disable, enable or revoke a runner (opt-in, needs `confirm`) |
 
 - **Contexts:** `~/.config/mirafleet/config.yaml` lists one or more centrals (for example a
   private-network central and a cloud central), with an optional SSH jump host per central.
@@ -183,7 +181,7 @@ htmx, with all assets embedded, so it loads nothing from the internet.
 
 Screens: **Fleets** (create, mode, default image, confirm flag), **Runners** (status, labels,
 heartbeat, approve, disable, revoke), **Join tokens** (create, revoke), **Operators**
-(approve, revoke), **Workspaces** (active sessions, age, kill), **Audit** (filter, export).
+(current registration code, revoke), **Workspaces** (active sessions, age, kill), **Audit** (filter, export).
 One admin account, created on first start.
 
 ## Enrollment
@@ -193,9 +191,15 @@ One admin account, created on first start.
 mirafleet central token create --fleet uat --labels role=jump,region=eu
 # on the runner
 mirafleet runner join central.corp:2222 <token>   # generates key, pins host key, installs systemd unit
-# operator, on their machine
-mirafleet mcp login central.corp:2222             # registers operator key → approve in GUI
+# on central, or in the GUI: current operator registration code (rotates every 60 s, single-use)
+mirafleet central operator code
+# operator, on their machine (code read from stdin; pins central's host key from the code)
+mirafleet mcp login central.corp:2222 -name alice -code -
 ```
+
+Operator registration codes are TOTP-style: HMAC-SHA256 over a 60-second time step with a secret
+held by central, 128 bits long, valid for the current and previous step, and single-use. A leaked
+code is worthless within two minutes. Details: [M2.md](M2.md) §1.3.
 
 ## Security summary
 
