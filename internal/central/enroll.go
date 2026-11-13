@@ -71,7 +71,7 @@ func (s *Server) serveEnroll(sconn *ssh.ServerConn, p auth.Principal, accepted t
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.serveEnrollChannel(ctx, ch, typ, p, key)
+			s.serveEnrollChannel(ctx, sconn, ch, typ, p, key)
 			// One request, one response, then the connection is closed.
 			ch.Close()
 			sconn.Close()
@@ -99,12 +99,12 @@ func enrollKey(sconn *ssh.ServerConn, p auth.Principal) (ssh.PublicKey, error) {
 	return k, nil
 }
 
-func (s *Server) serveEnrollChannel(ctx context.Context, ch ssh.Channel, typ string, p auth.Principal, key ssh.PublicKey) {
+func (s *Server) serveEnrollChannel(ctx context.Context, sconn *ssh.ServerConn, ch ssh.Channel, typ string, p auth.Principal, key ssh.PublicKey) {
 	req, id, err := api.ReadRequestTimeout(ch, ch)
 	if err != nil {
 		if !errors.Is(err, io.EOF) {
 			s.cfg.Logf("enroll from %s: bad request: %v", p.Remote, err)
-			writeResponseTimeout(ch, ch, api.NewError(id, api.AsError(err)))
+			writeResponseTimeout(ch, ch, api.NewError(id, api.AsError(err)), sconn)
 		}
 		return
 	}
@@ -114,7 +114,7 @@ func (s *Server) serveEnrollChannel(ctx context.Context, ch ssh.Channel, typ str
 	if resp.Error != nil {
 		s.cfg.Logf("enroll from %s: %s refused (%s)", p.Remote, req.Method, resp.Error.Code)
 	}
-	if err := writeResponseTimeout(ch, ch, resp); err != nil {
+	if err := writeResponseTimeout(ch, ch, resp, sconn); err != nil {
 		s.cfg.Logf("enroll from %s: write response: %v", p.Remote, err)
 	}
 }
@@ -162,6 +162,19 @@ type ipLimiter struct {
 
 	mu sync.Mutex
 	m  map[string]*bucket
+
+	// global is an extra bucket shared by all sources (nil: disabled). Per-source buckets can be
+	// evicted by an attacker rotating addresses (D-22); this one cannot.
+	global     *bucket
+	globalRate float64
+}
+
+// setGlobal enables the all-sources limit of perMin connections per minute (burst = perMin).
+func (l *ipLimiter) setGlobal(perMin int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.globalRate = float64(perMin)
+	l.global = &bucket{tokens: l.globalRate, last: l.now()}
 }
 
 type bucket struct {
@@ -203,6 +216,17 @@ func (l *ipLimiter) allow(remote string) bool {
 	b.last = now
 	if b.tokens < 1 {
 		return false
+	}
+	if g := l.global; g != nil {
+		g.tokens += now.Sub(g.last).Minutes() * l.globalRate
+		if g.tokens > l.globalRate {
+			g.tokens = l.globalRate
+		}
+		g.last = now
+		if g.tokens < 1 {
+			return false // the per-source token is kept: this source was not the abuser
+		}
+		g.tokens--
 	}
 	b.tokens--
 	return true

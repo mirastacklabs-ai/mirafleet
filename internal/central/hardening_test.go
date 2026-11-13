@@ -117,7 +117,7 @@ func TestCloseDropsHandshakingConnections(t *testing.T) {
 	start := time.Now()
 	e.srv.Close()
 	if d := time.Since(start); d > 5*time.Second {
-		t.Fatalf("Close took %v with peers stuck in handshake (handshakeTimeout is %v)", d, handshakeTimeout)
+		t.Fatalf("Close took %v with peers stuck in handshake (handshake timeout is %v)", d, e.srv.cfg.HandshakeTimeout)
 	}
 }
 

@@ -18,3 +18,9 @@ func listenUnix(string) (net.Listener, error) { return nil, errAdminUnsupported 
 func checkPeer(net.Conn) error { return errAdminUnsupported }
 
 func peerClosed(*net.UnixConn) bool { return false }
+
+type sockID struct{}
+
+func statSocket(string) (sockID, error) { return sockID{}, errAdminUnsupported }
+
+func removeSocketIfSame(string, sockID) {}

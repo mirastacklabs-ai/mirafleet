@@ -8,6 +8,13 @@ package central
 // OSes admin_other.go fails closed (listen errors, peers are rejected); on unix OSes other than
 // linux/darwin admin_peer_other.go rejects every peer.
 //
+// Disconnect-cancel (a client going away cancels its in-flight request, e.g. Ctrl-C of
+// `central exec`) is linux-only: it needs POLLHUP from a zero-event poll, which is reliable on
+// Linux but not guaranteed on macOS. There (and on other unix OSes) peerClosed always returns
+// false, so a vanished client does not cancel its request; the request is still bounded by its
+// own timeout (an action's own deadline, or api.ListTimeout). Only an outright read error
+// (connection reset) cancels everywhere.
+//
 // The principal is auth.LocalAdmin(uid) with source cli; every call goes through the service
 // (policy, validation, audit). The request size limit is enforced by api.ReadRequestTimeout
 // before any decoding.
@@ -86,24 +93,39 @@ func (s *Server) ServeAdmin(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	// The listener does not unlink its path on Close (see listenUnix); this server removes the
+	// file itself, and only while it is still this server's file (D-20).
+	id, err := statSocket(path)
+	if err != nil {
 		ln.Close()
 		return err
 	}
-	// The accept loop owns a WaitGroup slot, taken here before it is spawned: Server.Close can
-	// therefore never run Wait concurrently with an Add from a zero counter, and the loop's
-	// own Add for each connection happens while it still holds its slot.
-	s.wg.Add(1)
-	if !s.track(ln) {
-		s.wg.Done()
+	if err := os.Chmod(path, 0o600); err != nil {
 		ln.Close()
+		removeSocketIfSame(path, id)
+		return err
+	}
+	// track takes the accept loop's WaitGroup slot under the lock Close uses, so Add can never
+	// race Close's Wait (D-17); the loop's own tracking of each connection happens while it
+	// still holds its slot.
+	if !s.track(ln) {
+		ln.Close()
+		removeSocketIfSame(path, id)
 		return errors.New("central: server closed")
 	}
-	go func() { <-ctx.Done(); ln.Close(); os.Remove(path) }()
+	loopDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			ln.Close()
+		case <-loopDone:
+		}
+	}()
 	table := adminTable()
 	go func() {
-		defer s.wg.Done()
+		defer close(loopDone)
 		defer s.untrack(ln)
+		defer removeSocketIfSame(path, id) // runs first: ln is closed by ctx or Server.Close
 		for {
 			c, err := ln.Accept()
 			if err != nil {
@@ -115,13 +137,11 @@ func (s *Server) ServeAdmin(ctx context.Context, path string) error {
 				c.Close()
 				continue
 			}
-			if !s.track(c) {
+			if !s.track(c) { // also takes the slot Server.Close waits on for in-flight calls
 				c.Close()
 				return
 			}
-			s.wg.Add(1) // Server.Close waits for in-flight admin calls
 			go func() {
-				defer s.wg.Done()
 				defer s.untrack(c)
 				s.adminConn(ctx, c, table)
 			}()
@@ -212,12 +232,23 @@ func watchPeerClose(ctx context.Context, c net.Conn, cancel context.CancelFunc) 
 	}
 }
 
+// writeResponse is api.WriteResponse; a variable so a test can force a response larger than
+// the SSH channel window (real responses are capped below it).
+var writeResponse = api.WriteResponse
+
 // writeResponseTimeout writes resp to w and closes c if the write has not finished within
 // api.WriteTimeout (D-09). ssh.Channel has no write deadline, so a peer that stops reading would
-// otherwise pin the handler (and its channel slot) forever; closing the channel unblocks the
-// write. It is also safe on net.Conn, where WriteResponse additionally applies a real deadline.
-func writeResponseTimeout(w io.Writer, c io.Closer, resp *api.Response) error {
-	t := time.AfterFunc(api.WriteTimeout, func() { c.Close() })
+// otherwise pin the handler (and its channel slot) forever. A local Channel.Close does not
+// unblock a write stalled on the peer's window in x/crypto/ssh (D-16), so for ssh channels the
+// owning connection is passed in also and closed too, which does. On net.Conn, c alone suffices
+// and WriteResponse additionally applies a real deadline.
+func writeResponseTimeout(w io.Writer, c io.Closer, resp *api.Response, also ...io.Closer) error {
+	t := time.AfterFunc(api.WriteTimeout, func() {
+		c.Close()
+		for _, a := range also {
+			a.Close()
+		}
+	})
 	defer t.Stop()
-	return api.WriteResponse(w, resp)
+	return writeResponse(w, resp)
 }

@@ -20,7 +20,16 @@ func listenUnix(path string) (net.Listener, error) {
 	umaskMu.Lock()
 	old := syscall.Umask(0o077)
 	defer func() { syscall.Umask(old); umaskMu.Unlock() }()
-	return net.Listen("unix", path)
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	// Go would unlink the path on Close, even when it is by then a newer server's socket (D-20).
+	// ServeAdmin removes it itself, only if it still is this listener's file.
+	if ul, ok := ln.(*net.UnixListener); ok {
+		ul.SetUnlinkOnClose(false)
+	}
+	return ln, nil
 }
 
 // Seam for tests: the peer-credential getter (atomic: accept loops of earlier servers may still
@@ -48,4 +57,29 @@ func checkPeer(c net.Conn) error {
 		return fmt.Errorf("peer uid %d != %d", uid, os.Getuid())
 	}
 	return nil
+}
+
+// sockID identifies a socket file (device and inode) so cleanup removes only the file this
+// server created, never a newer server's socket at the same path (D-20).
+type sockID struct{ dev, ino uint64 }
+
+func statSocket(path string) (sockID, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return sockID{}, err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return sockID{}, errors.New("no inode information for " + path)
+	}
+	return sockID{dev: uint64(st.Dev), ino: uint64(st.Ino)}, nil //nolint:unconvert // width differs per OS
+}
+
+// removeSocketIfSame removes path only while it is still the socket identified by id. (The
+// stat-then-remove window is not atomic; the caller holds the data-dir lock, so no other
+// central is racing it, and an in-process successor binds only after the old file is gone.)
+func removeSocketIfSame(path string, id sockID) {
+	if cur, err := statSocket(path); err == nil && cur == id {
+		os.Remove(path)
+	}
 }

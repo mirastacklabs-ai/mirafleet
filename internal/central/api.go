@@ -72,7 +72,7 @@ func (s *Server) serveOperator(sconn *ssh.ServerConn, p auth.Principal, chans <-
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			s.serveAPIChannel(ctx, ch, creqs, table, cc)
+			s.serveAPIChannel(ctx, sconn, ch, creqs, table, cc)
 		}()
 	}
 	cancel()
@@ -83,7 +83,7 @@ func (s *Server) serveOperator(sconn *ssh.ServerConn, p auth.Principal, chans <-
 // half-close (CloseWrite after the request, EOF on our read side) only means "no more input":
 // the request still runs and its response is still written (D-06). Full closure is observed as
 // the channel's request stream ending (the mux closes it when the peer's close arrives).
-func (s *Server) serveAPIChannel(connCtx context.Context, ch ssh.Channel, creqs <-chan *ssh.Request, table *methodTable, cc *callCtx) {
+func (s *Server) serveAPIChannel(connCtx context.Context, sconn *ssh.ServerConn, ch ssh.Channel, creqs <-chan *ssh.Request, table *methodTable, cc *callCtx) {
 	defer ch.Close()
 	ctx, cancel := context.WithCancel(connCtx)
 	defer cancel()
@@ -92,7 +92,7 @@ func (s *Server) serveAPIChannel(connCtx context.Context, ch ssh.Channel, creqs 
 	req, id, err := api.ReadRequestTimeout(ch, ch)
 	if err != nil {
 		if !errors.Is(err, io.EOF) {
-			writeResponseTimeout(ch, ch, api.NewError(id, api.AsError(err)))
+			writeResponseTimeout(ch, ch, api.NewError(id, api.AsError(err)), sconn)
 		}
 		return
 	}
@@ -102,7 +102,7 @@ func (s *Server) serveAPIChannel(connCtx context.Context, ch ssh.Channel, creqs 
 	go io.Copy(io.Discard, ch) // keep the window open; stray input after the request is ignored
 
 	resp := table.serve(ctx, cc, req)
-	if err := writeResponseTimeout(ch, ch, resp); err != nil {
+	if err := writeResponseTimeout(ch, ch, resp, sconn); err != nil {
 		s.cfg.Logf("api: write response to %q: %v", cc.p.Name, err)
 	}
 }

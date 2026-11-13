@@ -6,6 +6,11 @@ One static binary (`CGO_ENABLED=0`). Dependencies kept small:
 (pure Go), `gopkg.in/yaml.v3`,
 `github.com/containerd/containerd/v2` (M3), `github.com/modelcontextprotocol/go-sdk` (M5).
 CLI uses the standard library (`flag` with subcommands).
+
+**Build order (13 Nov 2026): M1 → M2 → M3 → M5 → M4 → M6.** M5 (orchestrator) comes before M4
+(GUI): it is what lets Claude Code drive fleets end to end, and the admin CLI already covers the
+GUI's functions. Milestone numbers are kept as labels. Every milestone also updates the
+developer guide in [guide/](guide/README.md).
 All dependencies must meet the permissive license policy in [CLAUDE.md](../CLAUDE.md).
 
 ## M1 — Transport and actions
@@ -32,9 +37,10 @@ The "M2 done when" scenario is `TestM2Done` in `internal/central/m2_done_test.go
   connection and cancels in-flight work (Q11). Every change is audited with its source.
 - Carried over from the M1 review: size and time limits on admin requests (Q12).
 - Deployment assumption: each fleet node talks to exactly one central, and each central owns
-  its data dir (closes Q13). Handshake caps and connection-level DoS limits (Q19) are an
-  enterprise feature; OSS docs recommend a firewall or rate limit in front of an
-  internet-facing central.
+  its data dir (closes Q13). OSS ships basic limits (Q19): per-IP and global caps on
+  in-progress handshakes, a short handshake deadline and a per-IP enroll rate. Advanced
+  connection-level DoS defence stays an enterprise feature; an internet-facing central should
+  still sit behind a firewall or rate limiter.
 
 ## M3 — Workspaces
 Decisions: [M3.md](M3.md) (executor interface; opt-in OpenSandbox executor, HTTPS-only).
@@ -112,5 +118,7 @@ syft are MIT or Apache-2.0).
 - Dev toolchain is container-only (`scripts/dev.sh`, Docker CLI; colima Docker runtime on macOS).
 - LICENSE (Apache-2.0), NOTICE and README disclaimer added. Branding approved in docs/BRAND.md.
 - M2 built (store, join tokens, rotating operator registration codes, lifecycle on central only,
-  `api@mirafleet`, admin socket, CLI, `runner join`, `mcp login|api`); done pending final review.
-- Next: M3 (workspaces). Central and runner are Linux only; `mcp` is cross-platform.
+  `api@mirafleet`, admin socket, CLI, `runner join`, `mcp login|api`). **M2 done** 13 Nov 2026:
+  reviewed, all findings fixed (docs/M2.md §4b), built-binary smoke test and `TestM2Done` pass.
+- Next: M3 (workspaces, executor interface, OpenSandbox opt-in), then M5, M4, M6.
+  Central and runner are Linux only; `mcp` is cross-platform.

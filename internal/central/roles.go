@@ -97,10 +97,11 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 	defer func() {
 		if sess != nil {
 			reg.Unregister(sess)
-			tc.stop() // no touch may race the final one
-			if s.claimEdge(p.ID, s.cfg.Now()) {
-				s.touchRunner(p.ID, lastHB) // D-02: last_seen/info on disconnect
-			}
+			// D-02: last_seen/info on disconnect. Never throttled (only connect edges are), and
+			// written by the touch worker after its pending write, in the background: a hung
+			// store (each write is bounded by storeTimeout) never delays teardown.
+			s.markEdge(p.ID, s.cfg.Now())
+			tc.finish(lastHB)
 		}
 	}()
 	for r := range reqs {
@@ -149,17 +150,17 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 // toucher writes a runner's last_seen/info to the store off the heartbeat path. It holds at most
 // one pending heartbeat: a newer one replaces an unwritten older one. put has a single caller.
 type toucher struct {
-	ch   chan transport.Heartbeat
-	done chan struct{}
+	ch    chan transport.Heartbeat
+	final transport.Heartbeat // written by finish before ch is closed
 }
 
 func (s *Server) startToucher(id int64) *toucher {
-	t := &toucher{ch: make(chan transport.Heartbeat, 1), done: make(chan struct{})}
+	t := &toucher{ch: make(chan transport.Heartbeat, 1)}
 	go func() {
-		defer close(t.done)
 		for hb := range t.ch {
 			s.touchRunner(id, hb)
 		}
+		s.touchRunner(id, t.final) // the closed channel orders this after finish's write
 	}()
 	return t
 }
@@ -180,26 +181,40 @@ func (t *toucher) put(hb transport.Heartbeat) {
 	}
 }
 
-// stop lets the worker finish its pending write and waits for it.
-func (t *toucher) stop() { close(t.ch); <-t.done }
+// finish queues the final (disconnect) write with hb after any pending one and returns at once;
+// the worker performs both in the background, in order, then exits. Single caller, last use.
+func (t *toucher) finish(hb transport.Heartbeat) { t.final = hb; close(t.ch) }
 
-// edgeGap is the minimum spacing of connect/disconnect writes per runner.
+// edgeGap is the minimum spacing of connect edge writes per runner.
 func (s *Server) edgeGap() time.Duration { return s.cfg.TouchInterval / 10 }
 
-// claimEdge reports whether a connect/disconnect store write for runner id may happen now, and
-// records it if so. A runner flapping faster than edgeGap costs the store at most one edge write
-// per gap; periodic heartbeat writes are unaffected and still refresh last_seen.
+// claimEdge reports whether a connect store write for runner id may happen now, and records it
+// if so. A runner flapping faster than edgeGap costs the store at most one connect write per
+// gap; periodic heartbeat writes are unaffected and still refresh last_seen. Disconnect writes
+// are never throttled (markEdge).
 func (s *Server) claimEdge(id int64, now time.Time) bool {
 	s.edgeMu.Lock()
 	defer s.edgeMu.Unlock()
 	if last, ok := s.edgeAt[id]; ok && now.Sub(last) < s.edgeGap() {
 		return false
 	}
+	s.setEdgeLocked(id, now)
+	return true
+}
+
+// markEdge records an unthrottled edge (the disconnect) so a quick reconnect's connect write is
+// throttled against it.
+func (s *Server) markEdge(id int64, now time.Time) {
+	s.edgeMu.Lock()
+	defer s.edgeMu.Unlock()
+	s.setEdgeLocked(id, now)
+}
+
+func (s *Server) setEdgeLocked(id int64, now time.Time) {
 	if s.edgeAt == nil {
 		s.edgeAt = map[int64]time.Time{}
 	}
 	s.edgeAt[id] = now
-	return true
 }
 
 // register reloads the runner from the store by id (its CURRENT status, not the one captured at

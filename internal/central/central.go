@@ -56,13 +56,28 @@ type Config struct {
 	// MaxHandshakes caps handshakes in progress across all sources. Zero means
 	// DefaultMaxHandshakes.
 	MaxHandshakes int
+	// HandshakeTimeout is how long a peer has to complete the SSH handshake; slower peers are
+	// dropped and their slot released. Zero means DefaultHandshakeTimeout. Peers that already
+	// hold an authenticated runner or operator connection are exempt from MaxHandshakesPerIP
+	// (still subject to MaxHandshakes), so one flooding source behind a shared IP cannot lock
+	// out its own legitimate peers.
+	//
+	// These limits are a backstop, not DoS protection: a central exposed to the internet still
+	// needs a firewall (or equivalent) in front of the SSH port.
+	HandshakeTimeout time.Duration
+	// EnrollGlobalRatePerMin limits enroll connections across ALL sources (token bucket, burst =
+	// rate), so rotating or flooding source addresses cannot evict per-IP buckets and bypass
+	// EnrollRatePerMin. Zero means DefaultEnrollGlobalRatePerMin.
+	EnrollGlobalRatePerMin int
 }
 
 // Defaults for the optional Config fields.
 const (
-	DefaultEnrollRatePerMin = 10
-	DefaultEnrollDeadline   = 30 * time.Second
-	DefaultTouchInterval    = 5 * time.Minute
+	DefaultEnrollRatePerMin       = 10
+	DefaultEnrollGlobalRatePerMin = 60
+	DefaultHandshakeTimeout       = 10 * time.Second
+	DefaultEnrollDeadline         = 30 * time.Second
+	DefaultTouchInterval          = 5 * time.Minute
 
 	DefaultMaxHandshakesPerIP = 64
 	DefaultMaxHandshakes      = 512
@@ -97,8 +112,10 @@ type Server struct {
 	edgeAt map[int64]time.Time // last connect/disconnect store write per runner id
 }
 
-// track registers c to be closed by Close. It reports false (and registers nothing) once the
-// server is closed.
+// track registers c to be closed by Close and takes a WaitGroup slot for it, both under the
+// same lock that Close uses to set closed: Add can therefore never race Close's Wait. It reports
+// false (registering and adding nothing) once the server is closed. A successful track must be
+// paired with untrack, which releases the slot.
 func (s *Server) track(c io.Closer) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -106,13 +123,18 @@ func (s *Server) track(c io.Closer) bool {
 		return false
 	}
 	s.closers[c] = struct{}{}
+	s.wg.Add(1)
 	return true
 }
 
 func (s *Server) untrack(c io.Closer) {
 	s.mu.Lock()
+	_, ok := s.closers[c]
 	delete(s.closers, c)
 	s.mu.Unlock()
+	if ok {
+		s.wg.Done()
+	}
 }
 
 // New validates cfg and returns a Server that has not started listening.
@@ -146,6 +168,12 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.EnrollGlobalRatePerMin <= 0 {
+		cfg.EnrollGlobalRatePerMin = DefaultEnrollGlobalRatePerMin
+	}
+	if cfg.HandshakeTimeout <= 0 {
+		cfg.HandshakeTimeout = DefaultHandshakeTimeout
+	}
 	if cfg.MaxHandshakesPerIP <= 0 {
 		cfg.MaxHandshakesPerIP = DefaultMaxHandshakesPerIP
 	}
@@ -167,7 +195,9 @@ func New(cfg Config) (*Server, error) {
 		MaxAuthTries:            3,
 	}
 	sc.AddHostKey(cfg.HostKey)
-	return &Server{cfg: cfg, ssh: sc, limiter: newIPLimiter(cfg.EnrollRatePerMin, cfg.Now),
+	lim := newIPLimiter(cfg.EnrollRatePerMin, cfg.Now)
+	lim.setGlobal(cfg.EnrollGlobalRatePerMin)
+	return &Server{cfg: cfg, ssh: sc, limiter: lim,
 		hs:    newHSLimiter(cfg.MaxHandshakesPerIP, cfg.MaxHandshakes),
 		conns: map[*ssh.ServerConn]struct{}{}, closers: map[io.Closer]struct{}{}}, nil
 }
@@ -213,8 +243,6 @@ func (s *Server) Close() {
 	s.wg.Wait()
 }
 
-const handshakeTimeout = 30 * time.Second
-
 func (s *Server) handle(nc net.Conn) {
 	accepted := time.Now()
 	remote := nc.RemoteAddr().String()
@@ -232,7 +260,7 @@ func (s *Server) handle(nc net.Conn) {
 		nc.Close()
 		return
 	}
-	nc.SetDeadline(time.Now().Add(handshakeTimeout))
+	nc.SetDeadline(time.Now().Add(s.cfg.HandshakeTimeout))
 	sconn, chans, reqs, err := ssh.NewServerConn(nc, s.ssh)
 	s.untrack(nc)
 	release()
@@ -262,6 +290,12 @@ func (s *Server) handle(nc net.Conn) {
 	if err != nil {
 		s.cfg.Logf("handshake from %s: missing or invalid identity; closing", nc.RemoteAddr())
 		return
+	}
+	// Runners and operators proved a registered key: while one of them is connected, its source
+	// is exempt from the per-IP handshake cap (not from the global one). Enroll connections are
+	// anonymous, so they never earn the exemption.
+	if p.Kind == auth.KindRunner || p.Kind == auth.KindOperator {
+		defer s.hs.markAuthed(remote)()
 	}
 	s.dispatch(sconn, p, accepted, chans, reqs)
 }

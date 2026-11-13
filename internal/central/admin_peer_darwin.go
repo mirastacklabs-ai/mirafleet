@@ -27,20 +27,7 @@ func peerUID(c *net.UnixConn) (uint32, error) {
 	return uid, serr
 }
 
-// peerClosed reports whether the peer has fully closed c (POLLHUP). A peer that only shut down
-// its write side (half-close) does not raise POLLHUP, so it is not reported.
-func peerClosed(c *net.UnixConn) bool {
-	rc, err := c.SyscallConn()
-	if err != nil {
-		return true
-	}
-	closed := false
-	if err := rc.Control(func(fd uintptr) {
-		fds := []unix.PollFd{{Fd: int32(fd), Events: 0}}
-		n, perr := unix.Poll(fds, 0)
-		closed = perr == nil && n > 0 && fds[0].Revents&(unix.POLLHUP|unix.POLLERR|unix.POLLNVAL) != 0
-	}); err != nil {
-		return true
-	}
-	return closed
-}
+// peerClosed always reports false on darwin: polling with no events is not guaranteed to
+// surface POLLHUP there (D-18), and central is linux-only. Admin disconnect-cancel is therefore
+// a linux feature (see admin.go); on darwin a request is bounded only by its own timeouts.
+func peerClosed(*net.UnixConn) bool { return false }

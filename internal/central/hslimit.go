@@ -16,10 +16,32 @@ type hsLimiter struct {
 	mu    sync.Mutex
 	total int
 	byIP  map[string]int
+	// authed counts authenticated (runner/operator) connections per source key. A source with
+	// one is exempt from the per-IP cap, never from the global cap.
+	authed map[string]int
 }
 
 func newHSLimiter(perIP, global int) *hsLimiter {
-	return &hsLimiter{perIP: perIP, global: global, byIP: map[string]int{}}
+	return &hsLimiter{perIP: perIP, global: global, byIP: map[string]int{}, authed: map[string]int{}}
+}
+
+// markAuthed records an authenticated connection from remote and returns the func that
+// forgets it (idempotent).
+func (l *hsLimiter) markAuthed(remote string) (unmark func()) {
+	ip := ipKey(remote)
+	l.mu.Lock()
+	l.authed[ip]++
+	l.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			if l.authed[ip]--; l.authed[ip] <= 0 {
+				delete(l.authed, ip)
+			}
+		})
+	}
 }
 
 // acquire reserves a handshake slot for remote (host:port). On success it returns the release
@@ -31,7 +53,7 @@ func (l *hsLimiter) acquire(remote string) (release func(), reason string, ok bo
 	if l.total >= l.global {
 		return nil, "global handshake limit", false
 	}
-	if l.byIP[ip] >= l.perIP {
+	if l.byIP[ip] >= l.perIP && l.authed[ip] == 0 {
 		return nil, "per-IP handshake limit", false
 	}
 	l.total++

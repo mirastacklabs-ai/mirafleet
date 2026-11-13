@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -69,7 +70,8 @@ func TestAdminForeignUIDRejectedBeforeAnyRead(t *testing.T) {
 	c2, err := net.Dial("unix", sock)
 	must(t, err)
 	defer c2.Close()
-	must(t, api.WriteFrame(c2, reqFrame(t, api.MethodFleetsList, nil)))
+	// The server may already have closed the connection: a failed write is as good as a refusal.
+	api.WriteFrame(c2, reqFrame(t, api.MethodFleetsList, nil))
 	c2.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := api.ReadFrame(c2, api.MaxResponseBytes); err == nil {
 		t.Fatal("foreign peer got a response")
@@ -78,6 +80,9 @@ func TestAdminForeignUIDRejectedBeforeAnyRead(t *testing.T) {
 
 // D-05/D-06: the client disconnecting cancels an admin action.run; a half-close does not.
 func TestAdminClientDisconnectCancelsActionRun(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("admin disconnect-cancel is linux-only (D-18)")
+	}
 	e := newEnv(t, "r1")
 	e.startRunner("r1")
 	e.waitOnline("r1")
