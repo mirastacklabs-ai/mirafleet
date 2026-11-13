@@ -2,8 +2,17 @@
 
 package central
 
-import "net"
+import (
+	"errors"
+	"net"
+)
 
-func listenUnix(path string) (net.Listener, error) { return net.Listen("unix", path) }
+// errAdminUnsupported is returned wherever the admin socket would be used on a non-unix OS.
+// Central is Linux-only, so this is defense in depth: the socket intentionally fails closed
+// (no peer-credential check or owner-only permission model exists here) and no non-unix
+// admin transport is planned.
+var errAdminUnsupported = errors.New("admin socket is unix-only; mirafleet central runs on linux")
 
-func checkPeer(net.Conn) error { return nil }
+func listenUnix(string) (net.Listener, error) { return nil, errAdminUnsupported }
+
+func checkPeer(net.Conn) error { return errAdminUnsupported }

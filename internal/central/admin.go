@@ -1,9 +1,13 @@
 package central
 
 // Local admin mechanism (M1): `mirafleet central` listens on a unix socket in its data dir
-// (admin.sock, mode 0600, in a 0700 dir, peer UID checked). `mirafleet central exec` connects, writes ONE JSON AdminRequest
-// line and reads ONE JSON AdminResponse line. Access control is the socket's file permission;
-// this is replaced by the operator-facing api@mirafleet channel in M2.
+// (admin.sock). `mirafleet central exec` connects, writes ONE JSON AdminRequest line and reads
+// ONE JSON AdminResponse line. Access control (unix only; central is linux-only): socket mode
+// 0600, created under umask 077, plus a peer-UID check on every connection. The 0700 data dir
+// is enforced by keys.EnsureDir in main.go, not here. On non-unix OSes admin_other.go fails
+// closed (listen errors, peers are rejected); on unix OSes other than linux/darwin
+// admin_peer_other.go rejects every peer. This is replaced by the operator-facing
+// api@mirafleet channel in M2.
 
 import (
 	"bufio"
@@ -12,6 +16,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"syscall"
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
@@ -29,8 +34,13 @@ type AdminResponse struct {
 
 // ServeAdmin serves the admin socket until ctx is done.
 func (s *Server) ServeAdmin(ctx context.Context, path string) error {
-	os.Remove(path)             // stale socket from a previous run
 	ln, err := listenUnix(path) // created under umask 077: never briefly world-accessible
+	if errors.Is(err, syscall.EADDRINUSE) {
+		// Stale socket from a previous run. Removed only after a real bind attempt, so the
+		// fail-closed (non-unix) path never deletes anything.
+		os.Remove(path)
+		ln, err = listenUnix(path)
+	}
 	if err != nil {
 		return err
 	}

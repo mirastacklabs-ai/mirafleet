@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -30,12 +31,18 @@ func main() {
 	var err error
 	switch os.Args[1] {
 	case "central":
+		if err = requireServerOS("central"); err != nil {
+			break
+		}
 		if len(os.Args) > 2 && os.Args[2] == "exec" {
 			err = centralExec(os.Args[3:])
 		} else {
 			err = centralRun(os.Args[2:])
 		}
 	case "runner":
+		if err = requireServerOS("runner"); err != nil {
+			break
+		}
 		err = runnerRun(os.Args[2:])
 	case "version":
 		fmt.Println(version)
@@ -48,11 +55,20 @@ func main() {
 	}
 }
 
+// requireServerOS refuses to start central or runner outside linux (see platform_*.go).
+func requireServerOS(what string) error {
+	if !serverSupported {
+		return fmt.Errorf("mirafleet %s is supported on linux only (current: %s)", what, runtime.GOOS)
+	}
+	return nil
+}
+
 func usage() {
 	fmt.Fprint(os.Stderr, `usage:
   mirafleet central [-data DIR] [-listen ADDR] [-init]
   mirafleet central exec [-data DIR] <runner> <action> [k=v...]
   mirafleet runner  [-data DIR] [-central ADDR] [-name NAME] [-actions FILE] [-labels k=v,...] [-init]
+  mirafleet version
 `)
 	os.Exit(2)
 }
