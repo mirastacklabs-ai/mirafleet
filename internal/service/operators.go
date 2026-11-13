@@ -117,5 +117,6 @@ func (s *Service) RevokeOperator(ctx context.Context, p auth.Principal, src Sour
 		return store.Operator{}, s.fail("revoke operator", err)
 	}
 	s.opConns.KickOperator(op.ID, OperatorRevokeReason)
+	s.closeWorkspacesOf(ctx, store.WorkspaceOwner{OperatorID: op.ID}, OperatorRevokeReason, "", "", name)
 	return op, nil
 }

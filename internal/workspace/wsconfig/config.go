@@ -124,6 +124,9 @@ type Config struct {
 	Limits     Limits        `yaml:"limits"`
 	Network    []string      `yaml:"network"`
 	EnvAllow   []string      `yaml:"env_allow"`
+	// EgressCIDRRules lets central ask for CIDR or IP-literal egress rules (default false: only
+	// hostname rules are accepted from central).
+	EgressCIDRRules bool `yaml:"egress_cidr_rules"`
 
 	Containerd  *Containerd  `yaml:"containerd"`
 	OpenSandbox *OpenSandbox `yaml:"opensandbox"`

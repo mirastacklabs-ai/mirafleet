@@ -138,6 +138,9 @@ type Executor interface {
 	// Name is the executor kind, e.g. "containerd" or "opensandbox".
 	Name() string
 	// Create makes a workspace; idempotent on s.ID. Errors: ErrRefused, ErrUnavailable.
+	// If Create fails or ctx is cancelled it MUST clean up any partial state (containers, snapshots,
+	// directories, remote sandboxes). The runner also calls Destroy best-effort after a failed
+	// create, so Destroy must handle half-created workspaces.
 	Create(ctx context.Context, s Spec) error
 	// Exec runs a command. The context deadline is the timeout; cancellation kills the command.
 	Exec(ctx context.Context, id ID, r ExecRequest) (ExecResult, error)
@@ -173,4 +176,20 @@ func ValidID(id ID) bool {
 		}
 	}
 	return true
+}
+
+// DiskUsage is one workspace's disk accounting (M3.md 1.9, decision 8: a soft quota).
+type DiskUsage struct {
+	Used     int64     // allocated bytes (a lower bound when Partial)
+	Quota    int64     // soft quota
+	Over     bool      // writes are refused: Used >= Quota, or the walk hit its bound
+	Kill     bool      // Used >= 2*Quota: the workspace should be destroyed
+	Partial  bool      // the walk hit its entry or time bound
+	Measured time.Time // when Used was measured
+}
+
+// DiskUsager is an optional Executor capability. The runner samples it periodically and destroys
+// workspaces for which Kill is set.
+type DiskUsager interface {
+	Usage(ctx context.Context, id ID) (DiskUsage, error)
 }

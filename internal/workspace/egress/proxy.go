@@ -486,6 +486,7 @@ func (p *Proxy) handlePlain(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	out := r.Clone(ctx)
 	out.RequestURI = ""
+	out.Host = u.Host // the vetted authority, never a client-supplied Host header
 	stripHop(out.Header)
 	out.Close = true
 

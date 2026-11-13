@@ -355,7 +355,7 @@ func (d *DB) CountLiveWorkspaces(ctx context.Context, runnerIDs []int64) (map[in
 	return out, rows.Err()
 }
 
-// CloseWorkspacesOf moves one owner's open workspaces to closing and opening ones to failed.
+// CloseWorkspacesOf moves one owner's opening and open workspaces to closing.
 func (d *DB) CloseWorkspacesOf(ctx context.Context, who store.WorkspaceOwner, reason string, now time.Time, ev store.AuditEvent) ([]string, error) {
 	var col string
 	var id int64
@@ -390,11 +390,7 @@ func (d *DB) CloseWorkspacesOf(ctx context.Context, who store.WorkspaceOwner, re
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		now := now.UnixMilli()
-		if _, err := tx.ExecContext(ctx, `UPDATE workspaces SET state = 'closing', reason = ? WHERE `+col+` = ? AND state = 'open'`, reason, id); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE workspaces SET state = 'failed', reason = ?, closed_at = ? WHERE `+col+` = ? AND state = 'opening'`, reason, now, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE workspaces SET state = 'closing', reason = ? WHERE `+col+` = ? AND state IN ('opening','open')`, reason, id); err != nil {
 			return err
 		}
 		if ev.Message == "" {

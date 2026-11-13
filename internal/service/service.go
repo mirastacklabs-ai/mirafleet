@@ -7,6 +7,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -56,6 +57,13 @@ type Config struct {
 	OperatorConns OperatorConns
 	// Logf receives server-side diagnostics. It never receives secrets. Optional.
 	Logf func(format string, args ...any)
+	// MaxWorkspacesPerOperator caps live workspaces per operator; 0 means the default (8),
+	// negative means no cap.
+	MaxWorkspacesPerOperator int
+	// WorkspaceOpenTimeout bounds a workspace create (image pull); 0 means 5 minutes.
+	WorkspaceOpenTimeout time.Duration
+	// ReaperInterval is the workspace reaper sweep period; 0 means 60 seconds.
+	ReaperInterval time.Duration
 }
 
 // Service implements the central operations. Safe for concurrent use.
@@ -67,6 +75,11 @@ type Service struct {
 	now     func() time.Time
 	logf    func(format string, args ...any)
 	opConns OperatorConns
+
+	maxPerOp    int
+	openTimeout time.Duration
+	reapEvery   time.Duration
+	recon       sync.Map // runner ids with a reconcile in flight
 }
 
 // New validates cfg and returns a Service.
@@ -89,7 +102,19 @@ func New(cfg Config) (*Service, error) {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	return &Service{st: cfg.Store, pol: cfg.Policy, live: cfg.Live, hostKey: cfg.HostKey, now: cfg.Now, logf: logf, opConns: cfg.OperatorConns}, nil
+	maxPerOp, openTimeout := cfg.MaxWorkspacesPerOperator, cfg.WorkspaceOpenTimeout
+	if maxPerOp == 0 {
+		maxPerOp = DefaultMaxWorkspacesPerOperator
+	}
+	if openTimeout <= 0 {
+		openTimeout = DefaultWorkspaceOpenTimeout
+	}
+	reapEvery := cfg.ReaperInterval
+	if reapEvery <= 0 {
+		reapEvery = DefaultReaperInterval
+	}
+	return &Service{st: cfg.Store, pol: cfg.Policy, live: cfg.Live, hostKey: cfg.HostKey, now: cfg.Now, logf: logf,
+		opConns: cfg.OperatorConns, maxPerOp: maxPerOp, openTimeout: openTimeout, reapEvery: reapEvery}, nil
 }
 
 var errForbidden = api.Errorf(api.CodeForbidden, "forbidden")

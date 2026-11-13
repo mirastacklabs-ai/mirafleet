@@ -109,6 +109,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	if r.cfgErr != nil {
 		return r.cfgErr
 	}
+	sampler := make(chan struct{})
+	sctx, stopSampler := context.WithCancel(ctx)
+	go func() { defer close(sampler); r.runDiskSampler(sctx) }()
+	defer func() { stopSampler(); <-sampler }()
 	backoff := r.cfg.BackoffMin
 	for ctx.Err() == nil {
 		healthy, err := r.session(ctx)

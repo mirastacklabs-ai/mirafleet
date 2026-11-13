@@ -727,3 +727,253 @@ func TestWorkspaceSecureRuntimeAccepted(t *testing.T) {
 	req.Spec.RequireSecureRuntime = true
 	h.want(req, nil, transport.CodeOK)
 }
+
+const wsEgressYAML = `
+executor: containerd
+concurrent: 2
+images: ["alpine:3.20"]
+limits: {cpus: 2, memory: 1GiB, pids: 256, tmpfs: 64MiB, disk: 1GiB, max_file: 4KiB, exec_max: 5s}
+network: [none, egress]
+containerd:
+  namespace: mirafleet
+  root: /var/lib/mirafleet/ws
+`
+
+func egressReq(rules ...transport.EgressRule) transport.WorkspaceRequest {
+	r := createReq(workspace.NewID())
+	r.Spec.NetworkMode = "egress"
+	r.Spec.Allow = rules
+	return r
+}
+
+// A compromised central must not be able to open private ranges or send rules the egress proxy
+// would reject; CIDR/IP-literal rules need egress_cidr_rules in workspace.yaml.
+func TestWorkspaceEgressRulesRevalidated(t *testing.T) {
+	h := newHarness(t, wsEgressYAML, fake.New(), nil)
+	for name, rule := range map[string]transport.EgressRule{
+		"cidr":         {Host: "10.0.0.0/8", Port: 443},
+		"ip literal":   {Host: "10.1.2.3", Port: 443},
+		"ipv6 literal": {Host: "fd00::1", Port: 443},
+		"metadata":     {Host: "169.254.169.254", Port: 80},
+		"bad host":     {Host: "not a host", Port: 443},
+		"bad wildcard": {Host: "*.com*", Port: 443},
+	} {
+		res, _ := h.do(egressReq(rule), nil)
+		if res.Code != transport.CodeRefused {
+			t.Errorf("%s: code %q, want refused", name, res.Code)
+		}
+	}
+	h.want(egressReq(transport.EgressRule{Host: "api.example.com", Port: 443}, transport.EgressRule{Host: "*.example.org", Port: 8443}), nil, transport.CodeOK)
+
+	on := newHarness(t, strings.Replace(wsEgressYAML, "network: [none, egress]", "network: [none, egress]\negress_cidr_rules: true", 1), fake.New(), nil)
+	on.want(egressReq(transport.EgressRule{Host: "10.0.0.0/8", Port: 443}), nil, transport.CodeOK)
+	on.want(egressReq(transport.EgressRule{Host: "10.1.2.3", Port: 443}), nil, transport.CodeOK)
+	// Even with the flag, rules the proxy refuses (loopback, metadata) stay refused.
+	on.want(egressReq(transport.EgressRule{Host: "169.254.169.254", Port: 80}), nil, transport.CodeRefused)
+	on.want(egressReq(transport.EgressRule{Host: "127.0.0.1", Port: 80}), nil, transport.CodeRefused)
+}
+
+// destroyCounter wraps the fake executor to fail Create and count Destroy calls.
+type destroyCounter struct {
+	*fake.Executor
+	failCreate atomic.Bool
+	destroys   atomic.Int32
+}
+
+func (d *destroyCounter) Create(ctx context.Context, s workspace.Spec) error {
+	if d.failCreate.Load() {
+		return errors.New("boom: partial state left")
+	}
+	return d.Executor.Create(ctx, s)
+}
+
+func (d *destroyCounter) Destroy(ctx context.Context, id workspace.ID) error {
+	d.destroys.Add(1)
+	return d.Executor.Destroy(ctx, id)
+}
+
+func TestWorkspaceFailedCreateDestroys(t *testing.T) {
+	dc := &destroyCounter{Executor: fake.New()}
+	h := newHarness(t, wsYAML, dc.Executor, func(c *Config) { c.Workspace = dc })
+	dc.failCreate.Store(true)
+	h.want(createReq(workspace.NewID()), nil, transport.CodeInternal)
+	if n := dc.destroys.Load(); n != 1 {
+		t.Fatalf("failed create: %d destroys, want 1", n)
+	}
+	// A failed re-create of an existing, confirmed workspace must not destroy it.
+	dc.failCreate.Store(false)
+	id := h.create()
+	dc.failCreate.Store(true)
+	before := dc.destroys.Load()
+	h.want(createReq(id), nil, transport.CodeInternal)
+	if dc.destroys.Load() != before {
+		t.Fatal("a failed duplicate create destroyed a live workspace")
+	}
+	// The slot of the failed create is free again.
+	dc.failCreate.Store(false)
+	h.create()
+}
+
+type blockCloser struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *blockCloser) Close() error { b.once.Do(func() { close(b.closed) }); return nil }
+
+// A central that never reads must not pin a slot: the result/body write is bounded and closes
+// the channel. (The SSH flow-control window is larger than any single result, so a real peer
+// cannot block a write; this exercises the bound directly.)
+func TestWriteBoundedClosesStuckWrite(t *testing.T) {
+	old := wsWriteTimeout
+	wsWriteTimeout = 50 * time.Millisecond
+	defer func() { wsWriteTimeout = old }()
+	bc := &blockCloser{closed: make(chan struct{})}
+	start := time.Now()
+	err := writeBounded(bc, func() error { // a write that only returns once the channel is closed
+		<-bc.closed
+		return io.ErrClosedPipe
+	})
+	if err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("stuck write not bounded: %v after %v", err, time.Since(start))
+	}
+	// A fast write is untouched.
+	if err := writeBounded(&blockCloser{closed: make(chan struct{})}, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Refused requests announcing large bodies are bounded before the body is read: at most
+// wsRefuseMax drain at once, the rest are rejected, and the bodies are discarded not buffered.
+func TestWorkspaceRefusedChannelsBounded(t *testing.T) {
+	h := newHarness(t, wsYAML, fake.New(), nil)
+	mk := func() transport.WorkspaceRequest { // unknown workspace -> refused after the body
+		return transport.WorkspaceRequest{Op: transport.OpExec, ID: string(workspace.NewID()),
+			Argv: []string{"x"}, StdinLen: transport.MaxBodyBytes}
+	}
+	const n = 4 * wsRefuseMax
+	var chans []ssh.Channel
+	rejected := 0
+	for i := 0; i < n; i++ {
+		req := mk()
+		ch, err := h.open(&req)
+		if err != nil {
+			if !busy(err) {
+				t.Fatalf("open %d: %v", i, err)
+			}
+			rejected++
+			continue
+		}
+		chans = append(chans, ch) // accepted; the body is never sent
+	}
+	if len(chans) > wsRefuseMax || rejected < n-wsRefuseMax {
+		t.Fatalf("accepted %d, rejected %d of %d (cap %d)", len(chans), rejected, n, wsRefuseMax)
+	}
+	// Closing them frees the tokens.
+	for _, c := range chans {
+		c.Close()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		req := mk()
+		res, _, err := h.try(req, bytes.Repeat([]byte("a"), transport.MaxBodyBytes))
+		if err == nil && res.Code == transport.CodeNotFound {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tokens not released: %v %v", res, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// usageEx is a fake executor with the optional disk-usage capability.
+type usageEx struct {
+	*fake.Executor
+	mu   sync.Mutex
+	used map[workspace.ID]int64
+}
+
+func (u *usageEx) Usage(_ context.Context, id workspace.ID) (workspace.DiskUsage, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	n := u.used[id]
+	const quota = 100
+	return workspace.DiskUsage{Used: n, Quota: quota, Over: n >= quota, Kill: n >= 2*quota}, nil
+}
+
+func newSamplerRunner(t *testing.T, ex *usageEx, log *syncBuf) *Runner {
+	t.Helper()
+	r := New(Config{Central: "127.0.0.1:1", Workspace: ex, WorkspaceConfig: parseWS(t, wsYAML), Audit: audit.New(log),
+		BackoffMin: time.Hour})
+	if r.cfgErr != nil {
+		t.Fatal(r.cfgErr)
+	}
+	return r
+}
+
+func TestDiskSamplerDestroysAtTwiceQuota(t *testing.T) {
+	ex := &usageEx{Executor: fake.New(), used: map[workspace.ID]int64{}}
+	log := &syncBuf{}
+	r := newSamplerRunner(t, ex, log)
+	over, kill, ok := workspace.NewID(), workspace.NewID(), workspace.NewID()
+	for _, id := range []workspace.ID{over, kill, ok} {
+		if err := ex.Create(context.Background(), workspace.Spec{ID: id, Image: "img", Pull: workspace.PullNever}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ex.used[over], ex.used[kill], ex.used[ok] = 150, 200, 10 // soft over, 2x, fine
+	r.sampleDisks(context.Background())
+	infos, err := ex.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[workspace.ID]bool{}
+	for _, in := range infos {
+		got[in.ID] = true
+	}
+	if !got[over] || !got[ok] || got[kill] {
+		t.Fatalf("survivors %v", got)
+	}
+	if l := log.String(); !strings.Contains(l, "workspace.disk_kill") || !strings.Contains(l, string(kill)) || strings.Contains(l, string(over)) {
+		t.Fatalf("audit:\n%s", l)
+	}
+	r.ws.mu.Lock()
+	_, stillLive := r.ws.live[kill]
+	r.ws.mu.Unlock()
+	if stillLive {
+		t.Fatal("slot not released")
+	}
+}
+
+func TestDiskSamplerRunsFromRunAndStops(t *testing.T) {
+	old := diskSampleEvery
+	diskSampleEvery = 10 * time.Millisecond
+	defer func() { diskSampleEvery = old }()
+	ex := &usageEx{Executor: fake.New(), used: map[workspace.ID]int64{}}
+	log := &syncBuf{}
+	r := newSamplerRunner(t, ex, log)
+	id := workspace.NewID()
+	if err := ex.Create(context.Background(), workspace.Spec{ID: id, Image: "img", Pull: workspace.PullNever}); err != nil {
+		t.Fatal(err)
+	}
+	ex.mu.Lock()
+	ex.used[id] = 1000
+	ex.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(log.String(), "workspace.disk_kill") {
+		if time.Now().After(deadline) {
+			t.Fatal("workspace not destroyed by the sampler")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}

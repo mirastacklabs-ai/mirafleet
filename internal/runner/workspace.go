@@ -26,7 +26,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +39,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/audit"
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
+	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/egress"
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/wsconfig"
 )
 
@@ -47,6 +50,7 @@ const (
 	wsFileTimeout       = 60 * time.Second
 	wsDestroyTimeout    = 60 * time.Second
 	wsListTimeout       = 10 * time.Second
+	wsRefuseMax         = 16             // refused channels whose bodies are being drained, at once
 	wsResultMax         = 1<<20 + 64<<10 // central's MaxWorkspaceResultBytes
 	wsOutputBudget      = 1<<20 - 16<<10 // JSON-encoded stdout+stderr together
 	auditArgvMax        = 4 << 10
@@ -66,6 +70,7 @@ type wsState struct {
 	ex       workspace.Executor
 	cfg      *wsconfig.Config
 	inflight chan struct{} // all in-flight ops, a coarse bound on goroutines and buffers
+	refusing chan struct{} // refused channels draining their body (no buffering), pre-accept bound
 
 	mu     sync.Mutex
 	live   map[workspace.ID]*wsEntry
@@ -74,7 +79,8 @@ type wsState struct {
 
 func newWSState(ex workspace.Executor, cfg *wsconfig.Config) *wsState {
 	return &wsState{ex: ex, cfg: cfg, live: map[workspace.ID]*wsEntry{},
-		inflight: make(chan struct{}, cfg.Concurrent*(maxExecPerWorkspace+1)+8)}
+		inflight: make(chan struct{}, cfg.Concurrent*(maxExecPerWorkspace+1)+8),
+		refusing: make(chan struct{}, wsRefuseMax)}
 }
 
 // seed loads the executor's existing workspaces once (runner restart keeps them). s.mu is held.
@@ -169,6 +175,23 @@ func (s *wsState) createDone(id workspace.ID, ok bool) {
 	} else if e.refs <= 0 && !e.confirmed {
 		delete(s.live, id)
 	}
+}
+
+// cleanupFailedCreate destroys what a failed or cancelled Create may have left behind (the
+// Executor contract says Create cleans up, this is the belt to those braces). It runs before the
+// slot entry is dropped, with its own bounded context since ctx may be the reason Create failed.
+// A workspace that already existed (confirmed, or another create in flight) is left alone.
+func (s *wsState) cleanupFailedCreate(ctx context.Context, id workspace.ID) {
+	s.mu.Lock()
+	e := s.live[id]
+	skip := e == nil || e.confirmed || e.refs > 1
+	s.mu.Unlock()
+	if skip {
+		return
+	}
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wsDestroyTimeout)
+	defer cancel()
+	s.ex.Destroy(dctx, id) // best effort
 }
 
 func (s *wsState) forget(id workspace.ID) {
@@ -276,6 +299,9 @@ func (s *wsState) prepare(req *transport.WorkspaceRequest) (*wsOp, *opErr) {
 		for _, a := range sp.Allow {
 			allow = append(allow, workspace.EgressRule{Host: a.Host, Port: a.Port})
 		}
+		if err := checkEgressRules(sp.Allow, cfg.EgressCIDRRules); err != nil {
+			return nil, refuse("%v", err)
+		}
 		op.spec = workspace.Spec{ID: op.id, Image: sp.Image, Pull: pull,
 			Limits: workspace.Limits{CPUMilli: sp.CPUMilli, MemoryBytes: sp.MemoryBytes, Pids: sp.Pids,
 				TmpfsBytes: sp.TmpfsBytes, DiskBytes: sp.DiskBytes},
@@ -347,6 +373,29 @@ func (s *wsState) prepare(req *transport.WorkspaceRequest) (*wsOp, *opErr) {
 		op.bodyLen = req.Length
 	}
 	return op, nil
+}
+
+// checkEgressRules parses every rule exactly as the egress proxy will (central is not trusted) and
+// refuses CIDR and IP-literal rules unless this runner's workspace.yaml opts in.
+func checkEgressRules(rules []transport.EgressRule, allowCIDR bool) error {
+	strs := make([]string, 0, len(rules))
+	for _, a := range rules {
+		host := a.Host
+		if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+			host = "[" + host + "]"
+		}
+		strs = append(strs, host+":"+strconv.Itoa(a.Port))
+		bare := strings.Trim(a.Host, "[]")
+		if _, err := netip.ParseAddr(bare); err == nil || strings.Contains(bare, "/") {
+			if !allowCIDR {
+				return errors.New("CIDR and IP-literal egress rules are not allowed on this runner")
+			}
+		}
+	}
+	if _, err := egress.NewAllowlist(strs); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ---- audit ----
@@ -487,6 +536,18 @@ func (r *Runner) serveWorkspace(ctx context.Context, nch ssh.NewChannel) {
 	}
 	if release != nil {
 		defer release()
+	} else {
+		// A refused request still has a body to drain; bound how many drain at once so a flood of
+		// refused channels cannot pile up goroutines (the body is discarded, never buffered).
+		select {
+		case s.refusing <- struct{}{}:
+			defer func() { <-s.refusing }()
+		default:
+			msg := "runner busy: too many refused requests in flight"
+			logEv("refused", -1, 0, msg, nil)
+			nch.Reject(ssh.ResourceShortage, msg)
+			return
+		}
 	}
 	ch, reqs, err := nch.Accept()
 	if err != nil {
@@ -533,7 +594,7 @@ func (r *Runner) serveWorkspace(ctx context.Context, nch ssh.NewChannel) {
 	var sum string
 	if bodyLen > 0 { // read (and so drain) the body even when the request is refused
 		var berr error
-		body, berr = readBody(ectx, ch, bodyLen)
+		body, berr = readBody(ectx, ch, bodyLen, release == nil)
 		if berr != nil {
 			out = fail(transport.CodeBadRequest, "refused", fmt.Errorf("body: %v", berr))
 			out.params = map[string]string{"bytes": fmt.Sprint(len(body))}
@@ -574,23 +635,53 @@ func (r *Runner) serveWorkspace(ctx context.Context, nch ssh.NewChannel) {
 	if ectx.Err() != nil && out.audit == "cancelled" {
 		return
 	}
-	if err := transport.WriteResult(ch, &out.res, wsResultMax); err != nil {
+	// A central that never reads must not pin the slot: the writes are bounded and close the channel.
+	werr := writeBounded(ch, func() error {
+		if err := transport.WriteResult(ch, &out.res, wsResultMax); err != nil {
+			return err
+		}
+		if out.res.Code == transport.CodeOK && req.Op == transport.OpRead {
+			if _, err := ch.Write(out.data); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if werr != nil {
 		return
-	}
-	if out.res.Code == transport.CodeOK && req.Op == transport.OpRead {
-		ch.Write(out.data)
 	}
 	ch.CloseWrite()
 }
 
+// wsWriteTimeout bounds the result frame and read body writes (a variable so tests can shorten it).
+var wsWriteTimeout = 60 * time.Second
+
+var errWriteTimeout = errors.New("workspace channel write timed out")
+
+// writeBounded runs fn (writes to ch) and closes ch if it takes longer than wsWriteTimeout, which
+// unblocks the write.
+func writeBounded(ch io.Closer, fn func() error) error {
+	t := time.AfterFunc(wsWriteTimeout, func() { ch.Close() })
+	err := fn()
+	if !t.Stop() && err == nil { // the timer fired just as the write finished
+		err = errWriteTimeout
+	}
+	return err
+}
+
 // readBody reads exactly n body bytes plus central's CloseWrite, bounded by wsBodyTimeout and
-// ctx (either closes the channel, which unblocks the read).
-func readBody(ctx context.Context, ch ssh.Channel, n int64) ([]byte, error) {
+// ctx (either closes the channel, which unblocks the read). With discard the bytes are checked
+// and dropped instead of buffered (refused requests).
+func readBody(ctx context.Context, ch ssh.Channel, n int64, discard bool) ([]byte, error) {
 	bctx, cancel := context.WithTimeout(ctx, wsBodyTimeout)
 	defer cancel()
 	stop := context.AfterFunc(bctx, func() { ch.Close() })
 	var buf bytes.Buffer
-	err := transport.CopyBody(&buf, ch, n)
+	var dst io.Writer = &buf
+	if discard {
+		dst = io.Discard
+	}
+	err := transport.CopyBody(dst, ch, n)
 	if !stop() && err == nil { // the timer fired just as the read finished
 		err = bctx.Err()
 	}
@@ -605,6 +696,7 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 		cctx, cancel := context.WithTimeout(ctx, wsCreateTimeout)
 		defer cancel()
 		if err := s.ex.Create(cctx, op.spec); err != nil {
+			s.cleanupFailedCreate(ctx, op.id)
 			return failFor(cctx, err)
 		}
 		return outcome{res: transport.WorkspaceResult{Code: transport.CodeOK}}
@@ -717,5 +809,82 @@ func (r *Runner) fillHeartbeat(hb *transport.Heartbeat) {
 		if len(im) <= transport.MaxHeartbeatImageBytes {
 			hb.Images = append(hb.Images, im)
 		}
+	}
+}
+
+// diskSampleEvery is the period of the disk sampler (a var so tests can shorten it).
+var diskSampleEvery = 60 * time.Second
+
+// runDiskSampler samples workspace disk usage every diskSampleEvery until ctx is done and
+// destroys workspaces at 2x their quota (M3.md 1.9). It does nothing when the executor has no
+// DiskUsager. Run waits for it, so nothing outlives the runner.
+func (r *Runner) runDiskSampler(ctx context.Context) {
+	if r.ws == nil {
+		return
+	}
+	if _, ok := r.ws.ex.(workspace.DiskUsager); !ok {
+		return
+	}
+	t := time.NewTicker(diskSampleEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			r.sampleDisks(ctx)
+		}
+	}
+}
+
+// sampleDisks runs one sampling pass. Central learns of a destroyed workspace through its next
+// reconcile or list (the row goes lost).
+func (r *Runner) sampleDisks(ctx context.Context) {
+	s := r.ws
+	du, ok := s.ex.(workspace.DiskUsager)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	if err := s.seed(ctx); err != nil { // runner restart: pick up the executor's workspaces
+		s.mu.Unlock()
+		return
+	}
+	ids := make([]workspace.ID, 0, len(s.live))
+	for id, e := range s.live {
+		if e.confirmed {
+			ids = append(ids, id)
+		}
+	}
+	s.mu.Unlock()
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			return
+		}
+		uctx, cancel := context.WithTimeout(ctx, wsFileTimeout)
+		u, err := du.Usage(uctx, id)
+		cancel()
+		if err != nil {
+			if errors.Is(err, workspace.ErrNotFound) {
+				s.forget(id)
+			}
+			continue
+		}
+		if !u.Kill {
+			continue
+		}
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wsDestroyTimeout)
+		derr := s.ex.Destroy(dctx, id)
+		cancel()
+		msg := fmt.Sprintf("disk usage %d bytes is at least twice the quota %d: workspace destroyed", u.Used, u.Quota)
+		outc := "destroyed"
+		if derr != nil && !errors.Is(derr, workspace.ErrNotFound) {
+			outc, msg = "failed", msg+": "+derr.Error()
+		} else {
+			s.forget(id)
+		}
+		r.cfg.Audit.Log(audit.Event{Action: "workspace.disk_kill", Outcome: outc, ExitCode: -1,
+			Message: clip(msg, wsMsgMax), Subject: string(id), RequestID: newRequestID()})
 	}
 }

@@ -24,6 +24,18 @@ func (s *Service) CreateFleet(ctx context.Context, p auth.Principal, src Source,
 	if !mode.Valid() {
 		return store.Fleet{}, badRequest("invalid fleet mode")
 	}
+	if mode == store.ModeWorkspace {
+		// Omitted (zero) fields take the documented defaults; the default image stays required.
+		var c store.WorkspaceConfig
+		if ws != nil {
+			c = *ws
+		}
+		c = WorkspaceDefaults(c)
+		if err := c.Validate(); err != nil {
+			return store.Fleet{}, configInvalid(err)
+		}
+		ws = &c
+	}
 	now := s.now()
 	ev := s.event(p, src, api.MethodFleetCreate)
 	ev.Fleet = name

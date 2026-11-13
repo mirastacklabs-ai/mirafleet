@@ -140,6 +140,7 @@ func (s *Service) lifecycle(ctx context.Context, p auth.Principal, src Source, r
 		// (registry.Status has no "revoked"), and ids are never reused. Tombstones live in memory
 		// only; after a restart revoked runners are rejected at auth from the DB status, so
 		// losing them is safe.
+		s.closeWorkspacesOf(ctx, store.WorkspaceOwner{RunnerID: r.ID}, RevokeReason, ref.Fleet, ref.Runner, ref.String())
 		return out, nil
 	}
 

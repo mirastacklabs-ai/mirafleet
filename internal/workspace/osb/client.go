@@ -379,7 +379,11 @@ func (c *Client) DeleteSandbox(ctx context.Context, id string) error {
 }
 
 // ListSandboxes walks every page (bounded) and returns the sandboxes that match opt.Metadata.
+// An empty metadata filter is refused: the client never lists sandboxes it cannot attribute.
 func (c *Client) ListSandboxes(ctx context.Context, opt ListOptions) ([]Sandbox, error) {
+	if len(opt.Metadata) == 0 {
+		return nil, errors.New("osb: refusing to list sandboxes without a metadata filter")
+	}
 	size := opt.PageSize
 	if size <= 0 {
 		size = defaultPage

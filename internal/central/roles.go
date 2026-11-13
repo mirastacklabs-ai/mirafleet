@@ -134,6 +134,9 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			}
 			registered.Store(true)
 			tc = s.startToucher(p.ID)
+			if hb.Executor != "" {
+				s.reconcileAsync(p.ID)
+			}
 			lastHB = hb
 			if s.claimEdge(p.ID, now) {
 				lastTouch = now
@@ -152,6 +155,17 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 		}
 		r.Reply(true, nil)
 	}
+}
+
+// reconcileAsync compares the runner's workspaces with the store in the background (M3.md 1.6). It
+// runs outside the registry lock and the heartbeat path, tracked by the wait group so Close drains
+// it before the store closes. Called from serveRunner, itself tracked, so Add cannot race Wait.
+func (s *Server) reconcileAsync(id int64) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.cfg.Service.ReconcileRunner(s.ctx, id)
+	}()
 }
 
 // toucher writes a runner's last_seen/info to the store off the heartbeat path. It holds at most

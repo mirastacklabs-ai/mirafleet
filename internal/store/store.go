@@ -302,8 +302,8 @@ type Store interface {
 	// CountLiveWorkspaces returns, for each given runner id, the number of workspaces in
 	// opening, open or closing (the slots it holds). Runners with none map to 0.
 	CountLiveWorkspaces(ctx context.Context, runnerIDs []int64) (map[int64]int, error)
-	// CloseWorkspacesOf moves every open workspace of the runner or operator to closing (and every
-	// opening one to failed) with reason, in one transaction, writing ev once (ev.Message carries the count).
+	// CloseWorkspacesOf moves every opening and open workspace of the runner or operator to closing
+	// (so a destroy is attempted even for an in-flight create) with reason, in one transaction, writing ev once (ev.Message carries the count).
 	// It returns the affected ws_ids. ErrInvalid unless exactly one owner id is non-zero.
 	CloseWorkspacesOf(ctx context.Context, who WorkspaceOwner, reason string, now time.Time, ev AuditEvent) ([]string, error)
 
@@ -591,15 +591,15 @@ func (s WorkspaceState) Live() bool {
 }
 
 // CanTransitionWorkspace reports whether a workspace may move from one state to another:
-// opening->open|failed, open->closing|lost, closing->closed. The rest are terminal.
+// opening->open|closing|failed, open->closing|lost, closing->closed|lost|failed (B-12: a dead runner must not pin a slot forever). The rest are terminal.
 func CanTransitionWorkspace(from, to WorkspaceState) bool {
 	switch from {
 	case WorkspaceOpening:
-		return to == WorkspaceOpen || to == WorkspaceFailed
+		return to == WorkspaceOpen || to == WorkspaceClosing || to == WorkspaceFailed
 	case WorkspaceOpen:
 		return to == WorkspaceClosing || to == WorkspaceLost
 	case WorkspaceClosing:
-		return to == WorkspaceClosed
+		return to == WorkspaceClosed || to == WorkspaceLost || to == WorkspaceFailed
 	}
 	return false
 }

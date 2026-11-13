@@ -410,7 +410,7 @@ var (
 )
 
 // workspaceAllowed reports whether op may run on a session in status st. Deny by default:
-// destroy and list also work on disabled runners (cleanup); everything else needs active.
+// read, destroy and list also work on disabled runners (M3.md 1.5); create, exec and write need active.
 func workspaceAllowed(op string, st Status) error {
 	switch st {
 	case StatusActive:
@@ -422,9 +422,9 @@ func workspaceAllowed(op string, st Status) error {
 		return fmt.Errorf("unknown workspace op %q", op)
 	case StatusDisabled:
 		switch op {
-		case transport.OpDestroy, transport.OpList:
+		case transport.OpRead, transport.OpDestroy, transport.OpList:
 			return nil
-		case transport.OpCreate, transport.OpExec, transport.OpRead, transport.OpWrite:
+		case transport.OpCreate, transport.OpExec, transport.OpWrite:
 			return ErrDisabled
 		}
 		return fmt.Errorf("unknown workspace op %q", op)

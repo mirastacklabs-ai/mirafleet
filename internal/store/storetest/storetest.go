@@ -1217,6 +1217,13 @@ func workspaces(t *testing.T, s store.Store) {
 			}
 		}
 	}
+	// B-12: a closing workspace may end closed, lost or failed (a dead runner must not pin a slot).
+	for _, to := range all {
+		want := to == store.WorkspaceClosed || to == store.WorkspaceLost || to == store.WorkspaceFailed
+		if store.CanTransitionWorkspace(store.WorkspaceClosing, to) != want {
+			t.Fatalf("closing->%s allowed = %v, want %v", to, !want, want)
+		}
+	}
 	// `from` mismatch, unknown id, invalid arguments.
 	m, _, _ := s.ReserveWorkspace(ctx, wsRow(300, f, rs[2], ops[0], "m"), 1000, 0, now, ev("x"))
 	if _, err := s.SetWorkspaceState(ctx, m.WsID, []store.WorkspaceState{store.WorkspaceOpen}, store.WorkspaceClosing, "", now, ev("x")); !errors.Is(err, store.ErrConflict) {
@@ -1375,7 +1382,7 @@ func workspaceClose(t *testing.T, s store.Store) {
 		t.Fatalf("two owners: %v", err)
 	}
 
-	// By runner: open -> closing, opening -> failed, closing untouched.
+	// By runner: open and opening -> closing, closing untouched.
 	base := auditCount(t, s)
 	later := now.Add(time.Minute)
 	ids, err := s.CloseWorkspacesOf(ctx, store.WorkspaceOwner{RunnerID: rs[0].ID}, "runner revoked", later, ev("runner.revoke"))
@@ -1395,7 +1402,7 @@ func workspaceClose(t *testing.T, s store.Store) {
 	if w := state(1); w.State != store.WorkspaceClosing || w.Reason != "runner revoked" || !w.ClosedAt.IsZero() {
 		t.Fatalf("ws1: %+v", w)
 	}
-	if w := state(2); w.State != store.WorkspaceFailed || w.Reason != "runner revoked" || !w.ClosedAt.Equal(later) {
+	if w := state(2); w.State != store.WorkspaceClosing || w.Reason != "runner revoked" || !w.ClosedAt.IsZero() {
 		t.Fatalf("ws2: %+v", w)
 	}
 	if state(3).State != store.WorkspaceOpen || state(5).State != store.WorkspaceClosing || state(5).Reason != "" {

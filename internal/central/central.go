@@ -10,6 +10,7 @@
 package central
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -110,6 +111,10 @@ type Server struct {
 
 	edgeMu sync.Mutex
 	edgeAt map[int64]time.Time // last connect/disconnect store write per runner id
+
+	// ctx is cancelled by Close before it waits: it stops the reaper and any reconcile.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // track registers c to be closed by Close and takes a WaitGroup slot for it, both under the
@@ -197,13 +202,22 @@ func New(cfg Config) (*Server, error) {
 	sc.AddHostKey(cfg.HostKey)
 	lim := newIPLimiter(cfg.EnrollRatePerMin, cfg.Now)
 	lim.setGlobal(cfg.EnrollGlobalRatePerMin)
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{cfg: cfg, ssh: sc, limiter: lim,
+		ctx: ctx, cancel: cancel,
 		hs:    newHSLimiter(cfg.MaxHandshakesPerIP, cfg.MaxHandshakes),
 		conns: map[*ssh.ServerConn]struct{}{}, closers: map[io.Closer]struct{}{}}, nil
 }
 
 // Start binds the listener and serves in the background. It returns the bound address.
 func (s *Server) Start() (string, error) {
+	// Startup recovery (M3.md 1.6): opening rows are from a create we crashed in. Runs before the
+	// listener so no new open can race it.
+	if n, err := s.cfg.Service.RecoverWorkspaces(s.ctx); err != nil {
+		s.cfg.Logf("workspace recovery failed: %v", err)
+	} else if n > 0 {
+		s.cfg.Logf("workspace recovery: %d opening workspaces marked failed", n)
+	}
 	ln, err := net.Listen("tcp", s.cfg.Listen)
 	if err != nil {
 		return "", err
@@ -211,6 +225,8 @@ func (s *Server) Start() (string, error) {
 	s.mu.Lock()
 	s.ln = ln
 	s.mu.Unlock()
+	s.wg.Add(1)
+	go func() { defer s.wg.Done(); s.cfg.Service.RunReaper(s.ctx) }()
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -228,6 +244,7 @@ func (s *Server) Start() (string, error) {
 
 // Close stops listening, drops all connections and waits for handlers.
 func (s *Server) Close() {
+	s.cancel() // stops the reaper and reconciles; Wait below drains them before the caller closes the store
 	s.mu.Lock()
 	s.closed = true
 	if s.ln != nil {

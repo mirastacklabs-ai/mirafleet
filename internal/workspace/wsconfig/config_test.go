@@ -377,3 +377,29 @@ func TestLoadReal(t *testing.T) {
 		}
 	}
 }
+
+func TestEgressCIDRRulesFlag(t *testing.T) {
+	c, err := Parse([]byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.EgressCIDRRules {
+		t.Fatal("egress_cidr_rules must default to false")
+	}
+	c, err = Parse([]byte(strings.Replace(base, "network: [none, egress]", "network: [none, egress]\negress_cidr_rules: true", 1)))
+	if err != nil || !c.EgressCIDRRules {
+		t.Fatalf("flag not parsed: %v", err)
+	}
+}
+
+func TestPinHexOnly(t *testing.T) {
+	pin := strings.Repeat("ab", 32)
+	ok := strings.Replace(osBase, "  ca_file: /etc/mirafleet/ca.pem\n", "  ca_file: /etc/mirafleet/ca.pem\n  pin_sha256: "+pin+"\n", 1)
+	if _, err := Parse([]byte(ok)); err != nil {
+		t.Fatal(err)
+	}
+	bad := strings.Replace(ok, pin, "q2Zo0nS2yR0v1sXq3m2Yk5oQ8cQ8c7p1o2o3o4o5o6o=", 1)
+	if _, err := Parse([]byte(bad)); err == nil {
+		t.Fatal("base64 pin accepted")
+	}
+}

@@ -384,7 +384,7 @@ func TestWorkspaceStatusGating(t *testing.T) {
 	}
 	allowed := map[Status]map[string]bool{
 		StatusActive:   {transport.OpCreate: true, transport.OpExec: true, transport.OpRead: true, transport.OpWrite: true, transport.OpDestroy: true, transport.OpList: true},
-		StatusDisabled: {transport.OpDestroy: true, transport.OpList: true},
+		StatusDisabled: {transport.OpRead: true, transport.OpDestroy: true, transport.OpList: true},
 		StatusPending:  {},
 	}
 	for st, ok := range allowed {

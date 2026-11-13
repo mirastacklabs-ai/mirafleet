@@ -9,7 +9,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -27,9 +27,9 @@ type Config struct {
 	// CAFile is a PEM file with the node CA. It is the only trust anchor (system roots are never
 	// used). Required.
 	CAFile string
-	// PinSHA256 optionally pins the server leaf: the base64 (std) SHA-256 of its
-	// SubjectPublicKeyInfo. It is checked in addition to chain verification. A pin alone is not
-	// accepted: Go cannot verify a chain without a trust anchor except via InsecureSkipVerify,
+	// PinSHA256 optionally pins the server leaf: the SHA-256 of its SubjectPublicKeyInfo as
+	// 64 hex characters (the form wsconfig validates); base64 is not accepted. It is checked in
+	// addition to chain verification. A pin alone is not accepted: Go cannot verify a chain without a trust anchor except via InsecureSkipVerify,
 	// which this package never uses. Point CAFile at the self-signed certificate if need be.
 	PinSHA256 string
 	// CertFile and KeyFile are the client certificate and key (PEM). Required (mTLS).
@@ -69,19 +69,19 @@ func parseBase(raw string) (*url.URL, error) {
 	return &url.URL{Scheme: "https", Host: u.Host}, nil
 }
 
-// decodePin decodes a base64 SHA-256 pin.
+// decodePin decodes a hex SHA-256 pin.
 func decodePin(p string) ([]byte, error) {
-	b, err := base64.StdEncoding.DecodeString(p)
+	b, err := hex.DecodeString(p)
 	if err != nil || len(b) != sha256.Size {
-		return nil, errors.New("osb: pin_sha256 must be the base64 of a SHA-256 digest")
+		return nil, errors.New("osb: pin_sha256 must be 64 hex characters (SHA-256 digest)")
 	}
 	return b, nil
 }
 
-// SPKIPin returns the pin string (base64 SHA-256 of the SubjectPublicKeyInfo) for a certificate.
+// SPKIPin returns the pin string (hex SHA-256 of the SubjectPublicKeyInfo) for a certificate.
 func SPKIPin(c *x509.Certificate) string {
 	sum := sha256.Sum256(c.RawSubjectPublicKeyInfo)
-	return base64.StdEncoding.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:])
 }
 
 func tlsConfig(cfg Config, host string) (*tls.Config, error) {

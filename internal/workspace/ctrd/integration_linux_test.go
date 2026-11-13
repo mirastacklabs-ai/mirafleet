@@ -17,6 +17,8 @@ import (
 	"github.com/containerd/containerd/v2/pkg/cio"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/pkg/oci"
+
+	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/initproc"
 )
 
 // Run via `scripts/dev.sh integration`, which starts containerd inside a throwaway privileged
@@ -26,6 +28,14 @@ import (
 const testNamespace = "mirafleet-test"
 
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "workspace-init" {
+		// This test binary is bind-mounted as /.mirafleet/init by the executor under test.
+		if err := initproc.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "workspace-init:", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if os.Getenv(testInitEnv) == "1" {
 		// Running as the container's init: prove we started, then exit.
 		fmt.Println("test-init ok uid", os.Getuid())

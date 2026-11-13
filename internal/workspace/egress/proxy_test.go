@@ -592,3 +592,32 @@ func (s *syncBuf) String() string {
 	defer s.mu.Unlock()
 	return s.b.String()
 }
+
+// A client-supplied Host header must not steer the upstream request to another virtual host
+// on an allowlisted address (B-08).
+func TestPlainHTTPHostHeaderPinned(t *testing.T) {
+	var gotHost string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		fmt.Fprint(w, "ok")
+	}))
+	defer s.Close()
+	_, port, _ := net.SplitHostPort(s.Listener.Addr().String())
+	res := newResolver(map[string][][]string{"app.test": {{"8.8.8.8"}}})
+	h := newHarness(t, []string{"app.test:" + port}, res, s.Listener.Addr().String(), nil)
+	c, err := net.Dial("tcp", h.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	fmt.Fprintf(c, "GET http://app.test:%s/ HTTP/1.1\r\nHost: evil.test\r\nConnection: close\r\n\r\n", port)
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || gotHost != "app.test:"+port {
+		t.Fatalf("status %d, upstream saw Host %q", resp.StatusCode, gotHost)
+	}
+}

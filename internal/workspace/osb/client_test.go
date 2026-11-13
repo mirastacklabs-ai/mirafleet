@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/wsconfig"
 )
 
 var ctx = context.Background()
@@ -285,6 +287,37 @@ func TestPin(t *testing.T) {
 	_, err = c.GetSandbox(ctx, "sb1")
 	if err == nil || !strings.Contains(err.Error(), "pin") {
 		t.Fatalf("wrong pin must be refused, got %v", err)
+	}
+}
+
+// A pin validated by wsconfig (64 hex chars) must work unchanged with osb's TLS client.
+func TestWsconfigPinEndToEnd(t *testing.T) {
+	p := newPKI(t)
+	f := newFake(t, p, fakeOpts{})
+	cfg := f.cfg(t)
+	cfg.PinSHA256 = SPKIPin(p.serverLeaf)
+	y := "executor: opensandbox\nconcurrent: 1\nimages: [\"alpine:3.20\"]\n" +
+		"limits: {cpus: 1, memory: 1GiB, pids: 64, tmpfs: 64MiB, disk: 1GiB, max_file: 1MiB}\n" +
+		"network: [none]\nopensandbox:\n  server: \"https://127.0.0.1:8443\"\n  ca_file: /x/ca.pem\n" +
+		"  pin_sha256: \"" + cfg.PinSHA256 + "\"\n  client_cert: /x/c.pem\n  client_key: /x/c.key\n  api_key_file: /x/k\n"
+	wc, err := wsconfig.Parse([]byte(y))
+	if err != nil {
+		t.Fatalf("wsconfig rejected the pin %q: %v", cfg.PinSHA256, err)
+	}
+	cfg.PinSHA256 = wc.OpenSandbox.PinSHA256
+	c, err := NewClient(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetSandbox(ctx, "sb1"); err != nil {
+		t.Fatalf("wsconfig pin: %v", err)
+	}
+	cfg.PinSHA256 = strings.ToUpper(cfg.PinSHA256) // wsconfig accepts either case
+	if c, err = NewClient(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetSandbox(ctx, "sb1"); err != nil {
+		t.Fatalf("upper-case pin: %v", err)
 	}
 }
 
