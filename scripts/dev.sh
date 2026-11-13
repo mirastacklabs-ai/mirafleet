@@ -5,7 +5,7 @@
 # MIRAFLEET_CTR and MIRAFLEET_GO_IMAGE are trusted caller environment (the CTR value is
 # word-split and executed); never derive them from untrusted input.
 #
-# Usage: scripts/dev.sh build|test|vet|cross|fmt|shell|go <args...>
+# Usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|shell|go <args...>
 set -eu
 
 # Pinned by tag and by multi-arch index digest.
@@ -42,6 +42,8 @@ run() {
 		-w /src \
 		-e HOME=/tmp \
 		-e GOCACHE=/gocache \
+		-e GOPATH=/gocache/gopath \
+		-e GOMODCACHE=/go/pkg/mod \
 		-e GOFLAGS="-buildvcs=false -modcacherw" \
 		"$GO_IMAGE" sh -ec "$PRECHECK$script" sh "$@"
 }
@@ -68,9 +70,29 @@ shell)
 	[ -t 0 ] && TTY=-t
 	run rw 'exec bash'
 	;;
+licenses)
+	# Linked code only (what go-licenses checks), for every target in $TARGETS so darwin/windows-only
+	# modules are checked too; allowlist per CLAUDE.md. go-licenses is built into the
+	# container's /tmp (host-arch, before GOOS is exported per target) and never installed on the host.
+	# NOTE: go-licenses classifies each module's top-level LICENSE only. modernc.org/libc bundles
+	# musl-derived MIT code that it does not see (reviewed manually, see docs/M2.md §6.3).
+	# --ignore modernc.org/mathutil: its LICENSE is verbatim BSD-3-Clause text (reviewed by hand)
+	# but go-licenses' classifier cannot match it ("The mathutil Authors" wording). The ignore is
+	# valid only for the reviewed version, pinned below; any bump fails until re-reviewed.
+	run ro "v=\$(go list -m -f '{{.Version}}' modernc.org/mathutil)
+		[ \"\$v\" = v1.7.1 ] || { echo 're-review modernc.org/mathutil licence' >&2; exit 1; }
+		GOBIN=/tmp/bin go install github.com/google/go-licenses@v1.6.0
+		for t in $TARGETS; do
+			export GOOS=\${t%/*} GOARCH=\${t#*/} CGO_ENABLED=0
+			echo \"== \$t\"
+			/tmp/bin/go-licenses check ./... \\
+				--ignore modernc.org/mathutil \\
+				--allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,0BSD
+		done"
+	;;
 go) run rw 'exec go "$@"' "$@" ;;
 *)
-	echo "usage: scripts/dev.sh build|test|vet|cross|fmt|shell|go <args...>" >&2
+	echo "usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|shell|go <args...>" >&2
 	exit 2
 	;;
 esac
