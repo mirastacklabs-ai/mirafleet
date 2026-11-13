@@ -164,7 +164,7 @@ func (e *env) audit() []store.AuditEvent {
 
 func (e *env) fleet(name string) {
 	e.t.Helper()
-	if _, err := e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, name, "", false); err != nil {
+	if _, err := e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, name, "", false, nil); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -258,7 +258,7 @@ func TestNewRequiresDeps(t *testing.T) {
 
 func TestFleets(t *testing.T) {
 	e := newEnv(t)
-	f, err := e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "prod", store.ModeWorkspace, true)
+	f, err := e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "prod", store.ModeWorkspace, true, wsCfg())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,22 +274,28 @@ func TestFleets(t *testing.T) {
 		ev.Fleet != "prod" || ev.Action != api.MethodFleetCreate || ev.Outcome != "ok" || !ev.Time.Equal(t0) {
 		t.Fatalf("audit = %+v", ev)
 	}
+	if c := code(t, errOf(e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "nows", store.ModeWorkspace, false, nil))); c != api.CodeBadRequest {
+		t.Fatalf("workspace fleet without config: %q", c)
+	}
+	if c := code(t, errOf(e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "ax", store.ModeActions, false, wsCfg()))); c != api.CodeBadRequest {
+		t.Fatalf("actions fleet with config: %q", c)
+	}
 	// Default mode.
-	g, err := e.svc.CreateFleet(e.ctx, e.admin, SourceGUI, "stage", "", false)
+	g, err := e.svc.CreateFleet(e.ctx, e.admin, SourceGUI, "stage", "", false, nil)
 	if err != nil || g.Mode != store.ModeActions {
 		t.Fatalf("default mode: %+v %v", g, err)
 	}
 	// Errors.
-	if c := code(t, errOf(e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "prod", "", false))); c != api.CodeConflict {
+	if c := code(t, errOf(e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "prod", "", false, nil))); c != api.CodeConflict {
 		t.Errorf("duplicate fleet code = %q", c)
 	}
-	if c := code(t, errOf(e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "Bad Name", "", false))); c != api.CodeBadRequest {
+	if c := code(t, errOf(e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "Bad Name", "", false, nil))); c != api.CodeBadRequest {
 		t.Errorf("bad name code = %q", c)
 	}
-	if c := code(t, errOf(e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "x", "weird", false))); c != api.CodeBadRequest {
+	if c := code(t, errOf(e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "x", "weird", false, nil))); c != api.CodeBadRequest {
 		t.Errorf("bad mode code = %q", c)
 	}
-	if c := code(t, errOf(e.svc.CreateFleet(e.ctx, e.admin, "bogus", "y", "", false))); c != api.CodeBadRequest {
+	if c := code(t, errOf(e.svc.CreateFleet(e.ctx, e.admin, "bogus", "y", "", false, nil))); c != api.CodeBadRequest {
 		t.Errorf("bad source code = %q", c)
 	}
 	if n := len(e.audit()); n != 2 {
@@ -516,7 +522,7 @@ func TestLiveSetStatusErrorIsLoggedNotFatal(t *testing.T) {
 func callAll(e *env, p auth.Principal) map[string]error {
 	ctx := e.ctx
 	return map[string]error{
-		"CreateFleet": errOf(e.svc.CreateFleet(ctx, p, SourceAPI, "zzz", "", false)),
+		"CreateFleet": errOf(e.svc.CreateFleet(ctx, p, SourceAPI, "zzz", "", false, nil)),
 		"CreateToken": errOf(e.svc.CreateToken(ctx, p, SourceAPI, TokenParams{Fleet: "prod"})),
 		"RevokeToken": e.svc.RevokeToken(ctx, p, SourceAPI, "0123456789abcdef"),
 		"ListTokens":  errOf(e.svc.ListTokens(ctx, p, SourceAPI, "")),
@@ -911,5 +917,17 @@ func TestConcurrentRevokeKeepsTombstone(t *testing.T) {
 		if revokes-revokesBefore != 1 {
 			t.Fatalf("round %d: %d revoke audit rows, want 1", i, revokes-revokesBefore)
 		}
+	}
+}
+
+// wsCfg returns a valid workspace-fleet configuration.
+func wsCfg() *store.WorkspaceConfig {
+	return &store.WorkspaceConfig{
+		Executor: store.ExecutorContainerd, DefaultImage: "docker.io/library/golang:1.27",
+		Images: []string{"docker.io/library/golang:1.27", "ghcr.io/acme/dev@sha256:*"},
+		Pull:   store.PullIfNotPresent, Network: store.NetworkNone,
+		CPUMilli: 2000, MemoryMB: 4096, Pids: 1024, TmpfsMB: 512, DiskMB: 10240,
+		IdleTTL: time.Hour, MaxTTL: 2 * time.Hour,
+		ExecDefault: 120 * time.Second, ExecMax: 30 * time.Minute,
 	}
 }

@@ -123,10 +123,10 @@ func TestRunActionOutcomeAuditFailureLogged(t *testing.T) {
 func TestRunActionChecks(t *testing.T) {
 	e := newEnv(t)
 	e.fleet("prod")
-	if _, err := e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "guarded", "actions", true); err != nil {
+	if _, err := e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "guarded", "actions", true, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "ws", "workspace", false); err != nil {
+	if _, err := e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "ws", "workspace", false, wsCfg()); err != nil {
 		t.Fatal(err)
 	}
 	act := e.runnerAt("prod", store.StatusActive)
@@ -319,7 +319,7 @@ func TestLifecycleSetStatusFailureKicks(t *testing.T) {
 
 func TestRunActionGuardedRefusalAudited(t *testing.T) {
 	e := newEnv(t)
-	if _, err := e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "guarded", "actions", true); err != nil {
+	if _, err := e.svc.CreateFleet(e.ctx, e.admin, SourceCLI, "guarded", "actions", true, nil); err != nil {
 		t.Fatal(err)
 	}
 	gr := e.runnerAt("guarded", store.StatusActive)

@@ -61,7 +61,7 @@ func newCenv(t *testing.T) *cenv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.CreateFleet(ctx, e.admin, service.SourceCLI, "f1", store.ModeActions, false); err != nil {
+	if _, err := e.svc.CreateFleet(ctx, e.admin, service.SourceCLI, "f1", store.ModeActions, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.svc.InitRegistrationSecret(ctx, e.admin, service.SourceCLI); err != nil {

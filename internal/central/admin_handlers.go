@@ -18,7 +18,7 @@ func handleFleetCreate(ctx context.Context, c *callCtx, req *api.Request) (any, 
 	if e := api.DecodeParams(req.Params, &p); e != nil {
 		return nil, e
 	}
-	f, err := c.svc.CreateFleet(ctx, c.p, c.src, p.Name, store.Mode(p.Mode), p.Confirm)
+	f, err := c.svc.CreateFleet(ctx, c.p, c.src, p.Name, store.Mode(p.Mode), p.Confirm, workspaceFromAPI(p.Workspace))
 	if err != nil {
 		return nil, err
 	}
@@ -177,4 +177,30 @@ func handleAuditList(ctx context.Context, c *callCtx, req *api.Request) (any, er
 			DurationMS: e.DurationMS, Message: e.Message, RequestID: e.RequestID}
 	}
 	return out, nil
+}
+
+// workspaceFromAPI maps the wire config to the store config field by field (seconds to
+// durations). nil stays nil; the store validates and rejects invalid or misplaced configs.
+func workspaceFromAPI(w *api.WorkspaceConfig) *store.WorkspaceConfig {
+	if w == nil {
+		return nil
+	}
+	sec := func(n int) time.Duration { return time.Duration(n) * time.Second }
+	return &store.WorkspaceConfig{
+		Executor:     store.Executor(w.Executor),
+		DefaultImage: w.DefaultImage,
+		Images:       w.Images,
+		Pull:         store.PullPolicy(w.Pull),
+		Network:      store.NetworkMode(w.Network),
+		Egress:       w.Egress,
+		CPUMilli:     w.CPUMilli,
+		MemoryMB:     w.MemoryMB,
+		Pids:         w.Pids,
+		TmpfsMB:      w.TmpfsMB,
+		DiskMB:       w.DiskMB,
+		IdleTTL:      sec(w.IdleTTLS),
+		MaxTTL:       sec(w.MaxTTLS),
+		ExecDefault:  sec(w.ExecDefaultS),
+		ExecMax:      sec(w.ExecMaxS),
+	}
 }

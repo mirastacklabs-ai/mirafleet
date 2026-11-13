@@ -42,7 +42,9 @@ func (TablePolicy) Authorize(_ context.Context, p auth.Principal, action string,
 			return ErrForbidden
 		}
 		switch action {
-		case api.MethodHello, api.MethodFleetsList, api.MethodRunnersList, api.MethodActionRun:
+		case api.MethodHello, api.MethodFleetsList, api.MethodRunnersList, api.MethodActionRun,
+			api.MethodWorkspaceOpen, api.MethodWorkspaceExec, api.MethodWorkspaceReadFile,
+			api.MethodWorkspaceWriteFile, api.MethodWorkspaceClose, api.MethodWorkspaceList:
 			return nil
 		}
 	case auth.KindEnroll:

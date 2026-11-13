@@ -20,6 +20,7 @@ var t0 = time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
 func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("Fleets", func(t *testing.T) { fleets(t, newStore(t)) })
 	t.Run("Audit", func(t *testing.T) { audit(t, newStore(t)) })
+	t.Run("FleetWorkspace", func(t *testing.T) { fleetWorkspace(t, newStore(t)) })
 	t.Run("Enroll", func(t *testing.T) { enroll(t, newStore(t)) })
 	t.Run("EnrollRaceSingleUse", func(t *testing.T) { enrollRace(t, newStore(t), 1, 1) })
 	t.Run("EnrollRaceMultiUse", func(t *testing.T) { enrollRace(t, newStore(t), 3, 3) })
@@ -60,7 +61,7 @@ func fleets(t *testing.T, s store.Store) {
 	if got.ID != f.ID || !got.Confirm || got.Mode != store.ModeActions || !got.CreatedAt.Equal(t0) || got.RunnerCount != 0 {
 		t.Fatalf("got = %+v", got)
 	}
-	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "db", Mode: store.ModeWorkspace}, t0.Add(time.Second), ev("fleet.create")); err != nil {
+	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "db", Mode: store.ModeWorkspace, Workspace: wsCfg()}, t0.Add(time.Second), ev("fleet.create")); err != nil {
 		t.Fatal(err)
 	}
 	l, err := s.ListFleets(ctx)
@@ -103,7 +104,7 @@ func audit(t *testing.T, s store.Store) {
 		ID: 999, Time: t0, Source: "api", ActorKind: "operator", Actor: "alice", Remote: "1.2.3.4",
 		Fleet: "web", Runner: "r1", Subject: "s", Action: "action.run",
 		Params: map[string]string{"a": "b"}, Outcome: "ok", ExitCode: &code, DurationMS: 42,
-		Message: "m", RequestID: "req1",
+		Message: "m", RequestID: "req1", Workspace: "0123456789abcdef0123456789abcdef",
 	}
 	id, err := s.RecordAudit(ctx, full)
 	if err != nil || id <= 0 {
@@ -115,7 +116,7 @@ func audit(t *testing.T, s store.Store) {
 	}
 	g := got[0]
 	if g.ID != id || !g.Time.Equal(t0) || g.Params["a"] != "b" || g.ExitCode == nil || *g.ExitCode != 3 ||
-		g.DurationMS != 42 || g.Actor != "alice" || g.RequestID != "req1" || g.Fleet != "web" || g.Message != "m" {
+		g.DurationMS != 42 || g.Actor != "alice" || g.RequestID != "req1" || g.Fleet != "web" || g.Message != "m" || g.Workspace != full.Workspace {
 		t.Fatalf("round trip = %+v", g)
 	}
 	// nil ExitCode stays nil; empty params stay empty.
@@ -826,5 +827,166 @@ func keyDisjointRace(t *testing.T, s store.Store) {
 		if joinErr != nil && !errors.Is(joinErr, store.ErrConflict) || regErr != nil && !errors.Is(regErr, store.ErrConflict) {
 			t.Fatalf("round %d: loser must get ErrConflict: join=%v register=%v", i, joinErr, regErr)
 		}
+	}
+}
+
+// wsCfg returns a valid workspace configuration.
+func wsCfg() *store.WorkspaceConfig {
+	return &store.WorkspaceConfig{
+		Executor: store.ExecutorContainerd, DefaultImage: "docker.io/library/golang:1.27",
+		Images: []string{"docker.io/library/golang:1.27", "ghcr.io/acme/dev@sha256:*"},
+		Pull:   store.PullIfNotPresent, Network: store.NetworkEgress, Egress: []string{"proxy.golang.org:443", "*.golang.org:443"},
+		CPUMilli: 2000, MemoryMB: 4096, Pids: 1024, TmpfsMB: 512, DiskMB: 10240,
+		IdleTTL: 24 * time.Hour, MaxTTL: 168 * time.Hour,
+		ExecDefault: 120 * time.Second, ExecMax: 30 * time.Minute,
+	}
+}
+
+func fleetWorkspace(t *testing.T, s store.Store) {
+	ctx := context.Background()
+
+	// Mode/config pairing.
+	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "w", Mode: store.ModeWorkspace}, t0, ev("fleet.create")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("workspace mode without config: %v", err)
+	}
+	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "a", Mode: store.ModeActions, Workspace: wsCfg()}, t0, ev("fleet.create")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("actions mode with config: %v", err)
+	}
+	if n := auditCount(t, s); n != 0 {
+		t.Fatalf("rejected creates wrote %d audit rows", n)
+	}
+
+	// Each mutation must be rejected with ErrInvalid and leave nothing behind.
+	for name, mut := range map[string]func(*store.WorkspaceConfig){
+		"bad executor":           func(c *store.WorkspaceConfig) { c.Executor = "docker" },
+		"bad pull":               func(c *store.WorkspaceConfig) { c.Pull = "sometimes" },
+		"bad network":            func(c *store.WorkspaceConfig) { c.Network = "host" },
+		"empty default image":    func(c *store.WorkspaceConfig) { c.DefaultImage = "" },
+		"default not in list":    func(c *store.WorkspaceConfig) { c.DefaultImage = "evil/img:1" },
+		"default is a pattern":   func(c *store.WorkspaceConfig) { c.DefaultImage = "ghcr.io/acme/dev@sha256:*" },
+		"empty allowlist":        func(c *store.WorkspaceConfig) { c.Images = nil },
+		"bare trailing wildcard": func(c *store.WorkspaceConfig) { c.Images = append(c.Images, "ghcr.io/acme/*") },
+		"prefix wildcard":        func(c *store.WorkspaceConfig) { c.Images = append(c.Images, "ghcr.io/acme/dev:v*") },
+		"mid-string wildcard":    func(c *store.WorkspaceConfig) { c.Images = append(c.Images, "a*b") },
+		"whitespace in image":    func(c *store.WorkspaceConfig) { c.Images = append(c.Images, "a b") },
+		"too many images":        func(c *store.WorkspaceConfig) { c.Images = make([]string, 65) },
+		"empty egress rule":      func(c *store.WorkspaceConfig) { c.Egress = []string{""} },
+		"egress with none":       func(c *store.WorkspaceConfig) { c.Network = store.NetworkNone },
+		"zero cpu":               func(c *store.WorkspaceConfig) { c.CPUMilli = 0 },
+		"zero memory":            func(c *store.WorkspaceConfig) { c.MemoryMB = 0 },
+		"negative pids":          func(c *store.WorkspaceConfig) { c.Pids = -1 },
+		"zero tmpfs":             func(c *store.WorkspaceConfig) { c.TmpfsMB = 0 },
+		"zero disk":              func(c *store.WorkspaceConfig) { c.DiskMB = 0 },
+		"zero idle ttl":          func(c *store.WorkspaceConfig) { c.IdleTTL = 0 },
+		"sub-second idle ttl":    func(c *store.WorkspaceConfig) { c.IdleTTL = time.Millisecond },
+		"max ttl < idle ttl":     func(c *store.WorkspaceConfig) { c.MaxTTL = c.IdleTTL - time.Second },
+		"zero exec default":      func(c *store.WorkspaceConfig) { c.ExecDefault = 0 },
+		"exec default > max":     func(c *store.WorkspaceConfig) { c.ExecDefault = c.ExecMax + time.Second },
+		"exec max > 24h":         func(c *store.WorkspaceConfig) { c.ExecMax = 24*time.Hour + time.Second },
+	} {
+		c := *wsCfg()
+		mut(&c)
+		if _, err := s.CreateFleet(ctx, store.Fleet{Name: "bad", Mode: store.ModeWorkspace, Workspace: &c}, t0, ev("fleet.create")); !errors.Is(err, store.ErrInvalid) {
+			t.Errorf("CreateFleet %s: want ErrInvalid, got %v", name, err)
+		}
+	}
+	if l, _ := s.ListFleets(ctx); len(l) != 0 || auditCount(t, s) != 0 {
+		t.Fatalf("invalid creates had effects: %d fleets, %d audit rows", len(l), auditCount(t, s))
+	}
+
+	// Boundary values are accepted: exec_max exactly 24h, exec_default == exec_max, max == idle ttl.
+	edge := *wsCfg()
+	edge.ExecMax, edge.ExecDefault, edge.MaxTTL, edge.IdleTTL = 24*time.Hour, 24*time.Hour, time.Hour, time.Hour
+	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "edge", Mode: store.ModeWorkspace, Workspace: &edge}, t0, ev("fleet.create")); err != nil {
+		t.Fatalf("edge config: %v", err)
+	}
+
+	// Create, then read back through every accessor.
+	in := wsCfg()
+	f, err := s.CreateFleet(ctx, store.Fleet{Name: "dev", Mode: store.ModeWorkspace, Confirm: true, Workspace: in}, t0, ev("fleet.create"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := *in
+	want.UpdatedAt = t0
+	same := func(what string, got, want store.WorkspaceConfig) {
+		t.Helper()
+		if fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", want) {
+			t.Fatalf("%s:\n got %+v\nwant %+v", what, got, want)
+		}
+	}
+	if f.Workspace == nil {
+		t.Fatal("CreateFleet dropped the config")
+	}
+	same("CreateFleet", *f.Workspace, want)
+	g, err := s.GetFleet(ctx, "dev")
+	if err != nil || g.Workspace == nil {
+		t.Fatalf("GetFleet = %+v, %v", g, err)
+	}
+	same("GetFleet", *g.Workspace, want)
+	got, err := s.GetFleetWorkspace(ctx, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	same("GetFleetWorkspace", got, want)
+	l, err := s.ListFleets(ctx)
+	if err != nil || len(l) != 2 || l[0].Name != "dev" || l[0].Workspace == nil || l[1].Name != "edge" || l[1].Workspace == nil {
+		t.Fatalf("ListFleets = %+v, %v", l, err)
+	}
+	same("ListFleets", *l[0].Workspace, want)
+
+	// Actions fleets and unknown fleets have no config.
+	mkFleet(t, s, "web")
+	if g, _ := s.GetFleet(ctx, "web"); g.Workspace != nil {
+		t.Fatalf("actions fleet has a config: %+v", g.Workspace)
+	}
+	if _, err := s.GetFleetWorkspace(ctx, "web"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetFleetWorkspace on actions fleet: %v", err)
+	}
+	if _, err := s.GetFleetWorkspace(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetFleetWorkspace unknown: %v", err)
+	}
+
+	// Put: replaces, stamps UpdatedAt, writes audit atomically; invalid and wrong-mode are
+	// rejected without effect.
+	base := auditCount(t, s)
+	upd := *wsCfg()
+	upd.Network, upd.Egress, upd.Pull = store.NetworkNone, nil, store.PullNever
+	upd.ExecMax = 2 * time.Hour
+	t1 := t0.Add(time.Hour)
+	put, err := s.PutFleetWorkspace(ctx, "dev", upd, t1, ev("fleet.workspace.set"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upd.UpdatedAt = t1
+	same("Put result", put, upd)
+	got, _ = s.GetFleetWorkspace(ctx, "dev")
+	same("after Put", got, upd)
+	if auditCount(t, s) != base+1 {
+		t.Fatalf("Put wrote %d audit rows", auditCount(t, s)-base)
+	}
+	bad := upd
+	bad.Pids = 0
+	if _, err := s.PutFleetWorkspace(ctx, "dev", bad, t1, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("Put invalid: %v", err)
+	}
+	if _, err := s.PutFleetWorkspace(ctx, "web", upd, t1, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("Put on actions fleet: %v", err)
+	}
+	if _, err := s.PutFleetWorkspace(ctx, "nope", upd, t1, ev("x")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Put unknown fleet: %v", err)
+	}
+	got, _ = s.GetFleetWorkspace(ctx, "dev")
+	same("after failed Puts", got, upd)
+	if auditCount(t, s) != base+1 {
+		t.Fatalf("failed Puts wrote audit rows")
+	}
+
+	// Sub-second durations are truncated to whole seconds consistently.
+	frac := *wsCfg()
+	frac.ExecDefault = 90*time.Second + 900*time.Millisecond
+	r, err := s.PutFleetWorkspace(ctx, "dev", frac, t1, ev("x"))
+	if err != nil || r.ExecDefault != 90*time.Second {
+		t.Fatalf("truncation: %+v, %v", r, err)
 	}
 }

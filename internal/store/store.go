@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/keys"
+	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
 )
 
 // Errors returned by Store implementations. Callers match with errors.Is.
@@ -155,6 +156,10 @@ type Fleet struct {
 	// RunnerCount is the number of non-revoked runners. Populated by ListFleets only; zero
 	// from GetFleet and CreateFleet.
 	RunnerCount int
+	// Workspace is the workspace configuration: required on CreateFleet when Mode is
+	// workspace, forbidden (nil) otherwise. Populated by GetFleet, ListFleets and CreateFleet
+	// for workspace-mode fleets.
+	Workspace *WorkspaceConfig
 }
 
 // Runner is an enrolled host. PubKey is the SSH wire-format key; Fingerprint its SHA256 form.
@@ -232,6 +237,7 @@ type AuditEvent struct {
 	DurationMS int64
 	Message    string
 	RequestID  string
+	Workspace  string // ws_id of the workspace the event concerns, "" if none
 }
 
 // Store is the persistence interface. All methods are safe for concurrent use. Every
@@ -246,14 +252,59 @@ type AuditEvent struct {
 // by the store, inside the Enroll and RegisterOperator transactions in internal/store/sqlite.
 type Store interface {
 	// CreateFleet inserts a fleet and returns it with ID and CreatedAt (= now) set. ErrInvalid
-	// if the mode is invalid or the name does not satisfy FleetNameRE. Atomic with ev.
+	// if the mode is invalid or the name does not satisfy FleetNameRE, or if f.Workspace is
+	// nil in workspace mode, non-nil in actions mode, or fails WorkspaceConfig.Validate. The
+	// config is inserted in the same transaction (UpdatedAt = now). Atomic with ev.
 	// ErrConflict if the name exists.
 	CreateFleet(ctx context.Context, f Fleet, now time.Time, ev AuditEvent) (Fleet, error)
-	// GetFleet returns the fleet by name, or ErrNotFound. RunnerCount is not populated.
+	// GetFleet returns the fleet by name, or ErrNotFound. RunnerCount is not populated;
+	// Workspace is set for workspace-mode fleets.
 	GetFleet(ctx context.Context, name string) (Fleet, error)
 	// ListFleets returns all fleets ordered by name, each with RunnerCount (non-revoked
-	// runners) populated.
+	// runners) and Workspace (workspace-mode fleets) populated.
 	ListFleets(ctx context.Context) ([]Fleet, error)
+	// GetFleetWorkspace returns the workspace config of fleet, or ErrNotFound if the fleet is
+	// unknown or is not in workspace mode.
+	GetFleetWorkspace(ctx context.Context, fleet string) (WorkspaceConfig, error)
+	// PutFleetWorkspace replaces the workspace config of a workspace-mode fleet (UpdatedAt =
+	// now) and returns it, atomically with ev. ErrInvalid if the config fails Validate or the
+	// fleet is in actions mode; ErrNotFound if the fleet is unknown. Existing workspaces keep
+	// the spec they were opened with.
+	PutFleetWorkspace(ctx context.Context, fleet string, c WorkspaceConfig, now time.Time, ev AuditEvent) (WorkspaceConfig, error)
+
+	// ReserveWorkspace places w (state is forced to opening, WsID must be 32 lowercase hex,
+	// FleetID/RunnerID/OperatorID/Session/Image/Spec set by the caller; CreatedAt = LastUsedAt
+	// = now, ExpiresAt from the caller) on its runner in one immediate transaction.
+	//  1. If a live (opening or open) workspace exists for (operator, fleet, session), return it
+	//     with existing=true and write nothing (the service audits the reuse).
+	//  2. Else if the operator already holds maxPerOp live workspaces (opening, open or
+	//     closing) -> ErrFull; maxPerOp <= 0 means no cap.
+	//  3. Else if the runner already holds slots live workspaces (opening, open or closing)
+	//     -> ErrFull.
+	//  4. Else insert, atomically with ev (ev.Workspace is set to w.WsID).
+	// ErrInvalid for a malformed w or slots < 1; ErrNotFound for an unknown fleet, runner or
+	// operator; ErrConflict on a duplicate WsID.
+	ReserveWorkspace(ctx context.Context, w Workspace, slots, maxPerOp int, now time.Time, ev AuditEvent) (ws Workspace, existing bool, err error)
+	// SetWorkspaceState moves wsID to state to with reason if its current state is in from and
+	// CanTransitionWorkspace allows it, atomically with ev (ev.Workspace = wsID). closed_at =
+	// now when to is closed, failed or lost. ErrInvalid if from is empty or holds an invalid
+	// state, or to is invalid; ErrNotFound if wsID is unknown; ErrConflict if the current state
+	// is not in from or the transition is not allowed.
+	SetWorkspaceState(ctx context.Context, wsID string, from []WorkspaceState, to WorkspaceState, reason string, now time.Time, ev AuditEvent) (Workspace, error)
+	// TouchWorkspace sets last_used_at = now on an open workspace. Not audited; ErrNotFound
+	// if wsID is unknown; a workspace in another state is left unchanged (nil).
+	TouchWorkspace(ctx context.Context, wsID string, now time.Time) error
+	// GetWorkspace returns the workspace (any state) by ws_id, or ErrNotFound.
+	GetWorkspace(ctx context.Context, wsID string) (Workspace, error)
+	// ListWorkspaces returns workspaces matching the filter ordered by id.
+	ListWorkspaces(ctx context.Context, f WorkspaceFilter) ([]Workspace, error)
+	// CountLiveWorkspaces returns, for each given runner id, the number of workspaces in
+	// opening, open or closing (the slots it holds). Runners with none map to 0.
+	CountLiveWorkspaces(ctx context.Context, runnerIDs []int64) (map[int64]int, error)
+	// CloseWorkspacesOf moves every open workspace of the runner or operator to closing (and every
+	// opening one to failed) with reason, in one transaction, writing ev once (ev.Message carries the count).
+	// It returns the affected ws_ids. ErrInvalid unless exactly one owner id is non-zero.
+	CloseWorkspacesOf(ctx context.Context, who WorkspaceOwner, reason string, now time.Time, ev AuditEvent) ([]string, error)
 
 	// ListRunners returns runners of a fleet ordered by name, including revoked ones when
 	// includeRevoked is set. ErrNotFound if the fleet does not exist.
@@ -353,3 +404,251 @@ type Store interface {
 
 // SettingRegistrationSecret is the settings key holding the operator registration secret.
 const SettingRegistrationSecret = "registration_secret"
+
+// ErrFull: a workspace could not be reserved because every slot (or the per-operator cap) is
+// taken. The service maps it to unavailable / the next runner.
+var ErrFull = errors.New("store: no free workspace slot")
+
+// MaxExecCeiling is the hard upper bound for a fleet's exec timeout (24 h); the per-fleet
+// exec_max_s can be set up to it, never past it.
+const MaxExecCeiling = 24 * time.Hour
+
+// Bounds on the list fields of a WorkspaceConfig.
+const (
+	maxConfigImages = 64
+	maxConfigEgress = 256
+	maxConfigEntry  = 512
+)
+
+// Executor names the runner-side workspace backend of a fleet.
+type Executor string
+
+const (
+	ExecutorContainerd  Executor = "containerd"
+	ExecutorOpenSandbox Executor = "opensandbox"
+)
+
+// Valid reports whether e is a known executor.
+func (e Executor) Valid() bool { return e == ExecutorContainerd || e == ExecutorOpenSandbox }
+
+// PullPolicy is when a runner pulls an image.
+type PullPolicy string
+
+const (
+	PullIfNotPresent PullPolicy = "if-not-present"
+	PullAlways       PullPolicy = "always"
+	PullNever        PullPolicy = "never"
+)
+
+// Valid reports whether p is a known pull policy.
+func (p PullPolicy) Valid() bool {
+	return p == PullIfNotPresent || p == PullAlways || p == PullNever
+}
+
+// NetworkMode is a workspace's network policy.
+type NetworkMode string
+
+const (
+	NetworkNone   NetworkMode = "none"
+	NetworkEgress NetworkMode = "egress"
+)
+
+// Valid reports whether n is a known network mode.
+func (n NetworkMode) Valid() bool { return n == NetworkNone || n == NetworkEgress }
+
+// WorkspaceConfig is a workspace-mode fleet's admin-set configuration (M3.md 1.7, 1.10).
+// Durations are stored in whole seconds.
+type WorkspaceConfig struct {
+	Executor     Executor
+	DefaultImage string
+	// Images is the allowlist: exact references, or patterns with one trailing '*'
+	// (repo@sha256:*, repo:*). DefaultImage must match one entry.
+	Images  []string
+	Pull    PullPolicy
+	Network NetworkMode
+	// Egress is the proxy allowlist ("host[:port]", "*.domain:443", "cidr:port"); only
+	// meaningful when Network is egress. Entries are checked for shape only here.
+	Egress      []string
+	CPUMilli    int
+	MemoryMB    int
+	Pids        int
+	TmpfsMB     int
+	DiskMB      int
+	IdleTTL     time.Duration // > 0
+	MaxTTL      time.Duration // >= IdleTTL
+	ExecDefault time.Duration // > 0, <= ExecMax
+	ExecMax     time.Duration // <= MaxExecCeiling
+	UpdatedAt   time.Time     // set by the store on write
+}
+
+// ImageAllowed reports whether ref is allowed by Images, using the one shared matcher
+// (workspace.MatchImage): exact refs, repo:* and repo@sha256:*, normalised on both sides.
+func (c WorkspaceConfig) ImageAllowed(ref string) bool {
+	return workspace.MatchImage(c.Images, ref)
+}
+
+func badEntry(s string) bool {
+	if s == "" || len(s) > maxConfigEntry {
+		return true
+	}
+	for _, r := range s {
+		if r <= ' ' || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// Validate checks the configuration; every error wraps ErrInvalid.
+func (c WorkspaceConfig) Validate() error {
+	bad := func(format string, a ...any) error {
+		return fmt.Errorf("%w: workspace config: %s", ErrInvalid, fmt.Sprintf(format, a...))
+	}
+	if !c.Executor.Valid() {
+		return bad("executor must be containerd or opensandbox")
+	}
+	if !c.Pull.Valid() {
+		return bad("pull must be if-not-present, always or never")
+	}
+	if !c.Network.Valid() {
+		return bad("network must be none or egress")
+	}
+	if _, err := workspace.NormalizeImage(c.DefaultImage); err != nil || badEntry(c.DefaultImage) || strings.Contains(c.DefaultImage, "*") {
+		return bad("default image is empty, malformed or a pattern")
+	}
+	if len(c.Images) == 0 || len(c.Images) > maxConfigImages {
+		return bad("images allowlist needs 1 to %d entries", maxConfigImages)
+	}
+	for _, p := range c.Images {
+		if badEntry(p) {
+			return bad("malformed image allowlist entry %q", echo(p))
+		}
+		if err := validImagePattern(p); err != nil {
+			return bad("image allowlist entry %q: %v", echo(p), err)
+		}
+	}
+	if !c.ImageAllowed(c.DefaultImage) {
+		return bad("default image %q is not in the allowlist", echo(c.DefaultImage))
+	}
+	if len(c.Egress) > maxConfigEgress {
+		return bad("at most %d egress rules", maxConfigEgress)
+	}
+	for _, e := range c.Egress {
+		if badEntry(e) {
+			return bad("malformed egress rule %q", echo(e))
+		}
+	}
+	if c.Network == NetworkNone && len(c.Egress) > 0 {
+		return bad("egress rules require network egress")
+	}
+	for name, v := range map[string]int{"cpu_milli": c.CPUMilli, "memory_mb": c.MemoryMB, "pids": c.Pids, "tmpfs_mb": c.TmpfsMB, "disk_mb": c.DiskMB} {
+		if v <= 0 {
+			return bad("%s must be > 0", name)
+		}
+	}
+	if c.IdleTTL < time.Second || c.MaxTTL < c.IdleTTL {
+		return bad("need 0 < idle ttl <= max ttl (whole seconds)")
+	}
+	if c.ExecDefault < time.Second || c.ExecMax < c.ExecDefault || c.ExecMax > MaxExecCeiling {
+		return bad("need 0 < exec default <= exec max <= %s", MaxExecCeiling)
+	}
+	return nil
+}
+
+// WorkspaceState is a workspace row's lifecycle state.
+type WorkspaceState string
+
+const (
+	WorkspaceOpening WorkspaceState = "opening"
+	WorkspaceOpen    WorkspaceState = "open"
+	WorkspaceClosing WorkspaceState = "closing"
+	WorkspaceClosed  WorkspaceState = "closed"
+	WorkspaceFailed  WorkspaceState = "failed"
+	WorkspaceLost    WorkspaceState = "lost"
+)
+
+// Valid reports whether s is a known workspace state.
+func (s WorkspaceState) Valid() bool {
+	switch s {
+	case WorkspaceOpening, WorkspaceOpen, WorkspaceClosing, WorkspaceClosed, WorkspaceFailed, WorkspaceLost:
+		return true
+	}
+	return false
+}
+
+// Terminal reports whether no transition leaves s.
+func (s WorkspaceState) Terminal() bool {
+	return s == WorkspaceClosed || s == WorkspaceFailed || s == WorkspaceLost
+}
+
+// Live reports whether the state holds a runner slot (opening, open or closing).
+func (s WorkspaceState) Live() bool {
+	return s == WorkspaceOpening || s == WorkspaceOpen || s == WorkspaceClosing
+}
+
+// CanTransitionWorkspace reports whether a workspace may move from one state to another:
+// opening->open|failed, open->closing|lost, closing->closed. The rest are terminal.
+func CanTransitionWorkspace(from, to WorkspaceState) bool {
+	switch from {
+	case WorkspaceOpening:
+		return to == WorkspaceOpen || to == WorkspaceFailed
+	case WorkspaceOpen:
+		return to == WorkspaceClosing || to == WorkspaceLost
+	case WorkspaceClosing:
+		return to == WorkspaceClosed
+	}
+	return false
+}
+
+// Workspace is one sandbox row. WsID is the 32-hex id central assigns.
+type Workspace struct {
+	ID         int64
+	WsID       string
+	FleetID    int64
+	Fleet      string // denormalised on read
+	RunnerID   int64
+	Runner     string // denormalised on read
+	OperatorID int64
+	Operator   string // denormalised on read
+	Session    string
+	Image      string
+	Spec       string // JSON
+	State      WorkspaceState
+	Reason     string
+	CreatedAt  time.Time
+	LastUsedAt time.Time
+	ExpiresAt  time.Time
+	ClosedAt   time.Time // zero while not closed
+}
+
+// WorkspaceFilter selects workspaces for ListWorkspaces; zero fields match everything.
+type WorkspaceFilter struct {
+	Fleet      string // fleet name
+	OperatorID int64
+	RunnerID   int64
+	States     []WorkspaceState
+	Limit      int // <= 0 means 100; implementations cap it
+}
+
+// WorkspaceOwner selects the workspaces CloseWorkspacesOf affects: exactly one of RunnerID and
+// OperatorID is non-zero.
+type WorkspaceOwner struct{ RunnerID, OperatorID int64 }
+
+// validImagePattern accepts a well-formed exact reference, "repo:*" or "repo@sha256:*"; the
+// semantics are those of workspace.MatchImage.
+func validImagePattern(p string) error {
+	base := p
+	switch {
+	case strings.HasSuffix(p, "@sha256:*"):
+		base = strings.TrimSuffix(p, "@sha256:*")
+	case strings.HasSuffix(p, ":*"):
+		base = strings.TrimSuffix(p, ":*")
+	}
+	if strings.Contains(base, "*") {
+		return errors.New("only repo:* and repo@sha256:* patterns are allowed")
+	}
+	if _, err := workspace.NormalizeImage(base); err != nil {
+		return err
+	}
+	return nil
+}

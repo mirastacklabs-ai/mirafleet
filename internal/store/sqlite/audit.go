@@ -16,8 +16,8 @@ const (
 )
 
 const insertAudit = `INSERT INTO audit
- (ts, source, actor_kind, actor, remote, fleet, runner, subject, action, params, outcome, exit_code, duration_ms, message, request_id)
- VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+ (ts, source, actor_kind, actor, remote, fleet, runner, subject, action, params, outcome, exit_code, duration_ms, message, request_id, workspace)
+ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 // insertAuditTx appends ev inside tx. ev.Time must be non-zero.
 func insertAuditTx(ctx context.Context, tx *sql.Tx, ev store.AuditEvent) (int64, error) {
@@ -38,7 +38,7 @@ func insertAuditTx(ctx context.Context, tx *sql.Tx, ev store.AuditEvent) (int64,
 	}
 	res, err := tx.ExecContext(ctx, insertAudit,
 		ev.Time.UnixMilli(), ev.Source, ev.ActorKind, ev.Actor, ev.Remote, ev.Fleet, ev.Runner,
-		ev.Subject, ev.Action, params, ev.Outcome, exit, ev.DurationMS, ev.Message, ev.RequestID)
+		ev.Subject, ev.Action, params, ev.Outcome, exit, ev.DurationMS, ev.Message, ev.RequestID, ev.Workspace)
 	if err != nil {
 		return 0, err
 	}
@@ -71,7 +71,7 @@ func (d *DB) ListAudit(ctx context.Context, sinceID int64, limit int) ([]store.A
 		limit = maxAuditLimit
 	}
 	rows, err := d.reader.QueryContext(ctx, `SELECT id, ts, source, actor_kind, actor, remote, fleet, runner,
- subject, action, params, outcome, exit_code, duration_ms, message, request_id
+ subject, action, params, outcome, exit_code, duration_ms, message, request_id, workspace
  FROM audit WHERE id > ? ORDER BY id LIMIT ?`, sinceID, limit)
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func (d *DB) ListAudit(ctx context.Context, sinceID int64, limit int) ([]store.A
 		)
 		if err := rows.Scan(&ev.ID, &ts, &ev.Source, &ev.ActorKind, &ev.Actor, &ev.Remote, &ev.Fleet,
 			&ev.Runner, &ev.Subject, &ev.Action, &params, &ev.Outcome, &exit, &ev.DurationMS,
-			&ev.Message, &ev.RequestID); err != nil {
+			&ev.Message, &ev.RequestID, &ev.Workspace); err != nil {
 			return nil, err
 		}
 		ev.Time = time.UnixMilli(ts).UTC()

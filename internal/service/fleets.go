@@ -9,8 +9,9 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
 
-// CreateFleet creates a fleet. Admin only. An empty mode means "actions".
-func (s *Service) CreateFleet(ctx context.Context, p auth.Principal, src Source, name string, mode store.Mode, confirm bool) (store.Fleet, error) {
+// CreateFleet creates a fleet. Admin only. An empty mode means "actions". ws is required for
+// mode workspace and must be nil otherwise; the store validates it (ErrInvalid).
+func (s *Service) CreateFleet(ctx context.Context, p auth.Principal, src Source, name string, mode store.Mode, confirm bool, ws *store.WorkspaceConfig) (store.Fleet, error) {
 	if err := s.authorize(ctx, p, src, api.MethodFleetCreate, true); err != nil {
 		return store.Fleet{}, err
 	}
@@ -28,7 +29,7 @@ func (s *Service) CreateFleet(ctx context.Context, p auth.Principal, src Source,
 	ev.Fleet = name
 	ev.Subject = name
 	ev.Params = map[string]string{"mode": string(mode), "confirm": strconv.FormatBool(confirm)}
-	f, err := s.st.CreateFleet(ctx, store.Fleet{Name: name, Mode: mode, Confirm: confirm}, now, ev)
+	f, err := s.st.CreateFleet(ctx, store.Fleet{Name: name, Mode: mode, Confirm: confirm, Workspace: ws}, now, ev)
 	if err != nil {
 		return store.Fleet{}, s.fail("create fleet", err)
 	}

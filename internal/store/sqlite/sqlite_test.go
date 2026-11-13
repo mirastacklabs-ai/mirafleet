@@ -319,3 +319,164 @@ func TestFKRestrictAndLiveNameIndex(t *testing.T) {
 		t.Fatalf("join_token_id not nulled: %d %v", n, err)
 	}
 }
+
+func wsRow(over string) string {
+	// A valid fleet_workspace insert for fleet 1; over replaces one column assignment.
+	cols := map[string]string{
+		"executor": "'containerd'", "default_image": "'i'", "images": "'[\"i\"]'", "pull": "'never'",
+		"network": "'none'", "egress": "'[]'", "cpu_milli": "1", "memory_mb": "1", "pids": "1",
+		"tmpfs_mb": "1", "disk_mb": "1", "idle_ttl_s": "10", "max_ttl_s": "10",
+		"exec_default_s": "10", "exec_max_s": "10", "updated_at": "0",
+	}
+	if k, v, ok := strings.Cut(over, "="); ok {
+		cols[k] = v
+	}
+	order := []string{"executor", "default_image", "images", "pull", "network", "egress", "cpu_milli",
+		"memory_mb", "pids", "tmpfs_mb", "disk_mb", "idle_ttl_s", "max_ttl_s", "exec_default_s", "exec_max_s", "updated_at"}
+	vals := make([]string, len(order))
+	for i, k := range order {
+		vals[i] = cols[k]
+	}
+	return "INSERT INTO fleet_workspace (fleet_id, " + strings.Join(order, ",") + ") VALUES (1," + strings.Join(vals, ",") + ")"
+}
+
+func TestFleetWorkspaceChecks(t *testing.T) {
+	d := open(t)
+	ctx := context.Background()
+	if _, err := d.CreateFleet(ctx, store.Fleet{Name: "a", Mode: store.ModeActions}, t0, store.AuditEvent{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{
+		"executor='docker'", "pull='x'", "network='host'", "images='not json'", "egress='{'",
+		"cpu_milli=0", "memory_mb=0", "pids=0", "tmpfs_mb=0", "disk_mb=0", "idle_ttl_s=0",
+		"max_ttl_s=9", "exec_default_s=0", "exec_max_s=9", "exec_max_s=86401", "exec_default_s=86401",
+	} {
+		if _, err := d.writer.Exec(wsRow(bad)); err == nil {
+			t.Errorf("CHECK let %q through", bad)
+		}
+	}
+	if _, err := d.writer.Exec(wsRow("exec_max_s=86400")); err != nil {
+		t.Fatalf("valid row: %v", err)
+	}
+	// Cascade: deleting the fleet removes its config.
+	if _, err := d.writer.Exec("DELETE FROM fleets WHERE id = 1"); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	d.reader.QueryRow("SELECT count(*) FROM fleet_workspace").Scan(&n)
+	if n != 0 {
+		t.Fatalf("fleet_workspace rows after fleet delete = %d", n)
+	}
+}
+
+func TestWorkspacesTableChecks(t *testing.T) {
+	d := open(t)
+	ctx := context.Background()
+	if _, err := d.CreateFleet(ctx, store.Fleet{Name: "a", Mode: store.ModeActions}, t0, store.AuditEvent{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		"INSERT INTO runners (fleet_id,name,pubkey,fingerprint,status,created_at,updated_at) VALUES (1,'r',x'01','f','active',0,0)",
+		"INSERT INTO operators (name,pubkey,fingerprint,status,created_at,updated_at) VALUES ('o',x'02','f','active',0,0)",
+	} {
+		if _, err := d.writer.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ins := func(wsID, session, state string) error {
+		_, err := d.writer.Exec(`INSERT INTO workspaces (ws_id,fleet_id,runner_id,operator_id,session,image,spec,state,created_at,last_used_at,expires_at)
+ VALUES (?,1,1,1,?,'i','{}',?,0,0,0)`, wsID, session, state)
+		return err
+	}
+	id := func(c byte) string { return strings.Repeat(string(c), 32) }
+	if err := ins("short", "s", "open"); err == nil {
+		t.Error("short ws_id accepted")
+	}
+	if err := ins(id('a'), "s", "bogus"); err == nil {
+		t.Error("bad state accepted")
+	}
+	if err := ins(id('a'), "s", "open"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ins(id('b'), "s", "opening"); err == nil {
+		t.Error("second live workspace for the same session accepted")
+	}
+	if err := ins(id('c'), "s", "closed"); err != nil {
+		t.Errorf("terminal duplicate session refused: %v", err)
+	}
+	if err := ins(id('a'), "t", "open"); err == nil {
+		t.Error("duplicate ws_id accepted")
+	}
+	if _, err := d.writer.Exec("DELETE FROM runners WHERE id = 1"); err == nil {
+		t.Error("runner with workspaces deleted (want RESTRICT)")
+	}
+}
+
+func TestMigrate0001To0002(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "m.db")
+	ms, err := loadMigrations(migrationFS, "migrations")
+	if err != nil || len(ms) < 2 {
+		t.Fatalf("loadMigrations: %v", err)
+	}
+	d, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Roll the file back to a genuine v1 database holding an audit row.
+	for _, q := range []string{
+		"DROP TABLE workspaces", "DROP TABLE fleet_workspace", "DROP INDEX audit_workspace",
+		"ALTER TABLE audit DROP COLUMN workspace",
+	} {
+		if _, err := d.writer.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if _, err := d.writer.Exec("INSERT INTO audit (ts, action) VALUES (1, 'old')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.writer.Exec("PRAGMA user_version=1"); err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+
+	d, err = Open(ctx, path)
+	if err != nil {
+		t.Fatalf("migrating v1 -> latest: %v", err)
+	}
+	defer d.Close()
+	if v := userVersion(t, d.writer); v != len(ms) {
+		t.Fatalf("user_version = %d, want %d", v, len(ms))
+	}
+	evs, err := d.ListAudit(ctx, 0, 10)
+	if err != nil || len(evs) != 1 || evs[0].Action != "old" || evs[0].Workspace != "" {
+		t.Fatalf("old audit row after migration = %+v, %v", evs, err)
+	}
+}
+
+func TestAuditAppendOnlyAfterAlter(t *testing.T) {
+	d := open(t)
+	ctx := context.Background()
+	id, err := d.RecordAudit(ctx, store.AuditEvent{Time: t0, Action: "x", Workspace: strings.Repeat("a", 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		"UPDATE audit SET workspace = 'z'", "UPDATE audit SET message = 'z'", "DELETE FROM audit",
+	} {
+		if _, err := d.writer.Exec(q); err == nil || !strings.Contains(err.Error(), "append-only") {
+			t.Errorf("%s: want append-only abort, got %v", q, err)
+		}
+	}
+	evs, _ := d.ListAudit(ctx, id-1, 10)
+	if len(evs) != 1 || evs[0].Workspace != strings.Repeat("a", 32) {
+		t.Fatalf("audit row changed: %+v", evs)
+	}
+}
+
+func TestWorkspaceStubsReturnNotImplemented(t *testing.T) {
+	d := open(t)
+	if _, err := d.GetWorkspace(context.Background(), "x"); err == nil {
+		t.Fatal("stub returned nil error")
+	}
+}

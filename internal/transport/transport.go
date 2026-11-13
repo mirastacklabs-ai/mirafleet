@@ -2,7 +2,10 @@
 // SSH channel/request names and the JSON messages carried over them.
 package transport
 
+import "errors"
+
 // SSH names. Central->runner channels and runner->central global requests.
+// ChanWorkspace (workspace@mirafleet) is defined in workspace.go with the workspace messages.
 const (
 	ChanExec     = "exec@mirafleet"
 	ReqHeartbeat = "heartbeat@mirafleet"
@@ -34,6 +37,32 @@ type Heartbeat struct {
 	Arch     string            `json:"arch"`
 	Version  string            `json:"version"`
 	Labels   map[string]string `json:"labels,omitempty"`
+
+	// Workspace fields (M3), all optional: M2 runners omit them, and zero values mean "no workspace
+	// executor". Bounded by Validate.
+	Slots         int      `json:"slots,omitempty"`          // concurrent workspaces the runner accepts
+	Executor      string   `json:"executor,omitempty"`       // "containerd" or "opensandbox"
+	SecureRuntime string   `json:"secure_runtime,omitempty"` // "gvisor", "kata" or empty
+	Images        []string `json:"images,omitempty"`         // advertised image patterns, <= 32 entries of <= 256 bytes
+}
+
+// Validate bounds the optional workspace fields of a heartbeat.
+func (h *Heartbeat) Validate() error {
+	if h.Slots < 0 || h.Slots > MaxHeartbeatSlots {
+		return errors.New("heartbeat slots out of range")
+	}
+	if len(h.Executor) > maxHeartbeatNameBytes || len(h.SecureRuntime) > maxHeartbeatNameBytes {
+		return errors.New("heartbeat executor/secure_runtime too long")
+	}
+	if len(h.Images) > MaxHeartbeatImages {
+		return errors.New("too many heartbeat images")
+	}
+	for _, im := range h.Images {
+		if len(im) > MaxHeartbeatImageBytes {
+			return errors.New("heartbeat image too long")
+		}
+	}
+	return nil
 }
 
 // ExecRequest is sent as the extra data of an exec@mirafleet channel open.

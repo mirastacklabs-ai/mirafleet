@@ -18,10 +18,24 @@ func (d *DB) CreateFleet(ctx context.Context, f store.Fleet, now time.Time, ev s
 	if !f.Mode.Valid() {
 		return store.Fleet{}, fmt.Errorf("%w: fleet mode must be actions or workspace", store.ErrInvalid)
 	}
+	var cfg *store.WorkspaceConfig
+	switch {
+	case f.Mode == store.ModeWorkspace && f.Workspace == nil:
+		return store.Fleet{}, fmt.Errorf("%w: a workspace-mode fleet needs a workspace config", store.ErrInvalid)
+	case f.Mode != store.ModeWorkspace && f.Workspace != nil:
+		return store.Fleet{}, fmt.Errorf("%w: only workspace-mode fleets take a workspace config", store.ErrInvalid)
+	case f.Workspace != nil:
+		c, err := normalizeWS(*f.Workspace)
+		if err != nil {
+			return store.Fleet{}, err
+		}
+		c.UpdatedAt = now.UTC().Truncate(time.Millisecond)
+		cfg = &c
+	}
 	if ev.Time.IsZero() {
 		ev.Time = now
 	}
-	out := store.Fleet{Name: f.Name, Mode: f.Mode, Confirm: f.Confirm, CreatedAt: now.UTC().Truncate(time.Millisecond)}
+	out := store.Fleet{Name: f.Name, Mode: f.Mode, Confirm: f.Confirm, CreatedAt: now.UTC().Truncate(time.Millisecond), Workspace: cfg}
 	err := d.withTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `INSERT INTO fleets (name, mode, confirm, created_at) VALUES (?,?,?,?)`,
 			f.Name, string(f.Mode), f.Confirm, now.UnixMilli())
@@ -33,6 +47,11 @@ func (d *DB) CreateFleet(ctx context.Context, f store.Fleet, now time.Time, ev s
 		}
 		if out.ID, err = res.LastInsertId(); err != nil {
 			return err
+		}
+		if cfg != nil {
+			if err := insertFleetWorkspaceTx(ctx, tx, out.ID, *cfg, now); err != nil {
+				return err
+			}
 		}
 		_, err = insertAuditTx(ctx, tx, ev)
 		return err
@@ -68,7 +87,15 @@ func (d *DB) GetFleet(ctx context.Context, name string) (store.Fleet, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Fleet{}, fmt.Errorf("%w: fleet", store.ErrNotFound)
 	}
-	return f, err
+	if err != nil {
+		return f, err
+	}
+	if f.Mode == store.ModeWorkspace {
+		if f.Workspace, err = getFleetWorkspace(ctx, d.reader, f.ID); err != nil {
+			return store.Fleet{}, err
+		}
+	}
+	return f, nil
 }
 
 // ListFleets returns all fleets by name with the non-revoked runner count, in one query.
@@ -88,5 +115,18 @@ func (d *DB) ListFleets(ctx context.Context) ([]store.Fleet, error) {
 		}
 		out = append(out, f)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	cfgs, err := d.loadAllFleetWorkspaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if out[i].Mode == store.ModeWorkspace {
+			out[i].Workspace = cfgs[out[i].ID]
+		}
+	}
+	return out, nil
 }

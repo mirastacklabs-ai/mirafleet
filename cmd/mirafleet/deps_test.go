@@ -59,3 +59,39 @@ func TestLinuxLinksSQLite(t *testing.T) {
 	}
 	t.Fatal("linux binary links no SQLite package: the non-linux check proves nothing")
 }
+
+func linksContainerd(pkg string) bool {
+	return strings.HasPrefix(pkg, "github.com/containerd/") || strings.HasPrefix(pkg, "google.golang.org/grpc")
+}
+
+// darwin and windows binaries must never link containerd or gRPC (docs/M3.md §8): the containerd
+// executor lives under internal/workspace/ctrd and is wired in from linux-only files.
+func TestNoContainerdOnNonLinux(t *testing.T) {
+	requireGo(t)
+	for _, goos := range []string{"darwin", "windows"} {
+		for _, pkg := range goDeps(t, goos) {
+			if linksContainerd(pkg) {
+				t.Errorf("%s binary links %s", goos, pkg)
+			}
+		}
+	}
+}
+
+// Positive control for TestNoContainerdOnNonLinux. Nothing in cmd imports ctrd yet (S0), so this
+// checks ./internal/workspace/ctrd directly. TODO(M3 wiring): once server_linux.go imports ctrd,
+// switch it to goDeps(t, "linux") so it also proves the binary links containerd.
+func TestLinuxLinksContainerd(t *testing.T) {
+	requireGo(t)
+	cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", "./../../internal/workspace/ctrd")
+	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list ctrd: %v\n%s", err, out)
+	}
+	for _, pkg := range strings.Fields(string(out)) {
+		if linksContainerd(pkg) {
+			return
+		}
+	}
+	t.Fatal("linux ctrd links no containerd package: the non-linux check proves nothing")
+}

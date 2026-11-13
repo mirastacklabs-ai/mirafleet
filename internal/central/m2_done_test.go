@@ -40,7 +40,7 @@ func TestM2Done(t *testing.T) {
 
 	// Fleet and join token.
 	const fleet = "m2"
-	if _, err := e.svc.CreateFleet(ctx, e.admin, service.SourceCLI, fleet, store.ModeActions, false); err != nil {
+	if _, err := e.svc.CreateFleet(ctx, e.admin, service.SourceCLI, fleet, store.ModeActions, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	tok, err := e.svc.CreateToken(ctx, e.admin, service.SourceCLI, service.TokenParams{Fleet: fleet})

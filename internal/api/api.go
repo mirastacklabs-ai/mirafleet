@@ -10,6 +10,8 @@ import (
 	"io"
 	"net"
 	"time"
+
+	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
 )
 
 // Version is the protocol version; SupportedVersions lists every version this build speaks.
@@ -49,6 +51,19 @@ const (
 	MethodFleetsList  = "fleets.list"
 	MethodRunnersList = "runners.list"
 	MethodActionRun   = "action.run"
+
+	// Workspace operator methods (api@mirafleet; docs/M3.md §1.1).
+	MethodWorkspaceOpen      = "workspace.open"
+	MethodWorkspaceExec      = "workspace.exec"
+	MethodWorkspaceReadFile  = "workspace.read_file"
+	MethodWorkspaceWriteFile = "workspace.write_file"
+	MethodWorkspaceClose     = "workspace.close"
+	MethodWorkspaceList      = "workspace.list"
+
+	// Workspace admin methods (admin socket only).
+	MethodFleetWorkspaceSet  = "fleet.workspace_set"
+	MethodWorkspaceAdminList = "workspace.admin_list"
+	MethodWorkspaceKill      = "workspace.kill"
 
 	// Admin-only methods (local admin socket / GUI service; never on api@mirafleet).
 	MethodFleetCreate          = "fleet.create"
@@ -107,7 +122,9 @@ type EnrollRegisterResult struct {
 // set is immutable at runtime.
 func IsOperatorMethod(m string) bool {
 	switch m {
-	case MethodHello, MethodFleetsList, MethodRunnersList, MethodActionRun:
+	case MethodHello, MethodFleetsList, MethodRunnersList, MethodActionRun,
+		MethodWorkspaceOpen, MethodWorkspaceExec, MethodWorkspaceReadFile,
+		MethodWorkspaceWriteFile, MethodWorkspaceClose, MethodWorkspaceList:
 		return true
 	}
 	return false
@@ -119,7 +136,8 @@ func IsAdminMethod(m string) bool {
 	switch m {
 	case MethodFleetCreate, MethodTokenCreate, MethodTokenList, MethodTokenRevoke,
 		MethodRunnerLifecycle, MethodOperatorCode, MethodOperatorRotateSecret,
-		MethodOperatorList, MethodOperatorRevoke, MethodAuditList:
+		MethodOperatorList, MethodOperatorRevoke, MethodAuditList,
+		MethodFleetWorkspaceSet, MethodWorkspaceAdminList, MethodWorkspaceKill:
 		return true
 	}
 	return false
@@ -417,6 +435,9 @@ type FleetCreateParams struct {
 	Name    string `json:"name"`
 	Mode    string `json:"mode,omitempty"` // "actions" (default) or "workspace"
 	Confirm bool   `json:"confirm,omitempty"`
+	// Workspace is the workspace config; required-or-defaulted when mode is "workspace",
+	// rejected otherwise (validated by the service).
+	Workspace *WorkspaceConfig `json:"workspace,omitempty"`
 }
 type FleetCreateResult struct {
 	Fleet FleetInfo `json:"fleet"`
@@ -532,6 +553,15 @@ type FleetInfo struct {
 	Mode    string `json:"mode"`
 	Confirm bool   `json:"confirm"`
 	Runners int    `json:"runners"` // non-revoked runner count
+	// Workspace is set for workspace-mode fleets only (additive, docs/M3.md §1.1).
+	Workspace *FleetWorkspaceInfo `json:"workspace,omitempty"`
+}
+
+// FleetWorkspaceInfo is the operator-visible subset of a fleet's workspace config.
+type FleetWorkspaceInfo struct {
+	DefaultImage string   `json:"default_image"`
+	Images       []string `json:"images"`
+	Network      string   `json:"network"` // "none" or "egress"
 }
 type FleetsListResult struct {
 	Fleets []FleetInfo `json:"fleets"`
@@ -546,6 +576,11 @@ type RunnerInfo struct {
 	Online   bool              `json:"online"`
 	Labels   map[string]string `json:"labels,omitempty"`
 	LastSeen *time.Time        `json:"last_seen,omitempty"`
+	// Workspace-mode runners only (additive): total and currently free workspace slots, and the
+	// executor ("containerd" or "opensandbox"). Omitted when zero/empty.
+	Slots     int    `json:"slots,omitempty"`
+	FreeSlots int    `json:"free_slots,omitempty"`
+	Executor  string `json:"executor,omitempty"`
 }
 type RunnersListResult struct {
 	Runners []RunnerInfo `json:"runners"`
@@ -568,3 +603,210 @@ type ActionRunResult struct {
 	DurationMS int64  `json:"duration_ms"`
 	RequestID  string `json:"request_id,omitempty"`
 }
+
+// Workspace limits (docs/M3.md §1.9).
+const (
+	MaxArgvElems  = 256
+	MaxArgvBytes  = 32 << 10
+	MaxPathBytes  = 4 << 10
+	MaxEnvVars    = 32
+	MaxEnvValue   = 4 << 10
+	MaxFileChunk  = 1 << 20 // body frame limit
+	MaxSessionLen = 64
+
+	// DefaultWorkspaceExecTimeout and DefaultWorkspaceExecMax are the per-fleet defaults
+	// (exec_default_s 120, exec_max_s 1800); HardWorkspaceExecCeiling is the absolute cap in code.
+	DefaultWorkspaceExecTimeout = 2 * time.Minute
+	DefaultWorkspaceExecMax     = 30 * time.Minute
+	HardWorkspaceExecCeiling    = 24 * time.Hour
+)
+
+// WorkspaceExecTimeout returns the effective workspace.exec timeout from the request's timeout_s
+// and the fleet's exec_default_s / exec_max_s (0 or negative fleet values mean the built-in
+// defaults). A negative timeoutS is bad_request; 0 means the fleet default. The result is capped
+// at the fleet max and at HardWorkspaceExecCeiling. The runner's own limit is applied separately.
+// Clamping is done in seconds so huge values cannot overflow time.Duration.
+func WorkspaceExecTimeout(timeoutS, defaultS, maxS int) (time.Duration, *Error) {
+	if e := ValidateTimeoutS(timeoutS); e != nil {
+		return 0, e
+	}
+	ceiling := int(HardWorkspaceExecCeiling / time.Second)
+	if maxS <= 0 {
+		maxS = int(DefaultWorkspaceExecMax / time.Second)
+	}
+	if maxS > ceiling {
+		maxS = ceiling
+	}
+	if defaultS <= 0 {
+		defaultS = int(DefaultWorkspaceExecTimeout / time.Second)
+	}
+	s := timeoutS
+	if s == 0 {
+		s = defaultS
+	}
+	if s > maxS {
+		s = maxS
+	}
+	return time.Duration(s) * time.Second, nil
+}
+
+// ValidateArgv delegates to workspace.ValidArgv (1..256 elements, 32 KiB, no NUL, argv[0] set).
+func ValidateArgv(argv []string) *Error {
+	if err := workspace.ValidArgv(argv); err != nil {
+		return Errorf(CodeBadRequest, "%v", err)
+	}
+	return nil
+}
+
+// ValidatePath checks a workspace cwd or file path with workspace.CleanPath (the one shared
+// implementation; "" means the workspace root).
+func ValidatePath(p string) *Error {
+	if _, err := workspace.CleanPath(p); err != nil {
+		return Errorf(CodeBadRequest, "%v", err)
+	}
+	return nil
+}
+
+// ValidateEnv checks env with workspace.FilterEnv, allowing exactly the given names: it fails
+// closed on malformed, oversized or denylisted names. The fleet env_allow is applied by the runner.
+func ValidateEnv(env map[string]string) *Error {
+	allow := make([]string, 0, len(env))
+	for k := range env {
+		allow = append(allow, k)
+	}
+	if _, err := workspace.FilterEnv(env, allow); err != nil {
+		return Errorf(CodeBadRequest, "%v", err)
+	}
+	return nil
+}
+
+// WorkspaceInfo describes one workspace. Operator is set only on the admin listing.
+type WorkspaceInfo struct {
+	ID       string    `json:"id"`
+	Fleet    string    `json:"fleet"`
+	Runner   string    `json:"runner"`
+	Session  string    `json:"session"`
+	Image    string    `json:"image"`
+	State    string    `json:"state"`
+	Operator string    `json:"operator,omitempty"`
+	Created  time.Time `json:"created"`
+	LastUsed time.Time `json:"last_used"`
+	Expires  time.Time `json:"expires"`
+}
+
+type WorkspaceOpenParams struct {
+	Fleet   string            `json:"fleet"`
+	Session string            `json:"session"`
+	Image   string            `json:"image,omitempty"` // must be in the fleet allowlist
+	Labels  map[string]string `json:"labels,omitempty"`
+	Confirm string            `json:"confirm,omitempty"` // fleet name on guarded fleets
+}
+type WorkspaceOpenResult struct {
+	Workspace WorkspaceInfo `json:"workspace"`
+	Reused    bool          `json:"reused"`
+}
+
+// WorkspaceExecParams: when Stdin is true a body frame (<= MaxFileChunk) follows the request.
+type WorkspaceExecParams struct {
+	Workspace string            `json:"workspace"`
+	Argv      []string          `json:"argv"`
+	Cwd       string            `json:"cwd,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	TimeoutS  int               `json:"timeout_s,omitempty"` // 0 = fleet exec_default_s
+	Stdin     bool              `json:"stdin,omitempty"`
+	Confirm   string            `json:"confirm,omitempty"`
+}
+type WorkspaceExecResult struct {
+	ExitCode   int    `json:"exit_code"`
+	Stdout     string `json:"stdout"`
+	Stderr     string `json:"stderr"`
+	Truncated  bool   `json:"truncated,omitempty"`
+	TimedOut   bool   `json:"timed_out,omitempty"`
+	DurationMS int64  `json:"duration_ms"`
+	RequestID  string `json:"request_id,omitempty"`
+}
+
+type WorkspaceReadFileParams struct {
+	Workspace string `json:"workspace"`
+	Path      string `json:"path"`
+	Offset    int64  `json:"offset,omitempty"`
+	Limit     int    `json:"limit,omitempty"` // bytes, 0 = MaxFileChunk; capped at MaxFileChunk
+}
+
+// WorkspaceReadFileResult is followed by exactly one body frame holding Length bytes.
+type WorkspaceReadFileResult struct {
+	Size   int64  `json:"size"` // total file size
+	Offset int64  `json:"offset"`
+	Length int    `json:"length"`
+	Mode   uint32 `json:"mode"` // permission bits
+	EOF    bool   `json:"eof"`
+}
+
+// WorkspaceWriteFileParams is followed by one body frame of exactly Length bytes whose SHA-256
+// (lowercase hex) must equal SHA256.
+type WorkspaceWriteFileParams struct {
+	Workspace string `json:"workspace"`
+	Path      string `json:"path"`
+	Offset    int64  `json:"offset,omitempty"`
+	Truncate  bool   `json:"truncate,omitempty"`
+	Mode      uint32 `json:"mode,omitempty"` // permission bits for a new file, 0 = 0644
+	Length    int    `json:"length"`
+	SHA256    string `json:"sha256"`
+	Confirm   string `json:"confirm,omitempty"`
+}
+type WorkspaceWriteFileResult struct {
+	Size int64 `json:"size"` // file size after the write
+}
+
+type WorkspaceCloseParams struct {
+	Workspace string `json:"workspace"`
+}
+type WorkspaceCloseResult struct{}
+
+type WorkspaceListParams struct {
+	Fleet string `json:"fleet,omitempty"`
+}
+type WorkspaceListResult struct {
+	Workspaces []WorkspaceInfo `json:"workspaces"` // the caller's own only
+}
+
+// WorkspaceConfig is a fleet's workspace config (mirrors store.WorkspaceConfig). Units: CPUMilli
+// millicores, *MB mebibytes, *S seconds. On create, zero/empty fields take defaults; on
+// fleet.workspace_set, zero/empty (nil slices) fields are left unchanged.
+type WorkspaceConfig struct {
+	Executor     string   `json:"executor,omitempty"`      // "containerd" (default) or "opensandbox"
+	DefaultImage string   `json:"default_image,omitempty"` // must be in Images
+	Images       []string `json:"images,omitempty"`        // allowlist: exact refs or repo@sha256:* / repo:*
+	Pull         string   `json:"pull,omitempty"`          // if-not-present | always | never
+	Network      string   `json:"network,omitempty"`       // none | egress
+	Egress       []string `json:"egress,omitempty"`        // host[:port], *.domain:443, cidr:port
+	CPUMilli     int      `json:"cpu_milli,omitempty"`
+	MemoryMB     int      `json:"memory_mb,omitempty"`
+	Pids         int      `json:"pids,omitempty"`
+	TmpfsMB      int      `json:"tmpfs_mb,omitempty"`
+	DiskMB       int      `json:"disk_mb,omitempty"`
+	IdleTTLS     int      `json:"idle_ttl_s,omitempty"`
+	MaxTTLS      int      `json:"max_ttl_s,omitempty"`
+	ExecDefaultS int      `json:"exec_default_s,omitempty"` // default 120
+	ExecMaxS     int      `json:"exec_max_s,omitempty"`     // default 1800, ceiling 86400
+}
+
+type FleetWorkspaceSetParams struct {
+	Fleet     string          `json:"fleet"`
+	Workspace WorkspaceConfig `json:"workspace"`
+}
+type FleetWorkspaceSetResult struct {
+	Fleet FleetInfo `json:"fleet"`
+}
+
+type WorkspaceAdminListParams struct {
+	Fleet string `json:"fleet,omitempty"`
+}
+type WorkspaceAdminListResult struct {
+	Workspaces []WorkspaceInfo `json:"workspaces"` // all operators, live and recent
+}
+
+type WorkspaceKillParams struct {
+	ID string `json:"id"`
+}
+type WorkspaceKillResult struct{}

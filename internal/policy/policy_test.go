@@ -16,8 +16,13 @@ func TestTruthTable(t *testing.T) {
 		api.MethodRunnerLifecycle, api.MethodOperatorCode, api.MethodOperatorRotateSecret,
 		api.MethodOperatorList, api.MethodOperatorRevoke, api.MethodAuditList,
 		api.MethodEnrollJoin, api.MethodEnrollRegister, "", "bogus",
+		api.MethodWorkspaceOpen, api.MethodWorkspaceExec, api.MethodWorkspaceReadFile,
+		api.MethodWorkspaceWriteFile, api.MethodWorkspaceClose, api.MethodWorkspaceList,
+		api.MethodFleetWorkspaceSet, api.MethodWorkspaceAdminList, api.MethodWorkspaceKill,
 	}
-	opAllowed := map[string]bool{api.MethodHello: true, api.MethodFleetsList: true, api.MethodRunnersList: true, api.MethodActionRun: true}
+	opAllowed := map[string]bool{api.MethodHello: true, api.MethodFleetsList: true, api.MethodRunnersList: true, api.MethodActionRun: true,
+		api.MethodWorkspaceOpen: true, api.MethodWorkspaceExec: true, api.MethodWorkspaceReadFile: true,
+		api.MethodWorkspaceWriteFile: true, api.MethodWorkspaceClose: true, api.MethodWorkspaceList: true}
 	enrollAllowed := map[string]bool{api.MethodEnrollJoin: true, api.MethodEnrollRegister: true}
 	type who struct {
 		name   string

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+
+	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/initproc"
 )
 
 var version = "dev"
@@ -31,6 +33,8 @@ func main() {
 		err = runnerMain(os.Args[2:])
 	case "mcp":
 		err = mcpMain(os.Args[2:], os.Stdin, os.Stdout)
+	case "workspace-init": // hidden: PID 1 inside workspace containers, not in usage
+		err = initproc.Run()
 	case "version":
 		fmt.Println(version)
 	default:
