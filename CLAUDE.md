@@ -1,7 +1,7 @@
 # mirafleet
 
 Claude Code orchestrates fleets of servers through a central server. Open source (Apache-2.0)
-under mirastacklabs. Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+under the `mirastacklabs-ai` GitHub org. Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Milestones: [docs/PLAN.md](docs/PLAN.md).
 
 ## Ground rules

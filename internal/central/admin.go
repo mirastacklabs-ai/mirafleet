@@ -14,7 +14,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/mirastacklabs/mirafleet/internal/transport"
+	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
 type AdminRequest struct {

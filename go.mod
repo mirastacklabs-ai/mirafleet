@@ -1,4 +1,4 @@
-module github.com/mirastacklabs/mirafleet
+module github.com/mirastacklabs-ai/mirafleet
 
 go 1.27.3
 

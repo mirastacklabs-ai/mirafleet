@@ -12,9 +12,9 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/mirastacklabs/mirafleet/internal/actions"
-	"github.com/mirastacklabs/mirafleet/internal/keys"
-	"github.com/mirastacklabs/mirafleet/internal/transport"
+	"github.com/mirastacklabs-ai/mirafleet/internal/actions"
+	"github.com/mirastacklabs-ai/mirafleet/internal/keys"
+	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
 // fakeCentral accepts any key, then either drops the connection right after the handshake

@@ -1,6 +1,6 @@
 # mirafleet — Build plan
 
-Design: [ARCHITECTURE.md](ARCHITECTURE.md). Module: `github.com/mirastacklabs/mirafleet`.
+Design: [ARCHITECTURE.md](ARCHITECTURE.md). Module: `github.com/mirastacklabs-ai/mirafleet`.
 One static binary (`CGO_ENABLED=0`). Dependencies kept small:
 `golang.org/x/crypto/ssh`, `modernc.org/sqlite` (pure Go), `gopkg.in/yaml.v3`,
 `github.com/containerd/containerd/v2` (M3), `github.com/modelcontextprotocol/go-sdk` (M5).
@@ -61,16 +61,16 @@ All dependencies must meet the permissive license policy in [CLAUDE.md](../CLAUD
 | Channel | Audience | Notes |
 |---|---|---|
 | GitHub Releases | everyone | tarballs, checksums, SBOM, cosign keyless signatures, build provenance |
-| Homebrew tap `mirastacklabs/homebrew-tap` | orchestrator users on macOS/Linux | homebrew-core later, once adoption qualifies |
+| Homebrew tap `mirastacklabs-ai/homebrew-tap` | orchestrator users on macOS/Linux | homebrew-core later, once adoption qualifies |
 | `.deb` / `.rpm` / `.apk` (goreleaser nFPM) | runners and central | include systemd units and a `mirafleet` system user |
-| OCI image on `ghcr.io/mirastacklabs/mirafleet` | central on containerd / Kubernetes | Helm chart later, on demand |
+| OCI image on `ghcr.io/mirastacklabs-ai/mirafleet` | central on containerd / Kubernetes | Helm chart later, on demand |
 | `go install …/cmd/mirafleet@latest` | Go users | no extra work |
 | `install.sh` | quick start | downloads the release and verifies the checksum before installing |
 
 **Harness and MCP stores (orchestrator)**:
 | Channel | How users install |
 |---|---|
-| Claude Code plugin marketplace (repo with `.claude-plugin/marketplace.json`) | `/plugin marketplace add mirastacklabs/mirafleet`, then `/plugin install mirafleet` |
+| Claude Code plugin marketplace (repo with `.claude-plugin/marketplace.json`) | `/plugin marketplace add mirastacklabs-ai/mirafleet`, then `/plugin install mirafleet` |
 | Anthropic's official plugin directory | submit once stable |
 | npm wrapper `@mirastacklabs/mirafleet` (per-platform binaries as optional dependencies, no postinstall download) | `npx -y @mirastacklabs/mirafleet mcp` in any harness's MCP config |
 | Official MCP Registry (`server.json`, pointing at the npm and OCI packages) | discovery; many directories and harness galleries sync from it |

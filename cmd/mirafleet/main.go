@@ -13,12 +13,12 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mirastacklabs/mirafleet/internal/actions"
-	"github.com/mirastacklabs/mirafleet/internal/audit"
-	"github.com/mirastacklabs/mirafleet/internal/central"
-	"github.com/mirastacklabs/mirafleet/internal/keys"
-	"github.com/mirastacklabs/mirafleet/internal/runner"
-	"github.com/mirastacklabs/mirafleet/internal/transport"
+	"github.com/mirastacklabs-ai/mirafleet/internal/actions"
+	"github.com/mirastacklabs-ai/mirafleet/internal/audit"
+	"github.com/mirastacklabs-ai/mirafleet/internal/central"
+	"github.com/mirastacklabs-ai/mirafleet/internal/keys"
+	"github.com/mirastacklabs-ai/mirafleet/internal/runner"
+	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
 var version = "dev"
