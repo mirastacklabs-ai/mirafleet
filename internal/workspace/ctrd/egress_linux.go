@@ -196,7 +196,18 @@ func (e *Executor) reattachOne(ctx context.Context, c containerd.Container) erro
 	if s := info.Labels[labelEgress]; s != "" {
 		rules = strings.Split(s, ",")
 	}
-	// Re-check against today's policy: a rule the runner no longer permits is a failure.
+	if err := e.checkReattach(rules); err != nil {
+		return err
+	}
+	return e.startEgress(id, t.Pid(), rules)
+}
+
+// checkReattach re-checks stored rules against today's runner policy: egress must still be
+// allowed, and IP/CIDR rules need egress_cidr_rules. A failure leaves the workspace without network.
+func (e *Executor) checkReattach(rules []string) error {
+	if !e.cfg.AllowsNetwork("egress") {
+		return errors.New("network mode egress is no longer allowed on this runner")
+	}
 	if !e.cfg.EgressCIDRRules {
 		for _, r := range rules {
 			if strings.Contains(r, "/") || isIPRule(r) {
@@ -204,7 +215,7 @@ func (e *Executor) reattachOne(ctx context.Context, c containerd.Container) erro
 			}
 		}
 	}
-	return e.startEgress(id, t.Pid(), rules)
+	return nil
 }
 
 func isIPRule(r string) bool {

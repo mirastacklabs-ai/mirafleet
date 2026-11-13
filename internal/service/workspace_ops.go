@@ -171,7 +171,12 @@ func (s *Service) ExecWorkspace(ctx context.Context, p auth.Principal, src Sourc
 	if err != nil {
 		return api.WorkspaceExecResult{}, s.refuseInput(ctx, p, src, api.MethodWorkspaceExec, w, err.Error())
 	}
-	if stdinLen < 0 || stdinLen > api.MaxFileChunk || (stdinLen > 0 && stdin == nil) {
+	deferred, _ := stdin.(DeferredBody)
+	if stdinLen == StdinDeferred {
+		if deferred == nil {
+			return api.WorkspaceExecResult{}, badRequest("invalid stdin length")
+		}
+	} else if stdinLen < 0 || stdinLen > api.MaxFileChunk || (stdinLen > 0 && stdin == nil) {
 		return api.WorkspaceExecResult{}, badRequest("invalid stdin length")
 	}
 	if f.Confirm && confirm != f.Name {
@@ -180,6 +185,16 @@ func (s *Service) ExecWorkspace(ctx context.Context, p auth.Principal, src Sourc
 	timeout, terr := api.WorkspaceExecTimeout(timeoutS, int(cfg.ExecDefault/time.Second), int(cfg.ExecMax/time.Second))
 	if terr != nil {
 		return api.WorkspaceExecResult{}, terr
+	}
+	if stdinLen == StdinDeferred {
+		// Every gating check has passed: only now may the caller read the body from the wire.
+		var berr error
+		if stdin, stdinLen, berr = deferred.Body(); berr != nil {
+			return api.WorkspaceExecResult{}, berr
+		}
+		if stdinLen < 0 || stdinLen > api.MaxFileChunk || (stdinLen > 0 && stdin == nil) {
+			return api.WorkspaceExecResult{}, badRequest("invalid stdin length")
+		}
 	}
 	rid, err := newRequestID()
 	if err != nil {
@@ -212,6 +227,8 @@ func (s *Service) ExecWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		return api.WorkspaceExecResult{}, err
 	}
 
+	s.touch(ctx, w.WsID)
+	defer s.beginOp(w.WsID)()
 	dctx, cancel := context.WithTimeout(ctx, timeout+execMargin)
 	defer cancel()
 	res, lerr := s.live.Workspace(dctx, w.RunnerID, transport.WorkspaceRequest{Op: transport.OpExec, ID: w.WsID,
@@ -298,6 +315,8 @@ func (s *Service) ReadWorkspaceFile(ctx context.Context, p auth.Principal, src S
 		return api.WorkspaceReadFileResult{}, err
 	}
 
+	s.touch(ctx, w.WsID)
+	defer s.beginOp(w.WsID)()
 	dctx, cancel := context.WithTimeout(ctx, fileOpTimeout)
 	defer cancel()
 	cw := &countWriter{w: out}
@@ -410,6 +429,8 @@ func (s *Service) WriteWorkspaceFile(ctx context.Context, p auth.Principal, src 
 		return api.WorkspaceWriteFileResult{}, err
 	}
 
+	s.touch(ctx, w.WsID)
+	defer s.beginOp(w.WsID)()
 	dctx, cancel := context.WithTimeout(ctx, fileOpTimeout)
 	defer cancel()
 	res, lerr := s.live.Workspace(dctx, w.RunnerID, transport.WorkspaceRequest{Op: transport.OpWrite, ID: w.WsID,

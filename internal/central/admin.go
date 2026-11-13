@@ -63,10 +63,16 @@ func adminTable() *methodTable {
 			api.MethodOperatorList:         handleOperatorList,
 			api.MethodOperatorRevoke:       handleOperatorRevoke,
 			api.MethodAuditList:            handleAuditList,
+			api.MethodFleetWorkspaceSet:    handleFleetWorkspaceSet,
+			api.MethodWorkspaceAdminList:   handleWorkspaceAdminList,
+			api.MethodWorkspaceKill:        handleWorkspaceKill,
 		},
 		timeout: func(m string) time.Duration {
-			if m == api.MethodActionRun {
+			switch m {
+			case api.MethodActionRun:
 				return 0
+			case api.MethodWorkspaceKill:
+				return wsCloseOuterTimeout
 			}
 			return api.ListTimeout
 		},
@@ -243,6 +249,12 @@ var writeResponse = api.WriteResponse
 // owning connection is passed in also and closed too, which does. On net.Conn, c alone suffices
 // and WriteResponse additionally applies a real deadline.
 func writeResponseTimeout(w io.Writer, c io.Closer, resp *api.Response, also ...io.Closer) error {
+	return writeResponseBodyTimeout(w, c, resp, nil, false, also...)
+}
+
+// writeResponseBodyTimeout is writeResponseTimeout followed, when withBody is set, by one body
+// frame (possibly empty) under the same timer. The body is written only if the result frame was.
+func writeResponseBodyTimeout(w io.Writer, c io.Closer, resp *api.Response, body []byte, withBody bool, also ...io.Closer) error {
 	t := time.AfterFunc(api.WriteTimeout, func() {
 		c.Close()
 		for _, a := range also {
@@ -250,5 +262,11 @@ func writeResponseTimeout(w io.Writer, c io.Closer, resp *api.Response, also ...
 		}
 	})
 	defer t.Stop()
-	return writeResponse(w, resp)
+	if err := writeResponse(w, resp); err != nil {
+		return err
+	}
+	if withBody {
+		return api.WriteBody(w, body)
+	}
+	return nil
 }

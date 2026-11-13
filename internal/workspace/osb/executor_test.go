@@ -647,3 +647,25 @@ func TestSecretsNeverInExecutorErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateRefusesNonWebPorts(t *testing.T) {
+	f, p := newEFake(t)
+	ex := f.executor(t, p, "")
+	for _, port := range []int{22, 8443, 0} {
+		s := spec(workspace.NewID())
+		s.Network = workspace.Network{Mode: workspace.NetEgress, Allow: []workspace.EgressRule{{Host: "pypi.org", Port: 443}, {Host: "git.example", Port: port}}}
+		err := ex.Create(ctx, s)
+		if !errors.Is(err, workspace.ErrRefused) || !strings.Contains(err.Error(), "host-only") {
+			t.Errorf("port %d: err = %v", port, err)
+		}
+	}
+	if len(f.creates) != 0 {
+		t.Fatalf("sandbox created despite refusal: %d", len(f.creates))
+	}
+	s := spec(workspace.NewID())
+	s.Network = workspace.Network{Mode: workspace.NetEgress, Allow: []workspace.EgressRule{{Host: "a.example", Port: 80}}}
+	createPoll = 5 * time.Millisecond
+	if err := ex.Create(ctx, s); err != nil {
+		t.Fatalf("port 80: %v", err)
+	}
+}

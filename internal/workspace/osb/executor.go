@@ -149,6 +149,15 @@ func (e *executor) Create(ctx context.Context, s workspace.Spec) error {
 	default:
 		return fmt.Errorf("%w: unknown network mode", workspace.ErrRefused)
 	}
+	if s.Network.Mode == workspace.NetEgress {
+		// OpenSandbox policies are host-only: an allowed host is reachable on every port, so a
+		// rule that names another port cannot be honoured.
+		for _, r := range s.Network.Allow {
+			if r.Port != 443 && r.Port != 80 {
+				return fmt.Errorf("%w: opensandbox network policy is host-only; egress rule %q port %d is not supported (only 443 and 80)", workspace.ErrRefused, r.Host, r.Port)
+			}
+		}
+	}
 
 	// Idempotent on ID.
 	existing, err := e.find(ctx, s.ID)

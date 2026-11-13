@@ -13,6 +13,10 @@ import (
 // DefaultReaperInterval is the period of the workspace reaper sweep (M3.md 1.6).
 const DefaultReaperInterval = 60 * time.Second
 
+// DefaultOpenMargin is added to the open timeout before reconcile treats an opening row as stuck,
+// so a create still finishing on the runner is not destroyed under its caller.
+const DefaultOpenMargin = 30 * time.Second
+
 // sweepLimit is the most rows one query of a sweep reads (the store caps lists at 1000). Rows
 // beyond it are picked up by later sweeps as earlier ones leave the queried state.
 const sweepLimit = 1000
@@ -77,6 +81,7 @@ func (s *Service) destroyOn(ctx context.Context, runnerID int64, id string) bool
 // RunReaper sweeps every ReaperInterval until ctx is done. It returns only after any sweep in
 // progress has finished, so a caller that waits for it can close the store afterwards.
 func (s *Service) RunReaper(ctx context.Context) {
+	s.markStarted()
 	t := time.NewTicker(s.reapEvery)
 	defer t.Stop()
 	for {
@@ -123,7 +128,7 @@ func (s *Service) ReapOnce(ctx context.Context) {
 				}
 				idle[w.Fleet] = ttl
 			}
-			if ttl > 0 && w.LastUsedAt.Add(ttl).Before(now) {
+			if ttl > 0 && s.idleRef(w).Add(ttl).Before(now) && !s.busy(w.WsID) {
 				reason = reasonIdle
 			}
 		}
@@ -246,6 +251,7 @@ func (s *Service) closeWorkspacesOf(ctx context.Context, who store.WorkspaceOwne
 // crashed in the middle of, so they become failed. Reconcile destroys any container left behind
 // when the runner returns. It returns how many rows it moved.
 func (s *Service) RecoverWorkspaces(ctx context.Context) (int, error) {
+	s.markStarted()
 	n := 0
 	for {
 		rows, err := s.st.ListWorkspaces(ctx, store.WorkspaceFilter{States: []store.WorkspaceState{store.WorkspaceOpening}, Limit: sweepLimit})
@@ -314,7 +320,9 @@ func (s *Service) ReconcileRunner(ctx context.Context, runnerID int64) {
 			if s.destroyOn(ctx, runnerID, w.WsID) {
 				s.setState(ctx, w, store.WorkspaceClosing, store.WorkspaceClosed, w.Reason, actionDestroy)
 			}
-		case w.State == store.WorkspaceOpening && s.now().Sub(w.CreatedAt) > s.openTimeout:
+		case w.State == store.WorkspaceOpen && deadState(in.State):
+			s.setState(ctx, w, store.WorkspaceOpen, store.WorkspaceLost, "container "+in.State+" on runner", actionLost)
+		case w.State == store.WorkspaceOpening && s.now().Sub(w.CreatedAt) > s.openTimeout+s.openMargin:
 			if s.destroyOn(ctx, runnerID, w.WsID) {
 				s.setState(ctx, w, store.WorkspaceOpening, store.WorkspaceFailed, "open timed out", actionRecover)
 			}
@@ -344,4 +352,58 @@ func (s *Service) destroyOrphan(ctx context.Context, runnerID int64, w store.Wor
 		}
 	}
 	s.recordBestEffort(ctx, s.sysEvent(actionOrphan, w, "orphan destroyed: "+why))
+}
+
+// markStarted records the start of this process's workspace housekeeping (the first call wins).
+// The idle clock never runs from before it: after a central outage longer than idle_ttl, every
+// workspace would otherwise look idle at the first sweep although nobody could reach it.
+func (s *Service) markStarted() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.startedAt.IsZero() {
+		s.startedAt = s.now()
+	}
+}
+
+// idleRef is the time the idle ttl counts from: the later of last use and central's start.
+func (s *Service) idleRef(w store.Workspace) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.startedAt.After(w.LastUsedAt) {
+		return s.startedAt
+	}
+	return w.LastUsedAt
+}
+
+// beginOp marks an op in flight on workspace id and returns the function that ends it. The
+// reaper never idles out a workspace with an op in flight.
+func (s *Service) beginOp(id string) func() {
+	s.mu.Lock()
+	if s.inflight == nil {
+		s.inflight = map[string]int{}
+	}
+	s.inflight[id]++
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.inflight[id]--; s.inflight[id] <= 0 {
+			delete(s.inflight, id)
+		}
+	}
+}
+
+func (s *Service) busy(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inflight[id] > 0
+}
+
+// deadState reports a runner-reported container state that can no longer serve an open row.
+func deadState(st string) bool {
+	switch st {
+	case string(workspace.StateStopped), string(workspace.StateUnknown), "terminated":
+		return true
+	}
+	return false
 }

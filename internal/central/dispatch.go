@@ -23,6 +23,9 @@ type callCtx struct {
 	st    store.Store
 	logf  func(string, ...any)
 	state *connState
+	// body is the channel body I/O of this call (api@ only; nil on the admin socket). It is set on a
+	// per-call copy of the connection's callCtx, never on the shared one.
+	body *callBody
 }
 
 // connState is per-connection mutable state shared by the channels of one connection.
@@ -76,7 +79,8 @@ func (t *methodTable) serve(ctx context.Context, c *callCtx, req *api.Request) *
 	return resp
 }
 
-// operatorTable is the api@mirafleet table: hello, fleets.list, runners.list, action.run.
+// operatorTable is the api@mirafleet table: hello, fleets.list, runners.list, action.run and the
+// workspace.* operator methods.
 func operatorTable() *methodTable {
 	return &methodTable{
 		src:     service.SourceAPI,
@@ -86,14 +90,35 @@ func operatorTable() *methodTable {
 			api.MethodFleetsList:  handleFleetsList,
 			api.MethodRunnersList: handleRunnersList,
 			api.MethodActionRun:   handleActionRun,
+
+			api.MethodWorkspaceOpen:      handleWorkspaceOpen,
+			api.MethodWorkspaceExec:      handleWorkspaceExec,
+			api.MethodWorkspaceReadFile:  handleWorkspaceReadFile,
+			api.MethodWorkspaceWriteFile: handleWorkspaceWriteFile,
+			api.MethodWorkspaceClose:     handleWorkspaceClose,
+			api.MethodWorkspaceList:      handleWorkspaceList,
 		},
-		timeout: func(m string) time.Duration {
-			if m == api.MethodActionRun {
-				return 0
-			}
-			return api.ListTimeout
-		},
+		timeout: operatorTimeout,
 	}
+}
+
+// operatorTimeout is the per-method outer deadline of the api@ table. action.run and the
+// workspace calls that carry their own (tighter) deadline in the service get a generous safety
+// net instead (see the ws*OuterTimeout constants).
+func operatorTimeout(m string) time.Duration {
+	switch m {
+	case api.MethodActionRun:
+		return 0
+	case api.MethodWorkspaceOpen:
+		return wsOpenOuterTimeout
+	case api.MethodWorkspaceExec:
+		return wsExecOuterTimeout
+	case api.MethodWorkspaceReadFile, api.MethodWorkspaceWriteFile:
+		return wsFileOuterTimeout
+	case api.MethodWorkspaceClose:
+		return wsCloseOuterTimeout
+	}
+	return api.ListTimeout
 }
 
 // versions returns a copy of the supported protocol versions.

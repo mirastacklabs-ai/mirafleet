@@ -79,7 +79,12 @@ type Service struct {
 	maxPerOp    int
 	openTimeout time.Duration
 	reapEvery   time.Duration
-	recon       sync.Map // runner ids with a reconcile in flight
+	recon       sync.Map      // runner ids with a reconcile in flight
+	openMargin  time.Duration // slack on top of openTimeout before reconcile destroys an opening row
+
+	mu        sync.Mutex     // guards startedAt and inflightOps
+	startedAt time.Time      // when this central process started its workspace housekeeping
+	inflight  map[string]int // in-flight ops per workspace id (exec, read, write)
 }
 
 // New validates cfg and returns a Service.
@@ -114,7 +119,7 @@ func New(cfg Config) (*Service, error) {
 		reapEvery = DefaultReaperInterval
 	}
 	return &Service{st: cfg.Store, pol: cfg.Policy, live: cfg.Live, hostKey: cfg.HostKey, now: cfg.Now, logf: logf,
-		opConns: cfg.OperatorConns, maxPerOp: maxPerOp, openTimeout: openTimeout, reapEvery: reapEvery}, nil
+		opConns: cfg.OperatorConns, maxPerOp: maxPerOp, openTimeout: openTimeout, reapEvery: reapEvery, openMargin: DefaultOpenMargin}, nil
 }
 
 var errForbidden = api.Errorf(api.CodeForbidden, "forbidden")

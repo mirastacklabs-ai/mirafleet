@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
@@ -612,7 +613,7 @@ const (
 	MaxEnvVars    = 32
 	MaxEnvValue   = 4 << 10
 	MaxFileChunk  = 1 << 20 // body frame limit
-	MaxSessionLen = 64
+	MaxSessionLen = 128
 
 	// DefaultWorkspaceExecTimeout and DefaultWorkspaceExecMax are the per-fleet defaults
 	// (exec_default_s 120, exec_max_s 1800); HardWorkspaceExecCeiling is the absolute cap in code.
@@ -822,3 +823,13 @@ type WorkspaceKillParams struct {
 	ID string `json:"id"`
 }
 type WorkspaceKillResult struct{}
+
+var sessionRE = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+// ValidateSession checks a workspace session id: 1..MaxSessionLen characters of A-Za-z0-9._:-.
+func ValidateSession(s string) *Error {
+	if !sessionRE.MatchString(s) {
+		return Errorf(CodeBadRequest, "invalid session")
+	}
+	return nil
+}

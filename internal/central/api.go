@@ -99,10 +99,25 @@ func (s *Server) serveAPIChannel(connCtx context.Context, sconn *ssh.ServerConn,
 	// Closing the channel unblocks a stalled write; the peer closing it cancels the request.
 	stop := context.AfterFunc(ctx, func() { ch.Close() })
 	defer stop()
-	go io.Copy(io.Discard, ch) // keep the window open; stray input after the request is ignored
+	// Per-call copy: the body I/O must not be shared between the channels of one connection.
+	call := *cc
+	call.body = &callBody{r: ch, closer: ch}
+	if !takesBody(req.Method) {
+		go io.Copy(io.Discard, ch) // keep the window open; stray input after the request is ignored
+	}
 
-	resp := table.serve(ctx, cc, req)
-	if err := writeResponseTimeout(ch, ch, resp, sconn); err != nil {
+	// Methods that may carry a body frame read it from ch themselves, and only after the
+	// service has authorised the call, so nothing drains the channel until the handler is done.
+	// The client's write of at most MaxFileChunk+4 bytes fits the SSH window either way.
+	resp := table.serve(ctx, &call, req)
+	if takesBody(req.Method) {
+		go io.Copy(io.Discard, ch)
+	}
+	var out []byte
+	if resp.Error == nil && call.body.hasOut {
+		out = call.body.out
+	}
+	if err := writeResponseBodyTimeout(ch, ch, resp, out, call.body.hasOut && resp.Error == nil, sconn); err != nil {
 		s.cfg.Logf("api: write response to %q: %v", cc.p.Name, err)
 	}
 }

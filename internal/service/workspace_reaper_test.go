@@ -509,3 +509,114 @@ func TestRunReaperStopsOnCancel(t *testing.T) {
 		t.Fatal("RunReaper did not stop")
 	}
 }
+
+func TestReconcileOpeningBoundary(t *testing.T) {
+	e := newEnv(t)
+	clk := e.clock()
+	e.wsFleet("dev", false, nil)
+	r := e.wsRunner("dev", rspec{slots: 100})
+	ann := e.operator("ann")
+	if e.svc.openMargin != DefaultOpenMargin {
+		t.Fatalf("margin %v", e.svc.openMargin)
+	}
+	limit := e.svc.openTimeout + e.svc.openMargin
+	atLimit := e.rowAt(1, "dev", r, ann, store.WorkspaceOpening, t0)
+	inMargin := e.rowAt(2, "dev", r, ann, store.WorkspaceOpening, t0.Add(limit-e.svc.openTimeout-time.Second))
+	past := e.rowAt(3, "dev", r, ann, store.WorkspaceOpening, t0.Add(-time.Second))
+	clk.set(t0.Add(limit)) // atLimit: age == limit; inMargin: past the open timeout; past: limit+1s
+	e.listing(atLimit.WsID, inMargin.WsID, past.WsID)
+	e.svc.ReconcileRunner(e.ctx, r.ID)
+	for w, want := range map[string]store.WorkspaceState{atLimit.WsID: store.WorkspaceOpening,
+		inMargin.WsID: store.WorkspaceOpening, past.WsID: store.WorkspaceFailed} {
+		if got := e.state(w).State; got != want {
+			t.Errorf("%s: %s, want %s", w, got, want)
+		}
+	}
+}
+
+func TestReapIdleNotBeforeCentralStart(t *testing.T) {
+	e := newEnv(t)
+	clk := e.clock()
+	e.wsFleet("dev", false, func(c *store.WorkspaceConfig) { c.IdleTTL = time.Hour })
+	e.wsRunner("dev", rspec{slots: 4})
+	ann := e.operator("ann")
+	w := e.openWS(ann, "dev", "s1") // last_used = t0
+
+	// Central was down for 10 h; it restarts at t0+10h.
+	clk.set(t0.Add(10 * time.Hour))
+	e.svc.markStarted()
+	clk.set(t0.Add(10*time.Hour + 30*time.Minute))
+	e.svc.ReapOnce(e.ctx)
+	if e.state(w.WsID).State != store.WorkspaceOpen {
+		t.Fatal("reaped on a pre-restart last_used_at")
+	}
+	clk.set(t0.Add(11*time.Hour + time.Minute))
+	e.svc.ReapOnce(e.ctx)
+	if got := e.state(w.WsID); got.State != store.WorkspaceClosed || got.Reason != reasonIdle {
+		t.Fatalf("after a full ttl since start: %+v", got)
+	}
+}
+
+func TestReapSkipsInFlightOp(t *testing.T) {
+	e, op, w := opsEnv(t, false, func(c *store.WorkspaceConfig) { c.IdleTTL = time.Hour })
+	clk := e.clock()
+	var during store.Workspace
+	e.live.wsFn = func(ctx context.Context, id int64, req transport.WorkspaceRequest, b io.Reader, o io.Writer) (*transport.WorkspaceResult, error) {
+		if req.Op != transport.OpExec {
+			return &transport.WorkspaceResult{Code: transport.CodeOK}, nil
+		}
+		// A long exec: the clock runs past idle_ttl while it is in flight.
+		clk.set(t0.Add(3 * time.Hour))
+		e.svc.ReapOnce(e.ctx)
+		during = e.state(w.WsID)
+		return wsExecOK(0)(ctx, id, req, b, o)
+	}
+	clk.set(t0.Add(2 * time.Hour)) // dispatch time
+	if _, err := e.svc.ExecWorkspace(e.ctx, op, SourceAPI, w.WsID, []string{"sleep", "1"}, "", nil, 0, nil, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if during.State != store.WorkspaceOpen {
+		t.Fatalf("reaped mid-exec: %+v", during)
+	}
+	if !during.LastUsedAt.Equal(t0.Add(2 * time.Hour)) {
+		t.Fatalf("not touched at dispatch: %v", during.LastUsedAt)
+	}
+	if e.svc.busy(w.WsID) {
+		t.Fatal("in-flight marker leaked")
+	}
+}
+
+func TestReconcileDeadContainerStateLost(t *testing.T) {
+	e := newEnv(t)
+	clk := e.clock()
+	e.wsFleet("dev", false, nil)
+	r := e.wsRunner("dev", rspec{slots: 100})
+	ann := e.operator("ann")
+	clk.set(t0)
+	ws := map[string]store.Workspace{}
+	for i, st := range []string{"stopped", "unknown", "terminated", "running", "created"} {
+		ws[st] = e.rowAt(i+1, "dev", r, ann, store.WorkspaceOpen, t0)
+	}
+	e.live.wsFn = func(_ context.Context, _ int64, req transport.WorkspaceRequest, _ io.Reader, _ io.Writer) (*transport.WorkspaceResult, error) {
+		res := &transport.WorkspaceResult{Code: transport.CodeOK}
+		if req.Op == transport.OpList {
+			for st, w := range ws {
+				res.List = append(res.List, transport.WorkspaceInfo{ID: w.WsID, State: st})
+			}
+		}
+		return res, nil
+	}
+	e.svc.ReconcileRunner(e.ctx, r.ID)
+	for st, w := range ws {
+		want := store.WorkspaceOpen
+		if st == "stopped" || st == "unknown" || st == "terminated" {
+			want = store.WorkspaceLost
+		}
+		if got := e.state(w.WsID).State; got != want {
+			t.Errorf("%s: %s, want %s", st, got, want)
+		}
+	}
+	if a := e.wsAudit(actionLost); len(a) != 3 || a[0].Source != "system" {
+		t.Errorf("lost audit: %+v", a)
+	}
+}

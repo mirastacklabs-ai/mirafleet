@@ -272,6 +272,9 @@ func (e *Executor) Create(ctx context.Context, s workspace.Spec) (err error) {
 	if !e.cfg.AllowsNetwork(mode) {
 		return refuse("network mode %q is not allowed on this runner", mode)
 	}
+	if mode == string(workspace.NetEgress) && s.RequireSecureRuntime {
+		return refuse("egress is not supported with secure runtimes yet")
+	}
 	var egressRules []string
 	if mode == string(workspace.NetEgress) {
 		r, rerr := e.egressRules(s.Network.Allow)
