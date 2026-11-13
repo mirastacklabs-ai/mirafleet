@@ -184,6 +184,19 @@ func TestBodyOversizeBeforeAllocation(t *testing.T) {
 	}
 }
 
+func TestValidateFileMode(t *testing.T) {
+	for _, m := range []uint32{0, 0o644, 0o755, 0o777} {
+		if ValidateFileMode(m) != nil {
+			t.Errorf("%#o should be accepted", m)
+		}
+	}
+	for _, m := range []uint32{0o1000, 0o2755, 0o4755, 0o7777, 1 << 31} {
+		if ValidateFileMode(m) == nil {
+			t.Errorf("%#o should be refused", m)
+		}
+	}
+}
+
 func TestBodyTruncated(t *testing.T) {
 	var buf bytes.Buffer
 	WriteBody(&buf, []byte("hello world"))

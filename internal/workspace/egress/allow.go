@@ -31,8 +31,11 @@ const (
 //	ip[:port]            IP literal, shorthand for ip/32 (ip/128); port defaults to 443
 //
 // IPv6 literals and CIDRs must be bracketed: [2001:db8::1]:443, [2001:db8::/32]:443.
-// A cidr or IP rule is the only way to reach an otherwise refused range (private, loopback ...)
-// and the only way to dial an IP-literal target. Cloud metadata addresses can never be allowed.
+// A cidr or IP rule is the only way to reach an otherwise refused range (private, CGNAT ...)
+// and the only way to dial an IP-literal target. It unlocks a refused range only if the rule's
+// prefix lies inside that range, and a rule may not span more than one refused class.
+// Loopback, unspecified, link-local and cloud metadata addresses can never be allowed; rules
+// that overlap them are rejected.
 type Rule struct {
 	Raw    string
 	kind   ruleKind
@@ -115,6 +118,9 @@ func ParseRule(s string) (Rule, error) {
 		if !hasPort {
 			return r, errors.New("a CIDR rule requires an explicit port")
 		}
+		if why := checkRulePrefix(pfx); why != "" {
+			return r, errors.New(why)
+		}
 		r.kind, r.prefix = kindCIDR, pfx
 	default:
 		if ip, err := netip.ParseAddr(hostPart); err == nil {
@@ -124,7 +130,11 @@ func ParseRule(s string) (Rule, error) {
 			if ip.Is6() && !bracketed {
 				return r, errors.New("IPv6 needs brackets")
 			}
-			r.kind, r.prefix = kindCIDR, netip.PrefixFrom(ip, ip.BitLen())
+			pfx := netip.PrefixFrom(ip, ip.BitLen())
+			if why := checkRulePrefix(pfx); why != "" {
+				return r, errors.New(why)
+			}
+			r.kind, r.prefix = kindCIDR, pfx
 			break
 		}
 		if bracketed {

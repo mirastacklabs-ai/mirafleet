@@ -534,12 +534,19 @@ func TestChannelRestrictions(t *testing.T) {
 
 	// Runner side: central tries other channel types over the runner's connection.
 	conn := e.session("r1").Conn()
-	for _, typ := range []string{"session", "direct-tcpip", "file@mirafleet", "workspace@mirafleet", "x11"} {
+	for _, typ := range []string{"session", "direct-tcpip", "file@mirafleet", "x11"} {
 		_, _, err := conn.OpenChannel(typ, nil)
 		var oe *ssh.OpenChannelError
 		if !errors.As(err, &oe) || oe.Reason != ssh.UnknownChannelType {
 			t.Errorf("runner accepted %q: %v", typ, err)
 		}
+	}
+	// workspace@mirafleet is a registered channel type: a runner without a workspace config
+	// refuses it as Prohibited (not unknown, not accepted).
+	_, _, werr := conn.OpenChannel(transport.ChanWorkspace, nil)
+	var woe *ssh.OpenChannelError
+	if !errors.As(werr, &woe) || woe.Reason != ssh.Prohibited {
+		t.Errorf("runner without workspace config on %q: %v", transport.ChanWorkspace, werr)
 	}
 	// Malformed exec payload is rejected, not run.
 	if _, _, err := conn.OpenChannel(transport.ChanExec, []byte("not json")); err == nil {

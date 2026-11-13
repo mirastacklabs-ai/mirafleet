@@ -21,6 +21,12 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("Fleets", func(t *testing.T) { fleets(t, newStore(t)) })
 	t.Run("Audit", func(t *testing.T) { audit(t, newStore(t)) })
 	t.Run("FleetWorkspace", func(t *testing.T) { fleetWorkspace(t, newStore(t)) })
+	t.Run("Workspaces", func(t *testing.T) { workspaces(t, newStore(t)) })
+	t.Run("Workspaces", func(t *testing.T) { workspaces(t, newStore(t)) })
+	t.Run("WorkspaceFilters", func(t *testing.T) { workspaceFilters(t, newStore(t)) })
+	t.Run("WorkspaceClose", func(t *testing.T) { workspaceClose(t, newStore(t)) })
+	t.Run("WorkspaceSticky", func(t *testing.T) { workspaceSticky(t, newStore(t)) })
+	t.Run("WorkspaceRace", func(t *testing.T) { workspaceRace(t, newStore(t)) })
 	t.Run("Enroll", func(t *testing.T) { enroll(t, newStore(t)) })
 	t.Run("EnrollRaceSingleUse", func(t *testing.T) { enrollRace(t, newStore(t), 1, 1) })
 	t.Run("EnrollRaceMultiUse", func(t *testing.T) { enrollRace(t, newStore(t), 3, 3) })
@@ -871,6 +877,10 @@ func fleetWorkspace(t *testing.T, s store.Store) {
 		"whitespace in image":    func(c *store.WorkspaceConfig) { c.Images = append(c.Images, "a b") },
 		"too many images":        func(c *store.WorkspaceConfig) { c.Images = make([]string, 65) },
 		"empty egress rule":      func(c *store.WorkspaceConfig) { c.Egress = []string{""} },
+		"egress loopback cidr":   func(c *store.WorkspaceConfig) { c.Egress = []string{"127.0.0.0/8:443"} },
+		"egress everything":      func(c *store.WorkspaceConfig) { c.Egress = []string{"0.0.0.0/0:443"} },
+		"egress metadata":        func(c *store.WorkspaceConfig) { c.Egress = []string{"169.254.169.254:80"} },
+		"egress bad host":        func(c *store.WorkspaceConfig) { c.Egress = []string{"*.com"} },
 		"egress with none":       func(c *store.WorkspaceConfig) { c.Network = store.NetworkNone },
 		"zero cpu":               func(c *store.WorkspaceConfig) { c.CPUMilli = 0 },
 		"zero memory":            func(c *store.WorkspaceConfig) { c.MemoryMB = 0 },
@@ -988,5 +998,497 @@ func fleetWorkspace(t *testing.T, s store.Store) {
 	r, err := s.PutFleetWorkspace(ctx, "dev", frac, t1, ev("x"))
 	if err != nil || r.ExecDefault != 90*time.Second {
 		t.Fatalf("truncation: %+v, %v", r, err)
+	}
+}
+
+// wsFixture creates a workspace fleet, n runners and m operators.
+func wsFixture(t *testing.T, s store.Store, runnersN, opsN int) (store.Fleet, []store.Runner, []store.Operator) {
+	t.Helper()
+	ctx := context.Background()
+	f, err := s.CreateFleet(ctx, store.Fleet{Name: "wsf", Mode: store.ModeWorkspace, Workspace: wsCfg()}, t0, ev("fleet.create"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mkToken(t, s, "wsf", "cccccccccccccccc", "sec", 100, true, t0.Add(time.Hour))
+	var rs []store.Runner
+	for i := 0; i < runnersN; i++ {
+		r, err := s.Enroll(ctx, "cccccccccccccccc", secretHash("sec"), t0, newRunner(fmt.Sprintf("wr%d", i), byte(10+i)), ev("runner.enrol"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rs = append(rs, r)
+	}
+	var ops []store.Operator
+	for i := 0; i < opsN; i++ {
+		o, _, err := s.RegisterOperator(ctx, fmt.Sprintf("op%d", i), []byte{byte(50 + i), 7, 7}, fmt.Sprintf("fp%d", i), t0, ev("operator.register"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ops = append(ops, o)
+	}
+	return f, rs, ops
+}
+
+func wsID(n int) string { return fmt.Sprintf("%032x", n+1) }
+
+func wsRow(n int, f store.Fleet, r store.Runner, o store.Operator, session string) store.Workspace {
+	return store.Workspace{WsID: wsID(n), FleetID: f.ID, RunnerID: r.ID, OperatorID: o.ID, Session: session,
+		Image: "docker.io/library/golang:1.27", Spec: `{"cpu":1}`, ExpiresAt: t0.Add(time.Hour)}
+}
+
+func wsAudit(t *testing.T, s store.Store, id string) int {
+	t.Helper()
+	evs, err := s.ListAudit(context.Background(), 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range evs {
+		if e.Workspace == id {
+			n++
+		}
+	}
+	return n
+}
+
+func workspaces(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	f, rs, ops := wsFixture(t, s, 3, 3)
+	now := t0.Add(time.Minute)
+
+	// Reserve: fields, state forced to opening, audit carries the workspace id.
+	bad := wsRow(0, f, rs[0], ops[0], "s")
+	bad.State = store.WorkspaceOpen
+	w, existing, err := s.ReserveWorkspace(ctx, bad, 2, 0, now, ev("workspace.open"))
+	if err != nil || existing || w.State != store.WorkspaceOpening || w.ID == 0 || w.Fleet != "wsf" || w.Runner != "wr0" ||
+		w.Operator != "op0" || !w.CreatedAt.Equal(now) || !w.LastUsedAt.Equal(now) || !w.ExpiresAt.Equal(t0.Add(time.Hour)) ||
+		!w.ClosedAt.IsZero() || w.Session != "s" || w.Spec != `{"cpu":1}` {
+		t.Fatalf("reserve: %+v %v %v", w, existing, err)
+	}
+	if wsAudit(t, s, w.WsID) != 1 {
+		t.Fatal("reserve audit row missing the workspace id")
+	}
+
+	// Sticky reuse: same row, nothing written, even when the runner is otherwise full.
+	base := auditCount(t, s)
+	dup := wsRow(1, f, rs[0], ops[0], "s")
+	g, existing, err := s.ReserveWorkspace(ctx, dup, 1, 1, now.Add(time.Second), ev("workspace.open"))
+	if err != nil || !existing || g.WsID != w.WsID || g.ID != w.ID || auditCount(t, s) != base {
+		t.Fatalf("sticky: %+v %v %v audit %d/%d", g, existing, err, auditCount(t, s), base)
+	}
+	if _, err := s.GetWorkspace(ctx, dup.WsID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("sticky inserted a row: %v", err)
+	}
+	// Still sticky once open; a different session or operator gets its own row.
+	if _, err := s.SetWorkspaceState(ctx, w.WsID, []store.WorkspaceState{store.WorkspaceOpening}, store.WorkspaceOpen, "", now, ev("workspace.state")); err != nil {
+		t.Fatal(err)
+	}
+	if g, existing, err = s.ReserveWorkspace(ctx, dup, 5, 0, now, ev("x")); err != nil || !existing || g.WsID != w.WsID || g.State != store.WorkspaceOpen {
+		t.Fatalf("sticky open: %+v %v %v", g, existing, err)
+	}
+
+	// Validation and not-found.
+	for name, mut := range map[string]func(*store.Workspace){
+		"short id":    func(w *store.Workspace) { w.WsID = "abc" },
+		"upper id":    func(w *store.Workspace) { w.WsID = strings.ToUpper(wsID(90)) },
+		"no session":  func(w *store.Workspace) { w.Session = "" },
+		"no image":    func(w *store.Workspace) { w.Image = "" },
+		"no spec":     func(w *store.Workspace) { w.Spec = "" },
+		"no expiry":   func(w *store.Workspace) { w.ExpiresAt = time.Time{} },
+		"zero runner": func(w *store.Workspace) { w.RunnerID = 0 },
+	} {
+		x := wsRow(90, f, rs[1], ops[1], "v")
+		mut(&x)
+		if _, _, err := s.ReserveWorkspace(ctx, x, 2, 0, now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(91, f, rs[1], ops[1], "v"), 0, 0, now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("slots 0: %v", err)
+	}
+	for name, mut := range map[string]func(*store.Workspace){
+		"fleet":    func(w *store.Workspace) { w.FleetID = 9999 },
+		"runner":   func(w *store.Workspace) { w.RunnerID = 9999 },
+		"operator": func(w *store.Workspace) { w.OperatorID = 9999 },
+	} {
+		x := wsRow(92, f, rs[1], ops[1], "v")
+		mut(&x)
+		if _, _, err := s.ReserveWorkspace(ctx, x, 2, 0, now, ev("x")); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("unknown %s: %v", name, err)
+		}
+	}
+	// A runner of another fleet, or a revoked runner, is refused (ErrInvalid), nothing written.
+	f2, err := s.CreateFleet(ctx, store.Fleet{Name: "wsf2", Mode: store.ModeWorkspace, Workspace: wsCfg()}, t0, ev("fleet.create"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mkToken(t, s, "wsf2", "dddddddddddddddd", "sec2", 100, true, t0.Add(time.Hour))
+	foreign, err := s.Enroll(ctx, "dddddddddddddddd", secretHash("sec2"), t0, newRunner("fr0", 40), ev("runner.enrol"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, err := s.Enroll(ctx, "cccccccccccccccc", secretHash("sec"), t0, newRunner("wrgone", 41), ev("runner.enrol"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetRunnerStatus(ctx, gone.ID, []store.Status{gone.Status}, store.StatusRevoked, now, ev("runner.revoke")); err != nil {
+		t.Fatal(err)
+	}
+	baseAudit := auditCount(t, s)
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(93, f, foreign, ops[1], "x"), 2, 0, now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("runner of another fleet: %v", err)
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(94, f2, rs[1], ops[1], "x"), 2, 0, now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("fleet that does not own the runner: %v", err)
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(95, f, gone, ops[1], "x"), 2, 0, now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("revoked runner: %v", err)
+	}
+	for _, n := range []int{93, 94, 95} {
+		if _, err := s.GetWorkspace(ctx, wsID(n)); !errors.Is(err, store.ErrNotFound) || auditCount(t, s) != baseAudit {
+			t.Errorf("refused reserve %d left state: %v", n, err)
+		}
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(0, f, rs[1], ops[1], "other"), 2, 0, now, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("duplicate ws_id: %v", err)
+	}
+
+	// Per-operator cap counts opening, open and closing; other operators are unaffected.
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(10, f, rs[1], ops[1], "a"), 9, 2, now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(11, f, rs[1], ops[1], "b"), 9, 2, now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(12, f, rs[1], ops[1], "c"), 9, 2, now, ev("x")); !errors.Is(err, store.ErrFull) {
+		t.Fatalf("per-operator cap: %v", err)
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(13, f, rs[1], ops[2], "c"), 9, 2, now, ev("x")); err != nil {
+		t.Fatalf("other operator: %v", err)
+	}
+	// maxPerOp <= 0: no cap.
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(14, f, rs[1], ops[1], "d"), 9, 0, now, ev("x")); err != nil {
+		t.Fatalf("no cap: %v", err)
+	}
+	// Failed reserves write nothing.
+	if wsAudit(t, s, wsID(12)) != 0 {
+		t.Fatal("ErrFull audited")
+	}
+
+	// Transitions: all pairs, including illegal ones.
+	all := []store.WorkspaceState{store.WorkspaceOpening, store.WorkspaceOpen, store.WorkspaceClosing,
+		store.WorkspaceClosed, store.WorkspaceFailed, store.WorkspaceLost}
+	n := 100
+	for _, from := range all {
+		for _, to := range all {
+			n++
+			sess := fmt.Sprintf("t%d", n)
+			x, _, err := s.ReserveWorkspace(ctx, wsRow(n, f, rs[2], ops[2], sess), 1000, 0, now, ev("x"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Drive to `from` along a legal path.
+			path := map[store.WorkspaceState][]store.WorkspaceState{
+				store.WorkspaceOpening: nil,
+				store.WorkspaceOpen:    {store.WorkspaceOpen},
+				store.WorkspaceClosing: {store.WorkspaceOpen, store.WorkspaceClosing},
+				store.WorkspaceClosed:  {store.WorkspaceOpen, store.WorkspaceClosing, store.WorkspaceClosed},
+				store.WorkspaceFailed:  {store.WorkspaceFailed},
+				store.WorkspaceLost:    {store.WorkspaceOpen, store.WorkspaceLost},
+			}[from]
+			cur := store.WorkspaceOpening
+			for _, step := range path {
+				if _, err := s.SetWorkspaceState(ctx, x.WsID, []store.WorkspaceState{cur}, step, "setup", now, ev("x")); err != nil {
+					t.Fatalf("setup %s: %v", from, err)
+				}
+				cur = step
+			}
+			before := wsAudit(t, s, x.WsID)
+			got, err := s.SetWorkspaceState(ctx, x.WsID, []store.WorkspaceState{from}, to, "why", now.Add(time.Minute), ev("workspace.state"))
+			if store.CanTransitionWorkspace(from, to) {
+				if err != nil || got.State != to || got.Reason != "why" || wsAudit(t, s, x.WsID) != before+1 {
+					t.Fatalf("%s->%s: %+v %v", from, to, got, err)
+				}
+				if to.Terminal() != got.ClosedAt.Equal(now.Add(time.Minute)) || (!to.Terminal() && !got.ClosedAt.IsZero()) {
+					t.Fatalf("%s->%s closed_at = %v", from, to, got.ClosedAt)
+				}
+			} else if !errors.Is(err, store.ErrConflict) || wsAudit(t, s, x.WsID) != before {
+				t.Fatalf("%s->%s should conflict: %v", from, to, err)
+			}
+		}
+	}
+	// `from` mismatch, unknown id, invalid arguments.
+	m, _, _ := s.ReserveWorkspace(ctx, wsRow(300, f, rs[2], ops[0], "m"), 1000, 0, now, ev("x"))
+	if _, err := s.SetWorkspaceState(ctx, m.WsID, []store.WorkspaceState{store.WorkspaceOpen}, store.WorkspaceClosing, "", now, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("from mismatch: %v", err)
+	}
+	if _, err := s.SetWorkspaceState(ctx, wsID(999), []store.WorkspaceState{store.WorkspaceOpen}, store.WorkspaceClosing, "", now, ev("x")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown: %v", err)
+	}
+	if _, err := s.SetWorkspaceState(ctx, m.WsID, nil, store.WorkspaceOpen, "", now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("empty from: %v", err)
+	}
+	if _, err := s.SetWorkspaceState(ctx, m.WsID, []store.WorkspaceState{"bogus"}, store.WorkspaceOpen, "", now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("bad from: %v", err)
+	}
+	if _, err := s.SetWorkspaceState(ctx, m.WsID, []store.WorkspaceState{store.WorkspaceOpening}, "bogus", "", now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("bad to: %v", err)
+	}
+
+	// Touch: only open rows change; unknown is ErrNotFound; not audited.
+	tc := now.Add(time.Hour)
+	ab := auditCount(t, s)
+	if err := s.TouchWorkspace(ctx, m.WsID, tc); err != nil { // opening: unchanged
+		t.Fatal(err)
+	}
+	if g, _ := s.GetWorkspace(ctx, m.WsID); !g.LastUsedAt.Equal(now) {
+		t.Fatalf("touched an opening workspace: %v", g.LastUsedAt)
+	}
+	if _, err := s.SetWorkspaceState(ctx, m.WsID, []store.WorkspaceState{store.WorkspaceOpening}, store.WorkspaceOpen, "", now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	ab = auditCount(t, s)
+	if err := s.TouchWorkspace(ctx, m.WsID, tc); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := s.GetWorkspace(ctx, m.WsID); !g.LastUsedAt.Equal(tc) || auditCount(t, s) != ab {
+		t.Fatalf("touch open: %v audit %d/%d", g.LastUsedAt, auditCount(t, s), ab)
+	}
+	if err := s.TouchWorkspace(ctx, wsID(999), tc); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("touch unknown: %v", err)
+	}
+	if _, err := s.GetWorkspace(ctx, wsID(999)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("get unknown: %v", err)
+	}
+}
+
+func workspaceFilters(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	f, rs, ops := wsFixture(t, s, 2, 2)
+	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "wsg", Mode: store.ModeWorkspace, Workspace: wsCfg()}, t0, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	g, err := s.GetFleet(ctx, "wsg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mkToken(t, s, "wsg", "eeeeeeeeeeeeeeee", "sec3", 100, true, t0.Add(time.Hour))
+	gr0, err := s.Enroll(ctx, "eeeeeeeeeeeeeeee", secretHash("sec3"), t0, newRunner("gr0", 60), ev("runner.enrol"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := t0.Add(time.Minute)
+	reserve := func(n int, fl store.Fleet, r store.Runner, o store.Operator) {
+		if _, _, err := s.ReserveWorkspace(ctx, wsRow(n, fl, r, o, fmt.Sprintf("s%d", n)), 100, 0, now, ev("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reserve(1, f, rs[0], ops[0])
+	reserve(2, f, rs[0], ops[1])
+	reserve(3, f, rs[1], ops[0])
+	reserve(4, g, gr0, ops[1])
+	if _, err := s.SetWorkspaceState(ctx, wsID(2), []store.WorkspaceState{store.WorkspaceOpening}, store.WorkspaceOpen, "", now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	list := func(fl store.WorkspaceFilter) []string {
+		l, err := s.ListWorkspaces(ctx, fl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, w := range l {
+			ids = append(ids, w.WsID)
+		}
+		return ids
+	}
+	eq := func(name string, got []string, want ...int) {
+		t.Helper()
+		var w []string
+		for _, n := range want {
+			w = append(w, wsID(n))
+		}
+		if strings.Join(got, ",") != strings.Join(w, ",") {
+			t.Errorf("%s = %v, want %v", name, got, w)
+		}
+	}
+	eq("all", list(store.WorkspaceFilter{}), 1, 2, 3, 4)
+	eq("fleet", list(store.WorkspaceFilter{Fleet: "wsg"}), 4)
+	eq("unknown fleet", list(store.WorkspaceFilter{Fleet: "nope"}))
+	eq("operator", list(store.WorkspaceFilter{OperatorID: ops[0].ID}), 1, 3)
+	eq("runner", list(store.WorkspaceFilter{RunnerID: rs[0].ID}), 1, 2)
+	eq("state", list(store.WorkspaceFilter{States: []store.WorkspaceState{store.WorkspaceOpen}}), 2)
+	eq("states", list(store.WorkspaceFilter{States: []store.WorkspaceState{store.WorkspaceOpen, store.WorkspaceOpening}}), 1, 2, 3, 4)
+	eq("combined", list(store.WorkspaceFilter{Fleet: "wsf", OperatorID: ops[1].ID, RunnerID: rs[0].ID}), 2)
+	eq("limit", list(store.WorkspaceFilter{Limit: 2}), 1, 2)
+	if _, err := s.ListWorkspaces(ctx, store.WorkspaceFilter{States: []store.WorkspaceState{"bogus"}}); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("bad state filter: %v", err)
+	}
+
+	// CountLiveWorkspaces across runners; closing counts, terminal does not.
+	c, err := s.CountLiveWorkspaces(ctx, []int64{rs[0].ID, rs[1].ID, 9999})
+	if err != nil || c[rs[0].ID] != 2 || c[rs[1].ID] != 1 || c[9999] != 0 || len(c) != 3 {
+		t.Fatalf("count: %v %v", c, err)
+	}
+	if _, err := s.SetWorkspaceState(ctx, wsID(2), []store.WorkspaceState{store.WorkspaceOpen}, store.WorkspaceClosing, "", now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = s.CountLiveWorkspaces(ctx, []int64{rs[0].ID}); c[rs[0].ID] != 2 {
+		t.Fatalf("closing must hold a slot: %v", c)
+	}
+	if _, err := s.SetWorkspaceState(ctx, wsID(2), []store.WorkspaceState{store.WorkspaceClosing}, store.WorkspaceClosed, "", now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = s.CountLiveWorkspaces(ctx, []int64{rs[0].ID}); c[rs[0].ID] != 1 {
+		t.Fatalf("closed must free the slot: %v", c)
+	}
+	if c, err = s.CountLiveWorkspaces(ctx, nil); err != nil || len(c) != 0 {
+		t.Fatalf("empty count: %v %v", c, err)
+	}
+}
+
+func workspaceClose(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	f, rs, ops := wsFixture(t, s, 2, 2)
+	now := t0.Add(time.Minute)
+	mk := func(n int, r store.Runner, o store.Operator, open bool) {
+		if _, _, err := s.ReserveWorkspace(ctx, wsRow(n, f, r, o, fmt.Sprintf("s%d", n)), 100, 0, now, ev("x")); err != nil {
+			t.Fatal(err)
+		}
+		if open {
+			if _, err := s.SetWorkspaceState(ctx, wsID(n), []store.WorkspaceState{store.WorkspaceOpening}, store.WorkspaceOpen, "", now, ev("x")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mk(1, rs[0], ops[0], true)  // open
+	mk(2, rs[0], ops[1], false) // opening
+	mk(3, rs[1], ops[0], true)  // open, other runner
+	mk(4, rs[1], ops[1], true)
+	mk(5, rs[0], ops[0], true)
+	if _, err := s.SetWorkspaceState(ctx, wsID(5), []store.WorkspaceState{store.WorkspaceOpen}, store.WorkspaceClosing, "", now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CloseWorkspacesOf(ctx, store.WorkspaceOwner{}, "r", now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("no owner: %v", err)
+	}
+	if _, err := s.CloseWorkspacesOf(ctx, store.WorkspaceOwner{RunnerID: rs[0].ID, OperatorID: ops[0].ID}, "r", now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("two owners: %v", err)
+	}
+
+	// By runner: open -> closing, opening -> failed, closing untouched.
+	base := auditCount(t, s)
+	later := now.Add(time.Minute)
+	ids, err := s.CloseWorkspacesOf(ctx, store.WorkspaceOwner{RunnerID: rs[0].ID}, "runner revoked", later, ev("runner.revoke"))
+	if err != nil || strings.Join(ids, ",") != wsID(1)+","+wsID(2) {
+		t.Fatalf("by runner: %v %v", ids, err)
+	}
+	if auditCount(t, s) != base+1 {
+		t.Fatalf("CloseWorkspacesOf must write ev once: %d/%d", auditCount(t, s), base)
+	}
+	state := func(n int) store.Workspace {
+		w, err := s.GetWorkspace(ctx, wsID(n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	if w := state(1); w.State != store.WorkspaceClosing || w.Reason != "runner revoked" || !w.ClosedAt.IsZero() {
+		t.Fatalf("ws1: %+v", w)
+	}
+	if w := state(2); w.State != store.WorkspaceFailed || w.Reason != "runner revoked" || !w.ClosedAt.Equal(later) {
+		t.Fatalf("ws2: %+v", w)
+	}
+	if state(3).State != store.WorkspaceOpen || state(5).State != store.WorkspaceClosing || state(5).Reason != "" {
+		t.Fatal("other rows touched")
+	}
+
+	// By operator.
+	ids, err = s.CloseWorkspacesOf(ctx, store.WorkspaceOwner{OperatorID: ops[0].ID}, "operator revoked", later, ev("operator.revoke"))
+	if err != nil || strings.Join(ids, ",") != wsID(3) {
+		t.Fatalf("by operator: %v %v", ids, err)
+	}
+	if state(3).State != store.WorkspaceClosing || state(4).State != store.WorkspaceOpen {
+		t.Fatal("operator close touched the wrong rows")
+	}
+	// Nothing left to close: empty result.
+	if ids, err = s.CloseWorkspacesOf(ctx, store.WorkspaceOwner{OperatorID: ops[0].ID}, "again", later, ev("x")); err != nil || len(ids) != 0 {
+		t.Fatalf("repeat: %v %v", ids, err)
+	}
+}
+
+func workspaceSticky(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	f, rs, ops := wsFixture(t, s, 1, 1)
+	now := t0.Add(time.Minute)
+	open := []store.WorkspaceState{store.WorkspaceOpening}
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(1, f, rs[0], ops[0], "s"), 1, 0, now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	// Failed opening frees the sticky index and the slot.
+	if _, err := s.SetWorkspaceState(ctx, wsID(1), open, store.WorkspaceFailed, "boom", now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	w2, existing, err := s.ReserveWorkspace(ctx, wsRow(2, f, rs[0], ops[0], "s"), 1, 0, now, ev("x"))
+	if err != nil || existing || w2.WsID != wsID(2) {
+		t.Fatalf("after failed: %+v %v %v", w2, existing, err)
+	}
+	// A closing workspace holds its slot (ErrFull) but is no longer sticky for the session.
+	for _, step := range []struct {
+		from, to store.WorkspaceState
+	}{{store.WorkspaceOpening, store.WorkspaceOpen}, {store.WorkspaceOpen, store.WorkspaceClosing}} {
+		if _, err := s.SetWorkspaceState(ctx, wsID(2), []store.WorkspaceState{step.from}, step.to, "", now, ev("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(3, f, rs[0], ops[0], "s"), 1, 0, now, ev("x")); !errors.Is(err, store.ErrFull) {
+		t.Fatalf("closing holds the slot: %v", err)
+	}
+	if _, err := s.SetWorkspaceState(ctx, wsID(2), []store.WorkspaceState{store.WorkspaceClosing}, store.WorkspaceClosed, "", now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	w3, existing, err := s.ReserveWorkspace(ctx, wsRow(3, f, rs[0], ops[0], "s"), 1, 0, now, ev("x"))
+	if err != nil || existing || w3.WsID != wsID(3) {
+		t.Fatalf("after close: %+v %v %v", w3, existing, err)
+	}
+}
+
+func workspaceRace(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	f, rs, ops := wsFixture(t, s, 1, 1)
+	now := t0.Add(time.Minute)
+	base := auditCount(t, s)
+	const workers = 20
+	var (
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		ok, full  int
+		unexpects []error
+	)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, _, err := s.ReserveWorkspace(ctx, wsRow(i, f, rs[0], ops[0], fmt.Sprintf("s%d", i)), 2, 0, now, ev("workspace.open"))
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				ok++
+			case errors.Is(err, store.ErrFull):
+				full++
+			default:
+				unexpects = append(unexpects, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if ok != 2 || full != workers-2 || len(unexpects) > 0 {
+		t.Fatalf("ok=%d full=%d other=%v", ok, full, unexpects)
+	}
+	if got := auditCount(t, s) - base; got != 2 {
+		t.Fatalf("audit rows = %d, want 2", got)
+	}
+	if c, _ := s.CountLiveWorkspaces(ctx, []int64{rs[0].ID}); c[rs[0].ID] != 2 {
+		t.Fatalf("live = %v", c)
 	}
 }

@@ -42,7 +42,7 @@ const (
 	MaxHostBytes             = 253
 	MaxListEntries           = 4096
 	MaxMessageBytes          = 4 << 10
-	maxFileMode              = 0o7777
+	maxFileMode              = 0o777 // permission bits only: no setuid/setgid/sticky
 
 	// MaxHeartbeatImages and MaxHeartbeatImageBytes bound Heartbeat.Images.
 	MaxHeartbeatImages     = 32

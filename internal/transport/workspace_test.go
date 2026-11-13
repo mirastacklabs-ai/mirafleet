@@ -121,6 +121,8 @@ func TestValidate(t *testing.T) {
 		"write big len":    {Op: OpWrite, ID: testID, Path: "a", Length: MaxBodyBytes + 1},
 		"write neg len":    {Op: OpWrite, ID: testID, Path: "a", Length: -1},
 		"write bad mode":   {Op: OpWrite, ID: testID, Path: "a", Mode: 0o10000},
+		"write setuid":     {Op: OpWrite, ID: testID, Path: "a", Mode: 0o4755},
+		"write sticky":     {Op: OpWrite, ID: testID, Path: "a", Mode: 0o1777},
 		"create no spec":   {Op: OpCreate, ID: testID},
 		"create no image":  {Op: OpCreate, ID: testID, Spec: &WorkspaceSpec{}},
 		"create neg lim":   {Op: OpCreate, ID: testID, Spec: &WorkspaceSpec{Image: "x", Pids: -1}},

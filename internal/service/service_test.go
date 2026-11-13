@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -56,6 +57,15 @@ type fakeLive struct {
 	log       *callLog
 	snap      []registry.SessionInfo
 	statusErr error
+	wsFn      func(ctx context.Context, id int64, req transport.WorkspaceRequest, body io.Reader, out io.Writer) (*transport.WorkspaceResult, error)
+}
+
+func (f *fakeLive) Workspace(ctx context.Context, id int64, req transport.WorkspaceRequest, body io.Reader, out io.Writer) (*transport.WorkspaceResult, error) {
+	f.log.add(fmt.Sprintf("workspace %d %s", id, req.Op))
+	if f.wsFn != nil {
+		return f.wsFn(ctx, id, req, body, out)
+	}
+	return &transport.WorkspaceResult{Code: transport.CodeOK}, nil
 }
 
 func (f *fakeLive) Exec(ctx context.Context, id int64, req transport.ExecRequest) (*transport.ExecResult, error) {

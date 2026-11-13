@@ -114,6 +114,13 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			r.Reply(false, nil)
 			continue
 		}
+		if err := hb.Validate(); err != nil {
+			// Out-of-range workspace fields: a misbehaving or hostile runner. Refuse and drop it.
+			s.cfg.Logf("runner %q (id %d) sent an invalid heartbeat: %v", p.Name, p.ID, err)
+			r.Reply(false, nil)
+			sconn.Close()
+			continue
+		}
 		now := s.cfg.Now()
 		if sess == nil {
 			// Register on first heartbeat: by then the runner has installed its channel handler.

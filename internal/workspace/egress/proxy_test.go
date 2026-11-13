@@ -352,7 +352,7 @@ func TestCIDRExplicitAllow(t *testing.T) {
 	})
 	h := newHarness(t, []string{
 		"db.test:" + port, "db2.test:" + port, "lo.test:" + port, "md.test:" + port,
-		"10.1.0.0/16:" + port, "169.254.0.0/16:" + port,
+		"10.1.0.0/16:" + port,
 	}, res, upAddr, nil)
 	if code, _, _ := h.connect("db.test:" + port); code != 200 {
 		t.Errorf("db.test in allowed cidr: %d", code)
@@ -386,7 +386,7 @@ func TestCIDRPortMismatch(t *testing.T) {
 func TestNotTheProxyItself(t *testing.T) {
 	_, upAddr, _ := upstream(t)
 	// Allow loopback wholesale on the proxy's own port: still refused.
-	h := newHarness(t, []string{"127.0.0.0/8:{PORT}", "me.test:{PORT}"}, newResolver(map[string][][]string{"me.test": {{"127.0.0.1"}}}), upAddr, nil)
+	h := newHarness(t, []string{"me.test:{PORT}"}, newResolver(map[string][][]string{"me.test": {{"127.0.0.1"}}}), upAddr, nil)
 	_, port, _ := net.SplitHostPort(h.addr)
 	for _, target := range []string{"127.0.0.1:" + port, "me.test:" + port} {
 		if code, _, _ := h.connect(target); code != 403 {

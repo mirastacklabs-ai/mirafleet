@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -61,11 +62,23 @@ func roleInit() {
 	for i := 0; i < 3 && sc.Scan(); i++ {
 		fmt.Println(sc.Text())
 	}
-	if err := Run(); err != nil {
+	if err := run(); err != nil { // bypasses the PID 1 check (test hook)
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+func TestRunRefusesWhenNotPID1(t *testing.T) {
+	if err := Run(); err == nil || !strings.Contains(err.Error(), "PID 1") {
+		t.Fatalf("Run outside PID 1: %v", err)
+	}
+	old := pid1
+	pid1 = func() int { return 1 }
+	defer func() { pid1 = old }()
+	if err := checkPID1(); err != nil {
+		t.Fatalf("hook not honoured: %v", err)
+	}
 }
 
 func roleSpawner() {

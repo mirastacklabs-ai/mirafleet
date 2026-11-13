@@ -667,6 +667,18 @@ func ValidatePath(p string) *Error {
 	return nil
 }
 
+// MaxFileMode is the largest file mode accepted on write: permission bits only, so no
+// setuid, setgid or sticky bit can be requested.
+const MaxFileMode = 0o777
+
+// ValidateFileMode rejects a write mode above MaxFileMode (0 means the default).
+func ValidateFileMode(mode uint32) *Error {
+	if mode > MaxFileMode {
+		return Errorf(CodeBadRequest, "mode %#o: only permission bits (0777) are allowed", mode)
+	}
+	return nil
+}
+
 // ValidateEnv checks env with workspace.FilterEnv, allowing exactly the given names: it fails
 // closed on malformed, oversized or denylisted names. The fleet env_allow is applied by the runner.
 func ValidateEnv(env map[string]string) *Error {
@@ -771,8 +783,8 @@ type WorkspaceListResult struct {
 }
 
 // WorkspaceConfig is a fleet's workspace config (mirrors store.WorkspaceConfig). Units: CPUMilli
-// millicores, *MB mebibytes, *S seconds. On create, zero/empty fields take defaults; on
-// fleet.workspace_set, zero/empty (nil slices) fields are left unchanged.
+// millicores, *MB mebibytes, *S seconds. fleet.workspace_set is a full replace: the complete
+// config is sent and nothing is merged. Defaults for omitted fields apply on fleet.create only.
 type WorkspaceConfig struct {
 	Executor     string   `json:"executor,omitempty"`      // "containerd" (default) or "opensandbox"
 	DefaultImage string   `json:"default_image,omitempty"` // must be in Images

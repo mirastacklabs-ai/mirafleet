@@ -63,11 +63,18 @@ type SessionInfo struct {
 	LastHeartbeat time.Time
 	Since         time.Time
 	Info          transport.Heartbeat
+
+	// From the latest validated heartbeat (M3); zero for runners without a workspace executor.
+	Slots         int
+	Executor      string
+	SecureRuntime string
+	Images        []string
 }
 
 // Live is what the service layer needs from the registry.
 type Live interface {
 	Exec(ctx context.Context, id int64, req transport.ExecRequest) (*transport.ExecResult, error)
+	Workspace(ctx context.Context, id int64, req transport.WorkspaceRequest, body io.Reader, out io.Writer) (*transport.WorkspaceResult, error)
 	Kick(id int64, reason string)
 	Tombstone(id int64)
 	ClearTombstone(id int64)
@@ -289,7 +296,9 @@ func (r *Registry) Snapshot() []SessionInfo {
 	for _, s := range list {
 		s.mu.Lock()
 		out = append(out, SessionInfo{ID: s.ID, Name: s.Name, Fleet: s.Fleet, Status: s.status,
-			LastHeartbeat: s.lastSeen, Since: s.since, Info: s.hb})
+			LastHeartbeat: s.lastSeen, Since: s.since, Info: s.hb,
+			Slots: s.hb.Slots, Executor: s.hb.Executor, SecureRuntime: s.hb.SecureRuntime,
+			Images: append([]string(nil), s.hb.Images...)})
 		s.mu.Unlock()
 		out[len(out)-1].Online = s.ctx.Err() == nil && !r.stale(s)
 	}
@@ -328,10 +337,10 @@ func (r *Registry) Exec(ctx context.Context, id int64, req transport.ExecRequest
 	return res, err
 }
 
-func execOn(ctx context.Context, conn Conn, req transport.ExecRequest) (*transport.ExecResult, error) {
-	payload, _ := json.Marshal(req)
-	// OpenChannel itself cannot be cancelled: run it aside and give up on ctx. If it opens late,
-	// the orphan channel is closed.
+// openChan opens a channel on conn. OpenChannel itself cannot be cancelled: it runs aside and is
+// given up on when ctx ends; if it opens late, the orphan channel is closed. The caller owns
+// (and must Close) the returned channel; its requests are already being discarded.
+func openChan(ctx context.Context, conn Conn, name string, payload []byte) (ssh.Channel, error) {
 	type opened struct {
 		ch   ssh.Channel
 		reqs <-chan *ssh.Request
@@ -339,12 +348,16 @@ func execOn(ctx context.Context, conn Conn, req transport.ExecRequest) (*transpo
 	}
 	done := make(chan opened, 1)
 	go func() {
-		ch, reqs, err := conn.OpenChannel(transport.ChanExec, payload)
+		ch, reqs, err := conn.OpenChannel(name, payload)
 		done <- opened{ch, reqs, err}
 	}()
-	var o opened
 	select {
-	case o = <-done:
+	case o := <-done:
+		if o.err != nil {
+			return nil, o.err
+		}
+		go ssh.DiscardRequests(o.reqs)
+		return o.ch, nil
 	case <-ctx.Done():
 		go func() {
 			if late := <-done; late.err == nil {
@@ -354,11 +367,17 @@ func execOn(ctx context.Context, conn Conn, req transport.ExecRequest) (*transpo
 		}()
 		return nil, ctx.Err()
 	}
-	if o.err != nil {
-		return nil, fmt.Errorf("open exec channel: %w", o.err)
+}
+
+func execOn(ctx context.Context, conn Conn, req transport.ExecRequest) (*transport.ExecResult, error) {
+	payload, _ := json.Marshal(req)
+	ch, err := openChan(ctx, conn, transport.ChanExec, payload)
+	if err != nil {
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("open exec channel: %w", err)
 	}
-	ch := o.ch
-	go ssh.DiscardRequests(o.reqs)
 	defer ch.Close()
 	stop := context.AfterFunc(ctx, func() { ch.Close() })
 	defer stop()
@@ -377,4 +396,143 @@ func execOn(ctx context.Context, conn Conn, req transport.ExecRequest) (*transpo
 		return nil, fmt.Errorf("runner sent no valid result (%d bytes)", len(data))
 	}
 	return &res, nil
+}
+
+// MaxWorkspaceResultBytes is the largest encoded WorkspaceResult frame central reads: the API
+// result cap (api.MaxResultBytes, 1 MiB) plus 64 KiB of framing and metadata. Not the exec cap.
+const MaxWorkspaceResultBytes = 1<<20 + 64<<10
+
+var (
+	// ErrNoExecutor: the runner has no workspace executor configured (channel open Prohibited).
+	ErrNoExecutor = errors.New("runner has no workspace executor")
+	// ErrBusy: the runner is at capacity (channel open ResourceShortage).
+	ErrBusy = errors.New("runner is busy")
+)
+
+// workspaceAllowed reports whether op may run on a session in status st. Deny by default:
+// destroy and list also work on disabled runners (cleanup); everything else needs active.
+func workspaceAllowed(op string, st Status) error {
+	switch st {
+	case StatusActive:
+		switch op {
+		case transport.OpCreate, transport.OpExec, transport.OpRead, transport.OpWrite,
+			transport.OpDestroy, transport.OpList:
+			return nil
+		}
+		return fmt.Errorf("unknown workspace op %q", op)
+	case StatusDisabled:
+		switch op {
+		case transport.OpDestroy, transport.OpList:
+			return nil
+		case transport.OpCreate, transport.OpExec, transport.OpRead, transport.OpWrite:
+			return ErrDisabled
+		}
+		return fmt.Errorf("unknown workspace op %q", op)
+	case StatusPending:
+		return ErrPending
+	default:
+		return fmt.Errorf("%w: %q", ErrInvalidStatus, string(st))
+	}
+}
+
+// Workspace runs one workspace operation on a runner over a workspace@mirafleet channel. For
+// write (req.Length) and exec (req.StdinLen) exactly that many bytes are read from body and
+// streamed, then the write side is closed. The runner answers with one result frame; for a
+// successful read exactly File.Length bytes (at most req.Limit) are copied to out. Every step is
+// bounded by ctx and by the session context (kick); either closes the channel.
+func (r *Registry) Workspace(ctx context.Context, id int64, req transport.WorkspaceRequest, body io.Reader, out io.Writer) (*transport.WorkspaceResult, error) {
+	sess := r.Get(id)
+	if sess == nil {
+		return nil, fmt.Errorf("runner %d is not online", id)
+	}
+	sess.mu.Lock()
+	st := sess.status
+	sess.mu.Unlock()
+	if err := workspaceAllowed(req.Op, st); err != nil {
+		return nil, err
+	}
+	payload, err := transport.EncodeWorkspaceRequest(&req)
+	if err != nil {
+		return nil, err
+	}
+	var bodyLen int64
+	switch req.Op {
+	case transport.OpWrite:
+		bodyLen = req.Length
+	case transport.OpExec:
+		bodyLen = req.StdinLen
+	}
+	if bodyLen > 0 && body == nil {
+		return nil, errors.New("workspace request announces a body but none was given")
+	}
+	if req.Op == transport.OpRead && out == nil {
+		out = io.Discard
+	}
+	ectx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stopLink := context.AfterFunc(sess.ctx, cancel)
+	defer stopLink()
+	res, err := workspaceOn(ectx, sess.conn, &req, payload, bodyLen, body, out)
+	if err != nil && ctx.Err() == nil && sess.ctx.Err() != nil {
+		return nil, context.Cause(sess.ctx)
+	}
+	return res, err
+}
+
+func workspaceOn(ctx context.Context, conn Conn, req *transport.WorkspaceRequest, payload []byte, bodyLen int64, body io.Reader, out io.Writer) (*transport.WorkspaceResult, error) {
+	ch, err := openChan(ctx, conn, transport.ChanWorkspace, payload)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		var oe *ssh.OpenChannelError
+		if errors.As(err, &oe) {
+			switch oe.Reason {
+			case ssh.Prohibited:
+				return nil, ErrNoExecutor
+			case ssh.ResourceShortage:
+				return nil, ErrBusy
+			}
+		}
+		return nil, fmt.Errorf("open workspace channel: %w", err)
+	}
+	defer ch.Close()
+	// Closing the channel unblocks every read and write below, so ctx bounds all of them,
+	// including CopyBody's wait for the peer's CloseWrite.
+	stop := context.AfterFunc(ctx, func() { ch.Close() })
+	defer stop()
+	fail := func(err error) (*transport.WorkspaceResult, error) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, err
+	}
+	if bodyLen > 0 {
+		if err := transport.WriteBody(ch, body, bodyLen); err != nil {
+			return fail(fmt.Errorf("send workspace body: %w", err))
+		}
+	}
+	if err := ch.CloseWrite(); err != nil && ctx.Err() == nil {
+		return nil, fmt.Errorf("close write: %w", err)
+	}
+	res, err := transport.ReadResult(ch, MaxWorkspaceResultBytes)
+	if err != nil {
+		return fail(fmt.Errorf("runner sent no valid workspace result: %w", err))
+	}
+	if req.Op == transport.OpRead && res.Code == transport.CodeOK {
+		if res.File == nil {
+			return nil, errors.New("runner read result carries no file")
+		}
+		max := req.Limit
+		if max == 0 {
+			max = transport.MaxBodyBytes
+		}
+		if res.File.Length > max {
+			return nil, fmt.Errorf("runner returned %d bytes, more than the %d requested", res.File.Length, max)
+		}
+		if err := transport.CopyBody(out, ch, res.File.Length); err != nil {
+			return fail(fmt.Errorf("read workspace body: %w", err))
+		}
+	}
+	return res, nil
 }

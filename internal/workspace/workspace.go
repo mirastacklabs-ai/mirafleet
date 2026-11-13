@@ -23,15 +23,15 @@ type ID string
 type PullPolicy string
 
 const (
-	PullIfMissing PullPolicy = "if-missing" // default
-	PullNever     PullPolicy = "never"
-	PullAlways    PullPolicy = "always"
+	PullIfNotPresent PullPolicy = "if-not-present" // default
+	PullNever        PullPolicy = "never"
+	PullAlways       PullPolicy = "always"
 )
 
 // Valid reports whether p is a known policy (the empty string means the default).
 func (p PullPolicy) Valid() bool {
 	switch p {
-	case "", PullIfMissing, PullNever, PullAlways:
+	case "", PullIfNotPresent, PullNever, PullAlways:
 		return true
 	}
 	return false

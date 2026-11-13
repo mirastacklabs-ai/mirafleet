@@ -13,6 +13,7 @@ import (
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/keys"
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
+	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/egress"
 )
 
 // Errors returned by Store implementations. Callers match with errors.Is.
@@ -282,7 +283,7 @@ type Store interface {
 	//  3. Else if the runner already holds slots live workspaces (opening, open or closing)
 	//     -> ErrFull.
 	//  4. Else insert, atomically with ev (ev.Workspace is set to w.WsID).
-	// ErrInvalid for a malformed w or slots < 1; ErrNotFound for an unknown fleet, runner or
+	// ErrInvalid for a malformed w, slots < 1, a runner that is not in the fleet or is revoked; ErrNotFound for an unknown fleet, runner or
 	// operator; ErrConflict on a duplicate WsID.
 	ReserveWorkspace(ctx context.Context, w Workspace, slots, maxPerOp int, now time.Time, ev AuditEvent) (ws Workspace, existing bool, err error)
 	// SetWorkspaceState moves wsID to state to with reason if its current state is in from and
@@ -467,7 +468,7 @@ type WorkspaceConfig struct {
 	Pull    PullPolicy
 	Network NetworkMode
 	// Egress is the proxy allowlist ("host[:port]", "*.domain:443", "cidr:port"); only
-	// meaningful when Network is egress. Entries are checked for shape only here.
+	// meaningful when Network is egress. Each entry is validated with egress.ParseRule.
 	Egress      []string
 	CPUMilli    int
 	MemoryMB    int
@@ -536,6 +537,9 @@ func (c WorkspaceConfig) Validate() error {
 	for _, e := range c.Egress {
 		if badEntry(e) {
 			return bad("malformed egress rule %q", echo(e))
+		}
+		if _, err := egress.ParseRule(e); err != nil {
+			return bad("egress rule %q: %v", echo(e), err)
 		}
 	}
 	if c.Network == NetworkNone && len(c.Egress) > 0 {

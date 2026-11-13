@@ -18,6 +18,23 @@ var grace = 3 * time.Second
 // a child exiting never ends it. Handlers are installed with signal.Notify rather than
 // SIG_IGN so children (which reset handlers on exec) do not inherit ignored signals.
 func Run() error {
+	if err := checkPID1(); err != nil {
+		return err
+	}
+	return run()
+}
+
+// pid1 returns the process id used by the PID 1 check; tests replace it.
+var pid1 = os.Getpid
+
+func checkPID1() error {
+	if pid1() != 1 {
+		return errors.New("initproc: refusing to run: not PID 1 (it would signal every process it can reach)")
+	}
+	return nil
+}
+
+func run() error {
 	ch := make(chan os.Signal, 64)
 	signal.Notify(ch, syscall.SIGCHLD, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	reap()

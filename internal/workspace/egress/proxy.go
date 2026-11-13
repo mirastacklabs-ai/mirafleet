@@ -3,7 +3,6 @@ package egress
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -233,10 +232,7 @@ func (p *Proxy) vet(ctx context.Context, host string, port uint16) (vetted, *den
 	if ip, err := netip.ParseAddr(host); err == nil {
 		ip = ip.Unmap()
 		// IP literals are only reachable through an explicit cidr/ip rule.
-		if !allow.AllowsIP(ip, port) {
-			return vetted{}, &denial{http.StatusForbidden, "IP literal not allowlisted"}
-		}
-		if reason := neverAllowed(ip); reason != "" {
+		if reason := checkIP(ip, port, allow, true); reason != "" {
 			return vetted{}, &denial{http.StatusForbidden, reason}
 		}
 		if p.isSelf(ip, port) {
@@ -265,11 +261,8 @@ func (p *Proxy) vet(ctx context.Context, host string, port uint16) (vetted, *den
 	out := make([]netip.Addr, 0, len(ips))
 	for _, ip := range ips {
 		ip = ip.Unmap()
-		if reason := neverAllowed(ip); reason != "" {
+		if reason := checkIP(ip, port, allow, false); reason != "" {
 			return vetted{}, &denial{http.StatusForbidden, reason}
-		}
-		if reason := blockedReason(ip); reason != "" && !allow.AllowsIP(ip, port) {
-			return vetted{}, &denial{http.StatusForbidden, fmt.Sprintf("resolved to %s address", reason)}
 		}
 		if p.isSelf(ip, port) {
 			return vetted{}, &denial{http.StatusForbidden, "target is the proxy itself"}
@@ -555,55 +548,4 @@ func (l *Limits) Acquire(ws string) (release func(), ok bool) {
 			}
 		})
 	}, true
-}
-
-var (
-	metadataV4 = netip.MustParseAddr("169.254.169.254")
-	metadataV6 = netip.MustParseAddr("fd00:ec2::254")
-
-	reservedPrefixes = mustPrefixes(
-		"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15",
-		"198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4",
-		"64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/32", "2001:db8::/32", "2002::/16",
-	)
-)
-
-func mustPrefixes(s ...string) []netip.Prefix {
-	out := make([]netip.Prefix, len(s))
-	for i, v := range s {
-		out[i] = netip.MustParsePrefix(v)
-	}
-	return out
-}
-
-// neverAllowed returns a reason for addresses no rule can unlock (cloud metadata).
-func neverAllowed(ip netip.Addr) string {
-	ip = ip.Unmap()
-	if ip == metadataV4 || ip == metadataV6 {
-		return "cloud metadata address"
-	}
-	return ""
-}
-
-// blockedReason names the refused class of ip, or "" when it is ordinary public space.
-func blockedReason(ip netip.Addr) string {
-	ip = ip.Unmap()
-	switch {
-	case ip.IsUnspecified():
-		return "unspecified"
-	case ip.IsLoopback():
-		return "loopback"
-	case ip.IsLinkLocalUnicast(), ip.IsLinkLocalMulticast(), ip.IsInterfaceLocalMulticast():
-		return "link-local"
-	case ip.IsMulticast():
-		return "multicast"
-	case ip.IsPrivate():
-		return "private"
-	}
-	for _, pf := range reservedPrefixes {
-		if pf.Contains(ip) {
-			return "reserved/CGNAT"
-		}
-	}
-	return ""
 }

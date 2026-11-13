@@ -5,7 +5,7 @@
 # MIRAFLEET_CTR and MIRAFLEET_GO_IMAGE are trusted caller environment (the CTR value is
 # word-split and executed); never derive them from untrusted input.
 #
-# Usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|shell|go <args...>
+# Usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|shell|go <args...>
 set -eu
 
 # Pinned by tag and by multi-arch index digest.
@@ -90,9 +90,93 @@ licenses)
 				--allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,0BSD
 		done"
 	;;
+integration)
+	# containerd integration tests. (1) Build `-tags integration` test binaries statically in the
+	# pinned golang image into the mirafleet-itest-bin volume. (2) Run them as root inside a
+	# throwaway docker:dind container that starts containerd directly (not dockerd).
+	# --privileged is for dev/CI only: it applies to this --rm container (inside the container
+	# runtime's VM), never touches the host, and all state (containerd root, sockets) lives inside
+	# the container (tmpfs) and vanishes with it. Tests use no network; images are built at test time.
+	# Test binaries are mounted read-only. Exit status is the tests' exit status.
+	# Add packages that carry integration tests to ITEST_PKGS (space separated).
+	ITEST_PKGS="${MIRAFLEET_ITEST_PKGS:-./internal/workspace/ctrd}"
+	# docker:28-dind supplies runc 1.3.3 and the userland (its bundled containerd 1.7.28 is NOT
+	# used: the harness runs containerd 2.x built from go.mod, with its matching shim, from
+	# /itest). Pinned by tag and multi-arch index digest.
+	DIND_IMAGE="${MIRAFLEET_DIND_IMAGE:-docker.io/library/docker:28-dind@sha256:2a232a42256f70d78e3cc5d2b5d6b3276710a0de0596c145f627ecfae90282ac}"
+	$CTR volume create mirafleet-itest-bin >/dev/null
+	# shellcheck disable=SC2086
+	run ro "" # ensure the cache volumes exist and are owned by the host user
+	# shellcheck disable=SC2086
+	$CTR run -q --rm --user 0:0 -v mirafleet-itest-bin:/out "$GO_IMAGE" sh -c 'rm -rf /out/* && chown "$1:$2" /out' sh "$(id -u)" "$(id -g)"
+	# shellcheck disable=SC2086
+	$CTR run -q --rm --user "$(id -u):$(id -g)" \
+		-v "$ROOT":/src:ro -v mirafleet-itest-bin:/out \
+		-v mirafleet-gomod:/go/pkg/mod -v mirafleet-gocache:/gocache \
+		-w /src -e HOME=/tmp -e GOCACHE=/gocache -e GOPATH=/gocache/gopath -e GOMODCACHE=/go/pkg/mod \
+		-e GOFLAGS="-buildvcs=false -modcacherw" -e CGO_ENABLED=0 -e GOOS=linux \
+		"$GO_IMAGE" sh -ec 'for p in "$@"; do
+			n=$(echo "$p" | sed "s|^\./||; s|/|_|g")
+			go test -c -tags integration -o "/out/$n.test" "$p"
+		done
+		# containerd daemon + runc shim, built statically from the SAME module version as go.mod
+		# (the version is read from it). The daemon needs many modules that the repo go.mod does not
+		# list, so it is built in a scratch module under /tmp; go.mod/go.sum are never touched and
+		# nothing here is linked into mirafleet. Needs the Go module proxy for the extra modules
+		# (cached in the mirafleet-gomod volume afterwards). Selected versions follow containerd'"'"'s
+		# own go.mod requirements (MVS), checked against the Go checksum database.
+		v=$(go list -m -f "{{.Version}}" github.com/containerd/containerd/v2)
+		mkdir /tmp/b && cd /tmp/b && go mod init itest-ctrd >/dev/null 2>&1
+		M=github.com/containerd/containerd/v2
+		go get "$M/cmd/containerd@$v" "$M/cmd/containerd-shim-runc-v2@$v" >/dev/null 2>&1
+		go build -tags no_btrfs,no_devmapper,no_zfs,no_aufs -o /out/containerd "$M/cmd/containerd"
+		go build -o /out/containerd-shim-runc-v2 "$M/cmd/containerd-shim-runc-v2"
+		ls /out' sh $ITEST_PKGS
+	# shellcheck disable=SC2016
+	$CTR run --rm --privileged --entrypoint sh \
+		-v mirafleet-itest-bin:/itest:ro \
+		--tmpfs /var/lib/containerd:rw,exec,dev,suid \
+		--tmpfs /run/containerd:rw,exec \
+		"$DIND_IMAGE" -ec '
+		# cgroup v2 nesting, as in the dind entrypoint.
+		if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+			mkdir -p /sys/fs/cgroup/init
+			while ! {
+				xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs || :
+				sed -e "s/ / +/g" -e "s/^/+/" < /sys/fs/cgroup/cgroup.controllers > /sys/fs/cgroup/cgroup.subtree_control
+			}; do true; done
+		fi
+		mount --make-rshared /
+		mkdir -p /etc/containerd
+		cat > /etc/containerd/config.toml <<CFG
+version = 3
+root = "/var/lib/containerd"
+state = "/run/containerd"
+[grpc]
+  address = "/run/containerd/containerd.sock"
+CFG
+		export PATH=/itest:$PATH # our containerd 2.x and shim win over the dind-bundled ones
+		containerd --config /etc/containerd/config.toml >/tmp/containerd.log 2>&1 &
+		cpid=$!
+		i=0
+		until [ -S /run/containerd/containerd.sock ] && ctr --address /run/containerd/containerd.sock version >/dev/null 2>&1; do
+			i=$((i+1))
+			if [ $i -gt 100 ] || ! kill -0 $cpid 2>/dev/null; then echo "containerd did not start:" >&2; cat /tmp/containerd.log >&2; exit 1; fi
+			sleep 0.3
+		done
+		export MIRAFLEET_TEST_CONTAINERD_SOCK=/run/containerd/containerd.sock
+		rc=0
+		for b in /itest/*.test; do
+			echo "== $b"
+			"$b" -test.v -test.timeout 10m || rc=$?
+		done
+		[ $rc -eq 0 ] || { echo "--- containerd log tail" >&2; tail -n 30 /tmp/containerd.log >&2; }
+		kill $cpid 2>/dev/null || :
+		exit $rc'
+	;;
 go) run rw 'exec go "$@"' "$@" ;;
 *)
-	echo "usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|shell|go <args...>" >&2
+	echo "usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|shell|go <args...>" >&2
 	exit 2
 	;;
 esac

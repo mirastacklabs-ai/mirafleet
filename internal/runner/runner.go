@@ -22,6 +22,8 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/audit"
 	"github.com/mirastacklabs-ai/mirafleet/internal/keys"
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
+	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
+	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/wsconfig"
 )
 
 type Config struct {
@@ -30,10 +32,14 @@ type Config struct {
 	Signer     ssh.Signer
 	KnownHosts string // known-hosts-style file pinning central's host key
 	Actions    *actions.Set
-	Labels     map[string]string
-	Version    string
-	Audit      *audit.Writer
-	Logf       func(format string, args ...any)
+	// Workspace and WorkspaceConfig enable workspace mode (docs/M3.md 1.12): both or neither, and never
+	// together with Actions. Run returns the error from Validate before connecting.
+	Workspace       workspace.Executor
+	WorkspaceConfig *wsconfig.Config
+	Labels          map[string]string
+	Version         string
+	Audit           *audit.Writer
+	Logf            func(format string, args ...any)
 
 	HeartbeatEvery time.Duration // default 15s
 	BackoffMin     time.Duration // default 1s
@@ -43,8 +49,22 @@ type Config struct {
 }
 
 type Runner struct {
-	cfg Config
-	sem chan struct{}
+	cfg    Config
+	sem    chan struct{}
+	ws     *wsState // nil unless workspace mode
+	cfgErr error
+}
+
+// Validate checks that exactly one mode is configured: actions (exec@) xor workspace (workspace@).
+// Neither is allowed (the runner then refuses both channels with Prohibited).
+func (c *Config) Validate() error {
+	if (c.Workspace == nil) != (c.WorkspaceConfig == nil) {
+		return errors.New("runner: workspace executor and workspace config must be set together")
+	}
+	if c.Actions != nil && c.Workspace != nil {
+		return errors.New("runner: actions and workspace mode are mutually exclusive")
+	}
+	return nil
 }
 
 func New(cfg Config) *Runner {
@@ -69,7 +89,14 @@ func New(cfg Config) *Runner {
 	if cfg.MaxExec <= 0 {
 		cfg.MaxExec = 4
 	}
-	return &Runner{cfg: cfg, sem: make(chan struct{}, cfg.MaxExec)}
+	r := &Runner{cfg: cfg, sem: make(chan struct{}, cfg.MaxExec), cfgErr: cfg.Validate()}
+	if r.cfgErr == nil && cfg.Workspace != nil {
+		r.ws = newWSState(cfg.Workspace, cfg.WorkspaceConfig)
+		var hb transport.Heartbeat
+		r.fillHeartbeat(&hb)
+		r.cfgErr = hb.Validate()
+	}
+	return r
 }
 
 // jitter spreads d by +-20% so runners do not reconnect in lockstep.
@@ -79,6 +106,9 @@ func jitter(d time.Duration) time.Duration {
 
 // Run connects and reconnects with exponential backoff until ctx is cancelled.
 func (r *Runner) Run(ctx context.Context) error {
+	if r.cfgErr != nil {
+		return r.cfgErr
+	}
 	backoff := r.cfg.BackoffMin
 	for ctx.Err() == nil {
 		healthy, err := r.session(ctx)
@@ -119,7 +149,12 @@ func (r *Runner) session(ctx context.Context) (healthy bool, err error) {
 		return false, err
 	}
 	nc.SetDeadline(time.Time{})
-	client := ssh.NewClient(cc, chans, reqs)
+	// We dispatch channel opens ourselves (below). The client gets a channel nobody sends on, so no
+	// HandleChannelOpen registration can race an incoming open: the mux queues opens in chans until
+	// the dispatcher reads them.
+	noChans := make(chan ssh.NewChannel)
+	defer close(noChans)
+	client := ssh.NewClient(cc, noChans, reqs)
 	defer client.Close()
 	sctx, cancel := context.WithCancel(ctx) // cancelled when this connection ends
 	defer cancel()
@@ -127,11 +162,18 @@ func (r *Runner) session(ctx context.Context) (healthy bool, err error) {
 	acked := false
 	defer func() { healthy = acked && time.Since(connectedAt) >= r.cfg.HealthyAfter }()
 
-	// Only exec@mirafleet is handled; the ssh package rejects every other channel type.
-	execCh := client.HandleChannelOpen(transport.ChanExec)
+	// exec@mirafleet and workspace@mirafleet are served (each Prohibited unless configured);
+	// every other channel type is rejected.
 	go func() {
-		for nch := range execCh {
-			go r.serveExec(sctx, nch)
+		for nch := range chans {
+			switch nch.ChannelType() {
+			case transport.ChanExec:
+				go r.serveExec(sctx, nch)
+			case transport.ChanWorkspace:
+				go r.serveWorkspace(sctx, nch)
+			default:
+				nch.Reject(ssh.UnknownChannelType, "unknown channel type")
+			}
 		}
 	}()
 
@@ -139,6 +181,7 @@ func (r *Runner) session(ctx context.Context) (healthy bool, err error) {
 	go func() { dead <- client.Wait() }()
 	hostname, _ := os.Hostname()
 	hb := transport.Heartbeat{Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, Version: r.cfg.Version, Labels: r.cfg.Labels}
+	r.fillHeartbeat(&hb)
 	payload, _ := json.Marshal(hb)
 	tick := time.NewTicker(r.cfg.HeartbeatEvery)
 	defer tick.Stop()
@@ -200,6 +243,10 @@ func encodeResult(res *transport.ExecResult) []byte {
 }
 
 func (r *Runner) serveExec(ctx context.Context, nch ssh.NewChannel) {
+	if r.cfg.Actions == nil { // workspace-mode (or unconfigured) runners never run exec@
+		nch.Reject(ssh.Prohibited, "this runner does not run actions")
+		return
+	}
 	var req transport.ExecRequest
 	if err := json.Unmarshal(nch.ExtraData(), &req); err != nil {
 		nch.Reject(ssh.ConnectionFailed, "malformed exec request")
