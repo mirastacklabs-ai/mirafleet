@@ -1,0 +1,6 @@
+/mirafleet
+/dist/
+*.db
+*.db-*
+.env.local
+.DS_Store
