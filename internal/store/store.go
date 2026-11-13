@@ -275,14 +275,17 @@ type Store interface {
 	//     fixed dummy hash when the id is unknown, so unknown id and wrong secret cost the same;
 	//  3. staleness: revoked, expired at now, or used up -> ErrStale (the conditional
 	//     uses<max_uses update must affect one row);
-	//  4. insert.
+	//  4. key disjointness: a key present in operators (any status) -> ErrConflict. This runs only
+	//     after steps 1-3, so a caller with a bad token gets the token error, never a conflict;
+	//  5. insert.
 	// Unknown id and wrong secret both return ErrNotFound. The service maps ErrNotFound and
 	// ErrStale to one identical joiner-facing error. newRunner.FleetID/Fleet/Labels/Status are
 	// taken from the token (active if AutoApprove, else pending); the caller supplies Name,
 	// PubKey, Fingerprint. ErrInvalid on a bad runner name, an empty PubKey or Fingerprint, or a
 	// secretHash that is not 32 bytes (checked before any lookup). ErrConflict if the name is taken by
-	// a non-revoked runner in the fleet or the key is already known (including revoked keys,
-	// which never re-enrol); nothing is consumed on any error. Writes ev.
+	// a non-revoked runner in the fleet or the key is already known (including revoked runner
+	// keys, which never re-enrol) or belongs to an operator; nothing is consumed on any error.
+	// Writes ev with ev.Fleet set to the token's fleet name; the returned Runner.Fleet is that name.
 	Enroll(ctx context.Context, tokenID string, secretHash []byte, now time.Time, newRunner Runner, ev AuditEvent) (Runner, error)
 	// SetRunnerStatus moves runner id to status to if its current status is in from and
 	// CanTransition allows it, atomically with ev; UpdatedAt = now. ErrInvalid if from is empty
@@ -308,7 +311,8 @@ type Store interface {
 	// active operator, that operator is returned unchanged (created=false) even when the
 	// requested name differs (the service compares names); this path writes NO audit row, so
 	// the service must RecordAudit it. ErrInvalid on a bad name. ErrConflict if the key belongs
-	// to a revoked operator or the name is held by a different active operator. When created,
+	// to a revoked operator, to a runner (any status; checked inside the transaction), or the
+	// name is held by a different active operator. When created,
 	// atomic with ev.
 	RegisterOperator(ctx context.Context, name string, pubKey []byte, fingerprint string, now time.Time, ev AuditEvent) (op Operator, created bool, err error)
 	// GetOperatorByKey returns the operator (any status) with that wire key, or ErrNotFound.

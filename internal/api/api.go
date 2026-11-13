@@ -557,7 +557,8 @@ type ActionRunParams struct {
 	Action   string            `json:"action"`
 	Params   map[string]string `json:"params,omitempty"`
 	TimeoutS int               `json:"timeout_s,omitempty"`
-	Confirm  bool              `json:"confirm,omitempty"`
+	// Confirm must equal the fleet name on guarded fleets.
+	Confirm string `json:"confirm,omitempty"`
 }
 type ActionRunResult struct {
 	ExitCode   int    `json:"exit_code"`

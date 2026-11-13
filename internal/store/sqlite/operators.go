@@ -65,6 +65,14 @@ func (d *DB) RegisterOperator(ctx context.Context, name string, pubKey []byte, f
 		case !errors.Is(err, store.ErrNotFound):
 			return err
 		}
+		// Keys are disjoint across runners and operators: refuse a key held by any runner.
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runners WHERE pubkey = ?`, pubKey).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("%w: key already enrolled", store.ErrConflict)
+		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO operators (name, pubkey, fingerprint, status, created_at, updated_at)
  VALUES (?,?,?,'active',?,?)`, name, pubKey, fingerprint, ms(now), ms(now))
 		if err != nil {

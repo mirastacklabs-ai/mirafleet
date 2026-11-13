@@ -48,7 +48,7 @@ func TestCallAndHelpers(t *testing.T) {
 		case api.MethodActionRun:
 			var p api.ActionRunParams
 			api.DecodeParams(req.Params, &p)
-			reply(t, ch, req, api.ActionRunResult{Stdout: p.Action, DurationMS: 3})
+			reply(t, ch, req, api.ActionRunResult{Stdout: p.Action + ":" + p.Confirm, DurationMS: 3})
 		default:
 			resp := api.NewError(req.ID, api.Errorf(api.CodeNotFound, "no such method"))
 			api.WriteResponse(ch, resp)
@@ -68,8 +68,8 @@ func TestCallAndHelpers(t *testing.T) {
 	if err != nil || rl.Runners[0].Name != "r1" {
 		t.Fatal(rl, err)
 	}
-	ar, err := c.ActionRun(ctx, api.ActionRunParams{Fleet: "prod", Runner: "r1", Action: "uptime"})
-	if err != nil || ar.Stdout != "uptime" {
+	ar, err := c.ActionRun(ctx, api.ActionRunParams{Fleet: "prod", Runner: "r1", Action: "uptime", Confirm: "prod"})
+	if err != nil || ar.Stdout != "uptime:prod" {
 		t.Fatal(ar, err)
 	}
 	// Wire error surfaces as *api.Error.

@@ -196,7 +196,22 @@ func (d *DB) Enroll(ctx context.Context, tokenID string, secretHash []byte, now 
 		if n, _ := res.RowsAffected(); n != 1 {
 			return store.ErrStale
 		}
-		// 4. insert the runner.
+		// 4. key disjointness (only after the token proved valid, so a caller without a valid
+		// token learns nothing about operator keys): refuse a key held by any operator.
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM operators WHERE pubkey = ?`, nr.PubKey).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("%w: key already enrolled", store.ErrConflict)
+		}
+		// The audit row names the token's fleet.
+		var fleetName string
+		if err := tx.QueryRowContext(ctx, `SELECT name FROM fleets WHERE id = ?`, fleetID).Scan(&fleetName); err != nil {
+			return err
+		}
+		ev.Fleet = fleetName
+		// 5. insert the runner.
 		status := store.StatusPending
 		if auto {
 			status = store.StatusActive

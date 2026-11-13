@@ -23,6 +23,8 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("Enroll", func(t *testing.T) { enroll(t, newStore(t)) })
 	t.Run("EnrollRaceSingleUse", func(t *testing.T) { enrollRace(t, newStore(t), 1, 1) })
 	t.Run("EnrollRaceMultiUse", func(t *testing.T) { enrollRace(t, newStore(t), 3, 3) })
+	t.Run("KeyDisjoint", func(t *testing.T) { keyDisjoint(t, newStore(t)) })
+	t.Run("KeyDisjointRace", func(t *testing.T) { keyDisjointRace(t, newStore(t)) })
 	t.Run("Runners", func(t *testing.T) { runners(t, newStore(t)) })
 	t.Run("Tokens", func(t *testing.T) { tokens(t, newStore(t)) })
 	t.Run("Operators", func(t *testing.T) { operators(t, newStore(t)) })
@@ -736,5 +738,93 @@ func ctxCancelled(t *testing.T, s store.Store) {
 	// The store still works afterwards.
 	if _, err := s.CreateFleet(context.Background(), store.Fleet{Name: "db", Mode: store.ModeActions}, t0, ev("fleet.create")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// keyDisjoint covers the cross-table rule: a key belongs to a runner or an operator, never both,
+// enforced inside the Enroll and RegisterOperator transactions.
+func keyDisjoint(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	mkFleet(t, s, "web")
+	exp := t0.Add(time.Hour)
+	mkToken(t, s, "web", "aaaaaaaaaaaaaaaa", "sec", 5, true, exp)
+	opKey := []byte{50, 9, 9}
+	if _, _, err := s.RegisterOperator(ctx, "alice", opKey, "fpo", t0, ev("operator.register")); err != nil {
+		t.Fatal(err)
+	}
+	base := auditCount(t, s)
+
+	// Operator key with a valid token: conflict, nothing consumed.
+	nr := store.Runner{Name: "r1", PubKey: opKey, Fingerprint: "fpo"}
+	if _, err := s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("sec"), t0, nr, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("operator key enrol: %v", err)
+	}
+	if uses(t, s, "web") != 0 || auditCount(t, s) != base {
+		t.Fatal("refused enrol consumed a use or wrote audit")
+	}
+	// Operator key with a BAD token: the token error, never a conflict (no existence leak).
+	if _, err := s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("bad"), t0, nr, ev("x")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("bad secret + operator key: %v", err)
+	}
+	if _, err := s.Enroll(ctx, "bbbbbbbbbbbbbbbb", secretHash("sec"), t0, nr, ev("x")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown id + operator key: %v", err)
+	}
+	mkToken(t, s, "web", "cccccccccccccccc", "s2", 1, true, t0.Add(time.Second))
+	if _, err := s.Enroll(ctx, "cccccccccccccccc", secretHash("s2"), t0.Add(time.Minute), nr, ev("x")); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("stale token + operator key: %v", err)
+	}
+
+	// Runner key (any status) cannot register as an operator.
+	rr, err := s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("sec"), t0, newRunner("r2", 51), ev("runner.enrol"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rr.Fleet != "web" {
+		t.Fatalf("runner fleet = %q", rr.Fleet)
+	}
+	if _, _, err := s.RegisterOperator(ctx, "bob", newRunner("", 51).PubKey, "fpr", t0, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("runner key register: %v", err)
+	}
+	if _, err := s.SetRunnerStatus(ctx, rr.ID, []store.Status{store.StatusActive}, store.StatusRevoked, t0, ev("runner.revoke")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.RegisterOperator(ctx, "bob", newRunner("", 51).PubKey, "fpr", t0, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("revoked runner key register: %v", err)
+	}
+	// Revoked operator's key still cannot enrol as a runner.
+	if _, err := s.RevokeOperator(ctx, "alice", t0, ev("operator.revoke")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("sec"), t0, nr, ev("x")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("revoked operator key enrol: %v", err)
+	}
+}
+
+// keyDisjointRace: Join and Register racing with the same key; exactly one wins.
+func keyDisjointRace(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	mkFleet(t, s, "web")
+	mkToken(t, s, "web", "aaaaaaaaaaaaaaaa", "sec", 50, true, t0.Add(time.Hour))
+	for i := 0; i < 10; i++ {
+		key := []byte{byte(100 + i), 7, 7}
+		var wg sync.WaitGroup
+		var joinErr, regErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, joinErr = s.Enroll(ctx, "aaaaaaaaaaaaaaaa", secretHash("sec"), t0,
+				store.Runner{Name: fmt.Sprint("r", i), PubKey: key, Fingerprint: fmt.Sprint("fr", i)}, ev("runner.enrol"))
+		}()
+		go func() {
+			defer wg.Done()
+			_, _, regErr = s.RegisterOperator(ctx, fmt.Sprint("op", i), key, fmt.Sprint("fo", i), t0, ev("operator.register"))
+		}()
+		wg.Wait()
+		if (joinErr == nil) == (regErr == nil) {
+			t.Fatalf("round %d: join=%v register=%v, want exactly one success", i, joinErr, regErr)
+		}
+		if joinErr != nil && !errors.Is(joinErr, store.ErrConflict) || regErr != nil && !errors.Is(regErr, store.ErrConflict) {
+			t.Fatalf("round %d: loser must get ErrConflict: join=%v register=%v", i, joinErr, regErr)
+		}
 	}
 }
