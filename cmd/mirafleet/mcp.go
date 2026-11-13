@@ -29,6 +29,8 @@ import (
 const (
 	maxSecretBytes = 4096
 	mcpCallTimeout = 2 * time.Minute
+	// mcpRunMargin is added to an action.run timeout for dial, queueing and reply latency.
+	mcpRunMargin = 30 * time.Second
 )
 
 // readSecret reads a token or code from r (stdin), trimmed. It is never echoed or logged.
@@ -200,6 +202,20 @@ func writeAtomic0600(dir, name string, data []byte) error {
 	return os.Rename(tmp, filepath.Join(dir, name))
 }
 
+// mcpCallLimit is the client-side limit for one `mcp api` call: action.run gets its requested
+// timeout_s (server default when omitted, server max at most) plus mcpRunMargin; every other
+// method keeps mcpCallTimeout.
+func mcpCallLimit(method string, params json.RawMessage) time.Duration {
+	if method != api.MethodActionRun {
+		return mcpCallTimeout
+	}
+	var p struct {
+		TimeoutS int `json:"timeout_s"`
+	}
+	_ = json.Unmarshal(params, &p) // unparsable: the server rejects it; use the default
+	return api.ActionTimeout(p.TimeoutS) + mcpRunMargin
+}
+
 func mcpAPI(args []string, stdout io.Writer) error {
 	if len(args) < 1 || len(args) > 2 {
 		return errors.New("usage: mirafleet mcp api METHOD [JSON]")
@@ -232,7 +248,7 @@ func mcpAPI(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("load operator key: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), mcpCallTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), mcpCallLimit(args[0], params))
 	defer cancel()
 	cl, err := apiclient.Dial(ctx, addr, transport.UserOperator, signer, apiclient.KnownHosts(opconf.KnownHostsPath(dir)))
 	if err != nil {

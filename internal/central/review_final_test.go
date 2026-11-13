@@ -172,7 +172,7 @@ func TestRunnerTeardownDoesNotWaitOnStore(t *testing.T) {
 	start := time.Now()
 	cl.Close()
 	waitFor(t, func() bool { return e.session("r1") == nil })
-	e.srv.Close() // waits for serveRunner's return
+	// Server.Close drains touchers (bounded by storeTimeout), so it is not timed here.
 	if d := time.Since(start); d > time.Second {
 		t.Fatalf("connection teardown took %v with a hung store", d)
 	}
@@ -202,5 +202,42 @@ func TestDisconnectTouchNotThrottled(t *testing.T) {
 	waitFor(t, func() bool { return cs.n.Load() >= 2 })
 	if strings.Contains(e.logText(), "touch runner") {
 		t.Fatalf("touch failed: %s", e.logText())
+	}
+}
+
+// closedFlagStore records TouchRunner calls that arrive after the store was "closed".
+type closedFlagStore struct {
+	store.Store
+	closed atomic.Bool
+	late   atomic.Int64
+	calls  atomic.Int64
+}
+
+func (c *closedFlagStore) TouchRunner(ctx context.Context, id int64, seen time.Time, info map[string]string) error {
+	c.calls.Add(1)
+	if c.closed.Load() {
+		c.late.Add(1)
+	}
+	time.Sleep(50 * time.Millisecond) // keep the queued disconnect write in flight at Close
+	return c.Store.TouchRunner(ctx, id, seen, info)
+}
+
+// Server.Close drains touchers: no TouchRunner runs once the caller has closed the store.
+func TestCloseDrainsTouchers(t *testing.T) {
+	cs := &closedFlagStore{}
+	e := newEnvOpts(t, 15*time.Second, func(c *Config) {
+		cs.Store = c.Store
+		c.Store = cs
+	}, "r1")
+	e.rawRunner("r1", nil)
+	waitFor(t, func() bool { return e.session("r1") != nil })
+	e.srv.Close() // drops the connection; the final touch must finish before Close returns
+	cs.closed.Store(true)
+	time.Sleep(300 * time.Millisecond)
+	if n := cs.late.Load(); n != 0 {
+		t.Fatalf("%d TouchRunner calls after the store was closed", n)
+	}
+	if cs.calls.Load() < 2 {
+		t.Fatalf("expected connect and disconnect touches before Close returned, got %d", cs.calls.Load())
 	}
 }

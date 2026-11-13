@@ -156,7 +156,12 @@ type toucher struct {
 
 func (s *Server) startToucher(id int64) *toucher {
 	t := &toucher{ch: make(chan transport.Heartbeat, 1)}
+	// Tracked by the wait group so Server.Close drains it (each write is bounded by storeTimeout)
+	// before the caller closes the store. startToucher runs inside serveRunner, itself tracked,
+	// so the counter is never zero here and Add cannot race Close's Wait.
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		for hb := range t.ch {
 			s.touchRunner(id, hb)
 		}

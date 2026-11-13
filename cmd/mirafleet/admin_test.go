@@ -185,3 +185,24 @@ func TestAdminCLIExecPropagatesExitCode(t *testing.T) {
 		t.Fatalf("exit=%v out=%q err=%q", f.exitCh, f.out.String(), f.errw.String())
 	}
 }
+
+func TestMCPCallLimit(t *testing.T) {
+	run := api.MethodActionRun
+	cases := []struct {
+		name, method, params string
+		want                 time.Duration
+	}{
+		{"other method", api.MethodFleetsList, `{"timeout_s":600}`, mcpCallTimeout},
+		{"run default", run, ``, api.DefaultActionTimeout + mcpRunMargin},
+		{"run empty params", run, `{}`, api.DefaultActionTimeout + mcpRunMargin},
+		{"run explicit", run, `{"timeout_s":300}`, 300*time.Second + mcpRunMargin},
+		{"run max", run, `{"timeout_s":600}`, api.MaxActionTimeout + mcpRunMargin},
+		{"run over max capped", run, `{"timeout_s":99999999999}`, api.MaxActionTimeout + mcpRunMargin},
+		{"run malformed", run, `[1]`, api.DefaultActionTimeout + mcpRunMargin},
+	}
+	for _, c := range cases {
+		if got := mcpCallLimit(c.method, json.RawMessage(c.params)); got != c.want {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+}

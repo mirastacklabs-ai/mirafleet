@@ -424,9 +424,9 @@ an absolute path).
 | `runners.list` | `{"fleet":"dev"}` | runners with status, online, labels, last_seen |
 | `action.run` | `{"fleet","runner","action","params":{},"timeout_s":N,"confirm":"FLEET"}` | exit_code, stdout, stderr, truncated, duration_ms, request_id |
 
-`timeout_s`: 0 or absent means 120 s; it is capped at 600 s. Note that `mirafleet mcp api` itself
-gives up after 2 minutes for the whole call, so long actions need the MCP server (M5) or
-`central exec`. Limits: request at most 64 KiB, at most 32 params, param keys up to 64 bytes and
+`timeout_s`: 0 or absent means 120 s; it is capped at 600 s. `mirafleet mcp api` waits for an
+`action.run` as long as that timeout plus 30 s (other methods: 2 minutes), so a long action only
+needs a larger `timeout_s`. Limits: request at most 64 KiB, at most 32 params, param keys up to 64 bytes and
 values up to 4 KiB, output up to 1 MiB (stdout and stderr together; `truncated: true` if cut).
 
 ## 10.4 Files and directories
