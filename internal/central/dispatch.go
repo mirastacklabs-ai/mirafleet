@@ -2,6 +2,7 @@ package central
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
@@ -30,7 +31,8 @@ type callCtx struct {
 
 // connState is per-connection mutable state shared by the channels of one connection.
 type connState struct {
-	hint string // client hint from hello; recorded, never trusted
+	mu   sync.Mutex // guards hint (D-13: channels of one connection run concurrently)
+	hint string     // client hint from hello; recorded, never trusted
 }
 
 // methodTable is one front end's method set: the allow predicate (an independent gate in front
@@ -134,9 +136,12 @@ func handleHello(ctx context.Context, c *callCtx, req *api.Request) (any, error)
 	if err != nil || op.Status != store.OperatorActive {
 		return nil, api.Errorf(api.CodeForbidden, "forbidden")
 	}
-	c.state.hint = sanitizeHint(p.Client)
-	if c.state.hint != "" {
-		c.logf("operator %q hello (client hint %q, unverified)", c.p.Name, c.state.hint)
+	hint := sanitizeHint(p.Client)
+	c.state.mu.Lock()
+	c.state.hint = hint
+	c.state.mu.Unlock()
+	if hint != "" {
+		c.logf("operator %q hello (client hint %q, unverified)", c.p.Name, hint)
 	}
 	return api.HelloResult{Operator: c.p.Name, Versions: versions(), Server: "mirafleet"}, nil
 }
@@ -165,7 +170,7 @@ func handleFleetsList(ctx context.Context, c *callCtx, req *api.Request) (any, e
 	}
 	out := api.FleetsListResult{Fleets: make([]api.FleetInfo, len(fs))}
 	for i, f := range fs {
-		out.Fleets[i] = fleetInfo(f, c.p.Kind == auth.KindAdmin)
+		out.Fleets[i] = fleetInfo(f, c.exposeConfig())
 	}
 	return out, nil
 }

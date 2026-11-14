@@ -166,7 +166,7 @@ func validSpecLabels(labels map[string]string) error {
 // OpenWorkspace opens (or reuses) the caller's workspace for (fleet, session) (M3.md 1.4). The
 // caller must be an active operator and the fleet in workspace mode. Guarded fleets need
 // confirm == fleet name and a runner with a secure runtime. A live workspace of the same session
-// is returned with reused=true; if its runner is offline the call fails with unavailable and
+// that is open is returned with reused=true (one still opening is a conflict); if its runner is offline the call fails with unavailable and
 // nothing is created elsewhere. Otherwise a runner is picked (most free slots), a row reserved
 // (the "start" audit row, fail closed) and the runner asked to create it.
 func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Source, fleet, session, image string,
@@ -286,6 +286,10 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 			end.Outcome = OutcomeOK
 			ow, serr := s.finishWorkspace(ctx, id, store.WorkspaceOpening, store.WorkspaceOpen, "", end)
 			if serr != nil {
+				if errors.Is(serr, store.ErrConflict) {
+					// Killed or revoked while the create ran: the container now exists with no live row.
+					s.destroyStray(ctx, c.info.ID, id, "row closed while create ran")
+				}
 				return store.Workspace{}, false, s.fail("open workspace", serr)
 			}
 			ow.Fleet, ow.Runner, ow.Operator = fleet, c.runner.Name, p.Name
@@ -315,12 +319,29 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		if _, serr := s.finishWorkspace(ctx, id, store.WorkspaceOpening, store.WorkspaceFailed, reason, end); serr != nil {
 			s.logf("service: mark workspace %s failed: %v", id, serr)
 		}
+		if !busy && (deadline || ctx.Err() != nil || lerr != nil) {
+			// The runner may still finish the create: make sure what it builds does not survive.
+			s.destroyStray(ctx, c.info.ID, id, reason)
+		}
 		if busy && tried < maxPlacementTries {
 			continue
 		}
 		return store.Workspace{}, false, retErr
 	}
 	return store.Workspace{}, false, api.Errorf(api.CodeUnavailable, "no runner can take this workspace right now")
+}
+
+// destroyStray sends a best-effort destroy for a workspace whose create outcome could not be
+// recorded as open. It is bounded and detached from ctx (which may be cancelled); the runner
+// defers the destroy until an in-flight create settles, and ReconcileRunner remains the backstop.
+func (s *Service) destroyStray(ctx context.Context, runnerID int64, id, why string) {
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workspaceCloseTimeout)
+	defer cancel()
+	if s.destroyOn(dctx, runnerID, id) {
+		s.logf("service: destroyed stray workspace %s on runner %d (%s)", id, runnerID, why)
+	} else {
+		s.logf("service: could not destroy stray workspace %s on runner %d (%s); reconcile will retry", id, runnerID, why)
+	}
 }
 
 // runnerResultError maps a runner's non-ok result code to the operator-facing error.
@@ -347,6 +368,12 @@ func (s *Service) finishWorkspace(ctx context.Context, id string, from, to store
 
 // reuse returns a sticky workspace, or unavailable when its runner is offline.
 func (s *Service) reuse(ctx context.Context, p auth.Principal, src Source, w store.Workspace, rid string) (store.Workspace, bool, error) {
+	if w.State == store.WorkspaceOpening { // C-14: the create is still in flight; do not hand out a half-made workspace
+		ev := s.wsEvent(p, src, api.MethodWorkspaceOpen, w.Fleet, w.Runner, w.WsID, rid)
+		ev.Subject, ev.Outcome, ev.Message = w.Session, OutcomeError, "sticky workspace is still opening"
+		s.recordBestEffort(ctx, ev)
+		return store.Workspace{}, false, api.Errorf(api.CodeConflict, "workspace is still opening")
+	}
 	ev := s.wsEvent(p, src, api.MethodWorkspaceOpen, w.Fleet, w.Runner, w.WsID, rid)
 	ev.Subject = w.Session
 	if !s.runnerOnline(w.RunnerID) {

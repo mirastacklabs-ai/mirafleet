@@ -18,11 +18,14 @@ func handleFleetCreate(ctx context.Context, c *callCtx, req *api.Request) (any, 
 	if e := api.DecodeParams(req.Params, &p); e != nil {
 		return nil, e
 	}
+	if e := checkWorkspaceSeconds(p.Workspace); e != nil {
+		return nil, e
+	}
 	f, err := c.svc.CreateFleet(ctx, c.p, c.src, p.Name, store.Mode(p.Mode), p.Confirm, workspaceFromAPI(p.Workspace))
 	if err != nil {
 		return nil, err
 	}
-	return api.FleetCreateResult{Fleet: fleetInfo(f, c.p.Kind == auth.KindAdmin)}, nil
+	return api.FleetCreateResult{Fleet: fleetInfo(f, c.exposeConfig())}, nil
 }
 
 func handleTokenCreate(ctx context.Context, c *callCtx, req *api.Request) (any, error) {
@@ -177,6 +180,30 @@ func handleAuditList(ctx context.Context, c *callCtx, req *api.Request) (any, er
 			DurationMS: e.DurationMS, Message: e.Message, RequestID: e.RequestID}
 	}
 	return out, nil
+}
+
+// maxConfigSeconds bounds every *_s admin field (D-07) so the conversion to a Duration cannot
+// overflow; the store's own limits (exec ceiling, ttl order) apply afterwards.
+const maxConfigSeconds = 100_000_000
+
+// checkWorkspaceSeconds rejects an absurd *_s value as bad_request before it becomes a duration.
+func checkWorkspaceSeconds(w *api.WorkspaceConfig) error {
+	if w == nil {
+		return nil
+	}
+	for name, v := range map[string]int{"idle_ttl_s": w.IdleTTLS, "max_ttl_s": w.MaxTTLS,
+		"exec_default_s": w.ExecDefaultS, "exec_max_s": w.ExecMaxS} {
+		if v < -maxConfigSeconds || v > maxConfigSeconds {
+			return api.Errorf(api.CodeBadRequest, "%s out of range", name)
+		}
+	}
+	return nil
+}
+
+// exposeConfig reports whether fleet DTOs may carry the complete workspace config (D-14): only for
+// the admin principal on the admin socket (source cli).
+func (c *callCtx) exposeConfig() bool {
+	return c.p.Kind == auth.KindAdmin && c.src == service.SourceCLI
 }
 
 // workspaceFromAPI maps the wire config to the store config field by field (seconds to

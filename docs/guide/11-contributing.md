@@ -16,8 +16,8 @@ with the code, a checklist for reviewing a change, and some real first tasks.
 
 These come from [CLAUDE.md](../../CLAUDE.md) **as of 13 Nov 2026**. If the two ever disagree,
 CLAUDE.md wins and this table should be fixed. Read the file itself too; it is short and
-binding. Status today: M1 and M2 are done; next come M3 (workspaces), then M5 (MCP server),
-M4 (GUI) and M6 (release). A rule without a reason gets broken the first time it is inconvenient, so here is the reason for
+binding. Status today: M1 and M2 are done, and M3 (workspaces) is done (13 Nov 2026) pending its
+final review; next come M5 (MCP server), M4 (GUI) and M6 (release). A rule without a reason gets broken the first time it is inconvenient, so here is the reason for
 each.
 
 | Rule | Why |
@@ -28,8 +28,9 @@ each.
 | **Keep dependencies to the list in `docs/PLAN.md`; ask before adding others.** | Every dependency is code we did not write but must trust, patch and licence-check. A short list keeps the supply-chain risk small and the binary lean. |
 | **Permissive licences only** (Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD) for all dependencies, including transitive ones and bundled assets. Never GPL, LGPL, AGPL, MPL, SSPL, BUSL or other copyleft/source-available. Fonts may be SIL OFL-1.1. | mirafleet is Apache-2.0 and meant to be used inside companies. Copyleft or source-available terms could force those users to publish their own code or forbid their use. The licence gate is `scripts/dev.sh licenses` ([chapter 9](09-dev-setup-and-testing.md#99-the-licence-gate)). |
 | **Follow [BRAND.md](../BRAND.md)** for GUI, CLI colours, docs and assets. | Consistent look, and the colours carry meaning (teal is data, orange is emphasis only, status colours are runner states). |
-| **Containers:** the Docker ecosystem is supported (Docker CLI, Docker Engine, Compose, `docker.io` images), never a hard dependency on Docker's commercial products. Runner workspaces (M3) use containerd through its Go client. | We want open tooling anyone can run for free. Docker Engine runs on containerd, so one client covers Docker hosts and plain containerd hosts. |
+| **Containers:** the Docker ecosystem is supported (Docker CLI, Docker Engine, Compose, `docker.io` images), never a hard dependency on Docker's commercial products. Runner workspaces (M3) use containerd through its Go client, never Docker Engine. | We want open tooling anyone can run for free. Docker Engine runs on containerd, so one client covers Docker hosts and plain containerd hosts; the workspace namespace is `mirafleet`, and `moby` (Docker's) is refused in code so the two never mix. |
 | **The runner-side actions guard is the security boundary:** argv only, no shell, regex-validated params. | Central and the agent are not trusted to decide what is safe to run. The only thing that cannot be talked around is the allowlist on the machine that executes. Every change near `internal/actions` gets the strictest review. |
+| **M3 design rule (from [M3.md](../M3.md) section 1.11, not a line of CLAUDE.md): the workspace boundary is the container, and the runner builds it.** `workspace.yaml` has no field for privileged containers, unconfined profiles or host mounts; the runner re-validates everything central sends; nothing in a workspace gets API keys. The actions guard rule above is unchanged. | A workspace runner is root-equivalent (it holds the containerd socket), so central must not be able to ask for more than the runner's own template allows. Review changes in `internal/workspace/ctrd/spec_linux.go`, `wsconfig`, `egress` and `runner/workspace.go` as strictly as `internal/actions`. |
 | **Harness-agnostic core.** The MCP server must work with no hooks. Harness-specific code lives only in `integrations/<harness>/`. | Claude Code is first, but opencode, Kilo Code and others must be able to use mirafleet. Hooks are a convenience, never a requirement, so a plain MCP client keeps all safety guarantees. |
 | **OSS stays lean.** Enterprise features (RBAC, SSO, HA, ...) are out of scope; leave interface seams only. | The open-source edition has a clear job. Seams such as `PolicyEngine`, `AuthProvider` and `Store` let enterprise builds replace pieces without forking. Do not build the enterprise piece "just in case". |
 | **Containers only for tooling.** No host `go`, brew, npm or pip for this repo; everything via `scripts/dev.sh`. | Same compiler for everyone, a clean laptop, and a habit of not running install scripts. See [chapter 9](09-dev-setup-and-testing.md#91-the-container-only-rule). |
@@ -103,10 +104,12 @@ After the review: fix, then run the full gate again, then commit.
 
 [PLAN.md](../PLAN.md) lists milestones M1 to M6 and the **build order** (M1, M2, M3, M5, M4,
 M6; the numbers are labels, not the sequence). Each milestone has a "done when" sentence that a
-test can check. For M2 it is literally the test `TestM2Done`.
+test can check. For M2 it is literally the test `TestM2Done`; for M3 it is `TestM3Done` (fake
+executor, every run) and `TestM3DoneIntegration` (real containerd, `scripts/dev.sh integration`).
 
 For a milestone with real design choices there is a detailed file, `docs/M2.md`, `docs/M3.md`.
-Reading [M2.md](../M2.md) shows the shape:
+Reading [M2.md](../M2.md) shows the shape ([M3.md](../M3.md) follows it, with an extra section
+for the developer-guide updates):
 
 1. **Design decisions** (section 1): store, tokens, auth, protocol, admin socket, revoke, audit.
    Each with the reason.
@@ -118,7 +121,11 @@ Reading [M2.md](../M2.md) shows the shape:
 6. **Dependencies and licences** (section 5) and **decisions with dates** (section 6).
 
 Your job when starting a milestone is to write that file *first* and get it agreed. [M3.md](../M3.md)
-is an example of an early-stage plan: only decisions so far, "detailed plan to follow".
+shows the whole life of one: decisions first (executor interface, OpenSandbox as opt-in), then an
+approved plan in waves, then per-step reviewer focus, and finally a list of **deferred review
+findings** (P2/P3, labelled A-xx to D-xx by wave) that a later hardening pass works through. When you
+fix one, note it in the file. Read those lists before you touch workspace code: several are still
+open (see the good first tasks below).
 
 Rules of the road:
 
@@ -178,9 +185,15 @@ Two kinds, both described in STYLE.md:
   one-line caption.
 
 The shared diagram names are `big-picture.svg`, `runner-join.svg`, `operator-register.svg`,
-`action-run.svg`, `revoke.svg` and `framing.svg`. Reuse them; add new names only for new flows.
+`action-run.svg`, `revoke.svg`, `framing.svg` and, since M3, `workspace-open.svg`,
+`workspace-exec.svg` and `workspace-boundary.svg`. Reuse them; add new names only for new flows,
+and add the matching numbered list to `diagrams/README.md`.
 View your SVG in both a light and a dark browser theme, and with "reduce motion" on, before you
-commit.
+commit. One more rule learned the hard way: **write a plain colour before every `var()`**, for
+example `fill:#00695F;fill:var(--accent,#00695F)`. Browsers use the second declaration; renderers
+that do not understand CSS variables (some image viewers, `rsvg-convert`, link previews) use the
+first, so the picture is never black or blank. Check the file is well-formed XML and render it
+once with a non-browser renderer.
 
 ## 11.5 Review checklist for a pull request
 
@@ -274,7 +287,29 @@ changes behaviour, open a short plan or issue first (section 11.2).
    it cannot verify permissions. Implementing an owner-only DACL check (using `golang.org/x/sys`,
    already a dependency) unblocks `mirafleet mcp` on Windows. This is larger; do it only after
    a short design note, and test on a real Windows runner in CI.
-8. **Guide gaps.** Read a chapter as if you were new, and fix whatever confused you: add the
+8. **Warn about tag-only image patterns.** [M3.md](../M3.md) section 1.10 says a tag-only pattern
+   (`golang:*`) is allowed "but warned about" (digests are recommended), yet `fleet create` and
+   `fleet workspace set` print nothing. Add a one-line warning on stderr in
+   `cmd/mirafleet/admin_workspace.go` (`apply`) when an `-images` entry has no `@sha256:`, with a
+   test in `admin_workspace_test.go`. Teaches: the admin CLI, `adminCLI.call`, why digests matter.
+9. **`-json` for `runner workspace list`.** `central workspace list` has `-json`; the local
+   `mirafleet runner workspace list` only prints a table (`printWorkspaces` in
+   `cmd/mirafleet/runner_ws_linux.go`). Add the flag, using the fake executor seam (`newExecutor`)
+   for the test. Teaches: the `newExecutor` test seam and `workspace.Info`.
+10. **Filters for `central workspace list`.** Today only `-fleet`. Add `-operator NAME` and `-state S`
+    (the store's `WorkspaceFilter` already has `OperatorID` and `States`): `api.WorkspaceAdminListParams`,
+    `service.AdminListWorkspaces`, `handleWorkspaceAdminList`, the CLI, the conformance suite and
+    chapter 10. Agree parameter names first (it is an additive protocol change, chapter 7.12).
+11. **A deferred hardening finding.** Pick one from the "Deferred review findings" list at the end of
+    [M3.md](../M3.md) that is still open (for example D-11: a runner started without `-workspace` in
+    a workspace fleet should log a hint, or D-09: `mcp api -out` should check its output directory
+    first). Check the code first, since many entries are already fixed; write the test before the
+    fix; and update the list. Teaches: reading review findings and how the plan/review loop closes.
+12. **Private registry credentials (design note first).** Workspace pulls are anonymous
+    (question Q7 in M3.md). Write a short design note for a runner-side credentials file that never
+    enters a container (mode 0600, owned by the runner user, per-registry). Do not code it before the
+    note is agreed: it touches `wsconfig`, `ctrd` pulls and the security chapter.
+13. **Guide gaps.** Read a chapter as if you were new, and fix whatever confused you: add the
    missing glossary entry, correct a command, add a "common mistake" box. This is always welcome
    and is the best way to learn the code.
 
@@ -289,6 +324,10 @@ changes behaviour, open a short plan or issue first (section 11.2).
    before the PR can be merged.
 5. Your change adds a new SSH channel type. Name three chapters or files that must change with
    it.
+6. You add an animated SVG that looks perfect in your browser, but a teammate's chat preview shows
+   a black rectangle. What did you most likely forget, and how do you check for it?
+7. You change a function in `internal/workspace/ctrd/spec_linux.go`. Why does the review treat
+   this like a change to `internal/actions`, and what must the PR contain?
 
 <details>
 <summary>Answers</summary>
@@ -309,5 +348,14 @@ changes behaviour, open a short plan or issue first (section 11.2).
    `allowedChannels` in `internal/central/roles.go` plus a test, [chapter 7](07-protocols.md)
    (protocols), [chapter 5](05-security.md) (if it changes what a role can do),
    [chapter 8](08-code-tour.md) (code tour), and the matching diagram.
+6. A non-browser renderer ignores CSS variables, so every `fill:var(--x)` fell back to the default
+   (black). Write a plain colour first (`fill:#00695F;fill:var(--accent,#00695F)`). Check with an
+   XML well-formedness check and a render in a throwaway container with `rsvg-convert`; look at the
+   PNG, and check its size is not suspiciously tiny.
+7. The spec builder decides what a workspace container can do (capabilities, mounts, namespaces,
+   read-only rootfs), and a workspace runner is root-equivalent, so a loosened field is a possible
+   host compromise. The PR needs the matching assertion in `spec_linux_test.go`, an integration
+   attack test if behaviour changes, a [chapter 5](05-security.md) update, and a read-only review
+   (`qa-reviewer`) that tries to break it.
 
 </details>

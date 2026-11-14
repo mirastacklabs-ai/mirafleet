@@ -3,8 +3,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,6 +97,8 @@ func (d *DB) ReserveWorkspace(ctx context.Context, w store.Workspace, slots, max
 		return store.Workspace{}, false, invalidWS("session and image are required")
 	case w.Spec == "":
 		return store.Workspace{}, false, invalidWS("spec is required")
+	case !json.Valid([]byte(w.Spec)):
+		return store.Workspace{}, false, invalidWS("spec is not valid JSON")
 	case w.ExpiresAt.IsZero():
 		return store.Workspace{}, false, invalidWS("expires_at is required")
 	case slots < 1:
@@ -396,6 +400,7 @@ func (d *DB) CloseWorkspacesOf(ctx context.Context, who store.WorkspaceOwner, re
 		if ev.Message == "" {
 			ev.Message = fmt.Sprintf("%d workspaces", len(ids))
 		}
+		ev.Params = closeParams(ev.Params, ids)
 		_, err = insertAuditTx(ctx, tx, ev)
 		return err
 	})
@@ -403,4 +408,20 @@ func (d *DB) CloseWorkspacesOf(ctx context.Context, who store.WorkspaceOwner, re
 		return nil, err
 	}
 	return ids, nil
+}
+
+// closeParams returns a copy of p carrying the affected count and id list (C-12, B-12), so the audit
+// row has them whatever Message the caller set. The list is capped to keep the row small.
+func closeParams(p map[string]string, ids []string) map[string]string {
+	out := make(map[string]string, len(p)+2)
+	for k, v := range p {
+		out[k] = v
+	}
+	out["count"] = strconv.Itoa(len(ids))
+	list := strings.Join(ids, ",")
+	if len(list) > 4096 {
+		list = list[:4096]
+	}
+	out["ws_ids"] = list
+	return out
 }

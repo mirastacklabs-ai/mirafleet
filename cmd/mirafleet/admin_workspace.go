@@ -134,7 +134,7 @@ func (w *wsFlags) apply(base api.WorkspaceConfig) (api.WorkspaceConfig, error) {
 		c.Egress = splitList(*w.egress)
 	}
 	if g["cpus"] {
-		if *w.cpus <= 0 || *w.cpus > 4096 {
+		if !(*w.cpus > 0 && *w.cpus <= 4096) { // also rejects NaN (every NaN comparison is false)
 			return c, fmt.Errorf("%w: -cpus must be between 0 and 4096", errAdminUsage)
 		}
 		c.CPUMilli = int(math.Round(*w.cpus * 1000))
@@ -272,8 +272,13 @@ func (c *adminCLI) workspaceKill(args []string) error {
 	if err := adminWantArgs("workspace kill", pos, 1, "one workspace ID"); err != nil {
 		return err
 	}
-	if err := c.call(adminSock(*data), api.MethodWorkspaceKill, api.WorkspaceKillParams{ID: pos[0]}, nil); err != nil {
+	var res api.WorkspaceKillResult
+	if err := c.call(adminSock(*data), api.MethodWorkspaceKill, api.WorkspaceKillParams{ID: pos[0]}, &res); err != nil {
 		return err
+	}
+	if res.State == "closing" {
+		fmt.Fprintf(c.out, "workspace %s closing; the reaper will finish\n", pos[0])
+		return nil
 	}
 	fmt.Fprintf(c.out, "workspace %s killed\n", pos[0])
 	return nil

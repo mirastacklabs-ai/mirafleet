@@ -148,6 +148,9 @@ func ParseRule(s string) (Rule, error) {
 			if !strings.Contains(name, ".") {
 				return r, errors.New("wildcard needs at least two labels after \"*.\"")
 			}
+			if publicSuffixes[name] {
+				return r, fmt.Errorf("wildcard %q would cover every site under a public suffix; name a registrable domain such as *.example.%s", "*."+name, name)
+			}
 			r.kind, r.host = kindWildcard, name
 			break
 		}
@@ -277,4 +280,33 @@ func (a *Allowlist) AllowsIP(ip netip.Addr, port uint16) bool {
 		}
 	}
 	return false
+}
+
+// publicSuffixes is a small built-in list of multi-label public suffixes that a wildcard rule must
+// not cover (*.co.uk would allow every UK company site, *.github.io every GitHub Pages site).
+// It is NOT the Public Suffix List: single-label TLDs are already refused (a wildcard needs two
+// labels), and suffixes missing here are accepted. Operators remain responsible for sensible
+// wildcards; this only catches the common mistakes.
+var publicSuffixes = map[string]bool{}
+
+func init() {
+	for _, s := range strings.Fields(`
+		co.uk org.uk ac.uk gov.uk me.uk ltd.uk plc.uk net.uk sch.uk
+		com.au net.au org.au edu.au gov.au asn.au id.au
+		co.nz net.nz org.nz govt.nz ac.nz
+		co.jp ne.jp or.jp ac.jp go.jp ad.jp
+		co.in net.in org.in gov.in ac.in
+		co.za org.za gov.za ac.za
+		com.br net.br org.br gov.br edu.br
+		com.cn net.cn org.cn gov.cn edu.cn
+		com.mx org.mx gob.mx com.ar com.co com.pe com.ve com.ec
+		com.tr org.tr com.sg com.my com.hk com.tw org.tw co.kr or.kr go.kr
+		co.il org.il co.id or.id co.th in.th com.ph com.vn com.pk com.eg com.sa com.ng
+		com.ua org.ua com.pl com.ru
+		github.io gitlab.io herokuapp.com appspot.com cloudfront.net amazonaws.com s3.amazonaws.com
+		azurewebsites.net blob.core.windows.net web.app firebaseapp.com vercel.app netlify.app
+		pages.dev workers.dev blogspot.com wordpress.com fly.dev onrender.com ngrok.io ngrok-free.app
+		trycloudflare.com repl.co glitch.me`) {
+		publicSuffixes[s] = true
+	}
 }

@@ -399,8 +399,9 @@ func execOn(ctx context.Context, conn Conn, req transport.ExecRequest) (*transpo
 }
 
 // MaxWorkspaceResultBytes is the largest encoded WorkspaceResult frame central reads: the API
-// result cap (api.MaxResultBytes, 1 MiB) plus 64 KiB of framing and metadata. Not the exec cap.
-const MaxWorkspaceResultBytes = 1<<20 + 64<<10
+// result cap (1 MiB) plus 64 KiB of framing and metadata. Not the exec cap. The value is shared
+// with the runner through transport.MaxWorkspaceResultBytes.
+const MaxWorkspaceResultBytes = transport.MaxWorkspaceResultBytes
 
 var (
 	// ErrNoExecutor: the runner has no workspace executor configured (channel open Prohibited).
@@ -512,7 +513,9 @@ func workspaceOn(ctx context.Context, conn Conn, req *transport.WorkspaceRequest
 			return fail(fmt.Errorf("send workspace body: %w", err))
 		}
 	}
-	if err := ch.CloseWrite(); err != nil && ctx.Err() == nil {
+	// x/crypto returns io.EOF from CloseWrite once the channel is closed. If the runner already
+	// answered and closed before us, its result frame is still readable, so EOF is not fatal.
+	if err := ch.CloseWrite(); err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
 		return nil, fmt.Errorf("close write: %w", err)
 	}
 	res, err := transport.ReadResult(ch, MaxWorkspaceResultBytes)

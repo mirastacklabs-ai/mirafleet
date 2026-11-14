@@ -482,8 +482,13 @@ func (p *Proxy) handlePlain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.WithValue(r.Context(), dialKey{}, t), p.cfg.TotalTimeout)
+	// TotalTimeout caps the whole exchange; idle (reset per chunk below) caps a stalled upstream.
+	tctx, tcancel := context.WithTimeout(context.WithValue(r.Context(), dialKey{}, t), p.cfg.TotalTimeout)
+	defer tcancel()
+	ctx, cancel := context.WithCancel(tctx)
 	defer cancel()
+	idle := time.AfterFunc(p.cfg.IdleTimeout, cancel)
+	defer idle.Stop()
 	out := r.Clone(ctx)
 	out.RequestURI = ""
 	out.Host = u.Host // the vetted authority, never a client-supplied Host header
@@ -505,7 +510,30 @@ func (p *Proxy) handlePlain(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Connection", "close")
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+
+	// A-12: copy with a fresh write deadline per chunk (a client that stops reading cannot pin the
+	// goroutine and a workspace slot) and an idle timer on the upstream side; the context above
+	// enforces TotalTimeout.
+	rc := http.NewResponseController(w)
+	// The server's final flush after we return needs a live deadline too.
+	defer func() { _ = rc.SetWriteDeadline(time.Now().Add(p.cfg.IdleTimeout)) }()
+	buf := make([]byte, 32<<10)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			idle.Reset(p.cfg.IdleTimeout)
+			_ = rc.SetWriteDeadline(time.Now().Add(p.cfg.IdleTimeout))
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			if rc.Flush() != nil {
+				return
+			}
+		}
+		if rerr != nil {
+			return
+		}
+	}
 }
 
 // Limits caps concurrent proxied connections globally and per workspace. Share one

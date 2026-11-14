@@ -28,6 +28,13 @@ const (
 	// ctrUser is the uid/gid workspaces run as inside a user namespace.
 	ctrUser = 1000
 
+	// cgroupParent is the parent cgroup of every workspace container (cgroupfs-style path).
+	// This assumes containerd's runc uses the cgroupfs driver (SystemdCgroup=false, the
+	// containerd default). With SystemdCgroup=true runc expects "slice:prefix:name" paths and
+	// would reject this one. New cannot detect the setting cheaply (it lives in containerd's
+	// config, not in its API), so it is documented in docs/M3.md 1.13 instead.
+	cgroupParent = "/mirafleet"
+
 	cpuPeriod = 100000
 	noFile    = 4096
 )
@@ -45,6 +52,7 @@ type specParams struct {
 	MemoryBytes int64
 	Pids        int64
 	TmpfsBytes  int64
+	DiskBytes   int64 // workspace disk quota; becomes RLIMIT_FSIZE (no single file past the quota). 0 = unset
 
 	WorkspaceDir string // host paths of the only host mounts
 	HostsFile    string
@@ -92,6 +100,11 @@ func buildSpec(p specParams) (*specs.Spec, error) {
 		ApparmorProfile: p.AppArmorProfile,
 	}
 
+	if p.DiskBytes > 0 {
+		fsize := uint64(p.DiskBytes)
+		s.Process.Rlimits = append(s.Process.Rlimits, specs.POSIXRlimit{Type: "RLIMIT_FSIZE", Hard: fsize, Soft: fsize})
+	}
+
 	// Default runtime mounts (proc, dev, devpts, shm, mqueue, sysfs, cgroup) stay; add ours.
 	ro := []string{"bind", "ro", "nosuid", "nodev", "noexec"}
 	s.Mounts = append(s.Mounts,
@@ -126,6 +139,9 @@ func buildSpec(p specParams) (*specs.Spec, error) {
 			Pids:    &specs.LinuxPids{Limit: &p.Pids},
 		},
 		RootfsPropagation: "private",
+		// One parent cgroup for everything mirafleet runs, so a host-level limit or a cleanup
+		// can address all workspaces at once.
+		CgroupsPath: cgroupParent + "/" + p.ID,
 	}
 	if p.UserNS {
 		l.Namespaces = append(l.Namespaces, specs.LinuxNamespace{Type: specs.UserNamespace})

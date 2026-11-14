@@ -194,20 +194,14 @@ func newEnvMode(t *testing.T, mode string, concurrent int) *testEnv {
 	if err != nil {
 		t.Fatalf("alias image: %v", err)
 	}
-	t.Cleanup(func() { _ = c.ImageService().Delete(context.Background(), alias.Name) })
+	t.Cleanup(func() { deleteImage(t, c, alias.Name) })
 	root := newRoot(t)
 	ex, err := New(newConfig(t, root, mode, concurrent), Options{})
 	if err != nil {
 		t.Fatalf("New (userns %s): %v", mode, err)
 	}
 	e := ex.(*Executor)
-	t.Cleanup(func() {
-		infos, _ := e.List(context.Background())
-		for _, i := range infos {
-			_ = e.Destroy(context.Background(), i.ID)
-		}
-		_ = e.Close()
-	})
+	t.Cleanup(func() { destroyAll(t, e) })
 	return &testEnv{e: e, root: root, c: c, ctx: ctx, mode: mode}
 }
 

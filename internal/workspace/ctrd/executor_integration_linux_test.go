@@ -98,7 +98,7 @@ func newEnv(t *testing.T, concurrent int, opts Options) *testEnv {
 	if err != nil {
 		t.Fatalf("alias image: %v", err)
 	}
-	t.Cleanup(func() { _ = c.ImageService().Delete(context.Background(), alias.Name) })
+	t.Cleanup(func() { deleteImage(t, c, alias.Name) })
 
 	root := newRoot(t)
 	ex, err := New(newConfig(t, root, mode, concurrent), opts)
@@ -106,14 +106,7 @@ func newEnv(t *testing.T, concurrent int, opts Options) *testEnv {
 		t.Fatalf("New (userns %s): %v", mode, err)
 	}
 	e := ex.(*Executor)
-	t.Cleanup(func() {
-		// Whatever a failed test left behind.
-		infos, _ := e.List(context.Background())
-		for _, i := range infos {
-			_ = e.Destroy(context.Background(), i.ID)
-		}
-		_ = e.Close()
-	})
+	t.Cleanup(func() { destroyAll(t, e) }) // whatever a failed test left behind
 	return &testEnv{e: e, root: root, c: c, ctx: ctx, mode: mode}
 }
 

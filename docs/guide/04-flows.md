@@ -9,8 +9,11 @@
 - What happens to work that is already running when a runner or an operator is revoked, and why the
   two revokes use opposite orders.
 - How reconnecting, stale heartbeats and shutdown behave, and what you see when things fail.
+- How a workspace is opened, placed on a runner and kept sticky; how `workspace.exec` and file
+  transfers work (flows 12 to 14); and how closing, the TTL reaper, reconcile and revoke cascades
+  clean up (flows 15 to 18).
 
-[Chapter 3](03-architecture.md) showed the parts. This chapter shows them moving: eleven flows,
+[Chapter 3](03-architecture.md) showed the parts. This chapter shows them moving: eighteen flows,
 each following one thing that really happens in mirafleet, from the command someone types to the
 rows that end up in the database. Every flow starts with a one-sentence summary, then a diagram and
 a numbered explanation that names the functions involved, so you can open the code and follow
@@ -1186,6 +1189,407 @@ sequenceDiagram
 
 ---
 
+## Workspace flows (M3)
+
+Flows 12 to 18 are the workspace-mode story (new in M3). Here the cast is `dev` (a workspace fleet, not
+guarded), its runner `build-1` (started with `-workspace /etc/mirafleet/workspace.yaml`,
+`concurrent: 2`, containerd executor), and alice and bob. Dana created the fleet earlier:
+
+```
+mirafleet central fleet create dev -mode workspace \
+  -image docker.io/library/golang@sha256:... -images 'docker.io/library/golang@sha256:*' \
+  -network none -cpus 2 -memory 4GiB -idle-ttl 24h -max-ttl 168h
+```
+
+Four terms recur. A **slot** is one place for a workspace on a runner (`concurrent: 2` means two
+slots). A **session** is a name the client chooses (for example Claude Code's session id); there
+is at most one live workspace per (operator, fleet, session), which is what makes it **sticky**.
+A **workspace id** (`ws_id`) is 32 hex characters that central makes (128 random bits); the
+runner uses it as the container name `mf-<ws_id>`. A **request id** ties the `start` audit row
+of a call to its outcome row.
+
+---
+
+## 12. Open a workspace
+
+**In one sentence:** alice's agent asks for a workspace on `dev`; central checks the rules,
+picks the runner with the most free slots, writes a `start` audit row and a reserved
+(`opening`) database row, asks the runner to create the container, and then marks the row
+`open`.
+
+![workspace.open: placement on a runner with a free slot, then create](diagrams/workspace-open.svg)
+
+*Look at the order: the slot is reserved in the database before the runner is asked to build
+anything, so two simultaneous opens can never over-fill a runner.*
+
+1. alice's agent calls `workspace.open` (fleet `dev`, session `s1`) through `mirafleet mcp`.
+2. The `api@` frame reaches `service.OpenWorkspace`: active operator, workspace-mode fleet, image on
+   the allowlist, `confirm` on a guarded fleet, valid session id.
+3. Sticky reuse: a live workspace for (alice, `dev`, `s1`) is returned with `reused:true`. If its
+   runner is offline the answer is `unavailable`; a fresh workspace is never created elsewhere.
+4. Placement: active, online runners whose executor, trusted labels and image patterns fit, with
+   free slots (heartbeat slots minus live rows). The most free slots wins, random tie-break.
+5. `ReserveWorkspace` recounts the slots in one transaction and inserts the `opening` row with the
+   start audit row.
+6. A full runner (`ErrFull`) or a busy one moves to the next candidate (3 tries at most). Otherwise
+   central sends op `create` on `workspace@mirafleet`.
+7. The runner re-validates the spec against its own `workspace.yaml`, builds the container spec
+   from its fixed template, pulls the image if needed and creates the container.
+8. The row becomes `open`, the outcome audit row is written and the reply says `reused:false`.
+
+The same flow as a sequence diagram, with the function names:
+
+```mermaid
+sequenceDiagram
+  participant Op as alice (mcp api)
+  participant Svc as service.OpenWorkspace
+  participant DB as sqlite.DB
+  participant Reg as registry.Registry
+  participant Run as build-1 (serveWorkspace)
+  participant Ex as ctrd.Executor
+
+  Op->>Svc: workspace.open {fleet dev, session s1}
+  Svc->>DB: GetFleet, GetFleetWorkspace, live rows of alice
+  Svc->>Svc: sticky? per-operator cap? image allowed? candidates()
+  Svc->>DB: ReserveWorkspace (row opening + start audit row), one transaction
+  Svc->>Reg: Workspace(create, spec)
+  Reg->>Run: workspace@mirafleet channel, op create
+  Run->>Run: re-validate against workspace.yaml, take a slot
+  Run->>Ex: Create(spec)
+  Ex-->>Run: container running
+  Run-->>Reg: WorkspaceResult ok
+  Svc->>DB: SetWorkspaceState opening to open (+ outcome audit row)
+  Svc-->>Op: workspace {id, state open}, reused false
+```
+
+1. **Gates.** `handleWorkspaceOpen` (`internal/central/workspace_handlers.go`) decodes the
+   parameters strictly. `Service.OpenWorkspace` (`internal/service/workspace.go`) checks that the
+   caller is an active operator, the fleet name and the session (`^[A-Za-z0-9._:-]{1,128}$`) are
+   valid, the labels are well-formed, and the fleet is in workspace mode (otherwise `conflict`).
+   On a guarded fleet `confirm` must equal the fleet name, or a `denied` row is written and the
+   call fails.
+2. **Image.** An empty `image` means the fleet's `default_image`. The image must match the
+   fleet's allowlist (`WorkspaceConfig.ImageAllowed`: exact references, `repo:*` or
+   `repo@sha256:*`), or the call fails with `bad_request`. Without this check an agent could ask for
+   any image from the internet, including one built to attack the host.
+3. **Sticky session.** Central lists alice's live workspaces. If one with the same fleet and
+   session is `open`, `reuse` returns it with `reused: true` and writes a `reused` audit row.
+   If its runner is offline the answer is `unavailable`: central **never** silently makes a fresh
+   workspace, because alice's files are on that runner. If the existing row is still `opening`,
+   the answer is `conflict` ("workspace is still opening").
+4. **Per-operator cap.** An operator may hold at most 8 live workspaces (the service setting
+   `DefaultMaxWorkspacesPerOperator`), or the call fails with `conflict`. Without it, one runaway
+   agent could take every slot of a fleet.
+5. **Placement.** `Service.candidates` (`workspace_sched.go`) keeps runners that are:
+   `active` and online; running the executor the fleet asks for; advertising a secure runtime if
+   the fleet is guarded; carrying every requested label among their *trusted* labels (the ones
+   that came from the join token, not the self-reported heartbeat); and advertising an image
+   pattern that matches. Free slots are the heartbeat's `slots` minus live rows in the database
+   (`opening`, `open` and `closing` all count). The runner with the most free slots wins, with a
+   random tie-break from `crypto/rand`.
+6. **Reserve.** `Store.ReserveWorkspace` counts and inserts in **one** transaction, together with
+   the `start` audit row (fail closed: no row, no workspace). If the runner filled up in the
+   meantime it returns `ErrFull` and central tries the next candidate (at most 3).
+7. **Create.** `registry.Workspace` opens a `workspace@mirafleet` channel on the runner's own
+   connection and sends a `create` request (image, pull policy, limits, network mode, egress
+   rules, labels). The 5-minute open timeout covers a slow image pull.
+8. **The runner re-checks everything.** `wsState.prepare` validates the request against
+   `workspace.yaml`: the image against the runner's own allowlist, limits against its caps, the
+   network mode and egress rules against what it permits. If the runner is out of slots it rejects
+   the channel *before* accepting it (`ResourceShortage`), which central reports as busy and
+   answers by trying the next candidate. Only then does `ctrd.Executor.Create` build the OCI spec
+   and start the container (flow 13 shows what that spec contains; chapter 5 explains why).
+9. **Outcome.** On success the row moves `opening` to `open` together with the outcome audit
+   row. On any failure it moves to `failed` with a reason, and a busy runner makes central try the
+   next one. Image or pull failures are not retried elsewhere.
+
+---
+
+## 13. `workspace.exec`, end to end
+
+**In one sentence:** alice's agent runs `go test ./...` inside her workspace; the command runs in the
+container, the result comes back as one buffered answer, and two audit rows record exactly what
+ran.
+
+![workspace.exec through every layer and back, with both audit rows](diagrams/workspace-exec.svg)
+
+*Look at the two rows again: `start` is written before the runner is asked, the outcome after,
+and both carry the same `request_id` and the workspace id.*
+
+1. alice's agent calls `workspace.exec` (argv `go test ./...`) through `mirafleet mcp`.
+2. One `api@` frame arrives; the method table routes it to `service.ExecWorkspace`.
+3. Operator, ownership (`not_found` for others), state `open`, argv, cwd, env (denylist), confirm and
+   timeout are checked; then the `start` audit row is written FIRST. No row, no exec.
+4. `registry.Workspace` opens a `workspace@mirafleet` channel on the runner's own SSH connection; the
+   op is JSON in the channel-open data, any stdin follows as raw bytes.
+5. The runner re-validates argv, cwd, env (its `env_allow` plus the denylist) and the timeout. Central
+   is not trusted.
+6. The command runs inside the container as an unprivileged user, with no shell. Output is captured
+   head and tail, trimmed to the budget; timeout or cancel sends SIGKILL.
+7. The runner writes one result frame: exit code, stdout, stderr, `truncated`, `timed_out`.
+8. Central writes the `outcome` audit row (same `request_id`) and replies to alice.
+
+The same flow as a sequence diagram:
+
+```mermaid
+sequenceDiagram
+  participant Op as alice (mcp api)
+  participant Svc as service.ExecWorkspace
+  participant DB as sqlite.DB
+  participant Run as build-1 (runWS)
+  participant Ex as ctrd.Executor
+  participant C as container
+
+  Op->>Svc: workspace.exec {workspace, argv [go test ./...]}
+  Svc->>DB: owner check (not_found otherwise), state open
+  Svc->>DB: audit row start (argv, cwd, env NAMES), fail closed
+  Svc->>Run: workspace@mirafleet, op exec
+  Run->>Run: re-validate, take an exec slot (max 4 per workspace)
+  Run->>Ex: Exec(argv, cwd, env, timeout)
+  Ex->>C: task.Exec (no caps, uid 1000)
+  C-->>Ex: exit code, stdout, stderr
+  Ex-->>Run: result (head+tail capture)
+  Run-->>Svc: WorkspaceResult exec
+  Svc->>DB: audit row outcome (same request_id)
+  Svc-->>Op: exit_code, stdout, stderr, truncated, timed_out
+```
+
+1. **Find the workspace and its owner.** `Service.wsTarget` loads the row by `ws_id`. It must
+   exist, be owned by the caller, and be `open`. For anyone else (bob, for instance) the answer
+   is the same `not_found` as for an id that does not exist, so bob cannot even learn that the
+   workspace is there.
+2. **Validate the input.** `argv` is an array, at most 256 elements and 32 KiB, no NUL bytes.
+   There is **no shell string** on the wire, so the audit log shows exactly what ran. `cwd` is
+   cleaned with `workspace.CleanPath` (a lexical check: `..` and absolute paths outside
+   `/workspace` are refused). `env` names must pass `workspace.FilterEnv`, which applies a hard
+   denylist (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, `ANTHROPIC_*`, `AWS_*`, `*PROXY*`, ...) that
+   beats any allowlist. A refused name is reported by name, never by value.
+3. **Guarded fleets** need `confirm` equal to the fleet name here too.
+4. **Timeout.** The effective timeout comes from the fleet (`exec_default_s`, default 120 s;
+   `exec_max_s`, default 30 minutes, hard ceiling 24 h) and is further capped by the runner's own
+   `limits.exec_max`. A client value above the maximum is refused.
+5. **Audit `start`, fail closed.** `startRow` writes the row *before* dispatch. If it cannot be
+   written, the call fails with `unavailable` and nothing runs. The row holds the argv as JSON
+   (clipped to 4 KiB), the cwd and the env **names only, never values**, plus the timeout.
+6. **Touch.** `last_used_at` is updated at dispatch and again at completion, and a workspace with
+   an op in flight is never reaped as idle (flow 16).
+7. **Dispatch.** `registry.Workspace` sends the `exec` request on a new `workspace@mirafleet` channel.
+   If the runner is `disabled` or `pending`, the registry refuses it (a `disabled` runner still allows
+   `read`, `close` and `destroy`, so people can rescue files).
+8. **The runner runs it.** `runner.runExec` re-validates, takes one of at most 4 exec slots of that
+   workspace, writes its own local `start` line, and calls `Executor.Exec`. In containerd that is
+   `task.Exec` with an OCI process: the given argv, cwd under `/workspace`, filtered environment, uid
+   1000, `NoNewPrivileges`, **no capabilities**. If the fleet uses `egress`, the executor adds
+   `HTTP_PROXY` and `HTTPS_PROXY` pointing at the in-container proxy. A deadline or a cancel
+   sends SIGKILL to the exec.
+9. **Buffered output.** The runner captures the head and the tail of stdout and stderr and trims
+   them so the JSON-encoded result fits 1 MiB (`truncated: true` tells the caller). Output is made
+   valid UTF-8. There is no streaming in M3: one request, one response.
+10. **Audit `outcome`.** Central writes the second row with the same `request_id`, the exit code,
+    duration and an outcome of `ok`, `error`, `cancelled` or `timeout`, and returns
+    `{exit_code, stdout, stderr, truncated, timed_out, duration_ms, request_id}`.
+11. **Cancel.** If alice's channel closes (or central shuts down, or her operator key is
+    revoked), the context is cancelled, the channel to the runner closes, and the executor kills the
+    exec. One caveat: a daemonised child that double-forks can outlive an exec timeout, until the
+    workspace is destroyed. The pids and memory limits bound the damage.
+
+---
+
+## 14. Reading and writing files (body frames)
+
+**In one sentence:** a file travels in its own length-prefixed *body frame* after the JSON
+request, and central reads that frame only after the caller has been authorised.
+
+Why not put the bytes in the JSON as base64? Because every method's request would then need a
+bigger size limit (or files would travel in tiny 48 KiB chunks). Instead a request frame stays at
+64 KiB at most, and the file payload follows in **one more frame of at most 1 MiB**
+(`api.MaxFileChunk`). Bigger files go in several calls with an `offset`.
+
+```mermaid
+sequenceDiagram
+  participant Op as alice (mcp api -in FILE)
+  participant Srv as central api@ channel
+  participant Svc as service.WriteWorkspaceFile
+  participant Run as build-1
+  participant FS as workspace dir (os.Root)
+
+  Op->>Srv: request frame {workspace, path, length, sha256}
+  Op->>Srv: body frame (length bytes)
+  Note over Srv: body is NOT read yet
+  Srv->>Svc: WriteWorkspaceFile(lazy body)
+  Svc->>Svc: policy, owner, state, confirm, path, mode, length, sha256 syntax
+  Svc->>Srv: now read the body (30 s timer)
+  Svc->>Svc: SHA-256 of body must equal sha256 (constant time)
+  Svc->>Svc: audit start row (path, bytes, sha256)
+  Svc->>Run: workspace@ channel: request, then length raw bytes, CloseWrite
+  Run->>FS: write (temp file and rename when truncating), confined by os.Root
+  Run-->>Svc: result {size}
+  Svc-->>Op: {size}
+```
+
+**Write (`workspace.write_file`):**
+
+1. The client sends the request frame (`workspace`, `path`, `offset?`, `truncate?`, `mode?`,
+   `length`, `sha256`) and right away the body frame. SSH's 2 MiB channel window means that
+   second write never blocks.
+2. `handleWorkspaceWriteFile` hands the service a *lazy* reader. `Service.WriteWorkspaceFile`
+   runs every cheap check first: policy, ownership (`not_found` for others), workspace `open`,
+   `confirm`, path cleaning, `mode` at most `0777`, `length` between 0 and 1 MiB, `sha256` is 64
+   lowercase hex characters.
+3. **Only now** does the first `Read` pull the body from the wire, armed with a 30 s timer
+   (`api.BodyTimeout`) that closes the channel. This is the point of the design: an unauthorised
+   caller (or a revoked key, or someone else's workspace id) can never make central buffer up to
+   1 MiB. The cost of an attack is a refused small frame.
+4. Central computes the SHA-256 of the body and compares it with the announced one in constant
+   time. A mismatch or a short body is audited as one `error` row and nothing is sent to the runner.
+5. A `start` row (path, byte count, sha256, **never the content**) is written, then central sends
+   the runner the request followed by exactly `length` raw bytes and `CloseWrite`. The runner
+   refuses a mismatch.
+6. The executor writes through `os.Root` opened on the workspace directory, so a symlink planted
+   by the agent cannot lead outside it. With `truncate` it writes a temp file and renames it. New
+   files are chowned to the container's mapped uid. A **soft** disk quota is checked before the write
+   (over quota refuses; [section 5.9](05-security.md#59-the-workspace-container-boundary) explains
+   why it is only "soft").
+
+**Read (`workspace.read_file`):**
+
+1. The request has `workspace`, `path`, `offset?` and `limit?`. There is no request body, so
+   nothing special is deferred.
+2. After the same gates, central writes a `start` row (path, offset, limit) and asks the runner.
+3. The runner opens the file through `os.Root` with `O_NOFOLLOW` and `O_NONBLOCK`, then checks with
+   `fstat` that it is a regular file (a FIFO or a device would hang the runner), and replies with
+   a result frame followed by the raw bytes.
+4. Central **buffers** the bytes (at most 1 MiB), checks that their count matches the runner's
+   `length`, and only then sends alice the JSON result (`size`, `offset`, `length`, `mode`, `eof`)
+   followed by one body frame. A runner that lies about the length therefore sends nothing at all.
+5. The outcome row records the path and the byte count.
+
+`mirafleet mcp api workspace.write_file '{...}' -in main.go` fills `length` and `sha256` for you and
+sets the body; `-out report.txt` on `workspace.read_file` saves the body (atomically, mode `0600`).
+
+---
+
+## 15. Close a workspace
+
+**In one sentence:** the owner closes the workspace; the row goes `open`, `closing`, `closed`
+and the container and directory are deleted.
+
+```mermaid
+sequenceDiagram
+  participant Op as alice
+  participant Svc as service.CloseWorkspace
+  participant DB as sqlite.DB
+  participant Run as build-1
+  participant Ex as ctrd.Executor
+
+  Op->>Svc: workspace.close {workspace}
+  Svc->>DB: SetWorkspaceState open to closing (+ start audit row)
+  Svc->>Run: workspace@ channel, op destroy
+  Run->>Ex: Destroy(id)
+  Ex-->>Run: task killed, container and snapshot deleted, directory removed
+  Run-->>Svc: ok (or not_found: already gone)
+  Svc->>DB: SetWorkspaceState closing to closed (+ outcome audit row)
+  Svc-->>Op: workspace {state closed}
+```
+
+1. Only the owner may close; anyone else gets `not_found`. Closing something already terminal does
+   nothing and returns it. Closing one that is still `opening` is a `conflict`.
+2. The row moves to `closing` first. A `closing` row **still holds its slot**, so the runner
+   cannot be over-filled while the container is half deleted.
+3. `Executor.Destroy` kills every process in the container (`KillAll`), waits, deletes the
+   task and the container with its snapshot, closes the egress listener, then removes the directory
+   with `os.RemoveAll` (which does not follow symlinks). It is idempotent: a second destroy of an
+   absent container is not an error.
+4. If the runner is offline or the destroy fails, the row **stays `closing`** and the response says
+   so. The reaper (flow 16) or reconcile (flow 17) finishes the job later. The user never has
+   to retry.
+
+---
+
+## 16. The TTL reaper
+
+**In one sentence:** every 60 seconds a goroutine in central closes workspaces that nobody uses
+any more, so forgotten workspaces cannot pile up and use disk forever.
+
+1. `Service.RunReaper` is started with central (`internal/central/central.go`), runs in the server's
+   wait group, and is stopped in `Close` **before** the store closes. It uses the injected clock,
+   which is how the tests move time forward.
+2. Each sweep (`ReapOnce`) lists `open` rows and moves one to `closing` when any of these holds:
+   its operator is revoked; its runner is revoked; `expires_at` has passed (the fleet's `max_ttl`,
+   default 7 days); or it has been idle for more than the fleet's `idle_ttl` (default 24 h).
+3. **Idle is counted from the later of `last_used_at` and central's start.** If central was down for
+   two days, no workspace looks idle at the first sweep after restart, although nobody could reach
+   it. A workspace with an operation in flight is never reaped as idle.
+4. For each online runner, in a bounded number of goroutines (so one hung runner cannot stall the
+   rest), it destroys that runner's `closing` rows and moves them to `closed`.
+5. Rows on an **offline** runner stay `closing` and keep their slot until reconcile (flow 17). Rows on
+   a runner that is revoked or has vanished move to `lost`: that runner will never return to be told
+   to delete them, and its host keeps the containers until `mirafleet runner workspace prune`.
+6. Every state change writes a `system` audit row (`workspace.reap`, `workspace.destroy`,
+   `workspace.lost`) with the reason. Nobody has to be logged in.
+7. A runner-local backstop exists too: `max_age` in `workspace.yaml` lets the runner destroy anything
+   older, in case central is gone for good. Otherwise a runner never deletes on its own.
+
+---
+
+## 17. Reconcile after a runner or central restart
+
+**In one sentence:** the database and the runner can disagree after a crash, so each time a
+runner connects central compares the two lists and fixes the difference.
+
+```mermaid
+flowchart TD
+  A["runner (re)connects,<br/>first heartbeat"] --> B["central: read live rows<br/>for this runner"]
+  B --> C["central: ask runner<br/>for List()"]
+  C --> D{"container vs row"}
+  D -->|"container, no row or row closed"| E["destroy it (orphan)"]
+  D -->|"container, row closing"| F["destroy, row closed"]
+  D -->|"container, row opening older than<br/>open timeout + 30 s"| G["destroy, row failed"]
+  D -->|"no container, row open"| H["row lost, slot freed"]
+  D -->|"no container, row closing"| I["row closed"]
+```
+
+1. **Trigger.** On a runner's first heartbeat `serveRunner` starts `Service.ReconcileRunner` in a
+   background goroutine (never under the registry lock). A second trigger for the same runner while
+   one runs is ignored.
+2. **Rows first, list second.** Central reads the rows, then asks the runner for its list. A
+   workspace that opens between the two is not in the rows, so it cannot be mistaken for a missing
+   container.
+3. **Decisions** are in the flowchart. Each one writes a `system` audit row (`workspace.orphan`,
+   `workspace.destroy`, `workspace.recover`, `workspace.lost`).
+4. **When the runner restarts:** its containers keep running (they belong to containerd), so
+   `open` rows survive and `exec` works again. The runner re-attaches the egress proxy listener to
+   each container's network namespace, but only if `egress` is still allowed in `workspace.yaml`.
+   Its slot table is re-seeded from the executor's list.
+5. **When central restarts:** `RecoverWorkspaces` runs at startup. A row still `opening` means central
+   crashed in the middle of a create, so it becomes `failed`. Every other row simply persists in
+   SQLite, and the container is still there. The first reconcile with each returning runner
+   destroys any container that the failed row left behind.
+
+---
+
+## 18. Revoke cascades
+
+**In one sentence:** revoking a runner or an operator also closes the workspaces they hold, in
+their own transaction with their own audit row, with the reaper as a backstop.
+
+1. **Runner revoke** (flow 8): after the commit that sets `revoked`, `Service.closeWorkspacesOf`
+   moves that runner's `opening` and `open` workspaces to `closing` with the reason "runner
+   revoked", in one transaction with a `system` audit row (`workspace.close_all`). Nothing can be
+   destroyed on that host: the runner never reconnects. The next reaper sweep moves the rows to
+   `lost`. The containers stay on the host until an admin there runs
+   `mirafleet runner workspace prune`.
+2. **Operator revoke** (flow 9): the connection kick cancels in-flight execs. Then the same cascade moves
+   the operator's workspaces to `closing`, and the next sweep destroys them on their runners.
+3. **If the cascade write fails**, it is only logged: the reaper checks for revoked owners and
+   runners on every sweep, so nothing is missed, only delayed by up to 60 seconds.
+4. **Disabled runner.** `disable` is gentler: no new `open`, `exec` or `write_file`, but `read_file`,
+   `close` and destroy still work, so people can fetch their files first.
+5. **Admin kill.** `mirafleet central workspace kill ID` (`workspace.kill`) moves any workspace to
+   `closing` and destroys it. `workspace list` shows every workspace with its operator.
+
+---
+
 ## Lifecycle at a glance
 
 | Thing | States | Changed by | Effect on live connections |
@@ -1195,6 +1599,7 @@ sequenceDiagram
 | Operator | `active`, `revoked` | `mcp login` with a valid code; `operator revoke` | revoke: connections closed, in-flight actions cancelled |
 | Join token | usable until used up, expired or revoked | `token create`, `token revoke`, enroll | n/a |
 | Registration code | valid for its 60 s step | time; `rotate-secret` invalidates all | n/a |
+| Workspace | `opening`, `open`, `closing`, `closed`, `failed`, `lost` (see [chapter 6](06-data-model.md#the-workspace-state-machine)) | `workspace.open` / `close`, the reaper, reconcile, revoke cascades, `workspace.kill` | runner revoke: its workspaces go `closing` then `lost`; operator revoke: `closing` then `closed`; runner disable: no new open, exec or write |
 
 ## Failure: what you see and what the system does
 
@@ -1213,6 +1618,24 @@ sequenceDiagram
 | Runner revoked mid-action | `unavailable`: "runner revoked" | Process killed, `cancelled` row, runner refused when it returns (flow 8). |
 | Operator revoked mid-action | The connection closes | Request cancelled, runner kills the process, `cancelled` row (flow 9). |
 | Central crashes after the start row | A start row with no outcome row | Investigators read it as "something began and we never learned how it ended" (flow 7). |
+| `workspace.open` and every slot is taken | `unavailable`: "no runner can take this workspace right now" | A `failed` row at most; no container is made (flow 12). |
+| `workspace.open` for a session whose runner is offline | `unavailable`: "the runner holding this session's workspace is offline" | No new workspace is created, because the files are on that runner (flow 12). |
+| `workspace.open` twice quickly for one session | The second gets `conflict`: "workspace is still opening" | The first create continues (flow 12). |
+| Image not in the fleet allowlist | `bad_request`: "image is not allowed by the fleet" | Nothing reserved or created (flow 12). |
+| Operator already holds 8 workspaces | `conflict`: "workspace limit reached (8)" | A `denied` audit row (flow 12). |
+| bob uses alice's workspace id | `not_found`, identical to an unknown id | Nothing leaks; no runner is contacted (flow 13). |
+| Forbidden env name (for example `ANTHROPIC_API_KEY`) | `bad_request` naming the variable, never its value | A refused audit row; nothing runs (flow 13). |
+| `exec` runs past its timeout | The result has `timed_out: true` and outcome `timeout` | The runner kills the exec; daemonised children survive until close (flow 13). |
+| Output bigger than 1 MiB | `truncated: true`, head and tail kept | Nothing fails; the middle is dropped (flow 13). |
+| `write_file` with a wrong `sha256`, or fewer bytes than `length` | `bad_request` | One `error` audit row; nothing reaches the runner (flow 14). |
+| Body frame never arrives | `timeout` after 30 s | The channel is closed; central buffered nothing before authorisation (flow 14). |
+| Workspace over its disk quota | `bad_request`: "refused by runner: ..." (the runner's quota error) | Reads, exec and close still work (flow 14). |
+| Runner offline during `workspace.close` | The call returns the workspace in state `closing` | The reaper or reconcile finishes it (flows 15 to 17). |
+| Workspace idle for `idle_ttl` | Later calls get `conflict`: "workspace is closed" | The reaper destroyed it and wrote a `system` row (flow 16). |
+| Runner restarts | Existing workspaces keep working after it reconnects | Reconcile compares lists; the egress proxy is re-attached (flow 17). |
+| Central restarts during a create | The row is `failed` after restart | `RecoverWorkspaces`; reconcile destroys the leftover container (flow 17). |
+| Container vanished (host reboot, manual delete) | The row becomes `lost` | Reconcile frees the slot and writes `workspace.lost` (flow 17). |
+| Runner or operator revoked | Their workspaces are closed | Cascade, then reaper as backstop (flow 18). |
 
 ## Check your understanding
 
@@ -1226,6 +1649,14 @@ sequenceDiagram
    about when the admin revokes `db-1` instead?
 5. After `central operator revoke bob`, Bob's laptop is still connected for a fraction of a second.
    Which two mechanisms make sure it does not stay connected?
+6. alice sends `workspace.open` for session `s1` twice. What does she get the second time, and
+   what if `build-1` went offline in between?
+7. Why does central read the body frame of `write_file` only after the policy, ownership and
+   confirm checks? What would an attacker gain if it read the body first?
+8. A workspace has been closed by the reaper while `build-1` was offline for a day. What state is
+   its row in, and what finally deletes the container?
+9. Why does `workspace.exec` write a `start` audit row before dispatch, and what does it record
+   about the environment?
 
 <details>
 <summary>Answers</summary>
@@ -1251,6 +1682,19 @@ sequenceDiagram
    authenticated just before the commit and was added to `OperatorConns` after the kick,
    `serveOperator` re-reads the operator right after `add` and closes the connection if it is not
    active. New connections are refused by `KeyAuth` because the stored status is `revoked`.
+6. The second time she gets the same workspace with `reused: true`. If `build-1` is offline, she
+   gets `unavailable`: central never creates a fresh workspace elsewhere, because her files are on
+   `build-1`.
+7. Reading the body costs memory (up to 1 MiB per call) and time. If central read it first, anyone
+   with a valid connection could make it buffer megabytes for requests that will be refused (wrong
+   owner, revoked key, missing confirm). Reading it last bounds the attacker's cost to a small
+   refused frame.
+8. The row stays `closing` (it still holds its slot), because central cannot reach the runner.
+   When `build-1` returns, reconcile finds the container, destroys it and sets the row `closed`
+   (or the next reaper sweep does, once the runner is online).
+9. Fail closed: if the audit database is down, no command should run unrecorded. The row stores
+   the argv, the cwd and the env variable **names**, never the values, so a secret passed in
+   an environment variable does not land in the audit log.
 
 </details>
 

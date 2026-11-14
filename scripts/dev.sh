@@ -97,11 +97,14 @@ integration)
 	# --privileged is for dev/CI only: it applies to this --rm container (inside the container
 	# runtime's VM), never touches the host, and all state (containerd root, sockets) lives inside
 	# the container (tmpfs) and vanishes with it. Tests use no network; images are built at test time.
+	# NOTE: --privileged only confines itself to a VM-backed runtime (colima, Docker Desktop). On a
+	# bare Linux host with a native docker daemon it grants the container full host privileges, so
+	# do not run this target there (use a throwaway VM).
 	# Test binaries are mounted read-only. Exit status is the tests' exit status.
 	# Add packages that carry integration tests to ITEST_PKGS (space separated).
 	# ./cmd/mirafleet carries the built-binary end-to-end test (TestIntegration*): the mirafleet
 	# binary itself is built below into /out/mirafleet and handed to it as MIRAFLEET_TEST_BIN.
-	ITEST_PKGS="${MIRAFLEET_ITEST_PKGS:-./internal/workspace/ctrd ./cmd/mirafleet}"
+	ITEST_PKGS="${MIRAFLEET_ITEST_PKGS:-./internal/workspace/ctrd ./cmd/mirafleet ./internal/central}"
 	# docker:28-dind supplies runc 1.3.3 and the userland (its bundled containerd 1.7.28 is NOT
 	# used: the harness runs containerd 2.x built from go.mod, with its matching shim, from
 	# /itest). Pinned by tag and multi-arch index digest.
@@ -145,10 +148,17 @@ integration)
 		# cgroup v2 nesting, as in the dind entrypoint.
 		if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
 			mkdir -p /sys/fs/cgroup/init
+			# Bounded: the loop retries while processes are still moving into init, but gives up
+			# after 50 tries instead of spinning forever on a cgroup tree that cannot be nested.
+			n=0
 			while ! {
 				xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs || :
 				sed -e "s/ / +/g" -e "s/^/+/" < /sys/fs/cgroup/cgroup.controllers > /sys/fs/cgroup/cgroup.subtree_control
-			}; do true; done
+			}; do
+				n=$((n+1))
+				[ $n -le 50 ] || { echo "cgroup v2 nesting did not settle after 50 tries" >&2; exit 1; }
+				sleep 0.1
+			done
 		fi
 		mount --make-rshared /
 		mkdir -p /etc/containerd
@@ -176,7 +186,10 @@ CFG
 			# cmd_mirafleet.test also holds the (non-integration) unit tests, which the normal
 			# gate already runs; here only the built-binary end-to-end tests.
 			run=""
-			case "$b" in */cmd_mirafleet.test) run="-test.run ^TestIntegration" ;; esac
+			case "$b" in
+			*/cmd_mirafleet.test) run="-test.run ^TestIntegration" ;;
+			*/internal_central.test) run="-test.run ^TestM3DoneIntegration" ;; # the rest runs in the normal gate
+			esac
 			"$b" -test.v -test.timeout 10m $run || rc=$?
 		done
 		[ $rc -eq 0 ] || { echo "--- containerd log tail" >&2; tail -n 30 /tmp/containerd.log >&2; }

@@ -44,6 +44,10 @@ const (
 	MaxMessageBytes          = 4 << 10
 	maxFileMode              = 0o777 // permission bits only: no setuid/setgid/sticky
 
+	// MaxWorkspaceResultBytes is the largest encoded WorkspaceResult frame: the API result cap
+	// (1 MiB) plus 64 KiB of framing. Runner and central both use it (not the 8 MiB exec cap).
+	MaxWorkspaceResultBytes = MaxBodyBytes + 64<<10
+
 	// MaxHeartbeatImages and MaxHeartbeatImageBytes bound Heartbeat.Images.
 	MaxHeartbeatImages     = 32
 	MaxHeartbeatImageBytes = 256
@@ -390,10 +394,10 @@ func (r *WorkspaceResult) Validate() error {
 }
 
 // WriteResult writes res as one frame: a 4-byte big-endian length, then the JSON. The encoded size
-// must not exceed max (MaxResultBytes if max <= 0).
+// must not exceed max (MaxWorkspaceResultBytes if max <= 0).
 func WriteResult(w io.Writer, res *WorkspaceResult, max int) error {
 	if max <= 0 {
-		max = MaxResultBytes
+		max = MaxWorkspaceResultBytes
 	}
 	b, err := json.Marshal(res)
 	if err != nil {
@@ -409,11 +413,11 @@ func WriteResult(w io.Writer, res *WorkspaceResult, max int) error {
 	return err
 }
 
-// ReadResult reads one result frame. The length is checked against max (MaxResultBytes if
-// max <= 0) before anything is allocated; decoding is strict.
+// ReadResult reads one result frame. The length is checked against max (MaxWorkspaceResultBytes
+// if max <= 0) before anything is allocated; decoding is strict.
 func ReadResult(r io.Reader, max int) (*WorkspaceResult, error) {
 	if max <= 0 {
-		max = MaxResultBytes
+		max = MaxWorkspaceResultBytes
 	}
 	var hdr [4]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {

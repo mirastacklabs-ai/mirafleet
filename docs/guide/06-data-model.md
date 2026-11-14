@@ -11,12 +11,15 @@
   `synchronous=FULL`).
 - What the `Store` interface promises about atomicity and errors (summary here, every method in
   the appendix at the end).
+- The workspace tables `fleet_workspace` and `workspaces`, the workspace state machine, migration
+  0002, and the new `audit.workspace` column (section 6.15).
 
 Each new database word is explained where it first appears, and the main ones are also in the
 [glossary](glossary.md). Quick versions: a **transaction** is a group of changes that all
 happen or none do; a **foreign key** is a column that must point at a row in another table; a
-**tombstone** (here) is an in-memory "this id is dead" marker. M1 and M2 are done (13 Nov 2026);
-this chapter describes the M2 schema. The code lives in `internal/store` (the interface, pure Go with no SQL)
+**tombstone** (here) is an in-memory "this id is dead" marker. M1, M2 and M3 are done (13 Nov
+2026); sections 6.1 to 6.14 describe the M2 schema and [section 6.15](#615-the-workspace-tables-migration-0002)
+adds what M3 brought (two tables, one audit column, one state machine). The code lives in `internal/store` (the interface, pure Go with no SQL)
 and `internal/store/sqlite` (the implementation). Central is the only component with a
 database; runners keep a small local JSON-lines audit file and a `runner.yaml`, nothing more.
 
@@ -117,7 +120,10 @@ erDiagram
 ```
 
 *Look at: `operators`, `settings` and `audit` have no lines. They are not linked by foreign keys.
-`audit` is deliberately disconnected so history outlives what it describes.*
+`audit` is deliberately disconnected so history outlives what it describes.* (This picture is the
+M2 schema. The two workspace tables, `fleet_workspace` and `workspaces`, and the extra `audit`
+column `workspace` come from migration 0002 and have their own diagram in
+[6.15](#615-the-workspace-tables-migration-0002).)
 
 What the three words in brackets mean. They say what the database does when someone deletes the
 row a foreign key points at (the "parent"):
@@ -156,11 +162,12 @@ A fleet is a named group of runners and the unit of isolation.
 |---|---|---|
 | `id` | `INTEGER` PK AUTOINCREMENT | Internal id; never shown to users. |
 | `name` | `TEXT NOT NULL UNIQUE` | `dev`, `prod`. Regex `^[a-z0-9][a-z0-9._-]{0,62}$` (`store.FleetNameRE`), checked in Go before the insert. |
-| `mode` | `TEXT NOT NULL`, `CHECK IN ('actions','workspace')` | `actions` runs only named actions (the only mode `action.run` accepts today). `workspace` is planned for [M3](../M3.md); central refuses `action.run` on it with `conflict: fleet is not in actions mode`. |
+| `mode` | `TEXT NOT NULL`, `CHECK IN ('actions','workspace')` | `actions` runs only named actions (the only mode `action.run` accepts). `workspace` (built in [M3](../M3.md)) serves the `workspace.*` methods and has a `fleet_workspace` row ([6.15](#615-the-workspace-tables-migration-0002)); central refuses `action.run` on it with `conflict: fleet is not in actions mode`, and `workspace.*` on an actions fleet with `conflict: fleet is not in workspace mode`. |
 | `confirm` | `INTEGER NOT NULL DEFAULT 0`, `CHECK IN (0,1)` | SQLite has no boolean type; 0/1. `1` = **guarded fleet**: `action.run` must carry `confirm == fleet name` ([chapter 5](05-security.md#537-guarded-fleets-confirm-must-equal-the-fleet-name)). |
 | `created_at` | `INTEGER NOT NULL` | Unix ms. |
 
-Fleets are never updated or deleted by the current code; there is no `fleet.delete` method.
+A `fleets` row is never updated or deleted by the current code (only a workspace fleet's separate
+`fleet_workspace` row is replaced, by `fleet.workspace_set`); there is no `fleet.delete` method.
 (`join_tokens.fleet_id` is `ON DELETE CASCADE`, so deleting a fleet by hand would also delete its
 tokens; `runners.fleet_id` is `ON DELETE RESTRICT`, so a fleet that still has runners, even revoked
 ones, cannot be deleted.)
@@ -326,6 +333,11 @@ Re-registering with the same key and name returns success (and is still audited 
 `already registered`). Re-registering a revoked key is `ErrConflict`, and so is using the name of
 a different active operator, or a key that belongs to a runner.
 
+### Workspace
+
+Workspaces have a third state machine, with six states and three terminal ones. It is drawn and
+explained in [6.15](#the-workspace-state-machine), next to the tables it belongs to.
+
 ### Join token (derived state)
 
 ```mermaid
@@ -398,7 +410,7 @@ exclusive lock that the busy handler does not always wait for. `pingRetry` retri
 ## 6.10 Migrations
 
 Schema changes are **embedded SQL files** `internal/store/sqlite/migrations/NNNN_name.sql`
-(`0001_init.sql` today), applied by `migrate` in `migrate.go`.
+(`0001_init.sql` and `0002_workspaces.sql` today), applied by `migrate` in `migrate.go`.
 
 - **Forward-only.** There are no "down" migrations. Rolling back means restoring a backup.
 - **Versioned with `PRAGMA user_version`**, an integer stored in the database header. After
@@ -418,8 +430,14 @@ Schema changes are **embedded SQL files** `internal/store/sqlite/migrations/NNNN
   statement. That is safe because it is an `int` parsed from a file name that was just validated,
   never user input.
 
-To add a column later: create `0002_add_something.sql`, write plain `ALTER TABLE ...`, and add a
-test in `storetest`. Never edit `0001_init.sql` after it has shipped.
+To add a column later: create `0003_add_something.sql`, write plain `ALTER TABLE ...`, and add a
+test in `storetest`. Never edit `0001_init.sql` or `0002_workspaces.sql` after they have shipped.
+
+**Migration 0002 in short** (M3, schema version 2): it creates `fleet_workspace` and `workspaces`
+with their indexes and adds the column `audit.workspace` with its index. Upgrading is automatic: the
+first `central run` of the new binary applies it in the same single transaction as any other
+migration, and an *older* binary then refuses to open the database (version 2 is newer than it
+knows). Take a backup of `mirafleet.db` before upgrading, because there is no "down".
 
 ## 6.11 The audit table
 
@@ -435,7 +453,7 @@ BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
 A **trigger** is code stored in the database that runs on an event. `RAISE(ABORT, ...)` cancels the
 statement and returns an error, so an `UPDATE audit ...` or `DELETE FROM audit ...` fails, even
 from the `sqlite3` shell. (Whoever has file access can still `DROP TRIGGER`; this guards against
-bugs and ordinary mistakes, see [chapter 5](05-security.md#59-what-mirafleet-does-not-protect-against).)
+bugs and ordinary mistakes, see [chapter 5](05-security.md#510-what-mirafleet-does-not-protect-against).)
 
 **Denormalised on purpose:** `fleet` and `runner` are *names as text*, not ids, and there are no
 foreign keys, so rows survive when what they describe is renamed, revoked or deleted. A reader of the
@@ -447,8 +465,8 @@ log should not have to join five tables to learn that `alice` ran `restart-runne
 |---|---|---|
 | `id` | AUTOINCREMENT PK | Monotonic. `audit.list` pages by `since_id`; a SIEM exporter can tail it. |
 | `ts` | `INTEGER NOT NULL` | Unix ms when the event happened (injected clock `Service.now`). |
-| `source` | `TEXT` | Which **front end** (the door the request came through): `cli` (admin socket), `api` (operator API), `enroll`, and `gui` (planned, M4). `system` is defined in `service.Source` but unused . |
-| `actor_kind` | `TEXT` | The principal's kind. Values actually written today: `admin` (the local CLI), `operator` (the API) and `enroll` (a peer joining or registering). `runner` is a principal kind too but a runner has no API, so it never appears; `system` exists as a `source` value but nothing uses it yet. |
+| `source` | `TEXT` | Which **front end** (the door the request came through): `cli` (admin socket), `api` (operator API), `enroll`, and `gui` (planned, M4). `system` is used by the workspace reaper, reconcile and revoke cascades (M3): events nobody asked for. |
+| `actor_kind` | `TEXT` | The principal's kind. Values actually written today: `admin` (the local CLI), `operator` (the API), `enroll` (a peer joining or registering) and `system` (workspace housekeeping, with actor `reaper` or `revoke`). `runner` is a principal kind too but a runner has no API, so it never appears. |
 | `actor` | `TEXT` | Name of the actor. For the local admin it is `uid:<n>`; for an enrolling peer it is empty (the enrollee has no name yet). |
 | `remote` | `TEXT` | Source address (`host:port`) of an SSH peer, or `local` for the admin socket. |
 | `fleet` | `TEXT` | Fleet name, or empty. |
@@ -461,6 +479,7 @@ log should not have to join five tables to learn that `alice` ran `restart-runne
 | `duration_ms` | `INTEGER NOT NULL DEFAULT 0` | How long the action took. |
 | `message` | `TEXT` | Human text: `runner revoked`, `timed out`, `confirm missing or wrong`, `already registered`, ... |
 | `request_id` | `TEXT` | 32 hex characters (16 random bytes) tying an exec's `start` row to its outcome row. |
+| `workspace` | `TEXT NOT NULL DEFAULT ''` | Added by migration 0002: the 32-hex `ws_id` the event concerns, or empty. Indexed (`audit_workspace`, only for non-empty values). |
 
 Indexes: `audit_ts (ts)` for time range queries; `audit_fleet_runner (fleet, runner)` for "show me everything
 on prod/db-1".
@@ -505,6 +524,7 @@ This row was written in the **same transaction** as `UPDATE runners SET status =
 | registration secret created and rotated; **a code being shown** (never its value) | Heartbeats and `last_seen_at` writes |
 | every `action.run` (start plus outcome); denied calls and refused confirms | Forbidden methods attempted on `api@` (these go to the log) |
 | successful joins and registrations | |
+| every `workspace.*` call, `list` included (start plus outcome for open, exec, read, write, close); refusals; reaper, reconcile and cascade changes (source `system`) | File contents, env values, and an exec's output (only names, paths, byte counts and SHA-256) |
 
 ## 6.12 File safety
 
@@ -540,7 +560,8 @@ can write the directory could swap the file.
   Either both commit or neither. A zero `ev.Time` is set to `now`. `RecordAudit` is the exception:
   it has no state to change and no `now`, so it requires `ev.Time` (zero gives `ErrInvalid`).
 - **Secrets never appear in events.**
-- **Errors** are four sentinels, matched with `errors.Is`:
+- **Errors** are four sentinels, matched with `errors.Is` (plus `ErrFull` for workspaces, see
+  6.15):
 
 | Error | Meaning | Wire code the service maps it to |
 |---|---|---|
@@ -584,6 +605,197 @@ Putting the pieces together, the 6 steps of a successful `enroll.join` for `buil
 If any step fails, `withTx` rolls back and the token still has its use. The deferred rollback also
 runs on a panic, so the single writer connection is never left stuck inside an open transaction.
 
+## 6.15 The workspace tables (migration 0002)
+
+Workspace mode (M3) added two tables and one column in `0002_workspaces.sql`. Nothing in
+`0001` was edited: that is the rule for a shipped migration (6.10).
+
+```mermaid
+erDiagram
+    fleets ||--o| fleet_workspace : "fleet_id (CASCADE)"
+    fleets ||--o{ workspaces : "fleet_id (RESTRICT)"
+    runners ||--o{ workspaces : "runner_id (RESTRICT)"
+    operators ||--o{ workspaces : "operator_id (RESTRICT)"
+
+    fleet_workspace {
+        integer fleet_id PK
+        text executor "containerd | opensandbox"
+        text default_image
+        text images "JSON array, allowlist"
+        text pull "if-not-present always never"
+        text network "none | egress"
+        text egress "JSON array"
+        integer cpu_milli
+        integer memory_mb
+        integer pids
+        integer tmpfs_mb
+        integer disk_mb
+        integer idle_ttl_s
+        integer max_ttl_s
+        integer exec_default_s
+        integer exec_max_s
+        integer updated_at "unix ms"
+    }
+    workspaces {
+        integer id PK
+        text ws_id UK "32 hex"
+        integer fleet_id FK
+        integer runner_id FK
+        integer operator_id FK
+        text session
+        text image
+        text spec "JSON"
+        text state "opening open closing closed failed lost"
+        text reason
+        integer created_at "unix ms"
+        integer last_used_at "unix ms"
+        integer expires_at "unix ms"
+        integer closed_at "unix ms, nullable"
+    }
+```
+
+*Look at: `fleet_workspace` is one row per workspace-mode fleet (`fleet_id` is its primary key, so
+at most one). `workspaces` points at fleets, runners and operators with `RESTRICT`, so none of
+them can be deleted while a workspace row refers to it.*
+
+### `fleet_workspace`
+
+The admin-set configuration of a workspace-mode fleet. It is created in the same transaction as the
+fleet (`CreateFleet` with `Fleet.Workspace`) and replaced as a whole by `PutFleetWorkspace`
+(`fleet.workspace_set`). Existing workspaces keep the `spec` they were opened with; a change
+affects only new ones.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `fleet_id` | `INTEGER` PK, FK `fleets(id)` `ON DELETE CASCADE` | The fleet. One row per workspace fleet. |
+| `executor` | `TEXT`, `CHECK IN ('containerd','opensandbox')` | Which runner-side backend this fleet needs. Placement matches it against the runner's heartbeat. |
+| `default_image` | `TEXT` | Used when `workspace.open` names no image. Must match `images`. |
+| `images` | `TEXT`, `json_valid` | The **image allowlist**: JSON array of exact references or patterns `repo:*` and `repo@sha256:*`. Prefer digests. |
+| `pull` | `TEXT`, `CHECK IN ('if-not-present','always','never')` | When the runner pulls. `never` means pre-pulled images only (there are no registry credentials in M3). |
+| `network` | `TEXT`, `CHECK IN ('none','egress')` | `none` is the default: loopback only. |
+| `egress` | `TEXT DEFAULT '[]'`, `json_valid` | Proxy allowlist entries such as `proxy.golang.org:443`, `*.golang.org:443`, `cidr:port`. Used only with `network = egress`. |
+| `cpu_milli` | `INTEGER > 0` | CPU in thousandths of a core (2000 = 2 cores). |
+| `memory_mb`, `tmpfs_mb`, `disk_mb` | `INTEGER > 0` | Memory limit, size of `/tmp`, soft disk quota of `/workspace`, all in MiB. |
+| `pids` | `INTEGER > 0` | Maximum processes (the fork-bomb limit). |
+| `idle_ttl_s` | `INTEGER > 0` | Seconds of inactivity before the reaper closes the workspace (default 24 h). |
+| `max_ttl_s` | `INTEGER >= idle_ttl_s` | Hard lifetime in seconds (default 7 days). |
+| `exec_default_s` | `INTEGER > 0` | Exec timeout when the caller gives none (default 120). |
+| `exec_max_s` | `INTEGER >= exec_default_s AND <= 86400` | The longest exec the fleet allows (default 1800; hard ceiling 24 h). The runner's own `limits.exec_max` can lower it further. |
+| `updated_at` | `INTEGER` | Unix ms of the last change. |
+
+Units differ from the Go struct on purpose: the struct (`store.WorkspaceConfig`) uses
+`time.Duration` and the table uses whole seconds; `internal/store/sqlite/fleetws.go` converts.
+The service fills omitted fields with defaults on `fleet create` (`service.WorkspaceDefaults`);
+`fleet workspace set` is a **full replace**, so the CLI reads the current config, applies your
+flags and sends the complete value (this is also how a list like `egress` can be cleared).
+
+### `workspaces`
+
+One row per workspace, in every state. Rows are never deleted; terminal rows are history.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | `INTEGER` PK AUTOINCREMENT | Internal. |
+| `ws_id` | `TEXT NOT NULL UNIQUE`, `length = 32` | The public id: 32 lowercase hex characters from `crypto/rand`, made by central. The runner names the container `mf-<ws_id>`, so reconcile can map containers back to rows. |
+| `fleet_id`, `runner_id`, `operator_id` | `INTEGER NOT NULL`, FKs with `ON DELETE RESTRICT` | Where it lives and who owns it. Every owner check compares `operator_id`. |
+| `session` | `TEXT` | The client-chosen session name (`^[A-Za-z0-9._:-]{1,128}$`). |
+| `image` | `TEXT` | The image reference actually used. |
+| `spec` | `TEXT`, `json_valid` | The spec central sent to the runner (limits, network, labels). No secrets. |
+| `state` | `TEXT`, `CHECK IN (...)` | See the state machine below. |
+| `reason` | `TEXT DEFAULT ''` | Why the last transition happened: `idle ttl expired`, `runner revoked`, `closed by operator`, ... |
+| `created_at`, `last_used_at`, `expires_at` | `INTEGER` | Unix ms. `last_used_at` is touched (not audited) by every operation; `expires_at` = creation + the fleet's `max_ttl`. |
+| `closed_at` | `INTEGER`, nullable | Set when the state becomes `closed`, `failed` or `lost`. |
+
+Three **indexes** do real work:
+
+- `workspaces_session_live`: a **unique partial index** on `(operator_id, fleet_id, session)`
+  `WHERE state IN ('opening','open')`. This is what makes a session *sticky*: the database itself
+  refuses a second live workspace for the same operator, fleet and session. After a workspace is
+  closed, the same session name can be used again.
+- `workspaces_runner_live` on `(runner_id)` `WHERE state IN ('opening','open','closing')`: the
+  slot count. `free = slots - rows in this index for the runner`.
+- `workspaces_idle` on `(last_used_at)` `WHERE state = 'open'`: for the reaper's idle sweep.
+
+### The workspace state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> opening: ReserveWorkspace (start audit row)
+    opening --> open: runner created the container
+    opening --> failed: create failed, or central restarted mid-create
+    opening --> closing: revoke or admin kill during the create
+    open --> closing: close, reaper (idle, max ttl, revoked owner), kill
+    open --> lost: reconcile: container missing or dead
+    closing --> closed: runner destroyed it
+    closing --> lost: runner revoked or gone
+    closing --> failed: destroy refused (terminal)
+    closed --> [*]
+    failed --> [*]
+    lost --> [*]
+```
+
+*Look at: three terminal states, and that `closing` is where a workspace waits when its runner is
+offline.*
+
+The rule is one function, `store.CanTransitionWorkspace(from, to)`, and `SetWorkspaceState`
+checks it again inside the transaction, like the runner state machine (6.8). Which states hold a
+slot? `opening`, `open` and `closing` (`WorkspaceState.Live`); that is why `closing` is a real
+state and not just "being deleted".
+
+| State | Meaning | Holds a slot? |
+|---|---|---|
+| `opening` | Reserved; the runner is creating the container. | yes |
+| `open` | Ready; the owner may exec, read and write. | yes |
+| `closing` | Asked to close; the container may still exist. | yes |
+| `closed` | Destroyed on purpose. | no |
+| `failed` | The create failed, or central crashed while creating. | no |
+| `lost` | The container vanished (host reboot, manual delete) or its runner was revoked. | no |
+
+### `audit.workspace`
+
+Migration 0002 also runs `ALTER TABLE audit ADD COLUMN workspace TEXT NOT NULL DEFAULT ''` and
+`CREATE INDEX audit_workspace ON audit (workspace) WHERE workspace <> ''`. Every workspace
+audit row carries the `ws_id`, so "show me everything that happened to this workspace" is one
+indexed query (`audit.list` and `store.AuditEvent.Workspace`). The append-only triggers from
+`0001` still hold: the `ALTER` does not touch them.
+
+Audit rows for workspaces follow the same start/outcome pairing as `action.run` (6.11), with these
+actions: `workspace.open`, `workspace.exec`, `workspace.read_file`, `workspace.write_file`,
+`workspace.close`, `workspace.list`, `workspace.kill`, and the **system** actions the background
+code writes with `source = system` and `actor_kind = system`: `workspace.reap` (open to closing),
+`workspace.destroy` (closing to closed), `workspace.orphan` (a container with no row was destroyed),
+`workspace.lost`, `workspace.recover` (opening to failed) and `workspace.close_all` (the revoke
+cascade). Example, an `exec` pair (alice runs `go test ./...` on `dev/build-1`):
+
+| id | source | actor | action | fleet / runner | outcome | params / message | request_id |
+|---|---|---|---|---|---|---|---|
+| 2101 | api | alice | `workspace.exec` | dev / build-1 | `start` | `{"argv":"[\"go\",\"test\",\"./...\"]","cwd":"/workspace","env_names":"CI","timeout_s":"120"}` | `9f2c...` |
+| 2102 | api | alice | `workspace.exec` | dev / build-1 | `ok` | exit_code 0, duration 8140 ms | `9f2c...` |
+
+(both rows also have the `workspace` column set to the 32-hex id). Env **values** and file
+**contents** never appear.
+
+### New `Store` methods
+
+All follow the rules of 6.13: they take `now`, and every state change writes its `AuditEvent` in
+the same transaction. A fifth error sentinel, **`ErrFull`**, means "no free slot or per-operator
+cap reached" (the service maps it to "try the next runner", and finally `unavailable` or
+`conflict`).
+
+| Method | Contract |
+|---|---|
+| `CreateFleet` (changed) | `Fleet.Workspace` is inserted in the same transaction: required in workspace mode, forbidden in actions mode. |
+| `GetFleetWorkspace(fleet)` | The fleet's config. `ErrNotFound` for an unknown fleet or an actions fleet. |
+| `PutFleetWorkspace(fleet, cfg, now, ev)` | Replaces the whole config atomically with `ev`. Existing workspaces keep their spec. `ErrInvalid` for a bad config or an actions fleet. |
+| `ReserveWorkspace(w, slots, maxPerOp, now, ev)` | In **one immediate transaction**: (1) a live workspace for the same (operator, fleet, session) is returned with `existing = true` and nothing is written; (2) else, if the operator holds `maxPerOp` live workspaces, `ErrFull`; (3) else, if the runner holds `slots` live workspaces, `ErrFull`; (4) else insert with state `opening` and write `ev`. Twenty goroutines racing for two slots get exactly two. |
+| `SetWorkspaceState(wsID, from, to, reason, now, ev)` | Moves only if the current state is in `from` and `CanTransitionWorkspace` allows it; sets `closed_at` for terminal states. `ErrConflict` otherwise. |
+| `TouchWorkspace(wsID, now)` | Sets `last_used_at` on an **open** workspace. Not audited. Any other state is left unchanged. |
+| `GetWorkspace(wsID)`, `ListWorkspaces(filter)` | Any state; filter by fleet, operator, runner, states. Names are filled in on read. |
+| `CountLiveWorkspaces(runnerIDs)` | Slots held per runner (`opening`, `open`, `closing`). |
+| `CloseWorkspacesOf(owner, reason, now, ev)` | The revoke cascade: moves every `opening` and `open` workspace of one runner or one operator to `closing` in one transaction, writing `ev` once with the count and ids. Returns the ids. |
+
+The shared test suite in `internal/store/storetest` runs all of this against any `Store`.
+
 ## Check your understanding
 
 1. Why does `runners` have a *partial* unique index on `(fleet_id, name)` but a plain `UNIQUE`
@@ -595,6 +807,11 @@ runs on a panic, so the single writer connection is never left stuck inside an o
 4. Why are `fleet` and `runner` in the `audit` table text names and not foreign keys?
 5. You open the database with an older mirafleet binary after upgrading. What happens, and why is
    that better than letting it try?
+6. How does the database itself stop alice from holding two live workspaces for session `s1` on
+   `dev`? And can she use `s1` again after closing?
+7. A workspace row is `closing` and its runner is offline. Does it still count against the
+   runner's slots? Why is that the right choice?
+8. Why does the audit table need a `workspace` column when `subject` already holds the session?
 
 <details>
 <summary>Answers</summary>
@@ -612,6 +829,15 @@ runs on a panic, so the single writer connection is never left stuck inside an o
 5. `migrate` reads `PRAGMA user_version`, sees a number higher than the migrations it embeds, and
    returns an error ("newer than this binary supports"). Failing closed prevents an old binary
    from writing data in a layout it does not understand.
+6. The unique partial index `workspaces_session_live` on `(operator_id, fleet_id, session)` for
+   states `opening` and `open`; `ReserveWorkspace` returns the existing row instead of inserting.
+   After the first workspace reaches `closing` or a terminal state, it no longer matches the
+   index, so a new workspace for `s1` is allowed.
+7. Yes. The container may still exist and use CPU, memory and disk until it is really destroyed.
+   If `closing` released the slot at once, a flaky runner could be over-filled with containers
+   the database no longer counts.
+8. A session name can be reused over time, so it does not identify one workspace. The `ws_id` does,
+   and the index on it makes "everything that happened to this workspace" a quick lookup.
 
 </details>
 
@@ -625,7 +851,16 @@ Reference table for `internal/store/store.go`. Read the rules and the error tabl
 |---|---|
 | `CreateFleet(f, now, ev)` | Inserts and returns the fleet with `ID` and `CreatedAt = now`. `ErrInvalid` for a bad mode or name; `ErrConflict` if the name exists. Atomic with `ev`. |
 | `GetFleet(name)` | `ErrNotFound` if absent. `RunnerCount` is **not** filled. |
-| `ListFleets()` | Ordered by name; `RunnerCount` = non-revoked runners, computed in the same query. |
+| `ListFleets()` | Ordered by name; `RunnerCount` = non-revoked runners, computed in the same query. `Workspace` is filled for workspace fleets. |
+| `GetFleetWorkspace(fleet)`, `PutFleetWorkspace(fleet, cfg, now, ev)` | Read, and atomically replace, a workspace fleet's config (see 6.15). `CreateFleet` inserts `Fleet.Workspace` in the same transaction. |
+
+**Workspaces** (migration 0002; full contracts in [6.15](#new-store-methods))
+
+| Method | Contract |
+|---|---|
+| `ReserveWorkspace`, `SetWorkspaceState`, `TouchWorkspace` | Reserve a slot (sticky, capped, in one transaction), move between states with the transition table, and update `last_used_at`. |
+| `GetWorkspace`, `ListWorkspaces`, `CountLiveWorkspaces` | Read any state; count the slots a runner holds. |
+| `CloseWorkspacesOf` | The revoke cascade for one runner or one operator. |
 
 **Runners**
 

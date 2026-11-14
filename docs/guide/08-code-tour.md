@@ -10,9 +10,13 @@ use them.
 - Where every directory and file group lives, and what it is for.
 - Which package imports which, and why the arrows only point one way.
 - The key types and functions of each package, and the traps ("gotchas") that bit us before.
-- The exact function-by-function path of an `action.run`, a runner join and a revoke.
-- How build tags keep SQLite out of the macOS and Windows binaries, and where to add a new
-  operator method, admin command, store method or action field.
+- The exact function-by-function path of an `action.run`, a runner join and a revoke, and (section
+  8.9) of one `workspace.exec` from the agent into a container and back.
+- The M3 packages: `internal/workspace` and its children (`ctrd`, `osb`, `egress`, `wsconfig`,
+  `initproc`, `fake`), and where each sits in the import layers.
+- How build tags keep SQLite out of the macOS and Windows binaries (and containerd out of every
+  non-Linux build), and where to add a new operator method, admin command, store method,
+  action field or **workspace executor**.
 
 Terms used here (principal, channel, tombstone, ...) are explained in [glossary.md](glossary.md).
 The ideas behind them are in chapters [3](03-architecture.md), [5](05-security.md) and
@@ -28,10 +32,11 @@ mirafleet/
 ├── LICENSE, NOTICE            Apache-2.0
 ├── scripts/
 │   └── dev.sh                 every build/test/lint step, run inside a pinned container
+│                              (`integration` runs the containerd tests in a privileged dind)
 ├── docs/
 │   ├── ARCHITECTURE.md        the design
 │   ├── PLAN.md                milestones M1..M6 and the build order
-│   ├── M2.md, M3.md           per-milestone plans and decisions
+│   ├── M2.md, M3.md           per-milestone plans and decisions (M3 = workspaces)
 │   ├── BRAND.md               colours, fonts, tone
 │   └── guide/                 this developer guide
 ├── cmd/mirafleet/             the one binary: central | runner | mcp | version
@@ -40,11 +45,15 @@ mirafleet/
 │   ├── mcp.go                 `mirafleet mcp login|api` (operator side, cross-platform)
 │   ├── central_linux.go       `central init|run`: opens SQLite, builds service, starts server
 │   ├── server_linux.go        `runner join|run`, heartbeat constant (linux only)
+│   ├── runner_ws_linux.go     `runner run -workspace`, `tls-init`, `tls-front`, `workspace list|prune`;
+│   │                          the only file besides ctrd that links containerd (linux only)
+│   ├── admin_workspace.go     the workspace flags of `fleet create|workspace set`, `workspace list|kill`
 │   ├── lock_linux.go          flock on <data>/central.lock
 │   ├── server_other.go        !linux stubs that return "supported on linux only"
 │   ├── platform_linux.go      const serverSupported = true
 │   ├── platform_other.go      const serverSupported = false
-│   └── *_test.go              CLI parsing, central init, enrol end to end, deps_test.go
+│   └── *_test.go              CLI parsing, central init, enrol end to end, deps_test.go,
+│                              e2e_integration_linux_test.go (built binary, real containerd)
 └── internal/                  all other code; nothing outside the module can import it
     ├── api/                   wire protocol: methods, DTOs, error codes, framing, limits
     ├── transport/             SSH names (channel types, users), Heartbeat, ExecRequest/Result
@@ -55,12 +64,19 @@ mirafleet/
     ├── audit/                 JSON-lines audit writer (runner side) and the Sink interface
     ├── actions/               the runner's guard: actions.yaml, Plan, Run
     ├── store/                 persistence interface, domain types, validation, errors
-    │   ├── sqlite/            the SQLite implementation and migrations/0001_init.sql
+    │   ├── sqlite/            the SQLite implementation and migrations/0001_init.sql, 0002_workspaces.sql
     │   └── storetest/         conformance suite every Store must pass
     ├── service/               the single code path behind CLI, API (and later GUI)
     ├── central/               the SSH server, role handlers, admin socket
     │   └── registry/          live runner sessions, Exec, Kick, tombstones
-    ├── runner/                dial-out loop, heartbeat, exec@ handler, runner.yaml, join
+    ├── runner/                dial-out loop, heartbeat, exec@ and workspace@ handlers, runner.yaml, join
+    ├── workspace/             M3: the Executor interface, validation helpers, output capture
+    │   ├── fake/              in-memory Executor for unit tests
+    │   ├── wsconfig/          parse and validate the runner's workspace.yaml (fail closed)
+    │   ├── egress/            allow-list HTTP/CONNECT proxy, private-range blocking, setns helper
+    │   ├── initproc/          `mirafleet workspace-init`: PID 1 inside a container
+    │   ├── ctrd/              containerd executor (linux only)
+    │   └── osb/               OpenSandbox executor, TLS client, TLS front, PKI
     ├── apiclient/             SSH client for operators and enrol (cross-platform)
     └── opconf/                operator config dir: key, known_hosts, contexts.yaml
 ```
@@ -72,54 +88,73 @@ A rule of thumb: `cmd/` only parses flags and wires things together. All behavio
 
 The picture groups the packages into four layers. An arrow `A --> B` means "code in A imports
 code in B". Every arrow points down or sideways inside a layer, never up, which is why Go never
-reports an import cycle. The groups come from the real `import` lines of the non-test files.
+reports an import cycle. The groups come from the real `import` lines of the non-test files
+(M3 added the `internal/workspace` family; `go list -f '{{.Imports}}'` reproduces the table).
 
 ```mermaid
 flowchart TD
     cmd["4. cmd/mirafleet<br/>parses flags and wires everything"]
     top["3. central, service, runner<br/>the behaviour of each role"]
-    mid["2. store, store/sqlite, auth, policy,<br/>central/registry, apiclient, opconf"]
-    leaf["1. leaves: api, transport, keys,<br/>tokens, actions, audit"]
+    exe["2b. executors: workspace/ctrd (linux only),<br/>workspace/osb, workspace/fake"]
+    mid["2a. store, store/sqlite, auth, policy,<br/>central/registry, apiclient, opconf, workspace/wsconfig"]
+    leaf["1. leaves: api, transport, keys, tokens, actions,<br/>audit, workspace, workspace/egress, workspace/initproc"]
 
     cmd -->|"builds and starts"| top
     cmd -->|"opens the database (linux only)"| mid
+    cmd -->|"builds the executor (linux only for ctrd)"| exe
     top -->|"stores, authorises, dials, tracks sessions"| mid
     top -->|"vocabulary, guard, local audit"| leaf
     mid -->|"vocabulary and key handling"| leaf
+    exe -->|"Executor interface, validation, proxy"| leaf
+    exe -->|"reads the runner's limits"| mid
 ```
 
-`storetest` (imports only `store`) is test support and is not drawn. Inside layer 2 and 3 the
-details are: `central` calls `service` and `registry`; `service` calls `policy`, `registry`
-and `store`; `policy` and `auth` use `store`; `store/sqlite` implements `store`; `runner` calls
-`apiclient` and `actions`. The full table:
+`storetest` (imports only `store`) is test support and is not drawn. `runner` does not import any
+executor: it is handed a `workspace.Executor` value (the interface, in a leaf package), and only
+`cmd/mirafleet` knows which concrete executor it is. Inside layers 2 and 3 the details are:
+`central` calls `service` and `registry`; `service` calls `policy`, `registry` and `store`;
+`policy` and `auth` use `store`; `store/sqlite` implements `store`; `runner` calls `apiclient`,
+`actions` and the egress proxy. The full table (this is the Linux build; the darwin and windows
+`cmd/mirafleet` drops `ctrd` and `store/sqlite`):
 
 | Package | Imports (inside this repo) |
 |---|---|
-| `cmd/mirafleet` | actions, api, apiclient, audit, auth, central, central/registry, keys, opconf, policy, runner, service, store, store/sqlite, transport |
+| `cmd/mirafleet` | actions, api, apiclient, audit, auth, central, central/registry, keys, opconf, policy, runner, service, store, store/sqlite, transport, workspace, workspace/ctrd, workspace/initproc, workspace/osb, workspace/wsconfig |
 | `internal/central` | api, auth, central/registry, service, store, transport |
 | `internal/central/registry` | transport |
-| `internal/service` | api, auth, central/registry, policy, store, tokens, transport |
+| `internal/service` | api, auth, central/registry, policy, store, tokens, transport, workspace |
 | `internal/policy` | api, auth, store |
 | `internal/auth` | store |
-| `internal/store` | keys |
+| `internal/store` | keys, workspace, workspace/egress |
 | `internal/store/sqlite` | store |
 | `internal/store/storetest` | store |
-| `internal/runner` | actions, api, apiclient, audit, keys, transport |
+| `internal/runner` | actions, api, apiclient, audit, keys, transport, workspace, workspace/egress, workspace/wsconfig |
+| `internal/workspace/ctrd` | workspace, workspace/egress, workspace/wsconfig |
+| `internal/workspace/osb` | workspace, workspace/wsconfig |
+| `internal/workspace/wsconfig` | workspace |
+| `internal/workspace/fake` | workspace |
 | `internal/apiclient` | api, keys, tokens, transport |
 | `internal/opconf` | keys |
-| `internal/api`, `transport`, `keys`, `tokens`, `actions`, `audit` | nothing (leaves) |
+| `internal/api` | workspace (for the shared validators `CleanPath`, `ValidArgv`, `FilterEnv`) |
+| `transport`, `keys`, `tokens`, `actions`, `audit`, `workspace`, `workspace/egress`, `workspace/initproc` | nothing (leaves) |
 
-Three consequences worth remembering:
+Four consequences worth remembering:
 
 1. **`internal/central` never imports `store/sqlite`.** It sees only the `store.Store`
    interface. Only `cmd/mirafleet/central_linux.go` (a file that exists only on Linux) imports
    `internal/store/sqlite`; `server_linux.go` holds the runner commands. That is how the macOS
    and Windows binaries avoid linking SQLite (section 8.7).
-2. **`api`, `transport`, `tokens`, `actions` and `audit` are leaves.** They import nothing from
-   the repo, so they can never create an import cycle and are cheap to reuse.
+2. **`transport`, `tokens`, `actions`, `audit` and `workspace` are leaves.** They import nothing
+   from the repo, so they can never create an import cycle and are cheap to reuse. (`api` sits
+   one step above: it imports only `workspace`, so central and the runner validate paths, argv
+   and env with literally the same code. `workspace` itself is pure stdlib Go on purpose.)
 3. **`runner` does not import `central`, and `central` does not import `runner`.** They only
    share the vocabulary in `transport` and `api`. (Tests are the exception: `internal/central`'s
    tests start a real `runner` in process.)
+4. **Nothing above `cmd` imports `ctrd`.** `runner` talks to whatever implements
+   `workspace.Executor`; `service` never touches a container at all (it sends `workspace@`
+   requests through `registry`). So containerd and gRPC reach exactly one place in the linked
+   binary, `cmd/mirafleet/runner_ws_linux.go`, and only on Linux (section 8.7).
 
 ## 8.3 Package by package
 
@@ -133,12 +168,17 @@ Each package below has an **If you only read one** line: the single file to open
 - **Key names:** method constants (`MethodActionRun`, `MethodFleetsList`, ...);
   `IsOperatorMethod`, `IsAdminMethod`, `IsEnrollMethod` (three disjoint sets, each a `switch`
   so they cannot change at run time); `Request`, `Response`, `Error` and the `Code*` constants;
-  DTOs such as `ActionRunParams` and `ActionRunResult`; limits (`MaxRequestBytes` 64 KiB,
+  DTOs such as `ActionRunParams` and `ActionRunResult` and, from M3, the `Workspace*` DTOs and
+  methods (`MethodWorkspaceOpen`, ...); limits (`MaxRequestBytes` 64 KiB,
   `MaxResultBytes` 1 MiB, `MaxParams` 32, `DefaultActionTimeout` 2 min, `MaxActionTimeout`
   10 min).
 - **Functions:** `ReadFrame` / `WriteFrame` (4-byte length prefix, see `frame.go`),
   `ReadRequestTimeout` (reads one request with an arrival deadline), `ParseRequest`,
   `DecodeParams` (strict: unknown fields are `bad_request`), `WriteResponse`, `ActionTimeout`.
+- **Body frames (M3):** `frame.go` also has `WriteBody` and `ReadBodyTimeout`: the second
+  length-prefixed frame behind a request (limit `MaxFileChunk` 1 MiB, zero length allowed,
+  `BodyTimeout` 30 s). `ValidateArgv`, `ValidatePath`, `ValidateEnv`, `ValidateSession` and
+  `WorkspaceExecTimeout` wrap the shared validators of `internal/workspace`.
 - **Used by:** almost everything.
 - **Gotchas:** `ReadRequest` only works for readers with `SetReadDeadline` (a `net.Conn`). An
   `ssh.Channel` has no deadline, so every handler on a channel must call `ReadRequestTimeout`
@@ -151,7 +191,12 @@ Each package below has an **If you only read one** line: the single file to open
 - **Purpose:** the strings and tiny structs shared by central and runner.
 - **Key names:** `ChanExec` (`exec@mirafleet`), `ChanAPI`, `ChanJoin`, `ChanRegister`,
   `ReqHeartbeat`; users `UserOperator`, `UserEnroll`, `UserRunner`; `Heartbeat`, `ExecRequest`,
-  `ExecResult`; `MaxResultBytes` (8 MiB, the most central will read back from a runner).
+  `ExecResult`; `MaxResultBytes` (8 MiB, the most central will read back from a runner). M3 adds
+  `workspace.go`: `ChanWorkspace` (`workspace@mirafleet`), the ops (`OpCreate`, `OpExec`, `OpRead`,
+  `OpWrite`, `OpDestroy`, `OpList`), `WorkspaceRequest` / `WorkspaceResult` / `WorkspaceSpec`,
+  `Encode/DecodeWorkspaceRequest`, `WriteResult` / `ReadResult` (one length-prefixed result frame),
+  `CopyBody` / `WriteBody` (exactly N raw bytes, then EOF) and the workspace fields of `Heartbeat`
+  (`Slots`, `Executor`, `SecureRuntime`, `Images`, checked by `Heartbeat.Validate`).
 - **Gotcha:** the SSH *user name* decides the role. It is not a login name. See
   [chapter 7](07-protocols.md).
 
@@ -237,7 +282,8 @@ Each package below has an **If you only read one** line: the single file to open
 
 - **If you only read one:** `internal/store/store.go` (the interface and its doc comments).
 - **Key names:** `Store` interface; types `Fleet`, `Runner`, `JoinToken`, `Operator`,
-  `AuditEvent`; `Status` / `CanTransition` (pending to active, active to and from disabled, any
+  `AuditEvent`, and for M3 `WorkspaceConfig` (with `Validate` and `ImageAllowed`), `Workspace`,
+  `WorkspaceState` (`CanTransitionWorkspace`), `WorkspaceFilter`, `ErrFull`; `Status` / `CanTransition` (pending to active, active to and from disabled, any
   non-revoked to revoked, revoked is final); `ParseRef` ("fleet/runner"); name validators;
   errors `ErrNotFound`, `ErrInvalid`, `ErrConflict`, `ErrStale`.
 - **Rule written into the interface:** every state-changing method takes an `AuditEvent` and
@@ -252,8 +298,9 @@ Each package below has an **If you only read one** line: the single file to open
 - **If you only read one:** `migrations/0001_init.sql` (the whole schema).
 - **Files:** `sqlite.go` (`Open`, two connection pools), `migrate.go` (embedded migrations),
   one file per entity (`fleets.go`, `runners.go`, `tokens.go`, `operators.go`, `settings.go`,
-  `audit.go`), `driver.go` (maps driver error codes to `ErrConflict`), `open_unix.go` /
-  `open_other.go` (open with `O_NOFOLLOW` on unix), `migrations/0001_init.sql`.
+  `audit.go`, and for M3 `fleetws.go` and `workspaces.go`), `driver.go` (maps driver error codes to `ErrConflict`), `open_unix.go` /
+  `open_other.go` (open with `O_NOFOLLOW` on unix), `migrations/0001_init.sql` and
+  `0002_workspaces.sql`.
 - **How it works:** one single-connection *writer* pool doing `BEGIN IMMEDIATE` transactions,
   plus a small `query_only` *reader* pool, in WAL mode with `busy_timeout(5000)` and
   `foreign_keys(1)`. Migrations are numbered `NNNN_name.sql`, must be contiguous from 0001, run
@@ -284,6 +331,11 @@ calls it from `TestConformance`. A future Postgres store will call the same func
   `Revoke`, `Lifecycle`), `enroll.go` (`Join`, `Register`), `operators.go`
   (`InitRegistrationSecret`, `RotateRegistrationSecret`, `OperatorCode`, `ListOperators`,
   `RevokeOperator`), `tokens.go` (`CreateToken`, `ListTokens`, `RevokeToken`), `fleets.go`.
+  M3 added `workspace.go` (`OpenWorkspace`, `CloseWorkspace`, `SetFleetWorkspace`,
+  `WorkspaceDefaults`, the sticky `reuse`), `workspace_sched.go` (`candidates`: placement),
+  `workspace_ops.go` (`ExecWorkspace`, `ReadWorkspaceFile`, `WriteWorkspaceFile`,
+  `ListWorkspaces`, `classify`), `workspace_admin.go` (`AdminListWorkspaces`, `KillWorkspace`)
+  and `workspace_reaper.go` (`RunReaper`, `ReapOnce`, `ReconcileRunner`, `RecoverWorkspaces`).
 - **Dependencies are injected** through `service.Config`: `Store`, `Policy`, `Live` (the
   `registry.Live` interface), `HostKey`, `Now`, `OperatorConns`, `Logf`. Tests pass fakes
   (`fakeLive`, `fakeConns`) and a fixed clock.
@@ -303,7 +355,9 @@ calls it from `TestConformance`. A future Postgres store will call the same func
   handlers), `enroll.go` (`serveEnroll`, `enrollCall`, per-IP limiter), `hslimit.go`
   (pre-handshake connection caps), `conns.go` (`OperatorConns`), `admin.go` (`ServeAdmin`,
   `adminTable`, `adminConn`), `admin_handlers.go` (the admin handlers), `adminclient.go`
-  (`AdminCall`, the client end of the socket).
+  (`AdminCall`, the client end of the socket), and for M3 `workspace_handlers.go` (the six
+  `workspace.*` handlers, the lazy body readers `lazyStdin` and `lazyFileBody`, the admin
+  workspace handlers, `wsInfo`: store row to DTO).
 - **Platform files:** `admin_unix.go` (socket + `checkPeer`), `admin_peer_linux.go`
   (`SO_PEERCRED`), `admin_peer_darwin.go` (`LOCAL_PEERCRED`), `admin_peer_other.go` (other unix:
   rejects every peer), `admin_other.go` (non-unix: fails closed).
@@ -319,8 +373,13 @@ calls it from `TestConformance`. A future Postgres store will call the same func
 
 - **If you only read one:** the file with `Registry.Exec` and `Registry.Kick`.
 - **Key names:** `Registry`, `Session`, the `Live` interface (`Exec`, `Kick`, `Tombstone`,
-  `ClearTombstone`, `SetStatus`, `Snapshot`), `KickError`, `ErrPending`, `ErrDisabled`,
-  `ErrTombstoned`, `Options{StaleAfter}`.
+  `ClearTombstone`, `SetStatus`, `Snapshot`, and for M3 `Workspace`), `KickError`, `ErrPending`,
+  `ErrDisabled`, `ErrTombstoned`, `ErrNoExecutor`, `ErrBusy`, `Options{StaleAfter}`.
+  `SessionInfo` carries the heartbeat's `Slots`, `Executor`, `SecureRuntime` and `Images`.
+- **`Registry.Workspace`:** opens a `workspace@mirafleet` channel on the runner's connection
+  (`workspaceOn`), streams the raw body, reads one result frame (and, for a read, the raw bytes).
+  Status gating is per op: `destroy` and `list` work on an `active` or `disabled` runner; every
+  other op needs `active`.
 - **How it works:** sessions are keyed by the runner's database id. `Register` rejects a
   tombstoned id under the same lock that inserts the session, so a revoke cannot slip in between.
   `Exec` opens an `exec@mirafleet` channel **on the runner's own connection** (`execOn`). A
@@ -343,6 +402,62 @@ calls it from `TestConformance`. A future Postgres store will call the same func
 - **Gotchas:** a semaphore (`MaxExec`, default 4) caps concurrent actions; extra ones are
   rejected with `runner busy`. `Join` writes `runner.yaml` **last**, so its existence means "the
   join fully succeeded". The runner never listens on a port.
+- **Workspace mode (M3):** `workspace.go` holds `serveWorkspace` (decode, `prepare` = re-validate
+  against `workspace.yaml`, `admit` = slot and exec permits *before* accepting the channel, then
+  run and answer), `runWS` / `runExec` (call the `workspace.Executor`), `fillHeartbeat`, and the
+  disk sampler. `Config.Workspace` (the executor) and `Config.WorkspaceConfig` are set instead of
+  actions; `Config.Validate` requires the executor and its config together and refuses actions
+  plus workspace. The runner knows only the interface, never `ctrd` or `osb`.
+
+### `internal/workspace` and its children: M3's runner-side world
+
+The parent package is the contract; the children are implementations and helpers. Read them in
+this order.
+
+**`internal/workspace`** (pure stdlib, imports nothing from the repo)
+- **If you only read one:** `internal/workspace/workspace.go`.
+- **Key names:** the `Executor` interface (`Name`, `Create`, `Exec`, `ReadFile`, `WriteFile`,
+  `Destroy`, `List`, `Close`), `ID` (32 lowercase hex, assigned by **central**), `Spec`, `Limits`,
+  `Network`, `ExecRequest`/`ExecResult`, `Info`, the errors `ErrNotFound`, `ErrRefused`, `ErrBusy`,
+  `ErrTooLarge`, `ErrQuota`, `ErrUnavailable`, `ErrUnsupported`, and `Root` (`/workspace`).
+- **`validate.go`:** `CleanPath` (lexical: `..` can never escape `/workspace`; symlinks are the
+  executor's job), `ValidArgv`, `EnvDenied`, `FilterEnv` (allowlist, then the denylist that always
+  wins), `MatchImage` / `NormalizeImage` (exact refs, `repo:*`, `repo@sha256:*`). **`capture.go`:**
+  `Capture`, a head-and-tail writer whose result fits a JSON-encoded byte budget.
+- **Gotcha:** this code runs on central *and* the runner. Change a rule here and both change
+  together, which is the point: central rejects early, the runner re-checks because it does not
+  trust central.
+
+**`internal/workspace/wsconfig`**: parses `workspace.yaml` with `KnownFields(true)`.
+`Parse` checks everything that needs no disk; `Load` adds ownership and mode checks of the
+containerd root and the secret files. There is deliberately **no field** for privileged
+containers, unconfined profiles or host mounts. See [chapter 10](10-operations.md).
+
+**`internal/workspace/ctrd`** (`//go:build linux`): the containerd executor. Files:
+`executor_linux.go` (`New`, `Create`, `Destroy`, `Options`), `spec_linux.go` (`buildSpec`: the OCI
+spec from a fixed template, asserted by `spec_linux_test.go`), `userns_linux.go` (`probeUserNS`: kernel at
+least 5.19, user namespaces enabled, an idmapping snapshotter), `exec_linux.go` (`task.Exec`, FIFOs, kill on timeout),
+`files_linux.go` (`os.Root`, `O_NOFOLLOW|O_NONBLOCK`, regular-file check), `egress_linux.go`
+(listener in the container's network namespace), `disk_linux.go` (usage and soft quota),
+`list_linux.go`, `doc.go` (keeps the package visible to non-Linux tools).
+
+**`internal/workspace/egress`**: `Proxy` (a stdlib HTTP and CONNECT proxy), `allow.go` (the
+allowlist grammar `host[:port]`, `*.domain`), `blocked.go` (private, loopback, link-local and
+metadata ranges), `netns_linux.go` / `netns_other.go` (`LockOSThread` + `unix.Setns`, never reuse
+a thread that failed to switch back). Pure Go except the setns file.
+
+**`internal/workspace/osb`**: the OpenSandbox executor and everything around its TLS: `client.go`
+(the REST client, no redirects, URLs rebuilt on the configured base), `tls.go` (TLS 1.3 only, CA
+or SPKI pin, mTLS, never the system pool), `sse.go` (server-sent events of `/command`),
+`executor.go` (maps `workspace.Executor` onto OpenSandbox calls), `front.go` (`mirafleet runner
+tls-front`), `pki.go` (`tls-init`). All stdlib, compiles everywhere, wired on Linux only.
+
+**`internal/workspace/initproc`**: `Run`, PID 1 inside a container (reap zombies, exit on SIGTERM).
+Reached through the hidden `mirafleet workspace-init` command; the binary is bind-mounted
+read-only at `/.mirafleet/init`, so it works in any image, distroless included.
+
+**`internal/workspace/fake`**: an in-memory `Executor` with hooks. Service, registry, runner and
+the `TestM3Done` scenario use it, so the logic is tested without a daemon.
 
 ### `internal/apiclient` and `internal/opconf`: the operator side
 
@@ -365,6 +480,14 @@ calls it from `TestConformance`. A future Postgres store will call the same func
 admin subcommands go through `adminCLI.run` in `admin.go`; its `call` field is a function value
 (normally `central.AdminCall`) so tests replace it with a fake and never need a running central.
 `adminParse` lets flags appear after positional arguments (`fleet create web -mode workspace`).
+
+M3 added: `admin_workspace.go` (the `wsFlags` shared by `fleet create` and `fleet workspace set`,
+`workspaceList`, `workspaceKill`; no SQLite or containerd), `runner_ws_linux.go` (`runnerWorkspace`
+for `list` and `prune`, `runnerTLSInit`, `runnerTLSFront`, `loadWorkspace`, and the `newExecutor`
+variable that tests replace with a fake), and in `mcp.go` the `-in` and `-out` flags of
+`mcp api` (bodies for `write_file`, stdin of `exec`, the file a `read_file` writes) and
+`mcpCallLimit` (the client-side deadline per method). `runner run` takes exactly one of
+`-actions FILE` or `-workspace FILE`; workspace mode never falls back to actions.
 
 ## 8.4 Follow one request: `action.run`
 
@@ -619,6 +742,11 @@ checks.
 | `internal/keys/perm_windows.go`, `perm_other.go` | `windows`, `!unix && !windows` | refuse to load any key (no ACL check yet) |
 | `internal/actions/kill_unix.go` / `kill_other.go` | `unix` / `!unix` | kill the whole process group / plain `Kill` |
 | `internal/store/sqlite/open_unix.go` / `open_other.go` | `unix` / `!unix` | open with `O_NOFOLLOW` / without |
+| `internal/workspace/ctrd/*_linux.go` | `_linux` suffix | the whole containerd executor; only `doc.go` has no tag, so tools can still list the package on other systems |
+| `internal/workspace/egress/netns_linux.go` / `netns_other.go` | `_linux` / `!linux` | `setns` into a container's network namespace / an error |
+| `internal/workspace/initproc/init_linux.go` / `init_other.go` | `_linux` / `!linux` | PID 1 reaper / an error |
+| `cmd/mirafleet/runner_ws_linux.go` | `_linux` suffix | the **only** file that imports `ctrd`; `server_other.go` provides stubs elsewhere |
+| `*_integration_linux_test.go`, `e2e_integration_linux_test.go` | `linux && integration` | tests that need a real containerd; run only by `scripts/dev.sh integration` |
 
 The pattern is **fail closed**: where a security check cannot be done on a platform, the code
 returns an error instead of silently skipping the check.
@@ -632,6 +760,17 @@ fails if any `modernc.org/...` or `internal/store/sqlite` package appears, and
 `TestLinuxLinksSQLite` is the positive control (without it, a broken filter would let the first
 test pass for the wrong reason). If you add an import of `sqlite` anywhere outside the
 `_linux.go` files, that test fails.
+
+**3. The darwin and windows binaries never link containerd (M3).** The containerd Go client pulls
+in gRPC, protobuf and OpenTelemetry: tens of megabytes an operator's laptop would never use, and
+code with its own licences to review. Only `ctrd` (Linux-only files) imports
+`github.com/containerd/containerd/v2`, and only `runner_ws_linux.go` imports `ctrd`.
+`deps_test.go` has the same two-test shape as for SQLite: `TestNoContainerdOnNonLinux` runs
+`go list -deps` for `GOOS=darwin` and `windows` and fails on any `github.com/containerd/...` or
+`google.golang.org/grpc...` package, and `TestLinuxLinksContainerd` is the positive control: it
+checks that a *Linux* build does link them, so a broken filter cannot make the first test pass for
+the wrong reason. The OpenSandbox executor (`osb`) and the egress proxy are pure stdlib and
+compile everywhere, but are wired only on Linux, because only a Linux runner runs workspaces.
 
 ## 8.8 Where to add things
 
@@ -679,9 +818,10 @@ Example: `mirafleet central fleet delete`.
    says which errors it returns and that it audits in the same transaction if it changes state.
 2. `internal/store/sqlite/`: implement it in the matching file. State changes use the writer
    pool inside a transaction that also inserts the audit row.
-3. If the schema changes: add `internal/store/sqlite/migrations/0002_<name>.sql`. Numbers must
-   be contiguous and files are embedded automatically. **Never edit `0001_init.sql`** after it
-   shipped; a deployed database has already run it. `TestMigrationsContiguous` guards the
+3. If the schema changes: add `internal/store/sqlite/migrations/0003_<name>.sql` (`0002` is
+   `workspaces`, M3). Numbers must be contiguous and files are embedded automatically. **Never
+   edit `0001_init.sql` or `0002_workspaces.sql`** after they shipped; a deployed database has
+   already run them. `TestMigrationsContiguous` guards the
    numbering; extend `TestFreshMigrateAndReopen` in `sqlite_test.go` for new tables.
 4. `internal/store/storetest/storetest.go`: add a subtest to the conformance suite so every
    future store must behave the same.
@@ -703,6 +843,189 @@ Example: an `env` list.
 5. Update the YAML reference in [chapter 10](10-operations.md) and the threat discussion in
    [chapter 5](05-security.md).
 
+### A new workspace executor (a third backend next to `ctrd` and `osb`)
+
+Example: a Firecracker or Kubernetes executor. Everything above the interface (scheduling, sticky
+sessions, the reaper, audit, policy, `concurrent` slots, the wire protocol) stays as it is.
+
+1. Read `internal/workspace/workspace.go` (the `Executor` contract) and `internal/workspace/fake/fake.go`
+   (the smallest correct implementation). The contract in short: `Create` is **idempotent on the
+   id** and cleans up after itself on failure; `Destroy` is idempotent (absent is `nil`); `Exec`
+   obeys the context (deadline = timeout, cancel = kill) and never writes to the caller's writers
+   after it returns; `List` returns only this executor's own workspaces; errors wrap the
+   `workspace.Err*` sentinels so the runner can map them to result codes.
+2. Create `internal/workspace/<name>/`. Keep it pure stdlib if you can (the licence gate and the
+   "ask before adding a dependency" rule apply). If it needs Linux-only code, use `_linux.go` file
+   names and a `doc.go` without a tag, exactly like `ctrd`.
+3. **Re-check the policy yourself.** Treat the spec as untrusted: image against the allowlist
+   (`workspace.MatchImage`) *before* pulling, paths through `workspace.CleanPath` and then a
+   symlink-safe open, env through `workspace.FilterEnv`. The runner's `prepare` already did this,
+   but an executor is the last line of defence.
+4. `internal/workspace/wsconfig/config.go`: add the executor name to the constants and a config
+   block with strict validation (fail closed, no insecure defaults). Add the block to the
+   `validate` switch and tests in `config_test.go`.
+5. `cmd/mirafleet/runner_ws_linux.go`: add a `case` to `newExecutor`. This is the only wiring.
+6. `internal/service` and the store need **no** change except the executor name: add it to the
+   `store.Executor` constants and to the `CHECK` list of `fleet_workspace.executor` in a new
+   migration (a `CHECK` cannot be altered in SQLite, so the migration rebuilds the table), plus
+   the heartbeat-name rule in `transport.Heartbeat.Validate` if the name is unusual.
+7. Tests: run the shared contract against your executor (copy the shape of the fake's tests), add an
+   attack set (symlink, FIFO, `..`, oversized output) and, if it needs a daemon, put it behind
+   `//go:build linux && integration` and add the package to `ITEST_PKGS` in `scripts/dev.sh`.
+8. Update [chapter 5](05-security.md) (what *this* boundary is) and [chapter 10](10-operations.md).
+
+### A new field in `workspace.yaml`
+
+1. `internal/workspace/wsconfig/config.go`: add the field with a `yaml:"..."` tag to the right struct
+   (`Config`, `Limits`, `Containerd`, `OpenSandbox`). `KnownFields(true)` makes older runners reject
+   it, which is intended.
+2. Validate in `validate()` and its helpers: reject out-of-range values, never accept a silent
+   insecure default. If it needs the disk, check it in `CheckFiles` (only `Load` runs those).
+3. Use it where it matters: runner-side limits in `internal/runner/workspace.go` (`prepare`), spec
+   details in `internal/workspace/ctrd/spec_linux.go`. If central must know (placement), it goes in
+   the heartbeat (`transport.Heartbeat`, bounded in `Validate`), never in a trusted-by-default field.
+4. Tests in `config_test.go` (table tests with `t.TempDir()`), update the reference in
+   [chapter 10](10-operations.md).
+
+## 8.9 Follow one `workspace.exec`
+
+alice's agent runs a command in the workspace it opened earlier. This is the M3 counterpart of
+section 8.4; read them side by side. Watch for two things that are new: the **body frame** is read
+late, and the runner **re-validates everything**.
+
+![alice's workspace.exec travelling through api@, the service checks, a start audit row, workspace@ to the runner, re-validation, container exec and an outcome audit row](diagrams/workspace-exec.svg)
+
+*Look at: the start audit row is written before the runner is contacted; the runner trusts nothing
+central sent.*
+
+1. alice's agent calls `workspace.exec` (argv `go test ./...`) through `mirafleet mcp`.
+2. One `api@` frame arrives; the method table routes it to `service.ExecWorkspace`.
+3. Operator, ownership (`not_found` for others), state `open`, argv, cwd, env (denylist), confirm and
+   timeout are checked; then the `start` audit row is written FIRST. No row, no exec.
+4. `registry.Workspace` opens a `workspace@mirafleet` channel on the runner's own SSH connection; the
+   op is JSON in the channel-open data, any stdin follows as raw bytes.
+5. The runner re-validates argv, cwd, env (its `env_allow` plus the denylist) and the timeout. Central
+   is not trusted.
+6. The command runs inside the container as an unprivileged user, with no shell. Output is captured
+   head and tail, trimmed to the budget; timeout or cancel sends SIGKILL.
+7. The runner writes one result frame: exit code, stdout, stderr, `truncated`, `timed_out`.
+8. Central writes the `outcome` audit row (same `request_id`) and replies to alice.
+
+### In detail
+
+```bash
+mirafleet mcp api workspace.exec '{"workspace":"3f9a6c1e5b7d4820a1c3e5f708192a4b","argv":["go","test","./..."],"cwd":"src","env":{"CI":"1"},"timeout_s":300}'
+```
+
+**On alice's laptop** (`cmd/mirafleet/mcp.go`, `internal/apiclient/client.go`)
+
+1. `mcpAPI` parses `METHOD [JSON] [-in FILE] [-out FILE]`. For `workspace.exec`, `mcpCallLimit`
+   computes the client deadline: `timeout_s` plus a 30 s margin, and when `timeout_s` is absent
+   the server's 24 h ceiling plus the margin (the client cannot see the fleet's default; the
+   server enforces the real one). With `-in FILE`, the file becomes the body and `"stdin":true`
+   is added.
+2. `apiclient.Client.CallBody` opens an `api@mirafleet` channel, writes the request frame
+   (`api.WriteFrame`) and, if there is a body, immediately a body frame (`api.WriteBody`), then reads
+   the response frame.
+
+**On central** (`internal/central`)
+
+3. `Server.serveAPIChannel` reads the request with `api.ReadRequestTimeout` (10 s, 64 KiB), makes a
+   per-call `callBody{r: ch, closer: ch}` and calls `table.serve`. `takesBody("workspace.exec")` is
+   true, so nothing drains the channel yet.
+4. `methodTable.serve` checks `allowed` (`api.IsOperatorMethod`) and finds `handleWorkspaceExec` in
+   `workspace_handlers.go`. It decodes params strictly (`api.DecodeParams`) and, if `stdin` is true,
+   wraps the channel in a `lazyStdin`. The handler calls `Service.ExecWorkspace`.
+
+**In the service** (`internal/service/workspace_ops.go`), in this order:
+
+5. `wsTarget`: `requireOperator` (policy: the operator must be `active` now; kind must be operator),
+   `ownedWorkspace` (not the owner, or an unknown or malformed id: `not_found`), state must be `open`
+   (else `conflict`), then the fleet and its `WorkspaceConfig`.
+6. Input: `api.ValidateArgv`, `workspace.CleanPath(cwd)`, `workspace.FilterEnv` (shape and the hard
+   denylist: a refusal is audited as `denied`, naming the variable, never the value), confirm on a
+   guarded fleet, the effective timeout (`api.WorkspaceExecTimeout` from `timeout_s` and the
+   fleet's `exec_default` and `exec_max`).
+7. **Only now** is the stdin body read: `lazyStdin.Body` calls `api.ReadBodyTimeout` (1 MiB max,
+   30 s). A caller who failed any earlier check never made central buffer a byte.
+8. `newRequestID`, then `startRow`: the `start` audit row (argv JSON clipped to 4 KiB, cwd, env
+   **names**, stdin byte count, timeout). If the write fails the call returns `unavailable: audit
+   unavailable` and nothing runs. Then `touch` (activity for the idle reaper) and `beginOp` (marks
+   the workspace busy so the reaper never idle-closes it mid-command).
+
+**Central to the runner** (`internal/central/registry`)
+
+9. `registry.Workspace` looks up the live session by runner id, applies per-op status gating
+   (`disabled` and `pending` refuse an exec) and calls `workspaceOn`: `transport.EncodeWorkspaceRequest`
+   (validated JSON), `OpenChannel("workspace@mirafleet", payload)`, `transport.WriteBody` for stdin
+   (exactly `stdin_len` raw bytes, then `CloseWrite`), then `transport.ReadResult`. The caller's
+   context bounds all of it (exec timeout plus `execMargin`, 15 s), and a `Kick` (revoke) cancels it.
+
+**On the runner** (`internal/runner/workspace.go`)
+
+10. `Runner.serveWorkspace` decodes the open data (`transport.DecodeWorkspaceRequest`, strict).
+    `wsState.prepare` re-validates *everything* against the runner's `workspace.yaml`: argv, cwd,
+    env against `env_allow` and the denylist, stdin size, the timeout capped by `limits.exec_max`.
+    A refusal comes back as a normal result frame (`code: refused`).
+11. `wsState.admit` takes a runner-wide permit and one of the workspace's 4 exec permits **before**
+    accepting the channel. None free: `Reject(ResourceShortage)`, which central reports as `runner
+    busy`. Then `nch.Accept`, a runner-side audit `start` line, the body is read (60 s timer) and
+    `runWS` calls `runExec`.
+12. `runExec` makes two `workspace.NewCapture` buffers (head and tail, half the budget each) and
+    calls `Executor.Exec` with a context that expires at the timeout. The runner also watches the
+    channel: central closing it cancels the context.
+
+**In the container** (`internal/workspace/ctrd/exec_linux.go`)
+
+13. `Executor.Exec` re-validates argv and cwd (a second time, because the executor is the last
+    line), adds the proxy variables if the workspace has egress, loads the container and its running
+    task, and builds the process from the container's own spec (`execProcessSpec`: uid 1000, no
+    capabilities, no_new_privs, cwd under `/workspace`). It creates the exec with containerd FIFOs
+    wired to the capture buffers and waits for the exit. On timeout or cancel, `killTree` sends
+    SIGKILL to the exec and its descendants. A command that cannot start gives exit 127 or 126 with
+    the reason on stderr, like a shell. **There is no shell**: `argv[0]` is run as given.
+
+**Back up the chain**
+
+14. `runExec` builds a `WorkspaceResult` (`exit_code`, trimmed `stdout` and `stderr`, `truncated`,
+    `timed_out`); the runner writes its outcome audit line, then one frame with
+    `transport.WriteResult`, then `CloseWrite`.
+15. In the service, `classify` maps transport problems to API errors and audit outcomes; a normal
+    result becomes `api.WorkspaceExecResult`. The `outcome` audit row (`ok`, `error`, `cancelled`
+    or `timeout`, same `request_id`, exit code, duration) is written with `recordBestEffort`: a
+    failure here is only logged, because the command already ran. `touch` again.
+16. `writeResponseBodyTimeout` writes the response frame and closes the channel. The client
+    prints it.
+
+The same skeleton serves `workspace.read_file` (the result frame, then the body frame) and
+`workspace.write_file` (body read late, SHA-256 verified in the service before the start row).
+`workspace.open` has a different shape, because it has to *choose* a runner first:
+
+![alice's workspace.open: placement, sticky reuse, reserve, create on the runner](diagrams/workspace-open.svg)
+
+*Look at: the unique index makes the second `open` of `s1` return the same workspace.*
+
+1. alice's agent calls `workspace.open` (fleet `dev`, session `s1`) through `mirafleet mcp`.
+2. The `api@` frame reaches `service.OpenWorkspace`: active operator, workspace-mode fleet, image on
+   the allowlist, `confirm` on a guarded fleet, valid session id.
+3. Sticky reuse: a live workspace for (alice, `dev`, `s1`) is returned with `reused:true`. If its
+   runner is offline the answer is `unavailable`; a fresh workspace is never created elsewhere.
+4. Placement: active, online runners whose executor, trusted labels and image patterns fit, with
+   free slots (heartbeat slots minus live rows). The most free slots wins, random tie-break.
+5. `ReserveWorkspace` recounts the slots in one transaction and inserts the `opening` row with the
+   start audit row.
+6. A full runner (`ErrFull`) or a busy one moves to the next candidate (3 tries at most). Otherwise
+   central sends op `create` on `workspace@mirafleet`.
+7. The runner re-validates the spec against its own `workspace.yaml`, builds the container spec
+   from its fixed template, pulls the image if needed and creates the container.
+8. The row becomes `open`, the outcome audit row is written and the reply says `reused:false`.
+
+The code for that picture: `OpenWorkspace` (checks, sticky `reuse`, the 3-try loop),
+`candidates` in `workspace_sched.go` (the filters and the sort), `Store.ReserveWorkspace` in
+`store/sqlite/workspaces.go` (the transaction), `registry.Workspace` with op `create`, then
+`wsState.prepare`/`admit` and `ctrd.Executor.Create` on the runner (allowlist re-check, pull,
+`buildSpec`, user-namespace id range for the slot, egress listener).
+
 ## Check your understanding
 
 1. `internal/central` handles SSH connections for a database-backed server, yet it does not
@@ -716,6 +1039,12 @@ Example: an `env` list.
    the database?
 5. You add `import ".../internal/store/sqlite"` to `cmd/mirafleet/mcp.go`. Which test fails, and
    why does that matter to someone on a MacBook?
+6. In the `workspace.exec` trace, the runner re-validates argv, cwd and env that central already
+   validated. Why, and which import-graph fact keeps `service` from ever touching a container?
+7. You write a new executor. Which single file wires it in, and which two tests protect the macOS
+   binary from accidentally linking containerd?
+8. A refused `workspace.exec` from an unauthorised caller carries a 1 MiB stdin body. At which
+   step of the trace is it *not* read, and what would go wrong if it were read first?
 <details>
 <summary>Answers</summary>
 
@@ -738,5 +1067,17 @@ Example: an `env` list.
 5. `TestNoSQLiteOnNonLinux` in `cmd/mirafleet/deps_test.go` fails because the darwin build now
    links `internal/store/sqlite` and `modernc.org/...`. It matters because the laptop binary
    would grow by several megabytes and drag in a database engine the operator never uses.
+6. Central is not trusted by the runner: a compromised or buggy central must not be able to
+   smuggle a path escape, a denied env variable or an oversized limit into a container, so the
+   runner's `prepare` checks against its own `workspace.yaml`, and the executor checks once
+   more. `service` imports `registry` and the `workspace` leaf package only; the only code that
+   imports `ctrd` is `cmd/mirafleet/runner_ws_linux.go`, so central never has a container API.
+7. `cmd/mirafleet/runner_ws_linux.go` (the `newExecutor` switch). `TestNoContainerdOnNonLinux`
+   fails if a darwin or windows build links any `github.com/containerd/...` or gRPC package;
+   `TestLinuxLinksContainerd` proves the filter still works by requiring the Linux build to link it.
+8. Steps 5 to 7 of "In the service" come before the body read: policy, ownership, state, input,
+   confirm and timeout. The body is read only in step 7, through the lazy `lazyStdin`. Reading it
+   first would let any authenticated caller make central buffer 1 MiB per channel (8 channels per
+   connection) before being told `not_found` or `forbidden`.
 
 </details>

@@ -13,6 +13,9 @@ inside containers, and teaches you how the tests are built so you can write your
 - A tour of the test helpers and what each important test proves, including `TestM2Done`.
 - How to write a new test step by step, and how to fix the failures you will most likely meet.
 - How to run central, a runner and an operator by hand in one container ([9.11](#911-try-it-locally-central-runner-and-operator-in-one-container)).
+- The M3 additions: `scripts/dev.sh integration` (real containerd 2.4.2 in a throwaway privileged
+  container, with a hermetic test image), `TestM3Done` and its real-containerd twin, and how to try
+  a workspace by hand ([9.12](#912-try-it-locally-a-workspace)).
 
 ## 9.1 The container-only rule
 
@@ -117,6 +120,7 @@ because of downloads.
 | `scripts/dev.sh test` | ro | `go test -race ./...` then `CGO_ENABLED=0 go test ./...` | 1 to 4 min |
 | `scripts/dev.sh cross` | ro | for each of 6 targets: `go build -o /dev/null ./cmd/mirafleet` and `go vet ./...` | 1 to 3 min |
 | `scripts/dev.sh licenses` | ro | installs `go-licenses` v1.6.0, then `go-licenses check ./...` for each of 6 targets | 2 to 6 min |
+| `scripts/dev.sh integration` | ro (+ **privileged**, see below) | builds `-tags integration` test binaries, the real `mirafleet` binary and containerd 2.4.2; runs them as root against a real containerd in a throwaway `docker:28-dind` container | 3 to 10 min (first run: downloads and builds containerd) |
 | `scripts/dev.sh go <args>` | rw | `go <args>` (for example `go mod tidy`, or a single test) | depends |
 | `scripts/dev.sh shell` | rw | an interactive `bash` in the container | n/a |
 
@@ -134,6 +138,51 @@ Details that matter:
 - **`go` is the escape hatch.** Because it mounts the source read-write it is the only
   command (besides `shell`) that can modify files, for example `scripts/dev.sh go mod tidy`
   or `scripts/dev.sh go test -run TestM2Done -count=1 ./internal/central/`.
+
+### `scripts/dev.sh integration`: a real containerd, safely
+
+Workspace mode puts commands into real containers, and containers need a real kernel, root and
+a real `containerd`. A unit test cannot prove that "the root filesystem is read-only" or "a fork
+bomb hits the pids limit"; only a real container can. But the project rule is "nothing runs on the
+host", and containerd needs root. `integration` squares this:
+
+1. **Build step** (the pinned golang image, as your user, source mounted read-only). It writes into
+   a named volume, `mirafleet-itest-bin`, three kinds of static binaries:
+   - test binaries built with `go test -c -tags integration` for the packages in `ITEST_PKGS`
+     (default `./internal/workspace/ctrd ./cmd/mirafleet ./internal/central`);
+   - the real `mirafleet` binary (the built-binary test drives it through its CLI);
+   - **containerd 2.4.2 and its runc shim, built from the very module version pinned in `go.mod`**
+     (it reads the version with `go list -m`). The repository's `go.mod` only lists the client,
+     so the daemon is built in a scratch module under `/tmp` inside the container; `go.mod` and
+     `go.sum` are never touched and none of it is linked into mirafleet. This step needs the Go
+     module proxy for the daemon's extra modules (cached in `mirafleet-gomod` afterwards).
+2. **Run step**: a throwaway `docker:28-dind` container (pinned by tag and digest) started with
+   `--privileged`. dind supplies `runc` and the userland; its bundled containerd 1.7 is **not**
+   used. The script sets up cgroup v2 nesting (bounded to 50 tries), starts our containerd 2.4.2
+   directly (no `dockerd`) with its root and socket on `tmpfs`, then runs every test binary as
+   root. Test binaries are mounted read-only. The exit status is the tests' exit status.
+3. **Hermetic test image.** No test pulls anything from a network. The workspace image is built
+   *at test time*: the test builds an OCI layout tarball in memory from the test binary itself
+   (which doubles as the in-container PID 1 and as a tiny tool) plus a minimal `/etc/passwd`, and
+   imports it with `client.Import`. The image is therefore the same bytes every run, and the
+   digest-pinned images are only the two tool images (golang, dind).
+4. **Everything dies with the container.** The containerd root, sockets, snapshots and workspace
+   directories live on `tmpfs` or inside the `--rm` container.
+
+Two cautions, both in comments in `dev.sh`:
+
+- **`--privileged` is for dev and CI only, and only on a VM-backed runtime** (colima, Docker
+  Desktop). There it is confined to the VM and never touches the host. On a bare Linux host with a
+  native Docker daemon it would hand the container full host privileges, so there you use a
+  throwaway VM instead.
+- Only `^TestIntegration` (in `cmd/mirafleet`) and `^TestM3DoneIntegration` (in `internal/central`)
+  run from the packages that also hold ordinary unit tests; those are already covered by
+  `scripts/dev.sh test`. The ctrd package's integration tests all run.
+
+The tests have two layers of "is this host capable": `userns: required` needs kernel 5.19 or
+newer, user namespaces enabled and an overlayfs snapshotter that supports id remapping (containerd
+2.x does). The built-binary test tries `required` first and falls back to `off` (and says so in
+its log) on a host that cannot do it; the production runner does **not** fall back (chapter 10).
 
 ### Volumes and the host user ID
 
@@ -277,6 +326,15 @@ You do not need to read all of them. Know these and where they are.
 | `TestInjectionAttempts`, `TestFullMatchRegex`, `TestLeadingDash` (`internal/actions`) | Shell-metacharacter, regex-anchor and `-option` tricks fail. |
 | `TestCodeKnownAnswer`, `FuzzParseJoinToken`, `FuzzParseCode` (`internal/tokens`) | The code format never changes by accident; parsers survive garbage. |
 | `TestNoSQLiteOnNonLinux`, `TestLinuxLinksSQLite` (`cmd/mirafleet/deps_test.go`) | darwin and windows binaries do not link SQLite. |
+| `TestNoContainerdOnNonLinux`, `TestLinuxLinksContainerd` (same file) | darwin and windows binaries link no containerd or gRPC, and the Linux binary does (positive control). |
+| `TestM3Done` (`internal/central/m3_done_test.go`) | The whole M3 scenario with the fake executor, on every `dev.sh test` (below). |
+| `TestM3DoneIntegration` (`m3_done_integration_linux_test.go`) | The same scenario against a real containerd, in `dev.sh integration`. |
+| `TestIntegrationWorkspaceCLI` (`cmd/mirafleet/e2e_integration_linux_test.go`) | The **built binary**: `central`, `runner run -workspace` and `mcp api` driven through the CLI with real containerd: open, sticky, exec (incl. stdin), chunked write and read with `-in`/`-out`, `workspace list/kill`, `runner workspace list/prune`. |
+| `TestExecIdentityAndHardening`, `TestFileAttacks`, `TestForkBombHitsPidsLimit`, `TestMemoryHogIsOOMKilled`, `TestDiskQuota` (`internal/workspace/ctrd`, integration) | A real container is non-root, has a read-only rootfs and no capabilities; symlink, FIFO, hard-link and `/proc/self/root` tricks fail; a fork bomb and a memory hog are stopped by cgroups; the soft disk quota refuses writes. |
+| `TestEgressProxyInNetns`, `TestEgressNetworkNone`, `TestEgressRefusals`, `TestEgressReattachAfterRestart` (ctrd, integration) | The allow-list proxy listens inside the container's network namespace, `none` has no route, metadata and private ranges are refused, listeners come back after a runner restart. |
+| `TestExecWorkspaceStartRowFailClosed`, `TestExecWorkspaceEnvValuesNeverAudited` (`internal/service`) | If the start row cannot be written nothing runs; env values never reach the audit log. |
+| `TestReconcileTable`, `TestReapIdleAndMaxTTL`, `TestRevokeRunnerCascade`, `TestReapSkipsInFlightOp` (`internal/service`) | The reconcile table, idle and absolute TTL reaping, revoke cascades, and "a workspace with a command in flight is never idle-reaped". |
+| `TestCleanPath`, `TestFilterEnv`, `TestMatchImage`, `TestCaptureBudgetRandom` (`internal/workspace`) | Path confinement, the env denylist, image-pattern matching and the output budget hold (including random input). |
 | `TestCentralInitIsIdempotent` (`central_linux_test.go`) | Running `central init` twice never replaces the host key or secret. |
 
 ### `TestM2Done`: the acceptance test
@@ -302,7 +360,52 @@ Every milestone has a "done when" sentence in [PLAN.md](../PLAN.md). For M2 that
 10. moves the clock 61 seconds ahead and shows an **expired registration code** is refused and
     creates no operator.
 
-When you build M3 you will add the matching `TestM3Done`, and update this list.
+### `TestM3Done` and `TestM3DoneIntegration`: the M3 acceptance test
+
+M3's "done when" sentence in [M3.md](../M3.md) is one scenario, written **once** and run twice:
+
+- `TestM3Done` (`internal/central/m3_done_test.go`) runs it with the fake executor
+  (`internal/workspace/fake`). It runs on every `scripts/dev.sh test`, in under a few seconds,
+  needing nothing special.
+- `TestM3DoneIntegration` (`m3_done_integration_linux_test.go`, tag `linux && integration`) runs
+  the **same** `runM3Done` function against two runners that each own a real `ctrd` executor, with
+  the hermetic image of section 9.3. A small `m3Backend` struct holds the differences (the argv that
+  means "print my uid", how to count containers), so the two cannot drift apart.
+
+In order, the scenario:
+
+1. **Set-up.** An injected clock; fleet `dev` in workspace mode with an image allowlist; operators
+   alice and bob; two runners with `concurrent: 1` and *different trusted labels* (`zone=a`,
+   `zone=b`; the runners also claim a lying label in their heartbeat, which must be ignored).
+2. **Placement and sticky.** alice opens session `s1` with label `zone=a` and lands on the matching
+   runner; opening `s1` again returns the same workspace with `reused: true` and creates **no** second
+   container.
+3. **Ownership.** bob's `exec`, `read_file`, `write_file` and `close` on alice's workspace all get
+   `not_found`; his `workspace.list` is empty; alice's row is untouched.
+4. **Inside the workspace.** `id -u` is not 0; writing under `/etc` fails (read-only rootfs; in the
+   real run the message says "read-only"); a 1.5 MiB file round-trips in 512 KiB chunks with a
+   matching SHA-256; a symlink to a host path cannot be read through `read_file`; a network dial
+   fails under `network: none` (and the tool itself ran, so it is not "the tool could not start").
+5. **Refusals.** An image outside the allowlist; env `ANTHROPIC_API_KEY`; a third open while every
+   slot is taken (`unavailable`); `workspace.*` on an actions fleet and `action.run` on `dev`.
+6. **Restarts.** Stop the runner (exec is `unavailable` meanwhile), start a new one over the same
+   executor state: reconcile keeps the workspace and its files, exec works. Then close central and
+   start another over the same store: the row persists, runners reconnect, the session is still sticky.
+7. **Reaper.** Move the injected clock past the idle TTL: the untouched `s2` is destroyed (container
+   and directory gone, row `closed`); `s1`, used just now, stays.
+8. **Revoke.** Revoking alice closes her workspaces (the next reaper sweep destroys the container;
+   the row is `closed`, with a `workspace.close_all` audit row); bob's workspace on the other runner
+   is untouched. Then revoking runner `rb` marks bob's workspace there **`lost`** (not `closed`:
+   central can no longer reach that host, so it cannot prove the container is gone; a
+   `workspace.lost` audit row says so). The containers of a revoked runner stay on its host until
+   someone runs `mirafleet runner workspace prune` there (chapter 10).
+9. **Audit.** Every call has a `start` row and an outcome row, in exactly the counts the test
+   computes, with the `workspace` column set.
+
+The clock trick is the same as in `TestM2Done`: the service takes `Now`, and the test advances an
+atomic offset instead of sleeping. The `after` hook of the fake variant also asserts what the
+isolation depends on at the executor boundary: every create carried network `none`, the fleet's
+limits and the allowed image, and no exec ever carried a denied variable.
 
 ## 9.7 Writing a new test, step by step
 
@@ -450,6 +553,13 @@ is planned (M6); until then you run it by hand.
 | Files in the repo owned by root | someone ran the container as root | `dev.sh` runs as your user; if you used raw `docker run`, `sudo chown -R` the files and use `dev.sh` |
 | `TestNoSQLiteOnNonLinux` fails | a non-`_linux` file imports `store/sqlite` | move that import into a `_linux.go` file |
 | `cross` fails with `undefined: syscall.X` on windows | unix-only call outside a `unix`-tagged file | move it into a `_unix.go` file and add an `_other.go` stub that fails closed |
+| `integration` fails at once with `cgroup v2 nesting did not settle after 50 tries` | the container runtime's cgroup tree cannot be nested | use a VM-backed runtime (colima, Docker Desktop) or a Linux VM with cgroup v2 |
+| `integration`: `containerd did not start:` and the daemon log | `--privileged` not honoured, or a kernel feature is missing | read the log tail it prints; on colima make sure the VM is not rootless |
+| `integration`: runner log says `userns: required` unsupported, test logs `using off` | the VM kernel is older than 5.19 or lacks overlayfs id-mapping | harmless for the test (it falls back to `off`); update the VM to test `required` |
+| `integration`: build step fails fetching modules | no network to the Go module proxy for containerd's daemon modules | the first run needs network once; later runs use the `mirafleet-gomod` volume |
+| `go test ./internal/workspace/ctrd` on a Mac says there are no tests | the containerd package is `linux`-only | run `scripts/dev.sh test` (Linux container) or `integration` |
+| `TestNoContainerdOnNonLinux` fails | a non-Linux file imports `ctrd`, `containerd` or `grpc` | the only import of `ctrd` belongs in `cmd/mirafleet/runner_ws_linux.go` |
+| A workspace test hangs until the timeout | a fake `Exec` ignored its context | an `Executor` must return when `ctx` is done; copy the fake's `Exec` |
 | Slow first run, then fast | cold caches | normal; do not delete the volumes without a reason |
 | `deps_test` skipped / `go tool not available` | running tests outside the container | run via `dev.sh`; in CI (`CI` set) a missing `go` is a hard failure |
 
@@ -559,6 +669,122 @@ Stop everything with `kill $(jobs -p)` and `exit`. The next `scripts/dev.sh shel
 
 If a step fails, [10.6](10-operations.md#106-troubleshooting) lists the messages and fixes.
 
+## 9.12 Try it locally: a workspace
+
+**The walkthrough in 9.11 cannot run workspaces.** `scripts/dev.sh shell` is an ordinary,
+unprivileged container: no containerd, no root, no user namespaces. A workspace runner needs all
+three (it is root-equivalent by design, [chapter 5](05-security.md)). So there are two honest
+ways to see workspaces working, and the first needs nothing but Docker.
+
+### Way 1: watch the built binary do it, in the privileged harness
+
+```bash
+scripts/dev.sh integration
+```
+
+`TestIntegrationWorkspaceCLI` is this walkthrough, automated. It starts the real binary as central
+and as `runner run -workspace` over a real containerd, then runs exactly the commands you would
+type (the next section), with a hermetic image and no network. Read its log with `-test.v` output
+(the script already passes `-test.v`): every step prints. Its source,
+`cmd/mirafleet/e2e_integration_linux_test.go`, is the best worked example of the CLI.
+
+### Way 2: by hand, on a throwaway Linux machine
+
+You need a **disposable Linux VM** (not your laptop, not a shared server) with root, kernel 5.19
+or newer, cgroup v2, `runc`, and containerd **2.x** running (the repository does not install it for
+you; `scripts/dev.sh integration` builds the matching version if you want one to copy). Everything
+below is the same sequence as 9.11 plus the workspace pieces. Run as root. Never do this on a
+machine you care about: a workspace runner holds the containerd socket.
+
+```bash
+mf() { /usr/local/bin/mirafleet "$@"; }       # your build of the binary
+mf central init -data /tmp/c -listen 127.0.0.1:2222
+mf central run -data /tmp/c -listen 127.0.0.1:2222 &
+sleep 1
+```
+
+**1. A workspace fleet.** The image allowlist is exact or a pattern; a digest pattern is best.
+`-network none` is the default and the safe choice:
+
+```bash
+IMG=docker.io/library/busybox@sha256:<a digest you looked up and trust>
+mf central fleet create dev -data /tmp/c -mode workspace -executor containerd \
+  -image "$IMG" -images "docker.io/library/busybox@sha256:*" -pull if-not-present \
+  -network none -cpus 1 -memory 512MiB -pids 128 -tmpfs 64MiB -disk 1GiB \
+  -idle-ttl 1h -max-ttl 4h -exec-timeout 30s -exec-max 5m
+mf central fleet list -data /tmp/c -json | head -30     # shows the full config (admin socket only)
+```
+
+**2. The runner's own policy**, `/etc/mirafleet/workspace.yaml` (the boundary on the runner's
+side; every field is explained in [10.9.2](10-operations.md#1092-workspaceyaml-reference)):
+
+```bash
+mkdir -p /etc/mirafleet /var/lib/mirafleet/ws && chmod 0700 /var/lib/mirafleet/ws
+cat > /etc/mirafleet/workspace.yaml <<'EOF'
+executor: containerd
+concurrent: 2
+max_age: 24h
+images: ["docker.io/library/busybox@sha256:*"]
+limits: {cpus: 2, memory: 1GiB, pids: 256, tmpfs: 128MiB, disk: 2GiB, max_file: 64MiB, exec_max: 10m}
+network: [none]
+env_allow: [LANG, CI]
+containerd: {namespace: mirafleet, root: /var/lib/mirafleet/ws}
+EOF
+```
+
+**3. Join and start the runner** with `-workspace` instead of `-actions` (they are exclusive):
+
+```bash
+TOKEN=$(mf central token create -fleet dev -approve -data /tmp/c)
+printf '%s\n' "$TOKEN" | mf runner join 127.0.0.1:2222 -name build-1 -data /tmp/r -token -
+mf runner run -data /tmp/r -workspace /etc/mirafleet/workspace.yaml &
+sleep 3
+mf central runner list -data /tmp/c -fleet dev -json    # "online": true, "slots": 2, "executor": "containerd"
+```
+If the runner exits at start, its message names the failed rule (user namespaces unsupported,
+`root` not 0700 and root-owned, a forbidden namespace, ...); see
+[10.6](10-operations.md#106-troubleshooting).
+
+**4. Register alice and use the workspace.**
+
+```bash
+CODE=$(mf central operator code -data /tmp/c | sed -n 's/^code: *//p')
+export MIRAFLEET_CONFIG_DIR=/tmp/op1
+printf '%s\n' "$CODE" | mf mcp login 127.0.0.1:2222 -name alice -code -
+
+mf mcp api workspace.open '{"fleet":"dev","session":"s1"}'            # note the id
+WS=<the id from the reply>
+mf mcp api workspace.open '{"fleet":"dev","session":"s1"}'            # "reused": true
+mf mcp api workspace.exec "{\"workspace\":\"$WS\",\"argv\":[\"id\"]}" # uid=1000, not 0
+printf 'hello\n' > /tmp/hello.txt
+mf mcp api workspace.write_file "{\"workspace\":\"$WS\",\"path\":\"hello.txt\",\"truncate\":true}" -in /tmp/hello.txt
+mf mcp api workspace.read_file "{\"workspace\":\"$WS\",\"path\":\"hello.txt\"}" -out /tmp/back.txt
+cmp /tmp/hello.txt /tmp/back.txt && echo round trip ok
+```
+`mcp api` fills in `length` and `sha256` for `-in`, sets `stdin: true` for an `exec` with `-in`, and
+writes the body of a read to `-out` (0600, atomically).
+
+**5. Break it on purpose.**
+
+```bash
+mf mcp api workspace.exec "{\"workspace\":\"$WS\",\"argv\":[\"touch\",\"/etc/x\"]}"       # exit_code 1, read-only file system
+mf mcp api workspace.exec "{\"workspace\":\"$WS\",\"argv\":[\"env\"],\"env\":{\"ANTHROPIC_API_KEY\":\"x\"}}"  # bad_request
+mf mcp api workspace.write_file "{\"workspace\":\"$WS\",\"path\":\"../etc/evil\"}" -in /tmp/hello.txt        # refused
+```
+
+**6. Look from the other side.** Dana lists and kills; the audit log shows start and outcome rows
+with the workspace column; the runner host shows the container and its directory:
+
+```bash
+mf central workspace list -data /tmp/c
+mf central audit -data /tmp/c -limit 20
+mf runner workspace list -data /tmp/r -workspace /etc/mirafleet/workspace.yaml
+mf central workspace kill -data /tmp/c "$WS"
+```
+
+Stop with `kill $(jobs -p)`. If anything is left over, `mf runner workspace prune -all -yes -data
+/tmp/r -workspace /etc/mirafleet/workspace.yaml` removes this runner's containers and directories.
+
 ## Check your understanding
 
 1. Why does `scripts/dev.sh test` run the test suite twice?
@@ -570,6 +796,12 @@ If a step fails, [10.6](10-operations.md#106-troubleshooting) lists the messages
    does it move time forward?
 5. You want to check a `slow` action is killed after its timeout. Which `env` helper do you call,
    and is a refusal an `error` or a result?
+6. `scripts/dev.sh integration` uses `--privileged`. Why is that acceptable here but not for
+   `scripts/dev.sh test`, and what must be true of your Docker runtime?
+7. `TestM3Done` and `TestM3DoneIntegration` never drift apart. What is the mechanism, and what does
+   each variant prove that the other cannot?
+8. Why does the integration harness build containerd from the version in `go.mod` instead of using
+   the daemon bundled in the `dind` image?
 
 <details>
 <summary>Answers</summary>
@@ -588,5 +820,18 @@ If a step fails, [10.6](10-operations.md#106-troubleshooting) lists the messages
 5. `e.exec("r1", "slow")` (or `e.run`). A guard refusal is a *result* with `Refused: true`; a
    timeout is a result too, with `TimedOut: true` and `ExitCode: -1`. An `error` means a
    transport problem (runner offline, channel failed).
+6. Only the integration tests need real containers, so only they get extra privilege, and only in a
+   throwaway `--rm` container whose state lives on `tmpfs`; the normal gate stays unprivileged. The
+   runtime must be VM-backed (colima, Docker Desktop) so "privileged" means privileged *inside the
+   VM*, not on your host. On a bare Linux host use a throwaway VM.
+7. Both call the single function `runM3Done` with an `m3Backend` (the executor factory, the argv for
+   "print my uid" and so on). The fake variant proves the *logic* (placement, ownership, reaper,
+   audit counts) fast and everywhere, but cannot prove isolation. The containerd variant proves the
+   isolation claims by behaviour (non-root, read-only rootfs, no host symlink, no network), but is
+   slow and needs the privileged harness.
+8. The `dind` image's daemon is containerd 1.7; mirafleet's client and the user-namespace and
+   id-mapped snapshot features it relies on are 2.x. Building the daemon from the same module
+   version as the client makes the test exercise exactly what the code was written against, and a
+   `go.mod` bump automatically bumps the test daemon.
 
 </details>

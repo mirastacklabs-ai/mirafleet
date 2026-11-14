@@ -67,21 +67,24 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <text class="m" x="342" y="413">runs on central host</text>
 
 <!-- fleets -->
-<rect class="pn" x="620" y="56" width="210" height="112" rx="4"/>
-<text class="h" x="632" y="78">Fleet dev</text>
+<rect class="pn" x="620" y="56" width="210" height="170" rx="4"/>
+<text class="h" x="632" y="78">Fleet dev: workspace</text>
 <text x="632" y="98">runner build-1</text>
 <text class="m" x="632" y="114">listens on: nothing</text>
 <rect class="key" x="630" y="124" width="190" height="36" rx="2"/>
 <text x="640" y="140">runner ssh key +</text>
 <text class="m" x="640" y="155">central host-key hash</text>
+<rect class="bx" x="630" y="170" width="190" height="48" rx="2"/>
+<text x="640" y="190">containerd (local)</text>
+<text class="m" x="640" y="208">container: no keys</text>
 
-<rect class="pn" x="620" y="186" width="210" height="112" rx="4"/>
-<text class="h" x="632" y="208">Fleet prod</text>
-<text x="632" y="228">runner db-1</text>
-<text class="m" x="632" y="244">listens on: nothing</text>
-<rect class="key" x="630" y="254" width="190" height="36" rx="2"/>
-<text x="640" y="270">runner ssh key +</text>
-<text class="m" x="640" y="285">central host-key hash</text>
+<rect class="pn" x="620" y="244" width="210" height="112" rx="4"/>
+<text class="h" x="632" y="266">Fleet prod: actions</text>
+<text x="632" y="286">runner db-1</text>
+<text class="m" x="632" y="302">listens on: nothing</text>
+<rect class="key" x="630" y="312" width="190" height="36" rx="2"/>
+<text x="640" y="328">runner ssh key +</text>
+<text class="m" x="640" y="343">central host-key hash</text>
 
 <!-- arrows: all dialled toward central -->
 <g class="st" style="--i:2">
@@ -92,14 +95,14 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 </g>
 <g class="st" style="--i:4">
 <line class="ln" x1="618" y1="111" x2="524" y2="111" marker-end="url(#ah)"/>
-<line class="ln" x1="618" y1="241" x2="524" y2="241" marker-end="url(#ah)"/>
+<line class="ln" x1="618" y1="299" x2="524" y2="299" marker-end="url(#ah)"/>
 <text x="540" y="92">ssh :2222</text>
-<text x="540" y="222">ssh :2222</text>
+<text x="540" y="280">ssh :2222</text>
 <circle class="bdg" cx="571" cy="111" r="11"/><text class="bt" x="571" y="115.5">4</text>
 </g>
 <g class="st" style="--i:5">
-<text class="m" x="556" y="144">exec@</text>
-<text class="m" x="556" y="274">exec@</text>
+<text class="m" x="540" y="166">workspace@</text>
+<text class="m" x="556" y="332">exec@</text>
 <circle class="bdg" cx="536" cy="140" r="11"/><text class="bt" x="536" y="144.5">5</text>
 </g>
 <g class="st" style="--i:6">
@@ -117,6 +120,6 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <g class="st" style="--i:2"><text x="10" y="492"><tspan class="b">2</tspan> mcp dials central :2222 as SSH user operator; each request is one api@ channel.</text></g>
 <g class="st" style="--i:3"><text x="10" y="512"><tspan class="b">3</tspan> Central checks the key and the policy against SQLite, then acts.</text></g>
 <g class="st" style="--i:4"><text x="10" y="532"><tspan class="b">4</tspan> Runners dial OUT to central (user runner). Nothing listens on a runner.</text></g>
-<g class="st" style="--i:5"><text x="10" y="552"><tspan class="b">5</tspan> Central sends work back down that same connection as an exec@ channel.</text></g>
+<g class="st" style="--i:5"><text x="10" y="552"><tspan class="b">5</tspan> Central sends work back down that same connection: exec@ (actions) or workspace@ (containers).</text></g>
 <g class="st" style="--i:6"><text x="10" y="572"><tspan class="b">6</tspan> Dana runs the admin CLI on central. It uses a local unix socket, never the network.</text></g>
 </svg>

@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -53,6 +54,9 @@ type Front struct {
 	tlsCfg   *tls.Config
 	handler  http.Handler
 
+	handshakeTimeout time.Duration // TLS handshake and request headers (default 10s)
+	bodyTimeout      time.Duration // inactivity limit while the client sends a body (default 60s)
+
 	mu  sync.Mutex
 	srv *http.Server
 	ln  net.Listener
@@ -65,15 +69,31 @@ var (
 
 // frontRouteAllowed reports whether the decoded request path may be forwarded.
 func frontRouteAllowed(p string) bool {
-	if p == "" || p[0] != '/' || strings.ContainsAny(p, "\x00\\") {
+	if p == "" || p[0] != '/' || strings.ContainsAny(p, "\\") {
 		return false
+	}
+	for i := 0; i < len(p); i++ {
+		if p[i] < 0x20 || p[i] == 0x7f { // NUL, CR, LF, tabs and other control bytes
+			return false
+		}
 	}
 	// Reject anything that is not already in canonical form: dot segments, doubled slashes.
 	// (A trailing slash is canonical for our purposes.)
 	if c := path.Clean(p); c != p && c+"/" != p {
 		return false
 	}
-	if p == "/v1/sandboxes" || strings.HasPrefix(p, "/v1/sandboxes/") {
+	if p == "/v1/sandboxes" {
+		return true
+	}
+	if rest, ok := strings.CutPrefix(p, "/v1/sandboxes/"); ok {
+		// The lifecycle API. OpenSandbox's server proxy (/proxy/{port}, /port/{port}) can reach any
+		// port of a sandbox, so under this prefix it is allowed for execd's port only.
+		segs := strings.Split(rest, "/")
+		for _, s := range segs[1:] {
+			if s == "proxy" || s == "port" {
+				return frontProxyR.MatchString(p)
+			}
+		}
 		return true
 	}
 	return frontProxyR.MatchString(p)
@@ -136,8 +156,10 @@ func NewFront(cfg FrontConfig) (*Front, error) {
 		return nil, errors.New("tls front: the CA file contains no PEM certificate")
 	}
 	f := &Front{
-		cfg:      cfg,
-		upstream: &url.URL{Scheme: "http", Host: net.JoinHostPort(uh, uport)},
+		cfg:              cfg,
+		handshakeTimeout: 10 * time.Second,
+		bodyTimeout:      60 * time.Second,
+		upstream:         &url.URL{Scheme: "http", Host: net.JoinHostPort(uh, uport)},
 		tlsCfg: &tls.Config{
 			MinVersion:   tls.VersionTLS13,
 			MaxVersion:   tls.VersionTLS13,
@@ -193,7 +215,14 @@ func (f *Front) newHandler() http.Handler {
 		ErrorLog:      log.New(io.Discard, "", 0),
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			// The error text can carry the upstream address only; never headers. Keep it short.
-			f.cfg.Logf("tls-front: upstream error on %s %s: %s", r.Method, r.URL.Path, errClass(err))
+			f.cfg.Logf("tls-front: upstream error on %s %q: %s", r.Method, r.URL.Path, errClass(err))
+			if db, ok := r.Body.(*deadlineBody); ok && db.timedOut.Load() {
+				// D-08: the client stalled while sending its body. Answer before the connection
+				// is closed so it sees 408 instead of a bare EOF.
+				w.Header().Set("Connection", "close")
+				http.Error(w, "request body timeout", http.StatusRequestTimeout)
+				return
+			}
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 		},
 	}
@@ -208,9 +237,37 @@ func (f *Front) newHandler() http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if r.Body != nil && r.Body != http.NoBody {
+			r.Body = &deadlineBody{rc: http.NewResponseController(w), src: r.Body, d: f.bodyTimeout}
+		}
 		rp.ServeHTTP(w, r)
 	})
 }
+
+// deadlineBody gives each read of a request body an inactivity deadline and clears it at the end
+// of the body, so a slow-sending client times out (the handler then answers 408) while the
+// response stream that follows is not subject to a read deadline.
+type deadlineBody struct {
+	rc       *http.ResponseController
+	src      io.ReadCloser
+	d        time.Duration
+	timedOut atomic.Bool
+}
+
+func (b *deadlineBody) Read(p []byte) (int, error) {
+	b.rc.SetReadDeadline(time.Now().Add(b.d)) // best effort: unsupported writers just skip it
+	n, err := b.src.Read(p)
+	if err != nil {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			b.timedOut.Store(true)
+		}
+		b.rc.SetReadDeadline(time.Time{})
+	}
+	return n, err
+}
+
+func (b *deadlineBody) Close() error { return b.src.Close() }
 
 func errClass(err error) string {
 	var ne net.Error
@@ -236,9 +293,12 @@ func (f *Front) Start() (string, error) {
 		return "", fmt.Errorf("tls front: listen: %w", err)
 	}
 	srv := &http.Server{
-		Handler:           f.handler,
-		TLSConfig:         f.tlsCfg.Clone(),
-		ReadHeaderTimeout: 10 * time.Second,
+		Handler:   f.handler,
+		TLSConfig: f.tlsCfg.Clone(),
+		// D-03: net/http applies the smallest of Read/ReadHeader/WriteTimeout to the TLS handshake
+		// too, so a silent or stalled client is dropped after this long (and the request headers
+		// must also arrive within it). ReadTimeout is deliberately unset: exec streams are long.
+		ReadHeaderTimeout: f.handshakeTimeout,
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    64 << 10,
 		ErrorLog:          log.New(logWriter(f.cfg.Logf), "", 0), // handshake failures: no headers, no secrets

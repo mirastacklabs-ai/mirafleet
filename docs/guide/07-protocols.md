@@ -8,8 +8,11 @@
   socket, and the two enrol methods.
 - The error codes, the limits (with constant names and values), and the formats of join tokens
   and registration codes, field by field.
-- What flows between central and a runner (`heartbeat@mirafleet`, `exec@mirafleet`) and the
-  rules for changing the protocol.
+- What flows between central and a runner (`heartbeat@mirafleet`, `exec@mirafleet`,
+  `workspace@mirafleet`) and the rules for changing the protocol.
+- The M3 additions: the six workspace operator methods and the admin workspace methods with real
+  JSON, the **body frame** (a second length-prefixed frame carrying file or stdin bytes), the new
+  heartbeat fields, limits and errors.
 
 Unfamiliar terms (SSH channel, global request, framing, envelope) are in the
 [glossary](glossary.md). The code is `internal/api` (framing, envelope, DTOs, limits),
@@ -20,8 +23,9 @@ All examples use the running example: central at `central.example.com:2222`, fle
 `prod`, runners `build-1` (in `dev`) and `db-1` (in `prod`), operators `alice` and `bob`, and
 Dana, the admin who uses the local admin socket. Tokens and codes are obviously fake (the secret
 and host-key-hash placeholders are exactly 43 characters long, like the real ones). Timestamps
-are made up. M1 and M2 are done (13 Nov 2026); everything here is implemented, except where a
-paragraph says "planned".
+are made up. M1, M2 and M3 are done (13 Nov 2026); everything here is implemented, except where
+a paragraph says "planned". Workspace ids are 32 lowercase hex characters; the examples use
+`3f9a6c1e5b7d4820a1c3e5f708192a4b`.
 
 ## 7.1 The big picture: SSH carries everything
 
@@ -40,6 +44,7 @@ mirafleet uses three kinds of things on top of SSH:
 | Channel `api@mirafleet`, `join@mirafleet`, `register@mirafleet` (peer to central) | Operator API, enrolment | 4-byte length prefix + JSON, one request, one response (section 7.3) |
 | Global request `heartbeat@mirafleet` (runner to central) | "I am alive, here is what I am" | SSH request payload: JSON, answered with ok/not ok |
 | Channel `exec@mirafleet` (central to runner, **over the runner's own connection**) | Run one action | Open data: JSON; reply: one JSON document then EOF (section 7.10) |
+| Channel `workspace@mirafleet` (central to runner, same connection) | One workspace operation: create, exec, read, write, destroy, list | Open data: JSON; optional raw body; reply: one length-prefixed JSON frame, then raw bytes for a read (section 7.10) |
 
 Names are defined once, in `internal/transport/transport.go`, so central and runner cannot
 disagree.
@@ -52,7 +57,7 @@ The SSH **user name** selects the role. The key is looked up only in that role's
 
 | SSH user | Key must be | May open (peer to central) | May send | Central may open toward it |
 |---|---|---|---|---|
-| `runner` | an enrolled, non-revoked runner key | **nothing**: every channel is rejected | `heartbeat@mirafleet` global requests | `exec@mirafleet` |
+| `runner` | an enrolled, non-revoked runner key | **nothing**: every channel is rejected | `heartbeat@mirafleet` global requests | `exec@mirafleet` (actions runners), `workspace@mirafleet` (workspace runners) |
 | `operator` | an active operator key | `api@mirafleet`, at most **8 at once** | nothing honoured (global requests are discarded) | nothing |
 | `enroll` | **any** Ed25519 key | exactly **one** of `join@mirafleet` or `register@mirafleet`, then the connection closes | nothing honoured | nothing |
 | (anything else) | n/a | n/a | n/a | n/a (authentication fails) |
@@ -69,10 +74,12 @@ Notes you will need when debugging:
   rate limited (10/min per source, 60/min overall) *after* the handshake. This is why anyone who
   can reach the port can complete a handshake as `enroll`: they can then do nothing except present
   a token or code.
-- The runner never listens. Its only channel handler is for `exec@mirafleet`; the SSH library
-  rejects other channel types toward the runner.
-- `file@mirafleet` and `workspace@mirafleet` (central to runner) are planned for [M3](../M3.md).
-  They do not exist in the code yet.
+- The runner never listens. A runner started with `-actions` handles only `exec@mirafleet`; one
+  started with `-workspace` handles only `workspace@mirafleet`. The SSH library rejects every
+  other channel type toward the runner, and a runner refuses the channel type it has no config
+  for (`Prohibited`).
+- There is **no** `file@mirafleet` channel. [M3](../M3.md) put file reads and writes on
+  `workspace@mirafleet` (same handler, same trust, half the plumbing).
 - The **admin socket** is a unix socket, not SSH. It speaks the same framing and envelope as
   `api@mirafleet` (section 7.5).
 
@@ -92,6 +99,9 @@ sending). So every message is wrapped in a **length prefix**: the size comes fir
 4. Central reads 4 bytes, checks the length against its limit BEFORE allocating, reads that many.
 5. Central runs the method and builds the JSON response (a small example: 28 bytes).
 6. The response is framed the same way: 28 = 0x0000001C. The operator reads it back.
+7. `write_file` and `exec` with stdin add a body frame right behind the request: a 4-byte length,
+   then raw bytes (here 5 bytes, `hello`), at most 1 MiB. Not JSON.
+8. Central reads the body frame only after policy, ownership and confirm pass, within 30 s.
 
 ### In detail
 
@@ -157,6 +167,56 @@ matches (`apiclient.callOn`).
 Why a length prefix and not one JSON object per line (NDJSON)? It lets a receiver reject a big
 message by looking at 4 bytes, and the payload may contain any bytes including raw newlines.
 (`docs/M2.md` records NDJSON as rejected, Q12.)
+
+### Body frames (M3): bytes behind a request
+
+Files and stdin are bytes, not JSON. Base64 inside JSON would force a bigger request limit on
+**every** method (or tiny 48 KiB chunks), so M3 added a second kind of frame, the **body frame**,
+sent on the same channel right behind the request frame. The picture above shows it in steps 7
+and 8.
+
+```
+request frame                                  body frame (only some methods)
++----------+------------------------+          +----------+---------------------------+
+| 4 bytes  | N bytes of JSON (<=64K)|    then  | 4 bytes  | M raw bytes (<= 1 MiB)    |
+| N        | {"method":"workspace.  |          | M        | not JSON, any bytes at all|
++----------+ write_file", ...}      |          +----------+---------------------------+
+```
+
+Same 4-byte big-endian length, same "check before you allocate". The differences:
+
+| | Request frame (`ReadFrame`) | Body frame (`ReadBodyTimeout`) |
+|---|---|---|
+| Limit | `api.MaxRequestBytes` 64 KiB | `api.MaxFileChunk` 1 MiB |
+| Zero length | refused (`ErrEmptyFrame`) | **valid**: an empty file or empty stdin |
+| Content | one JSON envelope | raw bytes |
+| Deadline | `api.RequestTimeout` 10 s | `api.BodyTimeout` 30 s, armed when central **asks** for it |
+| Writer | `api.WriteFrame` | `api.WriteBody` |
+
+Which methods carry bodies:
+
+- `workspace.write_file`: a request body of exactly `length` bytes whose SHA-256 must equal
+  `sha256` (a mismatch is `bad_request`, audited, and nothing reaches the runner).
+- `workspace.exec` with `"stdin": true`: a request body (the stdin bytes, at most 1 MiB).
+- `workspace.read_file`: the **response** has a body. The JSON result frame comes first
+  (`length` says how many bytes follow), then one body frame.
+
+The client writes the body frame immediately after the request: SSH's channel window (2 MiB) is
+bigger than the biggest body, so that write never blocks. Central, however, reads it **late on
+purpose**: the handlers wrap the body in a lazy reader (`lazyStdin`, `lazyFileBody` in
+`internal/central/workspace_handlers.go`) and the service only touches it after policy, ownership,
+workspace state, input checks and `confirm` have passed. Why: if central read the body first, any
+authenticated but unauthorised caller could make it buffer 1 MiB per channel, 8 channels per
+connection, before being refused. With the late read, a refused caller costs a 64 KiB frame.
+A slow sender is cut off after 30 s (`timeout`; the channel is closed), a body over the stated
+size is `too_large`, a short one is `bad_request` "truncated body".
+
+Byte example, the body of a `write_file` of the five bytes `hello`:
+
+```
+offset  hex                        text
+0000    00 00 00 05 68 65 6C 6C 6F ....hello
+```
 
 ## 7.4 The v1 envelope
 
@@ -294,6 +354,168 @@ Failures (all with the same envelope):
 If the runner itself reports that the action timed out (the action's own `timeout` in
 `actions.yaml`), the response is a normal result with `exit_code: -1`, and the audit outcome is `timeout`.
 
+### Workspace methods (M3)
+
+Six more operator methods drive workspaces. They exist only on `api@mirafleet` (the admin socket
+does **not** serve them: Dana manages workspaces with the admin methods in section 7.6, she never
+runs commands in them). All six go through the same policy check as every other method, plus a
+direct check that the caller is an *operator*. They only work on a fleet in `workspace` mode;
+`action.run` on such a fleet, and `workspace.*` on an actions fleet, answer `conflict`.
+
+Ownership is the main rule: every call that names a `workspace` loads the row and requires that
+the caller is its owner. Anyone else, and any unknown or malformed id, gets the **same**
+`not_found`. bob cannot even learn that alice's workspace exists.
+
+The running example: alice's agent works in fleet `dev`, session `s1` (see the
+[M3 flow diagrams](diagrams/README.md): `workspace-open.svg` and `workspace-exec.svg`).
+
+#### `workspace.open`
+
+| Param | Type | Rules |
+|---|---|---|
+| `fleet` | string | A valid fleet name, in `workspace` mode. |
+| `session` | string | 1 to 128 characters of `A-Za-z0-9._:-`. Chosen by the **client**; it is the stickiness key. |
+| `image` | string | Optional. Must match the fleet's image allowlist; default is the fleet's `default_image`. |
+| `labels` | object of strings | Optional. Must be a subset of the runner's **trusted token labels**. At most 16; names starting with `mirafleet.` are reserved. |
+| `confirm` | string | On a guarded fleet, must equal the fleet name. |
+
+```json
+{"v":1,"id":"w1","method":"workspace.open","params":{"fleet":"dev","session":"s1","labels":{"zone":"a"}}}
+{"v":1,"id":"w1","result":{"workspace":{"id":"3f9a6c1e5b7d4820a1c3e5f708192a4b","fleet":"dev",
+ "runner":"build-1","session":"s1",
+ "image":"docker.io/library/golang@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+ "state":"open","created":"2026-11-13T09:41:07.512Z","last_used":"2026-11-13T09:41:07.512Z",
+ "expires":"2026-11-20T09:41:07.512Z"},"reused":false}}
+```
+
+Open **is** idempotent per `(operator, fleet, session)`: a second `open` with the same session
+returns the same workspace with `"reused":true` and creates nothing (a unique partial index in
+the database guarantees one live workspace per triple). Two situations are errors instead:
+the session's runner is offline (`unavailable`, "the runner holding this session's workspace is
+offline": the files live on that runner, so a fresh workspace elsewhere would silently lose
+them), and the first open is still being created (`conflict`, "workspace is still opening").
+Placement is described in [chapter 4](04-flows.md); the result of a successful open is an `open`
+row, `expires` is `created` plus the fleet's `max_ttl`.
+
+Failures: `bad_request` (invalid session, image not allowed by the fleet, missing confirm, label
+errors, "refused by runner: ..." when the runner's own `workspace.yaml` says no), `conflict`
+(fleet not in workspace mode, per-operator cap reached: "workspace limit reached (8)"),
+`unavailable` ("no runner can take this workspace right now", "runner busy"), `timeout`
+(creation, including an image pull, took more than 5 minutes).
+
+#### `workspace.exec`
+
+| Param | Type | Rules |
+|---|---|---|
+| `workspace` | string | An id you own, in state `open` (else `conflict`, "workspace is closing"). |
+| `argv` | array of strings | 1 to 256 elements, 32 KiB in total, no NUL, `argv[0]` set. **No shell string**: to use a shell, send `["/bin/sh","-c","..."]`. |
+| `cwd` | string | Optional. Relative to `/workspace` or absolute under it. Cleaned; a `..` that escapes is refused. |
+| `env` | object | Optional. At most 32 variables, names `^[A-Z_][A-Z0-9_]{0,63}$`, values up to 4 KiB. Must pass the runner's `env_allow` and never match the hard denylist (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, `*_PASSWORD`, `*_KEY`, `ANTHROPIC_*`, `OPENAI_*`, `AWS_*`, `SSH_AUTH_SOCK`, `GIT_ASKPASS`, `GIT_SSH_COMMAND`, `*PROXY*`, `LD_*`, `BASH_ENV`, `NODE_OPTIONS`; see `workspace.EnvDenied`). |
+| `timeout_s` | integer | `0` = the fleet's `exec_default_s` (120); capped at the fleet's `exec_max_s` (default 1800, ceiling 86400) and again by the runner's `limits.exec_max`. |
+| `stdin` | boolean | `true` means a body frame (at most 1 MiB) follows the request. |
+| `confirm` | string | Guarded fleets: the fleet name. |
+
+```json
+{"v":1,"id":"w2","method":"workspace.exec","params":{"workspace":"3f9a6c1e5b7d4820a1c3e5f708192a4b",
+ "argv":["go","test","./..."],"cwd":"src","env":{"CI":"1"},"timeout_s":300}}
+{"v":1,"id":"w2","result":{"exit_code":0,"stdout":"ok  \texample.com/app\t0.412s\n","stderr":"",
+ "duration_ms":1873,"request_id":"c0ffee11d00d4b2a9a3e5f6071829304"}}
+```
+
+As with `action.run`, a command that ran and failed is still a success response with a non-zero
+`exit_code`. `truncated: true` means the output hit the budget: the runner keeps a **head and a
+tail** of each stream and trims them so the *JSON-encoded* stdout plus stderr fit in 1 MiB
+(`api.MaxResultBytes`); invalid UTF-8 is replaced, so binary output can never turn into
+`too_large`. `timed_out: true` means the runner killed the command at its deadline (the audit
+outcome is `timeout`). There is no streaming: the reply is one frame when the command ends.
+
+An env value that is on the denylist is refused naming the *variable*, never its value:
+```json
+{"v":1,"id":"w3","method":"workspace.exec","params":{"workspace":"3f9a6c1e5b7d4820a1c3e5f708192a4b",
+ "argv":["env"],"env":{"ANTHROPIC_API_KEY":"x"}}}
+{"v":1,"id":"w3","error":{"code":"bad_request","message":"env ANTHROPIC_API_KEY is denied"}}
+```
+The shape is the point: `bad_request`, the variable name, never the value. A name that is merely
+not on the runner's `env_allow` list is refused by the runner instead (`refused by runner: env X
+is not allowed`).
+
+#### `workspace.read_file`
+
+Params: `workspace`, `path` (a file under `/workspace`, not the root itself), `offset` (default 0),
+`limit` (bytes, default and maximum 1 MiB). The result is followed by **one body frame** holding
+`length` bytes.
+
+```json
+{"v":1,"id":"w4","method":"workspace.read_file","params":{"workspace":"3f9a6c1e5b7d4820a1c3e5f708192a4b",
+ "path":"src/main.go","offset":0,"limit":65536}}
+{"v":1,"id":"w4","result":{"size":1342,"offset":0,"length":1342,"mode":420,"eof":true}}
+<body frame: 00 00 05 3E, then 1342 bytes>
+```
+`mode` is the permission bits as a number (420 is octal 0644). For a file bigger than one chunk,
+call again with `offset` set to what you have so far until `eof` is true. `read_file` works on
+regular files only: a directory, a FIFO or a symlink that points out of `/workspace` is refused.
+
+#### `workspace.write_file`
+
+| Param | Type | Rules |
+|---|---|---|
+| `workspace`, `path` | string | As above. |
+| `offset` | integer | Where to write, default 0. |
+| `truncate` | boolean | `true` replaces the file (written to a temp file, then renamed). |
+| `mode` | integer | Permission bits for a **new** file, 0 means 0644; only `0777` bits are allowed (no setuid). |
+| `length` | integer | 0 to 1 MiB: exactly the size of the body frame. |
+| `sha256` | string | 64 lowercase hex characters: the SHA-256 of the body. |
+| `confirm` | string | Guarded fleets: the fleet name. |
+
+```json
+{"v":1,"id":"w5","method":"workspace.write_file","params":{"workspace":"3f9a6c1e5b7d4820a1c3e5f708192a4b",
+ "path":"notes.txt","truncate":true,"mode":420,"length":5,
+ "sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}}
+<body frame: 00 00 00 05 68 65 6C 6C 6F>
+{"v":1,"id":"w5","result":{"size":5}}
+```
+Why the hash: the body frame already arrives intact over SSH, but the hash lets the audit row say
+*exactly* which bytes were written without storing them, and catches a client bug (wrong body for
+the request) before anything reaches the runner. A file bigger than the chunk limit is written in
+pieces: the first with `truncate:true`, the next ones with `offset` set. The runner also enforces
+its own `limits.max_file` (set in `workspace.yaml`, see [chapter 10](10-operations.md)) and refuses a write when the workspace is
+over its disk quota (`too_large`/`quota` surfaces as `bad_request`, "refused by runner: ...").
+
+#### `workspace.close`
+
+```json
+{"v":1,"id":"w6","method":"workspace.close","params":{"workspace":"3f9a6c1e5b7d4820a1c3e5f708192a4b"}}
+{"v":1,"id":"w6","result":{}}
+```
+The row goes `open` to `closing`, the runner destroys the container and its directory, the row
+becomes `closed`. If the runner is offline, the reply is still `{}` but the row stays `closing`
+(it keeps its slot) until the reaper or the reconcile pass finishes the job. Closing an already
+finished workspace is a no-op.
+
+#### `workspace.list`
+
+Params: `fleet` (optional). Returns **your own** live workspaces (`opening`, `open`, `closing`),
+never anyone else's. This call is audited too (one row), unlike `fleets.list` and `runners.list`.
+```json
+{"v":1,"id":"w7","method":"workspace.list","params":{"fleet":"dev"}}
+{"v":1,"id":"w7","result":{"workspaces":[{"id":"3f9a6c1e5b7d4820a1c3e5f708192a4b","fleet":"dev",
+ "runner":"build-1","session":"s1","image":"docker.io/library/golang@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+ "state":"open","created":"2026-11-13T09:41:07.512Z","last_used":"2026-11-13T09:44:50.101Z",
+ "expires":"2026-11-20T09:41:07.512Z"}]}}
+```
+
+#### Additive fields on older methods
+
+M3 added fields without a version bump (section 7.12): `fleets.list` shows
+`"workspace":{"default_image":...,"images":[...],"network":"egress"}` on workspace fleets, and
+`runners.list` shows `"slots"`, `"free_slots"` and `"executor"` on workspace runners:
+```json
+{"v":1,"id":"c3","result":{"runners":[{"name":"build-1","status":"active","online":true,
+ "labels":{"zone":"a"},"last_seen":"2026-11-13T09:44:52.512Z","slots":4,"free_slots":3,"executor":"containerd"}]}}
+```
+`free_slots` is `slots` minus the live workspaces the store knows about.
+
+
 ### The same envelope rejects what it must
 
 An admin method on the operator channel:
@@ -325,7 +547,10 @@ All times are RFC 3339 UTC.
 
 | Method | Params | Result |
 |---|---|---|
-| `fleet.create` | `name`, `mode` (`actions` default or `workspace`), `confirm` (bool) | `{"fleet":{name,mode,confirm,runners}}` |
+| `fleet.create` | `name`, `mode` (`actions` default or `workspace`), `confirm` (bool), `workspace` (config object; required-or-defaulted for `workspace` mode, rejected otherwise) | `{"fleet":{name,mode,confirm,runners,workspace?}}` |
+| `fleet.workspace_set` | `fleet`, `workspace` (the **complete** config: a full replace) | `{"fleet":{...}}` |
+| `workspace.admin_list` | `fleet` (optional) | `{"workspaces":[...]}` all operators, with the `operator` field |
+| `workspace.kill` | `id` | `{"state":"closed"}` or `{"state":"closing"}` |
 | `token.create` | `fleet`, `labels`, `approve`, `uses` (0 = 1), `ttl_s` (0 = 86400; max 2592000) | `{id, token, expires}`, token shown once |
 | `token.list` | `fleet` (empty = all) | `{"tokens":[{id,fleet,labels,approve,max_uses,uses,expires,revoked}]}` |
 | `token.revoke` | `id` | `{}` |
@@ -342,6 +567,56 @@ Examples (one line on the wire):
 {"v":1,"id":"1","method":"fleet.create","params":{"name":"prod","mode":"actions","confirm":true}}
 {"v":1,"id":"1","result":{"fleet":{"name":"prod","mode":"actions","confirm":true,"runners":0}}}
 ```
+
+Workspace fleets (M3). `fleet.create` with `mode: workspace` carries the fleet's workspace config.
+Omitted fields get documented defaults (executor `containerd`, pull `if-not-present`, network
+`none`, 2 CPUs, 4 GiB, 1024 pids, 512 MiB tmpfs, 10 GiB disk, idle TTL 24 h, max TTL 168 h,
+exec timeout 2 min, exec max 30 min); the default image is never invented and is required. Units
+in the wire config: `cpu_milli` thousandths of a CPU, `*_mb` mebibytes, `*_s` seconds.
+```json
+{"v":1,"id":"11","method":"fleet.create","params":{"name":"dev","mode":"workspace","workspace":{
+ "executor":"containerd",
+ "default_image":"docker.io/library/golang@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+ "images":["docker.io/library/golang@sha256:*"],"network":"egress",
+ "egress":["proxy.golang.org:443","*.golang.org:443"]}}}
+{"v":1,"id":"11","result":{"fleet":{"name":"dev","mode":"workspace","confirm":false,"runners":0,
+ "workspace":{"default_image":"docker.io/library/golang@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+ "images":["docker.io/library/golang@sha256:*"],"network":"egress",
+ "config":{"executor":"containerd","default_image":"docker.io/library/golang@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+ "images":["docker.io/library/golang@sha256:*"],"pull":"if-not-present","network":"egress",
+ "egress":["proxy.golang.org:443","*.golang.org:443"],"cpu_milli":2000,"memory_mb":4096,"pids":1024,
+ "tmpfs_mb":512,"disk_mb":10240,"idle_ttl_s":86400,"max_ttl_s":604800,"exec_default_s":120,"exec_max_s":1800}}}}}
+```
+The `config` object (the full config) appears **only on the admin socket**; an operator's
+`fleets.list` sees `default_image`, `images` and `network` and nothing more. `fleet.workspace_set`
+is a **full replace**: the CLI first reads the current config, changes the flags you gave and
+sends everything back, so a list such as `egress` can be cleared (send `[]`) and nothing is
+merged on the server. Workspaces that already exist keep the spec they were opened with.
+```json
+{"v":1,"id":"12","method":"fleet.workspace_set","params":{"fleet":"dev","workspace":{
+ "executor":"containerd","default_image":"docker.io/library/golang@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+ "images":["docker.io/library/golang@sha256:*"],"pull":"if-not-present","network":"none",
+ "cpu_milli":2000,"memory_mb":4096,"pids":1024,"tmpfs_mb":512,"disk_mb":10240,
+ "idle_ttl_s":43200,"max_ttl_s":604800,"exec_default_s":120,"exec_max_s":1800}}}
+{"v":1,"id":"12","result":{"fleet":{"name":"dev","mode":"workspace","confirm":false,"runners":1,
+ "workspace":{"default_image":"docker.io/library/golang@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+ "images":["docker.io/library/golang@sha256:*"],"network":"none","config":{"...":"as above"}}}}}
+```
+(`"config":{"...":"as above"}` abbreviates the same object; the real reply spells it out.)
+```json
+{"v":1,"id":"13","method":"workspace.admin_list","params":{"fleet":"dev"}}
+{"v":1,"id":"13","result":{"workspaces":[{"id":"3f9a6c1e5b7d4820a1c3e5f708192a4b","fleet":"dev",
+ "runner":"build-1","session":"s1","image":"docker.io/library/golang@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+ "state":"open","operator":"alice","created":"2026-11-13T09:41:07.512Z",
+ "last_used":"2026-11-13T09:44:50.101Z","expires":"2026-11-20T09:41:07.512Z"}]}}
+{"v":1,"id":"14","method":"workspace.kill","params":{"id":"3f9a6c1e5b7d4820a1c3e5f708192a4b"}}
+{"v":1,"id":"14","result":{"state":"closed"}}
+```
+`workspace.kill` destroys the workspace on its runner. If the runner is offline the state comes
+back `closing`: the row keeps its slot and the reaper finishes the job when the runner returns.
+`workspace.admin_list` shows live and recent workspaces of every operator, which is how Dana
+finds a session to kill. Dana can see and kill workspaces but has **no** method to read or write
+inside one.
 ```json
 {"v":1,"id":"2","method":"token.create","params":{"fleet":"prod","labels":{"role":"db"},"approve":false,"uses":1,"ttl_s":86400}}
 {"v":1,"id":"2","result":{"id":"0123456789abcdef",
@@ -453,6 +728,17 @@ speaks). `service.ToAPIError` maps internal errors to these.
 | `unsupported_version` | `v` is not one this server speaks. | `v` is a valid integer other than 1; carries `supported`. |
 | `internal` | Our bug or a store failure. | Message is always `internal error`; the cause is logged on central only. |
 
+Workspace methods (M3) use the same codes. The cases you will meet:
+
+| Code | Workspace situation |
+|---|---|
+| `bad_request` | Invalid `session`; image not on the fleet allowlist; env name denied or malformed; bad path or cwd (NUL, `..` escape, too long); `sha256` mismatch or not 64 lowercase hex; body shorter than `length`; `refused by runner: ...` (the runner's own `workspace.yaml` or limits said no: image, env, network mode, cap, quota, `max_file`); wrong or missing `confirm`. |
+| `not_found` | Unknown workspace id, malformed id, **or a workspace owned by someone else** (deliberately identical). |
+| `conflict` | Fleet not in `workspace` mode (or `action.run` on a workspace fleet); workspace is not `open` ("workspace is closing"); "workspace is still opening"; "workspace limit reached (8)" (per-operator cap). |
+| `unavailable` | The session's runner is offline; "no runner can take this workspace right now"; "runner busy"; "runner is disabled" / "runner is pending approval"; "runner has no workspace executor"; "audit unavailable"; "runner unavailable". |
+| `too_large` | Body frame over 1 MiB (or over the stated `length`). |
+| `timeout` | Body not received within 30 s; open took more than 5 minutes; a file operation or close took more than 60 s; central's own deadline for an exec (the exec timeout plus a 15 s margin) passed with no answer from the runner. A normal deadline hit is *not* an error: the runner kills the command and the result says `timed_out: true`. |
+
 Note that `timeout` after the request is read comes from the service. If the 10 s read timer
 fires, central closes the channel, so the error reply may never arrive.
 
@@ -477,6 +763,19 @@ input has a bound that is checked before its cost is paid.
 | `maxInfoValue` | 256 B | Each heartbeat-supplied string stored for a runner. |
 | store `maxInfoBytes` | 16 KiB | Runner `info` JSON. |
 | audit list | default 100, max 1000 | Rows per `audit.list`. |
+| `api.MaxFileChunk` | 1 MiB | One body frame: a file chunk or stdin. Bigger files go in chunks with `offset`. |
+| `api.MaxArgvElems` / `MaxArgvBytes` | 256 / 32 KiB | `workspace.exec` argv; no NUL. |
+| `api.MaxPathBytes` | 4 KiB | `cwd` and file `path`. |
+| `api.MaxEnvVars` / `MaxEnvValue` | 32 / 4 KiB | `workspace.exec` env; names `^[A-Z_][A-Z0-9_]{0,63}$`. |
+| `api.MaxSessionLen` | 128 | Workspace `session`, charset `A-Za-z0-9._:-`. |
+| `transport.MaxWorkspaceRequestBytes` | 64 KiB | The `workspace@` channel-open data. |
+| `transport.MaxBodyBytes` | 1 MiB | Raw body (stdin or file chunk) per `workspace@` request. |
+| `transport.MaxWorkspaceResultBytes` | 1 MiB + 64 KiB | Largest `WorkspaceResult` frame; central and runner both use it (not the 8 MiB exec cap). |
+| `transport.MaxSpecLabels` / `MaxEgressRules` | 16 / 64 | Labels and egress rules in a create spec. |
+| `transport.MaxHeartbeatSlots` / `MaxHeartbeatImages` / `MaxHeartbeatImageBytes` | 1024 / 32 / 256 B | Bounds on the workspace heartbeat fields. |
+| workspace exec output | 1 MiB JSON-encoded | Head and tail kept; stdout and stderr share the budget (`wsOutputBudget`, a little under 1 MiB). |
+| concurrent execs | 4 per workspace | `maxExecPerWorkspace` on the runner; the 5th is `ResourceShortage`. |
+| `service.DefaultMaxWorkspacesPerOperator` | 8 | Live workspaces per operator. |
 
 ### Connection and concurrency limits
 
@@ -501,6 +800,14 @@ input has a bound that is checked before its cost is paid.
 | `api.ListTimeout` | 10 s | Cap for all non-`action.run` methods. |
 | `api.DefaultActionTimeout` | 2 min | When `timeout_s` is 0. |
 | `api.MaxActionTimeout` | 10 min | Cap on `timeout_s`; clamped in seconds so huge values cannot overflow. |
+| `api.BodyTimeout` | 30 s | Time to deliver a body frame once central asks for it; the channel is closed on expiry. |
+| fleet `exec_default_s` / `exec_max_s` | 120 s / 1800 s | Per-fleet workspace exec timeout; `api.HardWorkspaceExecCeiling` (24 h) is the absolute cap, and the runner's `limits.exec_max` (default 1 h) applies again. The shortest wins. |
+| exec central margin | +15 s | `execMargin`: central waits this long beyond the exec timeout for the runner's reply. |
+| workspace open | 5 min | Includes an image pull (`DefaultWorkspaceOpenTimeout`). |
+| workspace file op, close | 60 s | `fileOpTimeout`, `workspaceCloseTimeout`. List on the runner: 10 s. |
+| reaper sweep | 60 s | `service.DefaultReaperInterval`. |
+| fleet `idle_ttl_s` / `max_ttl_s` | 24 h / 168 h | Defaults for idle and absolute workspace lifetime. |
+| disk sampler (runner) | 60 s | Workspace disk usage; 2x the quota destroys the workspace. |
 | `actions.DefaultTimeout` | 60 s | Per-action timeout if `actions.yaml` gives none. |
 | `runner.Config.HeartbeatEvery` | 15 s | Heartbeat interval. |
 | registry `StaleAfter` | 45 s (3 x heartbeat) | No heartbeat for this long = offline, connection closed. Set in `cmd/mirafleet/central_linux.go`. |
@@ -533,6 +840,28 @@ An SSH **global request** with `want_reply = true`. The payload is a JSON `trans
 ```json
 {"hostname":"db-1.example.com","os":"linux","arch":"amd64","version":"0.2.0","labels":{"role":"db"}}
 ```
+
+A workspace runner adds four optional fields (M3). An actions runner omits them, and zero values
+mean "no workspace executor":
+
+```json
+{"hostname":"build-1.example.com","os":"linux","arch":"amd64","version":"0.3.0","labels":{"zone":"a"},
+ "slots":4,"executor":"containerd","secure_runtime":"","images":["docker.io/library/golang@sha256:*"]}
+```
+
+| Field | Meaning | Bound (`Heartbeat.Validate`) |
+|---|---|---|
+| `slots` | How many workspaces this runner accepts at once (`concurrent` in `workspace.yaml`) | 0 to 1024 |
+| `executor` | `containerd` or `opensandbox`; central places a workspace only on a runner whose executor equals the fleet's | lowercase name, at most 32 chars |
+| `secure_runtime` | `gvisor`, `kata` or empty: whether the runner can serve guarded fleets | at most 64 chars, `[A-Za-z0-9._-/:]` |
+| `images` | The runner's image allowlist patterns, for placement only | at most 32 entries of at most 256 bytes |
+
+Central does **not** trust them to be enforced: `slots` and `images` are hints for placement and
+the runner re-checks everything. A runner that inflates `slots` only overloads itself, because
+central counts live workspaces from its own database and the runner has its own semaphore. An
+out-of-range value is a hostile or broken runner: central refuses to register it and drops the
+connection. The heartbeat's `labels` are still ignored for placement: workspace `labels` are
+matched against the **trusted token labels** stored when the runner joined.
 
 - Sent immediately after connecting and then every **15 s**. The runner waits at most 2 x the
   interval for the reply, then closes the connection and reconnects (with backoff).
@@ -584,6 +913,77 @@ audit line (`ok`, `failed`, `refused`, `timeout`) *before* telling central.
 
 Two timeouts apply: the action's own `timeout` in `actions.yaml` (runner side) and the
 `action.run` timeout (central side, default 2 min, max 10 min). The shorter one wins.
+
+### `workspace@mirafleet` (central to runner)
+
+The workspace twin of `exec@mirafleet`: central opens it **on the runner's own connection**, one
+channel per operation. It is a different channel type on purpose: an `exec@` request must only
+ever reach the actions guard, and mixing workspace operations into it would blur that boundary.
+There is no separate file channel; reads and writes are operations on this one.
+
+**The request** is the channel-open extra data (at most 64 KiB), a JSON
+`transport.WorkspaceRequest`. Only the fields an operation needs are set:
+
+| `op` | Fields used |
+|---|---|
+| `create` | `id`, `spec`, `timeout_ms` |
+| `exec` | `id`, `argv`, `cwd`, `env`, `stdin_len`, `timeout_ms` |
+| `read` | `id`, `path`, `offset`, `limit` |
+| `write` | `id`, `path`, `offset`, `truncate`, `mode`, `length`, `timeout_ms` |
+| `destroy` | `id` |
+| `list` | none |
+
+```json
+{"op":"create","id":"3f9a6c1e5b7d4820a1c3e5f708192a4b","timeout_ms":300000,"spec":{
+ "image":"docker.io/library/golang@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+ "pull":"if-not-present","cpu_milli":2000,"memory_bytes":4294967296,"pids":1024,
+ "tmpfs_bytes":536870912,"disk_bytes":10737418240,"network_mode":"egress",
+ "allow":[{"host":"proxy.golang.org","port":443}],"labels":{"zone":"a"},"max_age_ms":604800000}}
+```
+```json
+{"op":"exec","id":"3f9a6c1e5b7d4820a1c3e5f708192a4b","argv":["go","test","./..."],"cwd":"/workspace/src",
+ "env":{"CI":"1"},"timeout_ms":300000}
+```
+Central decodes strictly (unknown fields are an error) and validates the shape (known op, sizes,
+non-negative lengths) before sending. The runner does it **again**, plus the semantic checks
+(image allowlist, env allowlist, path confinement, limits against its own caps): central is not
+trusted.
+
+**The bytes on the channel**, in order:
+
+1. For `write` and `exec` with `stdin_len > 0`: central streams exactly `length` (or `stdin_len`)
+   **raw bytes**, then `CloseWrite`. There is no length prefix here, because the request already
+   said how many. A short or long body is an error (`ErrBodyLength`).
+2. The runner replies with **one length-prefixed JSON frame**, a `transport.WorkspaceResult`
+   (4-byte big-endian length, at most 1 MiB + 64 KiB, checked before allocating):
+
+```json
+{"code":"ok","exec":{"exit_code":0,"stdout":"ok  \texample.com/app\t0.412s\n","stderr":"","duration_ms":1873},"duration_ms":1875}
+```
+   Other result shapes: `{"code":"ok","file":{"size":1342,"mode":420,"length":1342,"eof":true},"duration_ms":2}` for
+   a read or write, `{"code":"ok","list":[{"id":"...","image":"...","state":"running","created_ms":1794562867000,"disk_bytes":4096}],"duration_ms":4}`
+   for list, and `{"code":"refused","message":"image not allowed on this runner","duration_ms":0}`
+   for a refusal.
+3. For `read` only: `length` raw bytes follow the result frame, then `CloseWrite`.
+
+`code` is one of `ok`, `bad_request`, `refused`, `not_found`, `busy`, `too_large`, `quota`,
+`unavailable`, `unsupported`, `timeout`, `internal`. The service maps them to the operator-facing
+codes of section 7.8 (`refused`, `too_large`, `quota` and `unsupported` all become `bad_request`
+"refused by runner: ..."; `busy` becomes `unavailable`).
+
+**Admission before accept.** A runner that is full cannot say "busy" inside the channel after
+accepting without wasting the body, so it decides *before* accepting: no workspace config means
+reject with `Prohibited` (central: `runner has no workspace executor`); all slots or exec
+permits taken means reject with `ResourceShortage` (central: `runner busy`; for `open`, central
+then tries the next candidate runner). An unreadable request is rejected `ConnectionFailed`.
+
+**Cancellation** works as for `exec@`: when central closes the channel (the caller gave up, the
+operator was revoked) or the connection drops, the runner cancels the executor context and the
+in-flight command is killed. The runner audits `start` and the outcome to its own JSONL log on
+every operation, and writes its outcome before answering.
+
+**Limits on this channel:** at most 4 concurrent execs per workspace, `concurrent` workspaces
+per runner, `MaxArgvItems` 256, argv 32 KiB, paths 4 KiB, env 32 variables, 1 MiB per body.
 
 ## 7.11 Token and code formats
 
@@ -660,7 +1060,19 @@ What the code enforces:
   version; a newer database is refused ([chapter 6](06-data-model.md#610-migrations)).
 - **SSH names** (`api@mirafleet`, `exec@mirafleet`, ...) are the stable surface between
   versions of central and runners. A new capability gets a new channel type or method, and
-  old peers reject what they do not know.
+  old peers reject what they do not know. M3 followed this: `workspace@mirafleet` is a new
+  channel type, the six `workspace.*` methods are new methods, and nothing about `exec@` or
+  `action.run` changed.
+- **M3 changed no existing request**, and added only *result* and *heartbeat* fields:
+  `runners.list` gained `slots`, `free_slots`, `executor`; `fleets.list` gained `workspace`;
+  `Heartbeat` gained `slots`, `executor`, `secure_runtime`, `images`. An older client ignores
+  them (lenient result decoding). An older **central** ignores unknown heartbeat fields too, so
+  a runner can be upgraded first; but it has no `workspace@` support, so a workspace runner only
+  makes sense behind an M3 central. The one place the framing grew is the **body frame**, and it
+  is opt-in per method (`stdin: true`, `write_file`, `read_file`), so every M2 method still
+  sees exactly one request frame and one response frame.
+- **The database has a new migration**, `0002_workspaces.sql` (chapter 6): upgrading central
+  runs it automatically; a downgraded binary refuses the newer database.
 
 Guidance for changing the protocol (derived from the rules above; not enforced by a test):
 
@@ -687,6 +1099,10 @@ Guidance for changing the protocol (derived from the rules above; not enforced b
    paste. What does he see, and what should he do?
 5. Which of these requests is accepted by a v1 server: (a) `{"v":1,"id":"x","method":"hello","extra":1}`,
    (b) `{"v":1,"id":"x","method":"hello"}`, (c) `{"id":"x","method":"hello"}`?
+6. bob sends `workspace.exec` for alice's workspace id, with `stdin: true` and a 1 MiB body frame
+   already queued behind the request. What does he get back, and how much did central buffer?
+7. A client writes a 3 MiB file with `workspace.write_file`. How, and what does each call carry?
+8. Why does a workspace runner reject a `workspace@` channel before accepting it when it is full?
 
 <details>
 <summary>Answers</summary>
@@ -706,5 +1122,14 @@ Guidance for changing the protocol (derived from the rules above; not enforced b
    `mirafleet central operator code` again and registers promptly.
 5. Only (b). (a) has an unknown field, so it is `bad_request`. (c) has no `v`, so it is
    `bad_request` "missing or invalid protocol version".
+6. `not_found`, the same answer as for an id that does not exist. Central read only the 64 KiB-bounded
+   request frame: the ownership check runs before the lazy body reader is touched, so the queued
+   body is never read (the channel closes after the reply).
+7. In three calls of at most 1 MiB each, `length` and `sha256` set per chunk: the first with
+   `truncate: true, offset: 0`, the next with `offset: 1048576` and `2097152`. Each call carries one
+   JSON request frame plus one body frame of exactly `length` bytes.
+8. Once it has accepted, the only way to say "busy" is inside the channel, after the caller has
+   already streamed up to 1 MiB of body. Rejecting first (`ResourceShortage`) costs nothing, and
+   it lets central see `runner busy` and try another runner for an `open`.
 
 </details>

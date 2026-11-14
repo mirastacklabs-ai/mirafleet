@@ -100,3 +100,15 @@ func TestGateDropsWritesAfterClose(t *testing.T) {
 		t.Errorf("late write: %d %v len %d", k, err, buf.Len())
 	}
 }
+
+func TestParseStartTime(t *testing.T) {
+	line := "123 (a b) c) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 98765 23 24"
+	if v, ok := parseStartTime(line); !ok || v != 98765 {
+		t.Errorf("parseStartTime = %d, %v", v, ok)
+	}
+	for _, bad := range []string{"", "123 no parens", "1 (x) S 1 2"} {
+		if _, ok := parseStartTime(bad); ok {
+			t.Errorf("parseStartTime(%q) accepted", bad)
+		}
+	}
+}

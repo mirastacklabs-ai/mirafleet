@@ -194,6 +194,8 @@ func TestOpenSandboxRules(t *testing.T) {
 		{"no client cert", rep(osBase, "  client_cert: /etc/mirafleet/c.pem\n", ""), "client_cert"},
 		{"no client key", rep(osBase, "  client_key: /etc/mirafleet/c.key\n", ""), "client_key"},
 		{"no api key file", rep(osBase, "  api_key_file: /etc/mirafleet/opensandbox.key\n", ""), "api_key_file"},
+		{"server path", rep(osBase, "127.0.0.1:8443", "127.0.0.1:8443/v1"), "no path"},
+		{"secure_runtime too long", rep(osBase, "secure_runtime: gvisor", "secure_runtime: "+strings.Repeat("a", 65)), "secure_runtime"},
 		{"relative ca", rep(osBase, "/etc/mirafleet/ca.pem", "ca.pem"), "ca_file"},
 		{"relative api key", rep(osBase, "/etc/mirafleet/opensandbox.key", "k"), "api_key_file"},
 		{"front bad", rep(osBase, "  secure_runtime: gvisor", "  front: none\n  secure_runtime: gvisor"), "front"},
@@ -286,7 +288,7 @@ func TestCheckFilesOpenSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := c.OpenSandbox.APIKeyFile
+	p, ck := c.OpenSandbox.APIKeyFile, c.OpenSandbox.ClientKey
 	cases := []struct {
 		name string
 		st   map[string]FileStat
@@ -303,9 +305,18 @@ func TestCheckFilesOpenSandbox(t *testing.T) {
 		{"other owner", map[string]FileStat{p: {Mode: 0o600, UID: 0}}, 501, "owned by"},
 		{"dir", map[string]FileStat{p: {Mode: os.ModeDir | 0o600, UID: 501, IsDir: true}}, 501, "regular"},
 		{"device", map[string]FileStat{p: {Mode: os.ModeDevice | 0o600, UID: 501}}, 501, "regular"},
+		{"client key 0644", map[string]FileStat{p: {Mode: 0o600, UID: 501}, ck: {Mode: 0o644, UID: 501}}, 501, "client_key"},
+		{"client key other owner", map[string]FileStat{p: {Mode: 0o600, UID: 501}, ck: {Mode: 0o600, UID: 0}}, 501, "client_key"},
+		{"client key missing", map[string]FileStat{p: {Mode: 0o600, UID: 501}, ck: {}}, 501, "client_key"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if _, ok := tc.st[ck]; !ok {
+				tc.st[ck] = FileStat{Mode: 0o600, UID: uint32(tc.uid)} // a good client key unless the case says otherwise
+			}
+			if tc.st[ck] == (FileStat{}) {
+				delete(tc.st, ck)
+			}
 			stub(t, tc.st, tc.uid)
 			err := c.CheckFiles()
 			if tc.want == "" {
@@ -328,6 +339,11 @@ func TestLoadReal(t *testing.T) {
 	if err := os.WriteFile(key, []byte("k"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	ckey := filepath.Join(dir, "client.key")
+	if err := os.WriteFile(ckey, []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	osBase := rep(osBase, "/etc/mirafleet/c.key", ckey)
 	y := rep(osBase, "/etc/mirafleet/opensandbox.key", key)
 	cfg := filepath.Join(dir, "workspace.yaml")
 	if err := os.WriteFile(cfg, []byte(y), 0o600); err != nil {
@@ -401,5 +417,23 @@ func TestPinHexOnly(t *testing.T) {
 	bad := strings.Replace(ok, pin, "q2Zo0nS2yR0v1sXq3m2Yk5oQ8cQ8c7p1o2o3o4o5o6o=", 1)
 	if _, err := Parse([]byte(bad)); err == nil {
 		t.Fatal("base64 pin accepted")
+	}
+}
+
+func TestHeartbeatImagesDropped(t *testing.T) {
+	c, err := Parse([]byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := c.HeartbeatImagesDropped(); len(d) != 0 {
+		t.Errorf("dropped = %v", d)
+	}
+	c.Images = nil
+	for i := 0; i < 34; i++ {
+		c.Images = append(c.Images, "alpine:"+strings.Repeat("a", i+1))
+	}
+	c.Images = append(c.Images, "x:"+strings.Repeat("b", 300))
+	if d := c.HeartbeatImagesDropped(); len(d) != 3 {
+		t.Errorf("dropped %d, want 3 (2 over the count, 1 too long)", len(d))
 	}
 }

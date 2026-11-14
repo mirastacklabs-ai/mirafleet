@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
@@ -43,6 +44,41 @@ type executor struct {
 	maxFile int64
 	cpus    float64
 	memory  int64
+
+	createMu sync.Mutex
+	creating map[workspace.ID]*idLock // per-ID create locks (C-15)
+}
+
+// idLock serialises Create for one workspace ID; refs counts holders and waiters so the map
+// entry can be dropped.
+type idLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lockCreate takes the per-ID create lock: two concurrent Creates for one ID would otherwise both
+// see "not found" and make two sandboxes. It returns the unlock func.
+func (e *executor) lockCreate(id workspace.ID) func() {
+	e.createMu.Lock()
+	if e.creating == nil {
+		e.creating = map[workspace.ID]*idLock{}
+	}
+	l := e.creating[id]
+	if l == nil {
+		l = &idLock{}
+		e.creating[id] = l
+	}
+	l.refs++
+	e.createMu.Unlock()
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		e.createMu.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(e.creating, id)
+		}
+		e.createMu.Unlock()
+	}
 }
 
 // NewExecutor builds the OpenSandbox executor from a workspace.yaml config. runnerName is the
@@ -138,6 +174,13 @@ func (e *executor) Create(ctx context.Context, s workspace.Spec) error {
 	if s.Image == "" {
 		return fmt.Errorf("%w: image is required", workspace.ErrRefused)
 	}
+	// Normalise (docker.io/library/..., :latest) so the sandbox runs exactly the reference the
+	// runner's allowlist matched, whatever defaults OpenSandbox itself would apply.
+	norm, nerr := workspace.NormalizeImage(s.Image)
+	if nerr != nil {
+		return fmt.Errorf("%w: %v", workspace.ErrRefused, nerr)
+	}
+	s.Image = norm
 	if s.RequireSecureRuntime && e.secure == "" {
 		return fmt.Errorf("%w: guarded workspace needs a secure runtime (gVisor/Kata) and opensandbox.secure_runtime is not declared", workspace.ErrRefused)
 	}
@@ -159,7 +202,8 @@ func (e *executor) Create(ctx context.Context, s workspace.Spec) error {
 		}
 	}
 
-	// Idempotent on ID.
+	// Idempotent on ID, and serialised per ID so concurrent Creates cannot make two sandboxes.
+	defer e.lockCreate(s.ID)()
 	existing, err := e.find(ctx, s.ID)
 	switch {
 	case err == nil && !dead(existing):
@@ -208,6 +252,9 @@ func (e *executor) buildCreate(s workspace.Spec) CreateRequest {
 	}
 	meta := map[string]string{}
 	for k, v := range s.Labels {
+		if strings.HasPrefix(k, "mirafleet.") {
+			continue // reserved for ownership metadata
+		}
 		meta[k] = v
 	}
 	meta[MetaWorkspace] = string(s.ID)
@@ -315,6 +362,9 @@ func (e *executor) List(ctx context.Context) ([]workspace.Info, error) {
 		created, _ := time.Parse(time.RFC3339, sb.CreatedAt)
 		labels := make(map[string]string, len(sb.Metadata))
 		for k, v := range sb.Metadata {
+			if strings.HasPrefix(k, "mirafleet.") {
+				continue // ownership metadata is not a user label
+			}
 			labels[k] = v
 		}
 		out = append(out, workspace.Info{ID: id, State: mapState(sb.Status.State), Created: created, Labels: labels})
@@ -557,6 +607,10 @@ type limitedBody struct {
 
 func (l *limitedBody) Close() error { return l.c.Close() }
 
+// WriteFile uploads the file through execd's multipart upload. It is NOT atomic: the OpenSandbox
+// execd API has no rename or temp-file primitive, so a reader can see a partially written file
+// and a failed upload may leave a truncated one (C-15). Offset and append writes are
+// read-modify-write and are not safe against concurrent writers of the same path.
 func (e *executor) WriteFile(ctx context.Context, id workspace.ID, p string, r io.Reader, off int64, truncate bool, mode fs.FileMode) (workspace.FileInfo, error) {
 	p, err := workspace.CleanPath(p)
 	if err != nil {

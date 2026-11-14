@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestMeasure(t *testing.T) {
@@ -82,5 +83,11 @@ func TestDiskEntrySnapshot(t *testing.T) {
 		if s.Over != c.over || s.Kill != c.kill {
 			t.Errorf("%+v -> %+v", c, s)
 		}
+	}
+}
+
+func TestStaleAfter(t *testing.T) {
+	if staleAfter(time.Second, false) != time.Second || staleAfter(time.Second, true) <= time.Second {
+		t.Error("partial walks must be cached longer")
 	}
 }

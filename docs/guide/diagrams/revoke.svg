@@ -104,7 +104,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- steps -->
 <text class="h" x="10" y="346">Steps</text>
-<g class="st" style="--i:1"><text x="10" y="370"><tspan class="b">1</tspan> Dana runs central runner revoke dev/build-1. The CLI sends runner.lifecycle (op revoke) over the admin socket.</text></g>
+<g class="st" style="--i:1"><text x="10" y="370"><tspan class="b">1</tspan> Dana runs central runner revoke dev/build-1; the CLI sends runner.lifecycle (revoke) to central.</text></g>
 <g class="st" style="--i:2"><text x="10" y="390"><tspan class="b">2</tspan> Tombstone: build-1's id goes into the registry, so no new session can slip in during the commit.</text></g>
 <g class="st" style="--i:3"><text x="10" y="410"><tspan class="b">3</tspan> Kick: the session context is cancelled and the runner's SSH connection is closed.</text></g>
 <g class="st" style="--i:4"><text x="10" y="430"><tspan class="b">4</tspan> In-flight action cancelled: the runner kills the process group; the outcome row says cancelled.</text></g>

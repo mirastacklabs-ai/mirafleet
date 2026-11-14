@@ -147,3 +147,37 @@ func TestBroadRuleDoesNotUnlock(t *testing.T) {
 		t.Error("public literal should pass")
 	}
 }
+
+func TestBlockedExtraRanges(t *testing.T) {
+	for _, ip := range []string{"::2", "::808:808", "fec0::1", "192.88.99.1", "2001:10::1", "5f00::1", "2001:2::1", "3fff::1"} {
+		if checkIP(netip.MustParseAddr(ip), 443, nil, false) == "" {
+			t.Errorf("%s was allowed", ip)
+		}
+	}
+	for _, ip := range []string{"8.8.8.8", "2606:4700::1111", "2001:4860:4860::8888"} {
+		if r := checkIP(netip.MustParseAddr(ip), 443, nil, false); r != "" {
+			t.Errorf("%s refused: %s", ip, r)
+		}
+	}
+	// Reserved (not never) classes can still be unlocked by an exact-scope rule.
+	a, err := NewAllowlist([]string{"[fec0::/10]:443"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkIP(netip.MustParseAddr("fec0::5"), 443, a, true) != "" {
+		t.Error("explicit rule did not unlock fec0::/10")
+	}
+}
+
+func TestWildcardPublicSuffix(t *testing.T) {
+	for _, s := range []string{"*.co.uk", "*.CO.UK:443", "*.github.io", "*.com.au", "*.herokuapp.com", "*.amazonaws.com", "*.co.jp."} {
+		if _, err := ParseRule(s); err == nil {
+			t.Errorf("%q: accepted", s)
+		}
+	}
+	for _, s := range []string{"*.example.co.uk", "*.golang.org", "foo.github.io", "co.uk", "*.me.example.com"} {
+		if _, err := ParseRule(s); err != nil {
+			t.Errorf("%q: %v", s, err)
+		}
+	}
+}

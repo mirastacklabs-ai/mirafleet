@@ -43,3 +43,18 @@ func TestWorkspaceFromAPIMapsEveryField(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckWorkspaceSeconds(t *testing.T) {
+	if checkWorkspaceSeconds(nil) != nil {
+		t.Fatal("nil must pass")
+	}
+	if err := checkWorkspaceSeconds(&api.WorkspaceConfig{IdleTTLS: 3600, ExecMaxS: maxConfigSeconds}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []api.WorkspaceConfig{{IdleTTLS: maxConfigSeconds + 1}, {MaxTTLS: -maxConfigSeconds - 1},
+		{ExecDefaultS: 1 << 60}, {ExecMaxS: 1 << 62}} {
+		if checkWorkspaceSeconds(&c) == nil {
+			t.Errorf("accepted %+v", c)
+		}
+	}
+}

@@ -42,11 +42,12 @@ SSH is implemented in-process with `golang.org/x/crypto/ssh`. No OpenSSH sshd, a
   JSON payload (hostname, OS, arch, version, labels, load, free workspace slots). A connection
   that is open and heartbeating means the runner is online.
 - **Central → runner:** central opens channels *back over the runner's own connection*
-  (channel types `exec@mirafleet`; `file@mirafleet` and `workspace@mirafleet` arrive with M3).
-  The runner accepts only these types; there is no shell, port forwarding or other channel.
+  (channel types `exec@mirafleet` for actions and `workspace@mirafleet` for workspaces; a
+  runner serves one, by mode). The runner accepts only these types; there is no shell, port
+  forwarding or other channel.
 - **Orchestrator → central:** the orchestrator connects with an operator key and makes
-  JSON requests on `api@mirafleet` channels (see [Channels and the API](#channels-and-the-api)).
-  Today: list fleets, list runners, run action. Workspace methods arrive with M3.
+  JSON requests on `api@mirafleet` channels (see [Channels and the API](#channels-and-the-api)):
+  list fleets and runners, run action, and the `workspace.*` methods.
 
 ### SSH users and channels
 
@@ -55,7 +56,7 @@ The SSH user selects the role; the role selects the channels the connection may 
 
 | SSH user | Authenticates as | Channels / requests |
 |---|---|---|
-| `runner` | an enrolled runner key (not revoked) | sends `heartbeat@mirafleet`; central opens `exec@mirafleet` toward it |
+| `runner` | an enrolled runner key (not revoked) | sends `heartbeat@mirafleet`; central opens `exec@mirafleet` or `workspace@mirafleet` toward it |
 | `operator` | an active operator key | opens `api@mirafleet` |
 | `enroll` | any ed25519 key (30 s deadline, rate-limited per source address) | exactly one of `join@mirafleet` (token) or `register@mirafleet` (registration code), then closed |
 
@@ -74,7 +75,8 @@ central
  └── fleet            name, mode (actions | workspace), policy
       ├── runner      name, labels, status, last heartbeat, concurrency
       ├── join token  one-time or multi-use, expiry, labels to apply
-      └── workspace   session id, orchestrator, runner, image, created, last used
+      ├── workspace config   executor, images, network, limits, TTLs, exec timeouts
+      └── workspace   session, operator, runner, image, state, created, last used, expires
 operator              name, public key, status (active | revoked)
 audit                 time, operator, fleet, runner, workspace, command/action, exit, duration
 ```
@@ -162,9 +164,14 @@ default 2 min; at most 8 concurrent channels per operator connection; at most 32
 
 | Method set | Methods | Reachable on |
 |---|---|---|
-| Operator | `hello`, `fleets.list`, `runners.list`, `action.run` | `api@mirafleet`, admin socket |
+| Operator | `hello`, `fleets.list`, `runners.list`, `action.run`, `workspace.open`, `workspace.exec`, `workspace.read_file`, `workspace.write_file`, `workspace.close`, `workspace.list` | `api@mirafleet`, admin socket |
 | Enrol | `enroll.join`, `enroll.register` | `join@mirafleet`, `register@mirafleet` only |
-| Admin | `fleet.create`, `token.*`, `runner.lifecycle`, `operator.*`, `audit.list` | local admin socket only |
+| Admin | `fleet.create`, `fleet.workspace_set`, `token.*`, `runner.lifecycle`, `operator.*`, `workspace.admin_list`, `workspace.kill`, `audit.list` | local admin socket only |
+
+Workspace limits differ from `action.run`: `exec` timeout comes from the fleet (see
+[Workspace mode](#workspace-mode)), and `write_file`/`exec{stdin}` add a body frame of at most
+1 MiB after the 64 KiB request. `runners.list` also reports `slots`, `free_slots` and `executor`.
+`mirafleet mcp api METHOD [JSON] [-in FILE|-] [-out FILE]` supplies and receives those bodies.
 
 Admin and enrol methods are never dispatched on `api@mirafleet`, whatever the principal (the
 method table and the policy are independent gates). `PolicyEngine` denies by default; an active
@@ -213,27 +220,160 @@ and it lives on the box being protected.
 ### Workspace mode
 
 Each Claude Code session gets its own workspace, as GitLab gives each job a build directory, so
-several orchestrators can work on different projects on the same runner at once.
+several orchestrators can work on different projects on the same runner at once. Detail and
+decisions: [M3.md](M3.md); operator how-to: [guide/](guide/README.md).
 
-- **Executor:** containerd, through its Go client. There is no Docker Engine dependency. It works
-  on Kubernetes nodes and on hosts with the `docker.io` package (which runs on containerd).
-  Workspaces live in the containerd namespace `mirafleet`, away from the kubelet's `k8s.io`.
-  Executors sit behind one runner-side interface; an opt-in OpenSandbox executor talks to a
-  node-local OpenSandbox over pinned HTTPS only, so agent API keys never enter the sandbox
-  (see [M3.md](M3.md)).
-- **Layout:** host dir `/var/lib/mirafleet/ws/<workspace-id>/` is bind-mounted at `/workspace`
-  in a long-lived container (`sleep infinity`) created from the fleet's default image or the
-  image requested. Commands run via containerd exec with `cwd=/workspace`.
-- **Isolation:** one container per workspace, with only its own directory mounted, CPU and memory
-  limits, no host network namespace sharing beyond default, and no privileged mode.
-- **Lifecycle:** `workspace_open` → central schedules onto a runner in the fleet with matching
-  labels and a free slot (sticky for the session) → `exec` / `read_file` / `write_file` →
-  `workspace_close` deletes the container and directory. A TTL reaper (default 24h idle) catches
-  sessions that died without closing.
-- **Concurrency:** each runner sets `concurrent: N` in its config. Central never schedules more
-  than N open workspaces on that runner.
-- **Repos:** `workspace_open` may take a repo URL and ref, cloned inside the container using
-  git credentials configured on the runner. Otherwise Claude clones via `exec`.
+**Runner config.** `mirafleet runner run -workspace /etc/mirafleet/workspace.yaml` (exactly one of
+`-actions` or `-workspace`; one runner = one fleet = one mode). `workspace.yaml` is the
+workspace-mode security boundary, like `actions.yaml`: strict parsing, fail-closed checks at
+load, no "privileged" or "unconfined" option. Effective policy is **fleet ∩ runner**; the runner
+builds the whole OCI spec itself from a fixed template, so a compromised central cannot obtain a
+privileged container, host network or host mount.
+
+**A workspace runner is root-equivalent on its host.** Access to the containerd socket amounts to
+host root. Run workspace runners on dedicated, disposable hosts; the container is the boundary
+for agent commands, the runner is not.
+
+#### Executors
+
+One runner-side interface (`workspace.Executor`: `Create`, `Exec`, `ReadFile`, `WriteFile`,
+`Destroy`, `List`). Scheduling, slots, reaper, audit and policy live above it.
+
+| Executor | Status | Notes |
+|---|---|---|
+| `containerd` | default | Go client, no Docker Engine. Its own namespace (`containerd.namespace`, required; use `mirafleet`; `k8s.io` and `moby` are refused), so it coexists with kubelet and `docker.io` hosts |
+| `opensandbox` | opt-in per fleet | node-local [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox), spoken to with stdlib HTTPS only (no SDK) |
+
+#### containerd sandbox
+
+- **Identity:** uid/gid 1000 inside the container. With `userns: required` (the default; hosts
+  without support get 0 slots and a clear error) each slot gets its own host uid range
+  (`uid_base + slot*65536`) on an idmapped snapshot, so workspaces are isolated from each other
+  too. The workspace directory is mode 0700 and owned by the mapped uid.
+- **Hardening:** no capabilities, no-new-privileges, containerd's default seccomp profile,
+  AppArmor when available, masked and read-only kernel paths, read-only rootfs, new
+  pid/ipc/uts/mount/cgroup/net/user namespaces.
+- **Mounts:** only `/workspace` (rw bind of `<containerd.root>/<id>/`, e.g. `/var/lib/mirafleet/ws/<id>/`; `root` is required), a size-limited tmpfs
+  `/tmp`, generated read-only `/etc/hosts` and `resolv.conf`, and the mirafleet binary read-only
+  as PID 1 (`/.mirafleet/init`, a zombie reaper that works in any image, distroless included).
+  No other host mounts, no devices.
+- **Limits:** cgroup CPU, memory (swap = memory) and pids; `RLIMIT_FSIZE` set to the disk quota;
+  all containers sit under one `mirafleet` parent cgroup. Disk is a soft quota: measured every
+  60 s and before writes, over quota refuses `write_file`, over 2× kills the workspace.
+- **Files:** `read_file`/`write_file` run on the host through `os.Root` on the workspace
+  directory (symlinks cannot escape; FIFOs and devices refused). Only `/workspace` is reachable.
+- **Exec:** argv only (no shell string on the wire), cwd under `/workspace`, at most 4
+  concurrent per workspace. Output is buffered, head plus tail, capped at 1 MiB JSON-encoded.
+  Timeout kills the exec; daemonised children live until the workspace is destroyed, bounded by
+  the pids and memory limits.
+
+#### Network
+
+Per fleet: `none` (no route out; default) or `egress`. Egress is an in-netns allowlisting proxy:
+the runner opens a listener on `127.0.0.1:3128` inside the container's network namespace, feeding
+a stdlib CONNECT/HTTP proxy that enforces the fleet's `host[:port]` allowlist (wildcards allowed)
+and does its own DNS, checking the resolved address. Execs get `HTTP(S)_PROXY`; tools that ignore
+proxies fail closed. No CNI, no iptables.
+
+- **Never-unlockable ranges:** loopback, link-local, cloud metadata and unspecified addresses
+  are refused whatever the rules say, because the proxy dials from the host's network namespace.
+- **Private and reserved ranges** (RFC 1918, CGNAT, multicast, ...) are blocked unless the runner
+  sets `egress_cidr_rules: true` (opt-in, default off) and a CIDR/IP rule covers them.
+- Egress with a secure runtime (gVisor/Kata) is refused: the listener does not reach the guest
+  netstack. Guarded fleets therefore run with network `none` for now.
+
+#### Policy and limits
+
+- **Images:** fleet allowlist ∩ runner allowlist (exact refs or `repo@sha256:*` / `repo:*`
+  patterns, normalised references). The allowlist is checked on the resolved reference before
+  any pull. Pull policy `if-not-present|always|never`; no registry credentials yet.
+- **Env:** must be in the runner's `env_allow` and pass a hard denylist (`*_API_KEY`, `*_TOKEN`,
+  `*_SECRET*`, `*_PASSWORD`, `*_KEY`, `ANTHROPIC_*`, `OPENAI_*`, `AWS_*`, `LD_*`, `*PROXY*`,
+  `SSH_AUTH_SOCK`, `GIT_ASKPASS`, `GIT_SSH_COMMAND`, `BASH_ENV`, `ENV`, `NODE_OPTIONS`,
+  `PYTHONSTARTUP`; source of truth `workspace.EnvDenied`), enforced on central and on the runner. Agent API keys never enter a workspace; the MCP server
+  forwards nothing from its own environment.
+- **Exec timeout:** per fleet on central, default 2 min, max 30 min, hard ceiling 24 h in code;
+  the runner's `limits.exec_max` also caps it.
+- **Other limits:** `concurrent: N` slots per runner, 8 workspaces per operator, files up to
+  `limits.max_file` (required, e.g. 64 MiB) moved in chunks of at most 1 MiB; the runner's
+  `max_age` caps the fleet max TTL and drives `runner workspace prune`.
+- **Guarded fleets** (`confirm`): `confirm == fleet name` on `open`, `exec` and `write_file`,
+  and a secure runtime (gVisor/Kata) is required on both executors.
+- Repo cloning with runner-held credentials is not built; Claude clones via `exec`, so no git
+  secrets live in workspaces.
+
+#### Lifecycle, ownership and placement
+
+- **Open:** `workspace.open{fleet, session}`. Sessions are client-chosen
+  (`^[A-Za-z0-9._:-]{1,128}$`) and **sticky**: one live workspace per (operator, fleet, session);
+  reopening returns it (`reused`). If its runner is offline, `open` returns `unavailable` rather
+  than creating a fresh one, since the files live on that runner.
+- **Placement:** active, online runners whose executor and secure runtime fit the fleet, whose
+  **trusted token labels** are a superset of the requested labels (heartbeat labels are
+  informational), and whose advertised images match; most free slots wins (random tie-break),
+  retrying up to 3 candidates.
+- **Ownership:** every call requires the workspace's operator to be the caller; anything else is
+  `not_found`, so existence does not leak. `workspace.list` shows only your own. Admins act
+  through admin methods on the local socket.
+- **Runner status:** a `disabled` runner refuses new `open`/`exec`/`write` but still serves
+  `read`, `close` and the reaper; `pending` runners never get workspaces.
+- **Cleanup:** a TTL reaper on central (every 60 s) destroys idle workspaces (default 24 h) and
+  those past their hard max (default 7 d), plus those of revoked operators or runners.
+  **Reconcile** runs when a runner heartbeats: orphans on the runner are destroyed, `open` rows
+  whose container vanished become `lost`. Runner revoke closes its workspaces in the store (the
+  containers stay on that host; clean with `mirafleet runner workspace prune`); operator revoke
+  cancels their execs and the reaper destroys their workspaces. At central start, `opening` rows
+  become `failed`. On runner restart, egress listeners are re-attached.
+- **Audit:** every workspace call, `list` included, writes a `start` row before dispatch (no row,
+  no call) and an outcome row, with the `workspace` column set. Rows hold argv, cwd, env names
+  (never values), paths and SHA-256 of written data (never content).
+
+#### Channel and body frames
+
+Central opens one channel type toward runners for all workspace operations: `workspace@mirafleet`
+(create, exec, read, write, destroy, list). The request is JSON in the channel-open data (at most
+64 KiB); write and stdin bytes follow raw, then `CloseWrite`; the runner answers with one
+length-prefixed JSON result, then raw bytes for a read. There is no separate `file@` channel
+(`exec@mirafleet` stays for the actions guard only). A runner with no workspace config refuses
+`workspace@`.
+
+On `api@mirafleet`, `workspace.write_file` and `workspace.exec{stdin:true}` carry a **body
+frame** after the request: one more length-prefixed frame of at most 1 MiB, which central reads
+only after policy, ownership and confirm checks pass; `workspace.read_file` returns its bytes in
+a frame after the JSON result. Workspace methods on an actions fleet (and `action.run` on a
+workspace fleet) return `conflict`.
+
+#### OpenSandbox executor (opt-in)
+
+OpenSandbox supplies the sandbox; mirafleet keeps the agent and its API keys outside it and adds
+identity, policy, central audit, instant revoke and outbound-only runners.
+
+- **HTTPS only**, even on loopback; plain `http://` is refused at config load. TLS 1.3, trust
+  anchored on a configured `ca_file` (never the system pool), optional `pin_sha256` SPKI pin on
+  the leaf, client certificate required (mTLS), no redirects. Endpoint hosts returned by
+  OpenSandbox are ignored; every URL is built from the configured base.
+- **TLS front:** OpenSandbox has no native TLS, so put a front next to it, in its network
+  namespace. Either the built-in `mirafleet runner tls-front` (stdlib, TLS 1.3, mTLS required,
+  loopback only, routes limited to the sandbox API and execd) with `mirafleet runner tls-init`
+  to mint the node CA, front and client certificates, or an existing TLS proxy following the same
+  rules (`opensandbox.front: external`).
+- **Secrets:** the OpenSandbox API key is a 0600/0400 file on the runner host, required, never
+  in env, argv, logs or a sandbox.
+- **Ownership:** sandboxes are tagged with `mirafleet.workspace` and the runner's name, and
+  listings are re-filtered client-side so foreign sandboxes are never touched.
+- **Network:** deny-default policy on every create. OpenSandbox policies are host-only, so egress
+  rules are limited to ports 80 and 443. No egress with gVisor/Kata yet.
+- **Gaps:** hardening (read-only rootfs, seccomp, pids) is server-wide in OpenSandbox, not
+  per-request, and must be configured by the operator; `exec` with stdin is unsupported; the
+  server is 0.1.x, so its API may change. The linked-code licence scope excludes it (operator
+  installed, not bundled).
+
+#### Admin and local commands
+
+On central: `fleet create|workspace set` (executor, image, allowlist, pull, network, egress,
+limits, TTLs, exec timeouts, `-confirm`), `workspace list`, `workspace kill ID`. On the runner
+host (no central needed, works after a revoke): `runner workspace list` and
+`runner workspace prune [-workspace FILE] [-all] [-yes]` (a dry run without `-yes`). Give each runner on a host its own `containerd.namespace`.
 
 ## Orchestrator
 
@@ -254,15 +394,17 @@ as hooks. Hooks only add convenience.
 
 `mirafleet mcp` exposes these tools:
 
-| Tool | Purpose |
-|---|---|
-| `list_fleets` | fleets on the configured central(s), with mode |
-| `list_runners` | runners in a fleet: status, labels, free slots |
-| `run_action` | actions mode: run a named action on a runner |
-| `workspace_open` | workspace mode: get a workspace for this session |
-| `exec` | run a command in the session's workspace |
-| `read_file` / `write_file` | file access inside the workspace |
-| `workspace_close` | release the workspace |
+M5 builds these tools on the API methods that already exist from M2/M3:
+
+| Tool | Purpose | Backed by |
+|---|---|---|
+| `list_fleets` | fleets on the configured central(s), with mode | `fleets.list` |
+| `list_runners` | runners in a fleet: status, labels, free slots | `runners.list` |
+| `run_action` | actions mode: run a named action on a runner | `action.run` |
+| `workspace_open` | workspace mode: get a workspace for this session | `workspace.open` (session = harness id or per-process random) |
+| `exec` | run a command in the session's workspace | `workspace.exec` (`["/bin/sh","-c",cmd]`, then a 30 KB head+tail cap) |
+| `read_file` / `write_file` | file access inside the workspace | `workspace.read_file` / `workspace.write_file`, chunked by offset |
+| `workspace_close` | release the workspace | `workspace.close` |
 
 - **Contexts:** `~/.config/mirafleet/config.yaml` lists one or more centrals (for example a
   private-network central and a cloud central), with an optional SSH jump host per central.
@@ -304,7 +446,10 @@ Join tokens and registration codes are described under
 
 - Runners and operators authenticate with Ed25519 keys. Central's host key is pinned on join and
   login, so there is no trust-on-every-connect.
-- Actions are argv-only with regex-validated parameters. Workspaces are unprivileged containers.
+- Actions are argv-only with regex-validated parameters. Workspaces are unprivileged containers
+  (user namespace, no capabilities, read-only rootfs, no network by default) with image and env
+  allowlists; a workspace runner itself is root-equivalent on its host.
+- Agent API keys never enter a workspace.
 - Runners never accept inbound network connections.
 - The GUI is not exposed publicly by default.
 - Audit is written on central (fleet-wide view) and on each runner (local copy).

@@ -26,6 +26,7 @@ var blockedRanges = []blockedRange{
 	br("fd00:ec2::/32", "cloud metadata", true),
 	br("100.100.100.200/32", "cloud metadata", true),
 	br("192.0.0.192/32", "cloud metadata", true),
+	br("::/96", "IPv4-compatible", true), // deprecated; also covers ::/128 and ::1/128 above
 
 	br("10.0.0.0/8", "private", false),
 	br("172.16.0.0/12", "private", false),
@@ -44,6 +45,13 @@ var blockedRanges = []blockedRange{
 	br("2001::/32", "reserved/CGNAT", false),
 	br("2001:db8::/32", "reserved/CGNAT", false),
 	br("2002::/16", "reserved/CGNAT", false),
+	br("192.88.99.0/24", "reserved/CGNAT", false), // 6to4 relay anycast (deprecated)
+	br("fec0::/10", "reserved/CGNAT", false),      // site-local (deprecated)
+	br("2001:10::/28", "reserved/CGNAT", false),   // ORCHID (deprecated)
+	br("2001:20::/28", "reserved/CGNAT", false),   // ORCHIDv2
+	br("2001:2::/48", "reserved/CGNAT", false),    // benchmarking
+	br("5f00::/16", "reserved/CGNAT", false),      // SRv6 SIDs
+	br("3fff::/20", "reserved/CGNAT", false),      // documentation
 	br("224.0.0.0/4", "multicast", false),
 	br("ff00::/8", "multicast", false),
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"testing"
 	"time"
 
@@ -140,6 +141,10 @@ func TestFiles(t *testing.T) {
 	}
 	rc, _, _ = e.ReadFile(ctx, s.ID, "a/b.txt", 2, 3)
 	if b, _ := io.ReadAll(rc); string(b) != "llo" {
+		t.Fatalf("%q", b)
+	}
+	rc, _, _ = e.ReadFile(ctx, s.ID, "a/b.txt", 2, math.MaxInt64) // A-10: no overflow
+	if b, _ := io.ReadAll(rc); string(b) != "lloXY" {
 		t.Fatalf("%q", b)
 	}
 	rc, _, _ = e.ReadFile(ctx, s.ID, "a/b.txt", 100, 3)

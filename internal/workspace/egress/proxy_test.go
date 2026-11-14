@@ -621,3 +621,58 @@ func TestPlainHTTPHostHeaderPinned(t *testing.T) {
 		t.Fatalf("status %d, upstream saw Host %q", resp.StatusCode, gotHost)
 	}
 }
+
+// A-12: a plain-HTTP response that stalls, or never ends, is cut off by IdleTimeout / TotalTimeout.
+func TestPlainHTTPResponseTimeouts(t *testing.T) {
+	for name, tc := range map[string]struct {
+		idle, total time.Duration
+		trickle     bool
+	}{
+		"idle":  {idle: 150 * time.Millisecond, total: time.Minute},
+		"total": {idle: time.Minute, total: 300 * time.Millisecond, trickle: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			done := make(chan struct{})
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.(http.Flusher).Flush()
+				fmt.Fprint(w, "a")
+				w.(http.Flusher).Flush()
+				for {
+					select {
+					case <-done:
+						return
+					case <-r.Context().Done():
+						return
+					case <-time.After(50 * time.Millisecond):
+						if !tc.trickle {
+							continue // stall: send nothing more
+						}
+						if _, err := fmt.Fprint(w, "b"); err != nil {
+							return
+						}
+						w.(http.Flusher).Flush()
+					}
+				}
+			}))
+			defer s.Close()
+			defer close(done)
+			_, port, _ := net.SplitHostPort(s.Listener.Addr().String())
+			res := newResolver(map[string][][]string{"app.test": {{"8.8.8.8"}}})
+			h := newHarness(t, []string{"app.test:" + port}, res, s.Listener.Addr().String(), func(c *Config) {
+				c.IdleTimeout, c.TotalTimeout = tc.idle, tc.total
+			})
+			pu, _ := url.Parse("http://" + h.addr)
+			cl := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(pu), DisableKeepAlives: true}}
+			start := time.Now()
+			resp, err := cl.Get("http://app.test:" + port + "/")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			io.Copy(io.Discard, resp.Body) // returns (with or without error) once the proxy cuts the stream
+			if d := time.Since(start); d > 5*time.Second {
+				t.Fatalf("response was not cut off: %s", d)
+			}
+		})
+	}
+}

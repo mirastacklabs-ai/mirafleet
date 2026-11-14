@@ -173,7 +173,7 @@ func (e *Executor) ReadFile(ctx context.Context, id workspace.ID, p string, off,
 		off = info.Size
 	}
 	end := info.Size
-	if n > 0 && off+n < end {
+	if n > 0 && n < end-off { // not off+n: that overflows for a huge n
 		end = off + n
 	}
 	return io.NopCloser(bytes.NewReader(append([]byte(nil), f.data[off:end]...))), info, nil

@@ -43,6 +43,9 @@ guide they understand the whole design and code and never need to ask the author
 | `diagrams/action-run.svg` | one `action.run` through every layer and back, with both audit rows |
 | `diagrams/revoke.svg` | tombstone → kick → in-flight cancel → commit → reconnect refused |
 | `diagrams/framing.svg` | the 4-byte length prefix + JSON envelope on an SSH channel |
+| `diagrams/workspace-open.svg` | `workspace.open`: checks, sticky reuse, placement, reserve, create on the runner |
+| `diagrams/workspace-exec.svg` | one `workspace.exec` through every layer and back, with both audit rows |
+| `diagrams/workspace-boundary.svg` | the container boundary: what is locked down, what crosses, what cannot |
 
 ## Chapter files
 `README.md` (index and reading order), `glossary.md`, `01-what-is-mirafleet.md`,

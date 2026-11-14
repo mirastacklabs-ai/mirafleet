@@ -7,8 +7,11 @@
   instead of HTTP.
 - Host-key pinning versus trust-on-first-use, hashes, HMAC and constant-time comparison, and how
   mirafleet's rotating registration code differs from a 6-digit authenticator code.
-- SQLite transactions and WAL, Go `context` cancellation, rate limiting, containers, MCP, and
-  Unix sockets with file permissions.
+- SQLite transactions and WAL, Go `context` cancellation, rate limiting, MCP, and Unix sockets
+  with file permissions.
+- Containers (§2.9) from the bottom up: the OCI spec, namespaces including user namespaces,
+  capabilities, seccomp, cgroups, read-only root file systems, an egress proxy, and Go's
+  `os.Root`.
 
 Each section ends with **Why mirafleet needs this**. You can read the sections in any order and
 come back when a later chapter mentions one. Terms are also in the [glossary](glossary.md).
@@ -418,41 +421,123 @@ firewall.
 
 ## 2.9 Containers, containerd and OpenSandbox
 
-This section is background for **M3 (planned)**. Nothing here runs yet.
+This section is background for **workspace mode (M3, built)**. Chapter 5 uses every idea here
+to explain the container boundary, so read it slowly.
 
 A **container** is a normal Linux process that the kernel has fenced in: it sees its own file
 system, its own process list and optional CPU and memory limits. It is lighter than a virtual
 machine because it shares the host's kernel. An **image** is the packaged file system a container
-starts from (for example "Ubuntu with Go installed").
+starts from (for example "Ubuntu with Go installed"). An image is named by a *reference* such as
+`docker.io/library/golang:1.24` (a **tag**, which can be re-pointed to different content) or
+`docker.io/library/golang@sha256:ab12...` (a **digest**, a hash of the content, which can never
+change). Digests are what you should put in an allowlist.
 
 **containerd** is the low-level program that actually pulls images and runs containers on a Linux
 host. Kubernetes uses it, and so does the Docker package. The product's workspaces (M3) use
 containerd through its Go client; our developer tooling runs in Docker containers (colima on
 macOS). The Docker ecosystem is supported; there is no hard dependency on Docker's commercial
 products. Using containerd directly keeps the runtime dependency small and works on Kubernetes
-nodes. mirafleet's containers will live in their own containerd *namespace* called `mirafleet`,
-away from Kubernetes' `k8s.io`.
+nodes. mirafleet's containers live in their own containerd *namespace* called `mirafleet`,
+away from Docker's `moby` and Kubernetes' `k8s.io` (the runner refuses to start if you point it
+at either).
 
-Planned workspace mode. Every name in this picture (`workspace_open`, the `workspace@mirafleet`
-channel, `read_file`, `write_file`) is **planned (M3)**; none exists in the code yet:
+### What a container is made of
+
+A container is not one feature; it is a stack of separate kernel features. mirafleet switches
+each one on explicitly, so you need to know them by name.
+
+- **The OCI runtime spec.** OCI (Open Container Initiative) publishes a standard JSON file that
+  describes a container completely: which program to run, as which user, with which
+  mounts, namespaces, capabilities and limits. A low-level runtime (`runc`) reads that file and
+  starts the process. mirafleet's runner **writes the whole spec itself** from a fixed template
+  (`buildSpec` in `internal/workspace/ctrd/spec_linux.go`). Central only chooses numbers inside
+  the runner's caps. So even a hacked central cannot ask for a "privileged" container: there is
+  no field to put that in.
+- **Namespaces.** A namespace gives a process its own private view of one kind of thing. The
+  *PID* namespace shows only the container's own processes (it thinks it is process 1). The
+  *mount* namespace gives it its own file system view. The *net* namespace gives it its own
+  network cards (an empty one: only loopback). Others cover hostname (UTS), shared memory (IPC)
+  and the cgroup tree. A namespace changes what a process can *see*.
+- **User namespaces.** The strongest one. It maps user ids: "user 0 (root) inside" is really an
+  ordinary, unprivileged user such as 1000000 on the host. Even if code escapes the container
+  as "root", it is a nobody on the host. mirafleet gives every slot its own range of 65536 host
+  ids, so two workspaces cannot touch each other's files either.
+- **Capabilities.** Linux splits "root's powers" into about 40 small switches called
+  *capabilities* (change file owners, load kernel modules, use raw sockets...). A process with
+  none of them is a very weak "root". mirafleet **drops all of them**, and sets *no new
+  privileges* so that a program cannot gain them back through a setuid file.
+- **seccomp.** A *system call* is a request to the kernel ("open this file"). seccomp is a filter
+  that lists which system calls a process may make; the others fail. mirafleet uses containerd's
+  default profile, which blocks dangerous calls (like `mount` or `reboot`) and is never turned
+  off. **AppArmor** is a second, similar filter that restricts file access; it is on when the
+  host has it.
+- **cgroups.** Control groups limit how much of the machine a group of processes may use: CPU
+  share, memory (swap set equal to memory, so none), and the maximum number of processes (this is
+  what stops a *fork bomb*, a program that starts copies of itself until the machine dies). A
+  cgroup limits what a process can *use*; a namespace limits what it can *see*.
+- **Read-only root file system.** The image's files are mounted read-only. The only writable
+  places are `/workspace` (a directory on the host, bind-mounted in) and `/tmp` (memory-backed,
+  size-limited). A malicious program cannot replace `/bin/sh` or plant a backdoor in `/etc`.
+- **A real limit remains.** All of this is the *same kernel* as the host. A bug in the kernel
+  could let code out. For high-risk fleets you add a **secure runtime**: gVisor (a user-space
+  kernel written in Go) or Kata (a tiny virtual machine per container). Both make a kernel bug
+  far less useful. mirafleet requires one for guarded fleets.
+
+### Network egress: a proxy instead of a firewall
+
+By default a workspace has **no network at all**. If a fleet needs, say, `proxy.golang.org` to
+download Go modules, the admin lists it as an *egress* rule. The container still has no route to
+the internet. Instead the runner starts a tiny **HTTP and CONNECT proxy** (a program that makes
+web requests on your behalf) and gives the container only a way to reach it, on `127.0.0.1:3128`
+*inside the container's own network namespace*. Commands get the standard `HTTP_PROXY` and
+`HTTPS_PROXY` variables. The proxy (`internal/workspace/egress`) checks every request against
+the allowlist, does the DNS lookup itself and checks the **resolved IP address** (so a hostname
+that secretly points to `169.254.169.254`, the cloud metadata address, is refused), and always
+blocks loopback, link-local and metadata ranges. No firewall rules, no CNI plug-ins, no extra
+dependency. The price: a tool that ignores proxy variables simply cannot reach the network
+(it "fails closed").
+
+### Confining file access: `os.Root`
+
+Reading `/workspace/notes.txt` for the agent sounds easy, but an attacker inside the container
+can create a *symlink* (a file that points to another path) named `notes.txt` that points to
+`/etc/shadow` on the host. A naive `os.ReadFile` run by the root runner would happily follow
+it. Go 1.24 added **`os.Root`**: you open a directory as a root, and every later operation
+through it is confined to it, even through symlinks and `..`. The executor opens each
+workspace directory as an `os.Root`, so nothing outside `/workspace` is reachable
+(`internal/workspace/ctrd/files_linux.go`). It also checks that the file is a regular file, so a
+FIFO (a pipe in a file) cannot hang the runner.
+
+### The workspace life cycle
 
 ```mermaid
 flowchart LR
-    A["Claude session"] -->|"workspace_open"| C["Central picks a runner<br/>with a free slot"]
+    A["Claude session"] -->|"workspace.open"| C["Central picks a runner<br/>with a free slot"]
     C -->|"workspace@mirafleet channel"| R["Runner"]
-    R -->|"create container, bind-mount dir at /workspace"| W["container (sleep infinity)"]
+    R -->|"create container, bind-mount dir at /workspace"| W["container (init process<br/>sleeps until close)"]
     A -->|"exec / read_file / write_file"| W
-    A -->|"workspace_close"| X["container and directory deleted"]
+    A -->|"workspace.close"| X["container and directory deleted"]
 ```
 
-**OpenSandbox** is a separate open-source sandbox service. M3 offers it as an *opt-in* second
-executor, behind the same runner-side Go interface (`WorkspaceExecutor`). The runner would speak
-to it over HTTPS only (never plain HTTP, even on loopback), pinning its certificate, with no SDK
-linked in. The key design rule: the agent's own API keys never enter the sandbox. See
-[../M3.md](../M3.md).
+(The MCP tool names for these arrive in M5 as `workspace_open`, `exec`, `read_file`,
+`write_file` and `workspace_close`; the API methods above exist now.)
+
+### OpenSandbox
+
+**OpenSandbox** is a separate open-source sandbox service. mirafleet offers it as an *opt-in*
+second **executor** (a runner-side backend behind the Go interface `workspace.Executor`; the
+default executor uses containerd). The runner speaks to it over **HTTPS only** (never plain HTTP,
+even on loopback) using TLS 1.3, **mutual TLS** (the runner proves who it is with a client
+certificate too) and a private certificate authority, with no SDK linked in. OpenSandbox's own
+servers do not speak TLS, so mirafleet ships a small **TLS front** (`mirafleet runner tls-front`)
+that sits next to it and terminates TLS. The runner can also *pin* the front's public key (an
+**SPKI pin**, a hash of the certificate's public-key info, so a look-alike certificate from a
+stolen CA still fails). The key design rule: the agent's own API keys never enter the sandbox,
+and OpenSandbox's API key stays on the runner host. See [../M3.md](../M3.md) and
+[chapter 3](03-architecture.md#where-does-each-secret-and-key-live).
 
 **Why mirafleet needs this.** Actions mode is a menu; coding needs freedom. A container gives
-freedom whose mistakes stay in a box.
+freedom whose mistakes stay in a box, and each feature above closes one specific way out of it.
 
 ---
 
@@ -468,8 +553,9 @@ runs them when asked. A harness launches it as a child process and talks to it o
 input and output (**stdio**), exchanging JSON messages.
 
 mirafleet's planned MCP tools (M5; none exist yet): `list_fleets`, `list_runners`, `run_action`
-(which maps to the API method `action.run`), and (with M3) `workspace_open`, `exec`, `read_file`,
-`write_file`, `workspace_close`.
+(which maps to the API method `action.run`), and, for workspace mode, `workspace_open`, `exec`,
+`read_file`, `write_file`, `workspace_close`. The API methods behind them (`workspace.open`,
+`workspace.exec`, ...) were built in M3.
 
 The architecture rule: **the core is harness-agnostic.** The MCP server must be fully usable with
 *no* harness-specific hooks. Hooks (scripts a harness runs at events like session start or before
@@ -540,6 +626,10 @@ anything. Locking it to the central's own user is what makes "admin" mean someth
    `synchronous(FULL)` used?
 5. In your own words: how does cancelling one context kill a process on a remote machine? And
    why are join tokens read from stdin rather than from a command-line argument?
+6. A container "runs as root" inside. Why is that much less scary with a user namespace, and why
+   is it still not as safe as a virtual machine?
+7. An attacker in a workspace creates a symlink `/workspace/x -> /etc/shadow`. What stops
+   `workspace.read_file` from returning the host's file?
 
 <details>
 <summary>Answers</summary>
@@ -562,5 +652,10 @@ anything. Locking it to the central's own user is what makes "admin" mean someth
    waiting call return, the exec channel closes, and the runner, noticing the channel close,
    kills the process group. Tokens come from stdin because command-line arguments are visible in
    shell history and in `ps` output; stdin is not.
+6. With a user namespace, "root" inside is mapped to an unprivileged host id, so an escape lands
+   as a nobody. But the container still shares the host kernel, so a kernel bug is a way out;
+   a VM-like runtime (gVisor, Kata) is needed to remove that risk.
+7. The executor reads files through `os.Root`, which confines every path (symlinks and `..`
+   included) to the workspace directory. The link cannot leave `/workspace`.
 
 </details>

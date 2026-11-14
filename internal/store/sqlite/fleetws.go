@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
@@ -18,6 +19,16 @@ type querier interface {
 
 const wsCols = `executor, default_image, images, pull, network, egress, cpu_milli, memory_mb, pids,
  tmpfs_mb, disk_mb, idle_ttl_s, max_ttl_s, exec_default_s, exec_max_s, updated_at`
+
+// wsUpsertSet assigns every non-key column from the proposed row (A-17: an UPSERT, not a delete+insert).
+var wsUpsertSet = func() string {
+	var parts []string
+	for _, c := range strings.Split(wsCols, ",") {
+		c = strings.TrimSpace(c)
+		parts = append(parts, c+" = excluded."+c)
+	}
+	return strings.Join(parts, ", ")
+}()
 
 func secs(d time.Duration) int64 { return int64(d / time.Second) }
 
@@ -146,8 +157,9 @@ func (d *DB) PutFleetWorkspace(ctx context.Context, fleet string, c store.Worksp
 		if store.Mode(mode) != store.ModeWorkspace {
 			return fmt.Errorf("%w: fleet %q is not in workspace mode", store.ErrInvalid, fleet)
 		}
-		_, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO fleet_workspace (fleet_id, `+wsCols+`)
- VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, append([]any{id}, args...)...)
+		_, err := tx.ExecContext(ctx, `INSERT INTO fleet_workspace (fleet_id, `+wsCols+`)
+ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ ON CONFLICT(fleet_id) DO UPDATE SET `+wsUpsertSet, append([]any{id}, args...)...)
 		if err != nil {
 			return err
 		}

@@ -50,9 +50,9 @@ const (
 	wsFileTimeout       = 60 * time.Second
 	wsDestroyTimeout    = 60 * time.Second
 	wsListTimeout       = 10 * time.Second
-	wsRefuseMax         = 16             // refused channels whose bodies are being drained, at once
-	wsResultMax         = 1<<20 + 64<<10 // central's MaxWorkspaceResultBytes
-	wsOutputBudget      = 1<<20 - 16<<10 // JSON-encoded stdout+stderr together
+	wsRefuseMax         = 16                                // refused channels whose bodies are being drained, at once
+	wsResultMax         = transport.MaxWorkspaceResultBytes // shared with central's registry
+	wsOutputBudget      = 1<<20 - 16<<10                    // JSON-encoded stdout+stderr together
 	auditArgvMax        = 4 << 10
 	wsMsgMax            = 1 << 10
 	wsCancelPoll        = 250 * time.Millisecond
@@ -64,6 +64,7 @@ type wsEntry struct {
 	sem       chan struct{} // concurrent execs, cap maxExecPerWorkspace
 	refs      int           // creates in flight
 	confirmed bool          // the executor has it
+	doomed    bool          // destroyed while a create was in flight; createDone destroys once it settles
 }
 
 type wsState struct {
@@ -129,6 +130,10 @@ func (s *wsState) admit(ctx context.Context, op *wsOp) (release func(), a admiss
 	switch op.req.Op {
 	case transport.OpCreate:
 		e := s.live[op.id]
+		if e != nil && e.doomed {
+			relInflight()
+			return nil, admitBusy
+		}
 		if e == nil {
 			if len(s.live) >= s.cfg.Concurrent {
 				relInflight()
@@ -141,7 +146,7 @@ func (s *wsState) admit(ctx context.Context, op *wsOp) (release func(), a admiss
 		return func() { relInflight() }, admitOK
 	case transport.OpExec:
 		e := s.live[op.id]
-		if e == nil {
+		if e == nil || e.doomed {
 			relInflight()
 			return nil, admitNotFound
 		}
@@ -153,7 +158,7 @@ func (s *wsState) admit(ctx context.Context, op *wsOp) (release func(), a admiss
 			return nil, admitBusy
 		}
 	case transport.OpRead, transport.OpWrite:
-		if s.live[op.id] == nil {
+		if e := s.live[op.id]; e == nil || e.doomed {
 			relInflight()
 			return nil, admitNotFound
 		}
@@ -162,14 +167,32 @@ func (s *wsState) admit(ctx context.Context, op *wsOp) (release func(), a admiss
 }
 
 // createDone settles a create: on failure the slot is freed unless the workspace exists.
-func (s *wsState) createDone(id workspace.ID, ok bool) {
+func (s *wsState) createDone(id workspace.ID, ok bool, logf func(string, ...any)) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	e := s.live[id]
 	if e == nil {
+		s.mu.Unlock()
 		return
 	}
 	e.refs--
+	if e.doomed && e.refs <= 0 {
+		// A destroy arrived while the create was in flight: it is ours to run now. The entry stays
+		// (slot counted, ops see not_found, creates see busy) until the destroy finishes.
+		s.mu.Unlock()
+		dctx, cancel := context.WithTimeout(context.Background(), wsDestroyTimeout)
+		err := s.ex.Destroy(dctx, id)
+		cancel()
+		if err != nil && !errors.Is(err, workspace.ErrNotFound) {
+			logf("workspace %s: deferred destroy after in-flight create failed: %v", id, err)
+		}
+		s.mu.Lock()
+		if cur := s.live[id]; cur == e {
+			delete(s.live, id)
+		}
+		s.mu.Unlock()
+		return
+	}
+	defer s.mu.Unlock()
 	if ok {
 		e.confirmed = true
 	} else if e.refs <= 0 && !e.confirmed {
@@ -552,7 +575,7 @@ func (r *Runner) serveWorkspace(ctx context.Context, nch ssh.NewChannel) {
 	ch, reqs, err := nch.Accept()
 	if err != nil {
 		if release != nil && req.Op == transport.OpCreate {
-			s.createDone(op.id, false)
+			s.createDone(op.id, false, r.cfg.Logf)
 		}
 		return
 	}
@@ -616,7 +639,7 @@ func (r *Runner) serveWorkspace(ctx context.Context, nch ssh.NewChannel) {
 		out = r.runWS(ectx, op, body)
 	}
 	if req.Op == transport.OpCreate && release != nil {
-		s.createDone(op.id, out.res.Code == transport.CodeOK)
+		s.createDone(op.id, out.res.Code == transport.CodeOK, r.cfg.Logf)
 	}
 	dur := time.Since(start)
 	out.res.DurationMs = dur.Milliseconds()
@@ -701,6 +724,15 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 		}
 		return outcome{res: transport.WorkspaceResult{Code: transport.CodeOK}}
 	case transport.OpDestroy:
+		s.mu.Lock()
+		if e := s.live[op.id]; e != nil && e.refs > 0 && !e.confirmed {
+			// A create is still in flight, so the container may not exist yet: createDone owns
+			// the destroy and runs it once the create settles. Nothing is lost or left untracked.
+			e.doomed = true
+			s.mu.Unlock()
+			return outcome{res: transport.WorkspaceResult{Code: transport.CodeOK}}
+		}
+		s.mu.Unlock()
 		dctx, cancel := context.WithTimeout(ctx, wsDestroyTimeout)
 		defer cancel()
 		if err := s.ex.Destroy(dctx, op.id); err != nil && !errors.Is(err, workspace.ErrNotFound) {

@@ -37,6 +37,10 @@ Everything in this guide uses the same fictional company, **Acme**:
 - Operators (a person's registered key and machine, driven by a person or an AI agent) are `alice`
   and `bob`.
 - **Dana** is the admin. She has a shell on the central host and runs `mirafleet central ...` there.
+- For workspace mode: Dana creates `dev` as a **workspace** fleet (with `build-1` as a workspace
+  runner), and alice's Claude Code opens a workspace on it, runs `go test` and reads and writes
+  files ([chapter 1](01-what-is-mirafleet.md#the-workspace-running-example)). `prod` stays an
+  actions fleet, with `db-1` and the `tail-logs` action.
 
 ## The big picture
 
@@ -49,7 +53,8 @@ runner or an operator's laptop.*
 2. `mcp` dials central `:2222` as SSH user `operator`; each request is one `api@` channel.
 3. Central checks the key and the policy against SQLite, then acts.
 4. Runners dial OUT to central (user `runner`). Nothing listens on a runner.
-5. Central sends work back down that same connection as an `exec@` channel.
+5. Central sends work back down that same connection: an `exec@` channel (actions fleet) or a
+   `workspace@` channel (workspace fleet, where the runner drives containerd locally).
 6. Dana runs the admin CLI on central. It uses a local unix socket, never the network.
 
 ### In detail
@@ -75,12 +80,16 @@ role:
 |---|---|---|---|
 | `mirafleet central init`, `central run` | **Central**: the server in the middle | one Linux host | its data directory (default `/var/lib/mirafleet/central`) |
 | `mirafleet central fleet ...`, `token ...`, `runner ...`, `operator ...`, `exec`, `audit` | **Admin CLI**: talks to the *running* central over a local socket | the central host | a running central |
-| `mirafleet runner join`, `runner run` | **Runner**: sits on a fleet server | each Linux server in a fleet | its data directory (default `/var/lib/mirafleet/runner`) and an `actions.yaml` |
+| `mirafleet runner join`, `runner run` | **Runner**: sits on a fleet server | each Linux server in a fleet | its data directory (default `/var/lib/mirafleet/runner`) and either an `actions.yaml` or (workspace mode) a `workspace.yaml` |
+| `mirafleet runner tls-init`, `tls-front`, `workspace list`, `workspace prune` | **Runner helpers** for workspace mode | the workspace runner's host | the runner's `workspace.yaml` (list, prune) or a new directory (tls-init) |
 | `mirafleet mcp login`, `mcp api` | **Operator tools**: what an operator's machine runs | laptop (Linux, macOS; builds on Windows) | a config directory with the operator key |
 
 `mirafleet mcp` will also become the MCP stdio server that Claude Code launches. That server is
 **planned** for milestone M5 (see [PLAN.md](../PLAN.md)); today `mcp api METHOD [JSON]` makes one
-raw call, which is how the flows in this guide are exercised.
+raw call, which is how the flows in this guide are exercised. (`mcp api` also takes `-in FILE`
+and `-out FILE`, to send a file body to `workspace.write_file` or `workspace.exec` and to save
+the body of `workspace.read_file`.) There is also a hidden command, `mirafleet workspace-init`,
+that is not for people: it is the first process (PID 1) inside every workspace container.
 
 ### Why one static binary?
 
@@ -173,9 +182,11 @@ is the only component with a view of the whole fleet. Its parts:
 | **Admin socket** | `internal/central/admin_unix.go` (`ServeAdmin`, `adminConn`), `adminclient.go` (`AdminCall`) | A Unix socket (a file that processes on the same machine connect to, instead of a network port) at `<data>/admin.sock` (mode `0600`). Same framing and the same dispatcher as the operator API, but with the `admin` principal. It exists so admin commands can reach the live connections (revoke has to kick a connected runner). |
 | **Service** | `internal/service` (`Service`) | The one place where business rules live: check policy, validate input, change state, write audit, map errors to wire errors. The SSH server, the admin socket and (later) the GUI all call it. |
 | **Policy** | `internal/policy` (`TablePolicy`) | A small fixed table: who may do what. Denies by default. |
-| **Registry** | `internal/central/registry` (`Registry`, `Session`) | In-memory list of runners that are connected *right now*: their SSH connection, last heartbeat (the runner's "I am alive" message), live status, tombstones (in-memory "this runner id is dead" marks) for revoked runners. It is also how central runs an action on a runner. |
+| **Registry** | `internal/central/registry` (`Registry`, `Session`) | In-memory list of runners that are connected *right now*: their SSH connection, last heartbeat (the runner's "I am alive" message), live status, tombstones (in-memory "this runner id is dead" marks) for revoked runners, and (from the heartbeat) the runner's slots, executor and secure runtime. It is also how central runs an action (`exec@`) or a workspace operation (`workspace@`) on a runner. |
 | **Store** | `internal/store` (interface), `internal/store/sqlite` (`DB`) | Persistence. The interface offers domain-level operations (`Enroll`, `SetRunnerStatus`, ...), each atomic and each writing its audit row in the same transaction. SQL stays inside `sqlite`. |
 | **Audit** | `audit` table in the store; `Store.RecordAudit` | Append-only record of every state change and every action. Triggers (database rules that run automatically) in the schema abort any `UPDATE` or `DELETE`. |
+| **Workspace handlers** | `internal/central/workspace_handlers.go` | Decode the six `workspace.*` operator methods and three admin ones strictly, call the service, map to DTOs. They also read the *body frame* of `write_file` and `exec` stdin, but only after the service has authorised the call. |
+| **Workspace service** | `internal/service/workspace*.go` | Placement (`workspace_sched.go`), open/close (`workspace.go`), exec/read/write/list (`workspace_ops.go`), admin (`workspace_admin.go`), and the housekeeping: the **reaper** and **reconcile** (`workspace_reaper.go`). |
 | **Auth** | `internal/auth` (`KeyAuth`, `Principal`) | Looks a presented key up in the store, applies the user-to-role binding, and carries the identity in `ssh.Permissions.Extensions`. |
 
 Two small helpers sit beside these:
@@ -207,9 +218,10 @@ The runner is `mirafleet runner run`. It is deliberately small and does four thi
 2. **Heartbeat** (`Runner.heartbeat`): sends an SSH global request (a message about the connection
    as a whole, not about one channel) called `heartbeat@mirafleet` right after connecting and then
    every 15 s (`heartbeatEvery` in `cmd/mirafleet/server_linux.go`). The payload is hostname, OS,
-   architecture, version and labels.
-3. **Actions guard** (`internal/actions`, `Set.Plan` and `Set.Run`): the only code that ever starts
-   a process. It reads the allowlist `actions.yaml` from the runner's own disk (default
+   architecture, version and labels; a workspace runner adds its slots, executor, secure
+   runtime and image patterns.
+3. **Actions guard** (`internal/actions`, `Set.Plan` and `Set.Run`): in actions mode, the only
+   code that ever starts a process (a workspace runner has no guard; see below). It reads the allowlist `actions.yaml` from the runner's own disk (default
    `/etc/mirafleet/actions.yaml`). **This guard, not central, is the security boundary.** Even a
    fully compromised central can only ask for actions that the runner's own file allows.
 4. **Local JSONL audit** (`internal/audit`, `Writer`): appends one JSON line per event to
@@ -217,9 +229,68 @@ The runner is `mirafleet runner run`. It is deliberately small and does four thi
    lost or disputed.
 
 **Channels on the runner connection.** The runner opens no channels toward central, and central
-opens only `exec@mirafleet` toward the runner. The SSH library on the runner rejects every other
-channel type, and the runner has no code that opens a listening socket (the package comment of
-`internal/runner` says so).
+opens only `exec@mirafleet` (actions runners) or `workspace@mirafleet` (workspace runners) toward
+the runner. A runner without an actions file refuses `exec@`; one without a workspace config
+refuses `workspace@`. The SSH library on the runner rejects every other channel type. The runner
+has no listening socket toward the network (the package comment of `internal/runner` says so).
+The one exception is the egress proxy below, which listens only *inside a container's own
+network namespace*.
+
+#### The workspace runner (M3)
+
+`mirafleet runner run` takes **exactly one** of `-actions FILE` or `-workspace FILE`. One runner is
+one fleet and one mode. With `-workspace` the runner does not start the actions guard at all;
+instead `runner.serveWorkspace` (`internal/runner/workspace.go`) serves `workspace@mirafleet`
+channels through a **`workspace.Executor`**, the Go interface in `internal/workspace`:
+`Create`, `Exec`, `ReadFile`, `WriteFile`, `Destroy`, `List`. Everything above the interface
+(scheduling, slots, TTL, audit, policy) is the same whatever sits below it. Two executors exist:
+
+| Executor | Package | What it does | Default? |
+|---|---|---|---|
+| `containerd` | `internal/workspace/ctrd` (Linux only) | Runs the container itself through the containerd Go client; builds the OCI spec; reads and writes files with `os.Root`; runs the egress proxy. | yes |
+| `opensandbox` | `internal/workspace/osb` | Speaks HTTPS to an [OpenSandbox](02-background.md#29-containers-containerd-and-opensandbox) server on the same host, through a TLS front, with mutual TLS. No SDK. | opt-in per fleet |
+
+Beside them: `internal/workspace/wsconfig` (loads and validates `workspace.yaml`),
+`internal/workspace/egress` (the proxy), `internal/workspace/initproc` (the tiny PID 1 that
+runs inside each container, started as `mirafleet workspace-init`) and
+`internal/workspace/fake` (an in-memory executor for tests).
+
+```mermaid
+flowchart LR
+  CEN(["central :2222"])
+  SW["internal/runner<br/>serveWorkspace<br/>re-validates every request"]
+  CFG["wsconfig<br/>workspace.yaml"]
+  EX["workspace.Executor"]
+  CT["ctrd<br/>containerd executor"]
+  OS["osb<br/>OpenSandbox executor"]
+  CTR["containerd<br/>socket = root on host"]
+  C1["container<br/>mf-ws_id"]
+  CEN -. "workspace@mirafleet channel" .-> SW
+  SW -- "limits and allowlists from" --> CFG
+  SW -- "calls" --> EX
+  EX -- "default" --> CT
+  EX -- "opt-in" --> OS
+  CT -- "create, exec, delete" --> CTR
+  CTR -- "runs" --> C1
+  OS -. "https, TLS 1.3, mTLS" .-> TF["TLS front<br/>next to OpenSandbox"]
+```
+
+*Look at the containerd socket: whoever can talk to it controls the host. That is why the runner
+re-validates everything and builds the container itself.*
+
+Facts to remember about a workspace runner:
+
+- **Slots.** `concurrent: N` in `workspace.yaml` is the number of workspaces the runner accepts.
+  It is sent in each heartbeat (`slots`, plus `executor`, `secure_runtime` and image patterns), so
+  central can place new workspaces. The runner also has its own limit of N as a second gate.
+- **Central is not trusted.** The runner rebuilds the entire container spec from a fixed
+  template. Central supplies only the image, limits within the runner's caps, the network mode
+  and allowlisted environment names. There is no field for "privileged", "host network" or "host
+  mount".
+- **Local admin.** `mirafleet runner workspace list` and `prune` talk to the executor directly,
+  with no central involved, so they still work after the runner was revoked.
+- **Root-equivalent.** A workspace runner can reach the containerd socket. See trust boundary 7
+  below.
 
 ### Operator side
 
@@ -238,7 +309,8 @@ Operators never connect to a runner. They send a request to central, and central
 | Package | Why it exists |
 |---|---|
 | `internal/api` | The JSON request/response types, error codes, size and time limits, and the length-prefixed framing. Pure Go. See [Protocols](07-protocols.md). |
-| `internal/transport` | The SSH vocabulary shared by both ends: channel names (`exec@mirafleet`, `api@mirafleet`, `join@mirafleet`, `register@mirafleet`), the request name `heartbeat@mirafleet`, the SSH user names, and the `Heartbeat`, `ExecRequest` and `ExecResult` messages. |
+| `internal/transport` | The SSH vocabulary shared by both ends: channel names (`exec@mirafleet`, `workspace@mirafleet`, `api@mirafleet`, `join@mirafleet`, `register@mirafleet`), the request name `heartbeat@mirafleet`, the SSH user names, and the `Heartbeat`, `ExecRequest`, `ExecResult`, `WorkspaceRequest` and `WorkspaceResult` messages. |
+| `internal/workspace` | Pure Go, no containers: the `Executor` interface, and the **one** set of input checks (`CleanPath`, `ValidArgv`, `FilterEnv` with its denylist, `MatchImage`). Central, the runner and the executors all call these; there is no second copy. |
 | `internal/tokens` | Formats of join tokens (`mfj1.`) and registration codes (`mfr1.`), the host-key hash and the registration-code HMAC. Used by both central (to make and check) and the clients (to parse). |
 | `internal/keys` | Generating and loading Ed25519 keys, refusing private keys that others can read, and the `known_hosts`-style pinning callback. |
 
@@ -348,13 +420,18 @@ The boundaries, one by one:
    user name `enroll` accepts an unknown key, and then only for one `join@mirafleet` or
    `register@mirafleet` request, within `EnrollDeadline`, rate-limited. Users `runner` and
    `operator` require a key that is already in the database and not revoked.
-2. **Operator to central.** An operator is trusted to ask for the four operator methods (`hello`,
-   `fleets.list`, `runners.list`, `action.run`) and nothing else. Admin and enroll methods are
-   refused on the operator channel even if the key is valid.
+2. **Operator to central.** An operator is trusted to ask for the ten operator methods (`hello`,
+   `fleets.list`, `runners.list`, `action.run` and the six `workspace.*` methods) and nothing
+   else. Admin and enroll methods are refused on the operator channel even if the key is valid.
+   Even for its own workspace, an operator may only touch workspaces it owns; anybody else's id
+   gets `not_found`.
 3. **Central to runner.** The runner trusts exactly one thing: central's host key, pinned in its
    `known_hosts` at join time. But it does **not** trust central's *requests*: every `exec`
    request still goes through the actions guard. A stolen central cannot run `rm -rf /` unless
-   `actions.yaml` on that runner defines such an action.
+   `actions.yaml` on that runner defines such an action. A workspace runner likewise re-checks
+   every `workspace@mirafleet` request against its own `workspace.yaml` (image allowlist,
+   limits, network modes, env allowlist) and builds the container spec itself, so a stolen
+   central cannot ask for a privileged container or a host mount.
 4. **Admin to central.** The admin socket has no password. Its protection is filesystem
    permission (`0600` in a `0700` directory) plus a check that the connecting process runs as the
    *same user id* as central (`checkPeer`). Anyone who is already that user on the central host
@@ -362,6 +439,18 @@ The boundaries, one by one:
 5. **Central to its own database.** The database file and the host key are the crown jewels.
    They sit in a `0700` data directory, and the data directory is protected by an exclusive lock
    (`flock`, an operating-system lock on a file) so that two centrals never share it.
+6. **Container boundary (workspace runners).** Inside a workspace the agent can run any command.
+   The line that matters is between that container and the runner host: a user namespace,
+   no capabilities, a read-only root, a seccomp filter, cgroup limits and an empty network
+   (or an allowlisting proxy). Chapter 5, [section 5.9](05-security.md#59-the-workspace-container-boundary),
+   covers each defence. Nothing the container does is trusted: the runner reads its files only
+   through `os.Root` and re-checks every path.
+7. **Runner host to containerd.** A runner that serves workspaces must reach the containerd
+   socket, and **access to that socket is equivalent to root on the host**. A workspace runner
+   is therefore a root-equivalent process: run it on a dedicated machine or VM, in its own
+   containerd namespace, and never on a host that holds other secrets. This is why a runner
+   takes exactly one of `-actions` or `-workspace`: the actions guard is never run as root just
+   because containerd needs it.
 
 Known limit, stated honestly in [ARCHITECTURE.md](../ARCHITECTURE.md): central is a single trust
 point. If an attacker owns central, they can ask every runner to run any action that runner's
@@ -385,7 +474,11 @@ allowlist permits. The runner-side guard bounds the damage but cannot remove it.
 | Registration code (60 s) | `central operator code` | Shown to Dana, passed to an operator | Not stored | Valid only in its own 60-second step. |
 | Admin socket | `central run` | Central | `<data>/admin.sock`, mode `0600` | Same-UID processes only. |
 | Data-dir lock | `central init` / `central run` | Central | `<data>/central.lock` (`flock`) | Keeps a second central off the same directory. |
-| **OpenSandbox API key** (planned, M3) | The runner's admin | The runner host only | Runner configuration (see [M3.md](../M3.md)) | Never enters a sandbox; the runner refuses to start if it is unset. Not implemented yet. |
+| Runner `workspace.yaml` | The runner's admin | The runner host (workspace runners only) | `/etc/mirafleet/workspace.yaml` (`-workspace`) | Nobody else. This is the workspace-mode boundary: image allowlist, limits, network modes, env allowlist, executor settings. |
+| **OpenSandbox API key** | The runner's admin (OpenSandbox's own key) | The runner host only | The file named by `opensandbox.api_key_file` in `workspace.yaml`; must be mode `0600` or `0400` and owned by the runner's user | Never in env or argv, never logged, never passed into a sandbox. The runner refuses to start if the file is missing or loose. |
+| **Node CA and certificates** (OpenSandbox executor) | `mirafleet runner tls-init -dir DIR` | The OpenSandbox host (the same machine as the runner) | `ca.pem`, `front.pem`, `front-key.pem`, `client.pem`, `client-key.pem`, all mode `0600` in a `0700` directory | The CA's private key is discarded right after signing. The front holds its server key; the runner holds the client key (mTLS). The runner may also pin the front's public key (`pin_sha256`). |
+| Workspace directories | `workspace.Create` | The workspace runner | `<containerd.root>/<ws_id>`, default `/var/lib/mirafleet/ws`; root-owned `0700` | The files an agent wrote. Not secret by design: **never put credentials in a workspace**. |
+| **The agent's AI API key** | The operator | The operator's laptop only | Environment of Claude Code | Never sent to central, never to a runner, never into a workspace. The env denylist (`*_API_KEY`, `ANTHROPIC_*`, ...) refuses to forward such names. |
 
 A good habit when reading the code: ask "which of these could this function see?". A function in
 `internal/service` can reach the registration secret through the store but never logs it; the CLI
@@ -422,8 +515,10 @@ flowchart TB
    empty for them). Operators may open `api@mirafleet` channels, at most `api.MaxChannelsPerConn`
    (8) at a time. Enroll peers may open exactly one channel, `join@mirafleet` or `register@mirafleet`.
 3. **Dispatch** (`dispatch.go`). Each front end has a `methodTable`: an `allowed` predicate and a
-   map of handlers. The operator table serves `hello`, `fleets.list`, `runners.list` and
-   `action.run`. The admin table adds the admin methods. An admin or enroll method sent on
+   map of handlers. The operator table serves `hello`, `fleets.list`, `runners.list`,
+   `action.run` and the six workspace methods (`workspace.open`, `exec`, `read_file`,
+   `write_file`, `close`, `list`). The admin table adds the admin methods (including
+   `fleet.workspace_set`, `workspace.admin_list` and `workspace.kill`). An admin or enroll method sent on
    `api@mirafleet` is answered `forbidden` and never reaches a handler.
 4. **Service** (`internal/service`). The single code path for every front end. A typical method
    calls `authorize` (policy plus a direct kind check for admin-only methods), validates the
@@ -466,7 +561,8 @@ compile-time constant per platform. The reasons are practical: the runner kills 
 groups (a *process group* is a set of related processes that can be signalled together; the runner
 uses `Setpgid` and `syscall.Kill(-pid, SIGKILL)`), central relies on `flock` and on Unix-socket
 peer credentials (the kernel telling the server which user is on the other end), and containers
-(M3) are a Linux feature. The admin socket's peer check has implementations for Linux and macOS;
+(M3) are a Linux feature (the containerd code is `//go:build linux`, and `server_linux.go` is the
+only file that imports it). The admin socket's peer check has implementations for Linux and macOS;
 on other systems it rejects every peer.
 
 One detail: "client disconnect cancels an admin `exec`" (for example pressing Ctrl-C in
@@ -475,11 +571,10 @@ does not report reliably. On other systems the request still ends at its own tim
 
 ## Planned parts (not in the code yet)
 
-M1 and M2 are done (13 Nov 2026). Next: M3 (workspaces), then M5 (MCP server), M4 (GUI), M6
-(release). So you do not look for them: workspace mode and containerd (M3), the OpenSandbox
-executor (M3, [M3.md](../M3.md)), the MCP stdio server and `integrations/` (M5), the admin GUI
-(M4), and release packaging and systemd units (M6). Fleets can already be created in `workspace`
-mode, but `action.run` on such a fleet answers a conflict error ("fleet is not in actions mode").
+M1, M2 and M3 are done (13 Nov 2026). Next: M5 (MCP server), then M4 (GUI) and M6 (release).
+So you do not look for them: the MCP stdio server and `integrations/` (M5), the admin GUI (M4),
+and release packaging and systemd units (M6). Workspace mode, the containerd executor and the
+OpenSandbox executor are **built** (M3, [M3.md](../M3.md)).
 
 ## Check your understanding
 
@@ -490,6 +585,9 @@ mode, but `action.run` on such a fleet answers a conflict error ("fleet is not i
 4. Where is the registration secret stored, and what does `alice` actually receive when she
    registers?
 5. If central is fully compromised, what stops the attacker from running any command on `db-1`?
+6. Why can a compromised central not make `build-1` start a privileged container with the host's
+   `/etc` mounted? And why must the `build-1` host still be treated as sensitive?
+7. A runner is started with both `-actions` and `-workspace`. What happens, and why?
 
 <details>
 <summary>Answers</summary>
@@ -511,6 +609,12 @@ mode, but `action.run` on such a fleet answers a conflict error ("fleet is not i
 5. The runner's actions guard. It only runs actions defined in the runner's own `actions.yaml`,
    as an argv list without a shell, with parameters that fully match their regex. Central cannot
    change that file.
+6. The runner builds the whole container spec itself from a fixed template, and re-checks the
+   image, limits, network mode and env against its own `workspace.yaml`. Central's request has
+   no field for privileges or mounts. But the runner can use the containerd socket, which is
+   root-equivalent on that host, so the host must be dedicated and trusted.
+7. The runner refuses to start. One runner is one fleet and one mode, and the actions guard must
+   never be run as root just because containerd needs root.
 
 </details>
 

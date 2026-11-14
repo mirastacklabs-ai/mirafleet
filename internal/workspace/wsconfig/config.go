@@ -38,6 +38,13 @@ const (
 	MaxExecMax     = 24 * time.Hour
 	DefaultExecMax = time.Hour
 
+	// MaxSecureRuntimeLen matches the heartbeat's name limit (transport.Heartbeat.Validate).
+	MaxSecureRuntimeLen = 64
+	// Heartbeat image limits (mirror transport.MaxHeartbeatImages / MaxHeartbeatImageBytes); images
+	// beyond them are not advertised to central (see HeartbeatImagesDropped).
+	heartbeatImages     = 32
+	heartbeatImageBytes = 256
+
 	maxCPUs     = 1024
 	maxMemory   = int64(4) << 40 // 4 TiB
 	maxPids     = 4 << 20
@@ -182,6 +189,22 @@ func (c *Config) AcceptsGuarded() bool {
 		return c.OpenSandbox != nil && c.OpenSandbox.SecureRuntime != ""
 	}
 	return false
+}
+
+// HeartbeatImagesDropped returns the allowlist patterns that cannot be advertised in a heartbeat
+// (more than 32 entries, or longer than 256 bytes). They still apply on the runner; central just
+// does not see them. Callers should warn.
+func (c *Config) HeartbeatImagesDropped() []string {
+	var out []string
+	n := 0
+	for _, im := range c.Images {
+		if n >= heartbeatImages || len(im) > heartbeatImageBytes {
+			out = append(out, im)
+			continue
+		}
+		n++
+	}
+	return out
 }
 
 // AllowsNetwork reports whether mode ("none" or "egress") is permitted.
@@ -365,8 +388,8 @@ func (k *Containerd) validate() error {
 	if !tokRE.MatchString(k.Runtime) {
 		return fmt.Errorf("containerd.runtime %q: invalid", k.Runtime)
 	}
-	if k.SecureRuntime != "" && !tokRE.MatchString(k.SecureRuntime) {
-		return fmt.Errorf("containerd.secure_runtime %q: invalid", k.SecureRuntime)
+	if k.SecureRuntime != "" && (!tokRE.MatchString(k.SecureRuntime) || len(k.SecureRuntime) > MaxSecureRuntimeLen) {
+		return fmt.Errorf("containerd.secure_runtime %q: invalid (at most %d characters)", k.SecureRuntime, MaxSecureRuntimeLen)
 	}
 	if !filepath.IsAbs(k.Root) || filepath.Clean(k.Root) != k.Root || k.Root == "/" {
 		return fmt.Errorf("containerd.root %q: must be a clean absolute path other than /", k.Root)
@@ -411,6 +434,9 @@ func (o *OpenSandbox) validate() error {
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("opensandbox.server %q: no credentials, query or fragment allowed", o.Server)
 	}
+	if u.Path != "" && u.Path != "/" || u.RawPath != "" {
+		return fmt.Errorf("opensandbox.server %q: no path allowed (use scheme://host:port)", o.Server)
+	}
 	switch u.Hostname() {
 	case "127.0.0.1", "::1", "localhost":
 	default:
@@ -440,8 +466,8 @@ func (o *OpenSandbox) validate() error {
 			return fmt.Errorf("opensandbox.%s %q: must be an absolute path", f.name, f.v)
 		}
 	}
-	if o.SecureRuntime != "" && !tokRE.MatchString(o.SecureRuntime) {
-		return fmt.Errorf("opensandbox.secure_runtime %q: invalid", o.SecureRuntime)
+	if o.SecureRuntime != "" && (!tokRE.MatchString(o.SecureRuntime) || len(o.SecureRuntime) > MaxSecureRuntimeLen) {
+		return fmt.Errorf("opensandbox.secure_runtime %q: invalid (at most %d characters)", o.SecureRuntime, MaxSecureRuntimeLen)
 	}
 	return nil
 }
@@ -486,8 +512,8 @@ func osStat(path string) (FileStat, error) {
 }
 
 // CheckFiles verifies ownership and modes: the containerd root must be a directory owned by
-// root with mode 0700; the OpenSandbox API key file must be a regular file with mode 0600 or
-// 0400 owned by the runner's uid.
+// root with mode 0700; the OpenSandbox API key file and mTLS client key must be regular files
+// with mode 0600 or 0400 owned by the runner's uid.
 func (c *Config) CheckFiles() error {
 	switch c.Executor {
 	case ExecContainerd:
@@ -505,20 +531,28 @@ func (c *Config) CheckFiles() error {
 			return fmt.Errorf("containerd.root %q: mode must be 0700, is %04o", c.Containerd.Root, st.Mode.Perm())
 		}
 	case ExecOpenSandbox:
-		p := c.OpenSandbox.APIKeyFile
-		st, err := statFn(p)
-		if err != nil {
-			return fmt.Errorf("opensandbox.api_key_file %q: %w", p, err)
+		if err := checkSecretFile("api_key_file", c.OpenSandbox.APIKeyFile); err != nil {
+			return err
 		}
-		if st.IsDir || !st.Mode.IsRegular() {
-			return fmt.Errorf("opensandbox.api_key_file %q: not a regular file", p)
-		}
-		if m := st.Mode.Perm(); m != 0o600 && m != 0o400 {
-			return fmt.Errorf("opensandbox.api_key_file %q: mode must be 0600 or 0400, is %04o", p, m)
-		}
-		if uid := getuid(); uid < 0 || st.UID != uint32(uid) {
-			return fmt.Errorf("opensandbox.api_key_file %q: must be owned by the runner user (uid %d), is uid %d", p, uid, st.UID)
-		}
+		return checkSecretFile("client_key", c.OpenSandbox.ClientKey)
+	}
+	return nil
+}
+
+// checkSecretFile requires a regular file, mode 0600 or 0400, owned by the runner's uid.
+func checkSecretFile(name, p string) error {
+	st, err := statFn(p)
+	if err != nil {
+		return fmt.Errorf("opensandbox.%s %q: %w", name, p, err)
+	}
+	if st.IsDir || !st.Mode.IsRegular() {
+		return fmt.Errorf("opensandbox.%s %q: not a regular file", name, p)
+	}
+	if m := st.Mode.Perm(); m != 0o600 && m != 0o400 {
+		return fmt.Errorf("opensandbox.%s %q: mode must be 0600 or 0400, is %04o", name, p, m)
+	}
+	if uid := getuid(); uid < 0 || st.UID != uint32(uid) {
+		return fmt.Errorf("opensandbox.%s %q: must be owned by the runner user (uid %d), is uid %d", name, p, uid, st.UID)
 	}
 	return nil
 }

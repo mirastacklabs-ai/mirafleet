@@ -103,7 +103,7 @@ func newEgressEnv(t *testing.T) *egressEnv {
 	if err != nil {
 		t.Fatalf("alias image: %v", err)
 	}
-	t.Cleanup(func() { _ = c.ImageService().Delete(context.Background(), alias.Name) })
+	t.Cleanup(func() { deleteImage(t, c, alias.Name) })
 
 	ip := bridgeIP(t)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,16 +123,8 @@ func newEgressEnv(t *testing.T) *egressEnv {
 		t.Fatalf("New: %v", err)
 	}
 	te := &egressEnv{e: ex.(*Executor), cfg: cfg, ctx: ctx, host: ip, port: port}
-	t.Cleanup(func() { te.cleanup() })
+	t.Cleanup(func() { destroyAll(t, te.e) })
 	return te
-}
-
-func (te *egressEnv) cleanup() {
-	infos, _ := te.e.List(context.Background())
-	for _, i := range infos {
-		_ = te.e.Destroy(context.Background(), i.ID)
-	}
-	_ = te.e.Close()
 }
 
 func (te *egressEnv) create(t *testing.T, mode workspace.NetworkMode, allow ...workspace.EgressRule) workspace.ID {

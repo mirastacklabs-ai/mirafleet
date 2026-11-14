@@ -825,7 +825,12 @@ type WorkspaceAdminListResult struct {
 type WorkspaceKillParams struct {
 	ID string `json:"id"`
 }
-type WorkspaceKillResult struct{}
+
+// WorkspaceKillResult carries the resulting state: "closed", or "closing" when the runner could not be
+// reached and the reaper will finish the destroy.
+type WorkspaceKillResult struct {
+	State string `json:"state"`
+}
 
 var sessionRE = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 

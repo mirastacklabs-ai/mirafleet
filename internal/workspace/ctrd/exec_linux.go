@@ -207,19 +207,59 @@ func drain(p containerd.Process, d time.Duration) {
 
 // killTree SIGKILLs the exec process and, best effort, the descendants visible through
 // /proc/<pid>/task/*/children (the runner shares the host pid namespace with containerd's
-// shim). Descendants are killed first-found-first so the exec cannot respawn them.
+// shim). Descendants are killed first-found-first so the exec cannot respawn them. Each pid's
+// /proc start time is recorded with the walk and revalidated right before its SIGKILL, so a pid
+// that exited and was reused meanwhile is never signalled.
+//
+// Limit: a daemonised or double-forked child is reparented away from the exec's tree and is not
+// found; it survives until the workspace is destroyed (bounded by the container's pids and
+// memory limits; destroy kills the whole container).
 func killTree(ctx context.Context, p containerd.Process) {
 	kctx, cancel := context.WithTimeout(ctx, cleanupTime)
 	defer cancel()
 	pid := int(p.Pid())
-	var tree []int
+	type proc struct {
+		pid   int
+		start uint64
+	}
+	var tree []proc
 	if pid > 1 {
-		tree = descendants(pid, 4096)
+		for _, c := range descendants(pid, 4096) {
+			if st, ok := procStartTime(c); ok {
+				tree = append(tree, proc{c, st})
+			}
+		}
 	}
 	_ = p.Kill(kctx, syscall.SIGKILL)
 	for _, c := range tree {
-		_ = syscall.Kill(c, syscall.SIGKILL)
+		if st, ok := procStartTime(c.pid); ok && st == c.start {
+			_ = syscall.Kill(c.pid, syscall.SIGKILL)
+		}
 	}
+}
+
+// procStartTime returns field 22 (starttime, clock ticks since boot) of /proc/<pid>/stat.
+func procStartTime(pid int) (uint64, bool) {
+	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return 0, false
+	}
+	return parseStartTime(string(b))
+}
+
+// parseStartTime parses a /proc/<pid>/stat line; comm may contain spaces and parens, so fields
+// are counted after the last ")".
+func parseStartTime(s string) (uint64, bool) {
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 {
+		return 0, false
+	}
+	f := strings.Fields(s[i+1:]) // f[0] is field 3 (state)
+	if len(f) < 20 {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(f[19], 10, 64) // field 22
+	return v, err == nil
 }
 
 func descendants(pid, limit int) []int {

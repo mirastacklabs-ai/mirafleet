@@ -92,12 +92,14 @@ func TestValidArgv(t *testing.T) {
 
 func TestEnvDenied(t *testing.T) {
 	for _, n := range []string{"FOO_API_KEY", "GH_TOKEN", "MY_SECRET", "MY_SECRET_KEY", "ANTHROPIC_BASE_URL", "OPENAI_ORG",
-		"AWS_REGION", "SSH_AUTH_SOCK", "GIT_ASKPASS", "HTTP_PROXY", "NO_PROXY", "https_proxy", "ALL_PROXY"} {
+		"AWS_REGION", "SSH_AUTH_SOCK", "GIT_ASKPASS", "HTTP_PROXY", "NO_PROXY", "https_proxy", "ALL_PROXY",
+		"LD_PRELOAD", "LD_LIBRARY_PATH", "BASH_ENV", "ENV", "NODE_OPTIONS", "PYTHONSTARTUP", "GIT_SSH_COMMAND",
+		"DB_PASSWORD", "SIGNING_KEY", "PASSWORD", "KEY"} {
 		if !EnvDenied(n) {
 			t.Errorf("%s not denied", n)
 		}
 	}
-	for _, n := range []string{"FOO", "LANG", "PATH", "HOME", "CI", "TOKENIZER_MODE", "GIT_AUTHOR"} {
+	for _, n := range []string{"FOO", "LANG", "PATH", "HOME", "CI", "TOKENIZER_MODE", "GIT_AUTHOR", "ENVIRONMENT", "LDFLAGS", "NODE_ENV", "KEYBOARD", "PYTHONPATH"} {
 		if EnvDenied(n) {
 			t.Errorf("%s denied", n)
 		}
@@ -184,6 +186,13 @@ func TestMatchImage(t *testing.T) {
 		{[]string{"ghcr.io/org/img@sha256:*"}, "ghcr.io/org/img", false},
 		{[]string{"ghcr.io/org/img@" + dg}, "ghcr.io/org/img@" + dg, true},
 		{[]string{"ghcr.io/org/img@" + dg}, "ghcr.io/org/img@" + dg2, false},
+		// A-18: with digests on both sides the tag is ignored.
+		{[]string{"ghcr.io/org/img@" + dg}, "ghcr.io/org/img:v1@" + dg, true},
+		{[]string{"ghcr.io/org/img:v1@" + dg}, "ghcr.io/org/img@" + dg, true},
+		{[]string{"ghcr.io/org/img:v1@" + dg}, "ghcr.io/org/img:v2@" + dg, true},
+		{[]string{"ghcr.io/org/img:v1@" + dg}, "ghcr.io/org/img:v1@" + dg2, false},
+		{[]string{"ghcr.io/org/img:v1@" + dg}, "ghcr.io/other/img:v1@" + dg, false},
+		{[]string{"ghcr.io/org/img:v1@" + dg}, "ghcr.io/org/img:v1", false},
 		{[]string{"localhost:5000/x:*"}, "localhost:5000/x:1", true},
 		{[]string{"localhost:5000/x:*"}, "localhost/x:1", false},
 		{[]string{"*"}, "alpine", false},

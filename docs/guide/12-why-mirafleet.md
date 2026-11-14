@@ -3,8 +3,8 @@
 > **A snapshot of the landscape on 13 Nov 2026. It is not maintained with the code.** Other
 > projects change licences, get archived and add features; check the sources (section 12.6)
 > before relying on any row. This chapter compares mirafleet as designed, with all planned
-> milestones (M1 to M6) implemented. M1 and M2 are done; see [../PLAN.md](../PLAN.md) for what is
-> built today. Star counts are approximate.
+> milestones (M1 to M6) implemented. M1, M2 and M3 (workspaces) are done; see
+> [../PLAN.md](../PLAN.md) for what is built today. Star counts are approximate.
 
 ## What you will learn
 
@@ -107,9 +107,13 @@ These rows describe the **typical setup** of each kind of tool, not something th
 
 Why mirafleet can do this: the model call happens in the harness (Claude Code) on alice's laptop.
 What crosses to central is a small JSON request such as "run `tail-logs` on `db-1`", not a model
-request. Nothing on the server side needs the model key, so it is never sent. In workspace mode
-the OpenSandbox executor goes further: the runner refuses to pass credentials into sandbox
-environments (see [../M3.md](../M3.md)), and OpenSandbox's own API key stays on the runner host.
+request. Nothing on the server side needs the model key, so it is never sent. Workspace mode (M3,
+built) goes further, on **both** executors: a workspace is never handed credentials. The environment
+a command may carry is limited by an allowlist on the runner **and** a hard denylist (`*_API_KEY`,
+`*_TOKEN`, `ANTHROPIC_*`, `AWS_*`, ...) that is enforced on central and again on the runner; the
+agent's own process is not in the container at all. With the optional OpenSandbox executor,
+OpenSandbox's own API key stays on the runner host in a mode-0600 file, is never logged and never
+enters a sandbox ([chapter 10](10-operations.md#1096-the-opensandbox-option-with-tls-init-and-tls-front)).
 
 ### mirafleet's own credentials
 
@@ -176,7 +180,8 @@ box around the sandbox with credentials, and every connection to central points 
 ## 12.3 The comparison
 
 Legend: ✅ yes, ⚠️ partly or with caveats, ❌ no. "Unverified" means the research could not
-confirm it. mirafleet's row describes the **full planned feature set**, not the code today. The
+confirm it. mirafleet's row describes the **full planned feature set** (M1 to M3 are built; the
+MCP server, GUI and release packaging are not), not the code today. The
 table has five columns of facts on purpose; everything else (extra dependencies, MCP support,
 audit and revoke) is in the prose after it.
 
@@ -220,9 +225,44 @@ audit and revoke) is in the prose after it.
 | **MCP SSH servers** | | | | | |
 | ssh-mcp (MIT, ~880★), shellguard and mcp-ssh-orchestrator (Apache-2.0, ~30★ each) | MIT / Apache-2.0 | ❌ agent host dials in to nodes | On the agent host, which is the wrong side of the trust boundary | On the agent host | ⚠️ simple, but push and node-side trust |
 | **Sandboxes and workspaces** | | | | | |
-| OpenSandbox (Apache-2.0, ~17.3k★), E2B (Apache-2.0, ~14.8k★, cloud is paid), kubernetes-sigs/agent-sandbox (Apache-2.0) | Open core, cloud paid for E2B | n/a | The isolation boundary, no fleet policy | Often inside the sandbox, in the env | ⚠️ different problem: disposable isolated environments, not operating your fleet. OpenSandbox becomes a mirafleet executor in M3 |
+| OpenSandbox (Apache-2.0, ~17.3k★), E2B (Apache-2.0, ~14.8k★, cloud is paid), kubernetes-sigs/agent-sandbox (Apache-2.0) | Open core, cloud paid for E2B | n/a | The isolation boundary, no fleet policy | Often inside the sandbox, in the env | ⚠️ different problem: disposable isolated environments, not operating your fleet. OpenSandbox is an opt-in mirafleet executor (built in M3; containerd is the default). See "mirafleet workspaces and OpenSandbox" below |
 | Daytona | AGPL. Archived June 2026, core went private | n/a | The isolation boundary | Often inside the sandbox | ❌ no longer open |
 | Coder | AGPL (~17.4k★). Premium is paid | ✅ agent connects to coderd | Workspace access control | In the workspace | ⚠️ developer workspaces, not ops |
+
+### mirafleet workspaces and OpenSandbox
+
+They solve **different layers**, and in M3 they meet. The comparison is of the design as of
+13 Nov 2026; OpenSandbox's server is 0.1.x, so check its current state before relying on any
+detail.
+
+| | OpenSandbox | mirafleet workspace fleet |
+|---|---|---|
+| **What it is** | A sandbox platform: create, run in and destroy isolated environments through an API and SDKs. | Fleet control with an isolation backend: who may open which workspace, where it runs, what it may reach, and an audit of every call. |
+| **Who may use it** | API key holder(s). No per-person identity or policy in the open-source server. | A registered operator key; ownership per workspace (`not_found` for anyone else); per-fleet image and network policy set by the admin. |
+| **Audit and revoke** | Its own server logs. | One central audit log with a start and an outcome row per call; revoking an operator or runner closes or marks their workspaces at once. |
+| **Reachability** | Your client dials the OpenSandbox server (or ingress), which must be reachable. | Runners dial **out** to central: works behind NAT, nothing listens on the runner. |
+| **Where the agent runs** | Often inside the sandbox, with its keys in the environment (the typical examples). | On the operator's laptop. The workspace only runs commands; no model key can reach it. |
+| **Isolation** | Server-wide settings: Docker or Kubernetes, optional gVisor, Kata or Firecracker, network policy, seccomp, AppArmor. | Default: its own small containerd executor (user namespace per slot, no capabilities, seccomp, read-only rootfs, one writable directory, empty network plus an allow-list proxy). Optional: OpenSandbox as the executor. |
+| **Strong points** | Several runtimes including microVMs, Kubernetes support, SDKs, streaming output, a larger community. | One static binary, central policy and audit, outbound-only runners, instant revoke. |
+
+How they fit together: mirafleet **keeps OpenSandbox out of the trust path where it can**. The
+runner talks to it only over TLS 1.3 with mutual authentication on loopback (OpenSandbox has no
+native TLS, so mirafleet ships a small `tls-front`, or you bring your own proxy), keeps its API key
+in a root-only file, and sends a deny-default network policy with every create, so a server that
+cannot enforce one fails closed. What you give up by choosing the OpenSandbox executor: no stdin for
+`exec`, no `pull: never`, egress rules are host-only (ports 80 and 443 at most), and the container
+hardening is whatever the server is configured with, not per workspace.
+
+Where OpenSandbox on its own is still the better tool: you want microVM isolation today, you run
+Kubernetes and want its native integration, you need streaming or interactive sessions, or you
+are happy with API-key access and your own audit.
+
+Honest limits of mirafleet's own executor (chapter 5 has the full list): the default `runc`
+runtime shares the host kernel, so a kernel exploit is a host exploit unless you configure gVisor or
+Kata (`secure_runtime`, and guarded fleets require it); a workspace runner holds the containerd
+socket, so it is root-equivalent and belongs on a dedicated host; the disk quota is soft;
+tools that ignore proxy settings simply have no network in egress mode; it is new code with far
+less production time than the platforms above.
 
 ### What the table leaves out
 
@@ -293,7 +333,9 @@ This section assumes the full feature set exists.
 
 - ssh-mcp-style **read, write and destructive tiers** for the `confirm` argument on guarded
   fleets.
-- **OpenSandbox** for isolation in workspace mode, instead of writing a sandbox.
+- **containerd, runc and the kernel's own isolation features** (user namespaces, seccomp, cgroups)
+  for the default workspace executor, instead of inventing a sandbox, and **OpenSandbox** as an
+  opt-in executor for fleets that want its runtimes.
 - **OpenTelemetry or OCSF-style audit export**, and an **OIDC `AuthProvider`** behind the existing
   seam, so you can plug in your own identity provider.
 - **Tailscale or Cloudflare Tunnel** as optional front doors to central. Never required.
@@ -307,6 +349,8 @@ This section assumes the full feature set exists.
 | You need desired-state configuration of many machines | Ansible or Salt |
 | You need SSO and session recording across humans and machines, and the licence fits | Teleport |
 | You need disposable isolated environments for untrusted code | OpenSandbox, E2B or agent-sandbox |
+| An agent should work in disposable environments **with** per-operator identity, central audit and instant revoke, from a laptop that keeps the keys | A mirafleet workspace fleet (containerd, or OpenSandbox as its executor) |
+| You need microVM isolation or Kubernetes-native sandboxes today | OpenSandbox, agent-sandbox or E2B directly |
 | You only build and test code | Your existing CI runners |
 
 ## 12.6 Sources
@@ -333,6 +377,7 @@ Researched 13 Nov 2026. Star counts are approximate and change daily.
 - https://github.com/fawdyinc/shellguard
 - https://github.com/samerfarida/mcp-ssh-orchestrator
 - https://github.com/opensandbox-group/OpenSandbox
+- https://github.com/containerd/containerd
 - https://github.com/e2b-dev/E2B
 - https://github.com/kubernetes-sigs/agent-sandbox
 - https://github.com/anthropics/sandbox-runtime
@@ -347,6 +392,11 @@ Researched 13 Nov 2026. Star counts are approximate and change daily.
    mirafleet?
 4. Give one reason ssh-mcp can be the better choice than mirafleet.
 5. Why is the command guard "on the node" a stronger place than on the agent host?
+6. Someone says "mirafleet workspaces are just OpenSandbox with extra steps". Give two things that
+   are true of a mirafleet workspace fleet that are not true of OpenSandbox on its own, and one thing
+   OpenSandbox does better.
+7. Name two features you give up by choosing the OpenSandbox executor, and say why the runner
+   needs a TLS front in front of it.
 
 <details>
 <summary>Answers</summary>
@@ -368,5 +418,15 @@ Researched 13 Nov 2026. Star counts are approximate and change daily.
 5. If the guard runs on the agent host, whatever compromises that host (including a tricked
    agent) can switch the guard off or bypass it. On the node, the guard is the last check before
    a command runs, and neither central nor the agent can change it.
+6. Any two of: per-operator identity and per-workspace ownership (`not_found` for others); a central
+   audit log with start and outcome rows; instant revoke of operator or runner; outbound-only runners
+   that work behind NAT; the agent and its model key staying on the laptop; per-fleet image and
+   network policy that the runner re-checks. OpenSandbox does better at: microVM runtimes
+   (Firecracker, Kata), Kubernetes-native deployment, streaming output, stdin, and a larger,
+   more mature community.
+7. Any two of: stdin for `exec`, `pull: never`, egress rules with ports other than 80 and 443,
+   per-workspace container hardening (it is server-wide). The front is needed because OpenSandbox
+   serves plain HTTP only, and mirafleet's rule is TLS 1.3 with mutual authentication, never plain HTTP,
+   not even on loopback.
 
 </details>

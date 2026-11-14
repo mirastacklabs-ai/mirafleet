@@ -15,7 +15,7 @@ func testParams(userns bool, slot uint32) specParams {
 		CPUMilli: 2500, MemoryBytes: 512 << 20, Pids: 256, TmpfsBytes: 64 << 20,
 		WorkspaceDir: "/var/lib/mirafleet/ws/0123", HostsFile: "/var/lib/mirafleet/ws/.meta/0123/hosts",
 		ResolvFile: "/var/lib/mirafleet/ws/.meta/0123/resolv.conf", InitBinary: "/usr/local/bin/mirafleet",
-		AppArmorProfile: "mirafleet-workspace",
+		AppArmorProfile: "mirafleet-workspace", DiskBytes: 1 << 30,
 	}
 	if userns {
 		p.HostBase = 1000000 + slot*userNSStride
@@ -58,8 +58,13 @@ func TestSpecHardening(t *testing.T) {
 		if pr.ApparmorProfile != "mirafleet-workspace" {
 			t.Errorf("apparmor = %q", pr.ApparmorProfile)
 		}
-		if len(pr.Rlimits) != 1 || pr.Rlimits[0].Type != "RLIMIT_NOFILE" || pr.Rlimits[0].Hard == 0 {
+		if len(pr.Rlimits) != 2 || pr.Rlimits[0].Type != "RLIMIT_NOFILE" || pr.Rlimits[0].Hard == 0 {
 			t.Errorf("rlimits = %+v", pr.Rlimits)
+		} else if r := pr.Rlimits[1]; r.Type != "RLIMIT_FSIZE" || r.Hard != 1<<30 || r.Soft != 1<<30 {
+			t.Errorf("RLIMIT_FSIZE = %+v, want the disk quota", r)
+		}
+		if s.Linux.CgroupsPath != "/mirafleet/mf-0123" {
+			t.Errorf("CgroupsPath = %q", s.Linux.CgroupsPath)
 		}
 		if s.Root == nil || !s.Root.Readonly {
 			t.Error("rootfs not read-only")

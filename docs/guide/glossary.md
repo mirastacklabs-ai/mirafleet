@@ -63,6 +63,11 @@ uses the SQLite store; the runner writes JSON lines to a file. See [chapter 8](0
 
 ## B
 
+**Body frame.** A second length-prefixed frame sent right after a workspace request frame,
+carrying a file or stdin (at most 1 MiB). Central reads it only after the caller has been
+authorised. See [chapter 4](04-flows.md#14-reading-and-writing-files-body-frames) and
+[chapter 7](07-protocols.md).
+
 **Backoff.** Waiting longer after each failed reconnect attempt. The runner starts at 1 s and
 doubles up to 60 s (with about 20% random jitter), resetting after a connection stays healthy for
 30 s. See [chapter 3](03-architecture.md).
@@ -102,12 +107,25 @@ boolean. See [chapter 5](05-security.md).
 bytes match, to avoid timing attacks. See
 [chapter 2](02-background.md#24-hashes-hmac-and-constant-time-comparison).
 
+**Capabilities (Linux).** About 40 small switches that split "root's powers" (change file owners,
+mount, use raw sockets, load modules...). A process with none of them is a very weak "root".
+Workspace containers drop all of them and set *no new privileges*. See
+[chapter 2](02-background.md#29-containers-containerd-and-opensandbox) and
+[chapter 5](05-security.md#59-the-workspace-container-boundary).
+
+**cgroup (control group).** A Linux feature that limits what a group of processes may *use*: CPU,
+memory, number of processes. It stops a fork bomb or memory hog from harming the host. Contrast
+with a namespace, which limits what a process can *see*. See
+[chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
+
 **Container.** A fenced-in Linux process with its own file system view and resource limits. Used
-by workspace mode (planned, M3). See [chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
+by workspace mode (built in M3). See [chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
 
 **containerd.** The Linux program that runs containers. The product's workspaces (M3) use it
-through its Go client; our developer tooling runs in Docker containers (colima on macOS). Planned
-for M3. See [chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
+through its Go client, in its own namespace `mirafleet`; our developer tooling runs in Docker
+containers (colima on macOS). Access to its socket is equivalent to root on the host. See
+[chapter 2](02-background.md#29-containers-containerd-and-opensandbox) and
+[chapter 3](03-architecture.md).
 
 **context (Go).** A value carrying cancellation and deadlines through function calls. See
 [chapter 2](02-background.md#27-go-context-cancellation).
@@ -168,9 +186,16 @@ too_large timeout unsupported_version internal`. See [chapter 7](07-protocols.md
 **exec@mirafleet.** The channel type central opens toward a runner (over the runner's own
 connection) to run an action. See [chapter 7](07-protocols.md).
 
+**Egress proxy.** The small HTTP/CONNECT proxy the runner starts inside a workspace's network
+namespace. It is the container's only way out when the fleet's network is `egress`: it checks
+every request against the allowlist, resolves DNS itself and blocks loopback, metadata and private
+addresses. See [chapter 2](02-background.md#29-containers-containerd-and-opensandbox) and
+[chapter 5](05-security.md#59-the-workspace-container-boundary).
+
 **Executor.** The runner-side component that actually runs work. Actions mode runs argv on the
-host. In workspace mode (planned), a `WorkspaceExecutor` runs commands in containers (containerd
-or OpenSandbox). See [chapter 3](03-architecture.md).
+host through the guard. In workspace mode, a `workspace.Executor` (Go interface in
+`internal/workspace`) runs commands in containers: `ctrd` (containerd, the default) or `osb`
+(OpenSandbox, opt-in per fleet). See [chapter 3](03-architecture.md).
 
 ## F
 
@@ -239,7 +264,8 @@ clients pin its hash. See [chapter 2](02-background.md#23-host-key-pinning-versu
 **Idempotent.** Doing it twice has the same effect as once. Re-registering an already active
 operator key is idempotent (but still audited). See [chapter 4](04-flows.md).
 
-**Image (container).** The packaged file system a container starts from. Planned (M3). See
+**Image (container).** The packaged file system a container starts from, named by a reference
+(a tag, or better a `@sha256:` digest). A fleet's image allowlist decides which images may run. See
 [chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
 
 **In-flight.** Currently running. "In-flight actions are cancelled on revoke." See
@@ -290,6 +316,10 @@ in the binary; forward-only; a newer database than the binary fails closed. See
 **Milestone (M1-M6).** A stage of the build plan. See [chapter 1](01-what-is-mirafleet.md#18-milestones-and-current-status)
 and [../PLAN.md](../PLAN.md).
 
+**mTLS (mutual TLS).** TLS where *both* sides present certificates: the server proves who it is,
+and the client does too. Used between the runner and the OpenSandbox TLS front, so only the runner
+can talk to it. See [chapter 5](05-security.md#59-the-workspace-container-boundary).
+
 **Mode (fleet).** `actions` or `workspace`. See [chapter 1](01-what-is-mirafleet.md#14-two-fleet-modes).
 
 ## N
@@ -319,8 +349,14 @@ acts through; the **admin** is a different person who runs central. See
 written after the work ends and sharing the `request_id` of the `start` row. See
 [chapter 6](06-data-model.md).
 
-**OpenSandbox.** An open-source sandbox service; an opt-in second workspace executor in M3,
-reached over pinned HTTPS only. See [../M3.md](../M3.md) and
+**OpenSandbox.** An open-source sandbox service; mirafleet's opt-in second workspace executor,
+reached over HTTPS only (TLS 1.3, mutual TLS, a private CA, an optional SPKI pin) through a TLS
+front. Its API key lives on the runner host only. See [../M3.md](../M3.md) and
+[chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
+
+**os.Root.** A Go 1.24 standard-library type: a directory handle through which every file
+operation stays inside that directory, even across symlinks and `..`. The containerd executor
+uses one per workspace for `read_file` and `write_file`. See
 [chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
 
 **Outbound-only.** All connections start from the runner or operator toward central; nothing
@@ -366,6 +402,13 @@ keeping lifecycle off the operator API. See [chapter 1](01-what-is-mirafleet.md#
 **Rate limit.** A cap on how often something may happen, using a token bucket. See
 [chapter 2](02-background.md#28-rate-limiting-token-bucket).
 
+**Reaper.** The goroutine in central (every 60 s) that closes idle, expired or revoked-owner
+workspaces and destroys them. See [chapter 4](04-flows.md#16-the-ttl-reaper).
+
+**Reconcile.** Comparing a runner's own list of workspaces with central's database when the runner
+connects, and fixing differences: destroy orphans, mark vanished ones `lost`. See
+[chapter 4](04-flows.md#17-reconcile-after-a-runner-or-central-restart).
+
 **Registration code.** `mfr1.<code>.<host-key-hash>`: a rotating, TOTP-style code an admin reads
 from central so operators can register. Valid for one 60 s step, not single-use. See
 [chapter 2](02-background.md#25-totp-style-rotating-codes) and [chapter 4](04-flows.md).
@@ -405,12 +448,33 @@ in later: `Store`, `AuthProvider`, `PolicyEngine`, `AuditSink`. See
 systems for security teams. Enterprise audit export to a SIEM is an interface seam, not built.
 See [chapter 12](12-why-mirafleet.md).
 
+**seccomp.** A Linux filter listing which system calls a process may make; others fail. Workspace
+containers use containerd's default profile and never run unconfined. See
+[chapter 2](02-background.md#29-containers-containerd-and-opensandbox) and
+[chapter 5](05-security.md#59-the-workspace-container-boundary).
+
+**Session (workspace).** A name the client chooses (for example Claude Code's session id) for the
+workspace it wants. At most one live workspace exists per operator, fleet and session. See
+[chapter 4](04-flows.md#12-open-a-workspace).
+
+**Slot.** One place for a workspace on a runner. The runner's `concurrent: N` setting gives N slots;
+a workspace in `opening`, `open` or `closing` holds one. See
+[chapter 4](04-flows.md#12-open-a-workspace).
+
+**SPKI pin.** A hash of a certificate's *public-key info* (SubjectPublicKeyInfo). The runner can pin
+the OpenSandbox front's key (`pin_sha256`) as an extra check on top of the CA. See
+[chapter 5](05-security.md#59-the-workspace-container-boundary).
+
+**Sticky (session).** A repeated `workspace.open` for the same session returns the same workspace
+(`reused: true`). If its runner is offline the answer is `unavailable`, never a fresh workspace.
+See [chapter 4](04-flows.md#12-open-a-workspace) and [chapter 6](06-data-model.md#615-the-workspace-tables-migration-0002).
+
 **Slow loris.** An attack that opens many connections and sends data very slowly to tie up the
 server. Handshake and enroll time limits defend against it. See [chapter 5](05-security.md).
 
 **source.** Which front end a call came from, recorded in the audit row: `cli` (admin socket),
-`api` (operator), `enroll` (join or register), `system` (central itself); `gui` is reserved for
-M4. See [chapter 6](06-data-model.md).
+`api` (operator), `enroll` (join or register), `system` (central itself: the workspace reaper,
+reconcile and revoke cascades); `gui` is reserved for M4. See [chapter 6](06-data-model.md).
 
 **Symlink.** A file that points to another path. Opening a key file through a symlink could be
 steered to a different file, so key loading refuses symlinks (`O_NOFOLLOW`). See
@@ -452,6 +516,10 @@ changes. mirafleet does **not** use it. See
 **Token bucket.** A rate-limiting scheme with a refilling bucket of permits. See
 [chapter 2](02-background.md#28-rate-limiting-token-bucket).
 
+**TLS front.** A small reverse proxy (`mirafleet runner tls-front`, or any TLS-terminating proxy)
+that sits next to OpenSandbox, which has no native TLS, and serves only TLS 1.3 with a required
+client certificate. See [chapter 5](05-security.md#59-the-workspace-container-boundary).
+
 **Trigger (database).** SQL that the database runs automatically on insert, update or delete.
 The `audit` table uses triggers that reject every update and delete. See
 [chapter 6](06-data-model.md).
@@ -472,6 +540,12 @@ time step. mirafleet's registration code is TOTP-style but long and with 60 s st
 **umask.** A per-process mask removing permission bits from newly created files; central uses
 `077`. The arithmetic: a file requested as `0666` becomes `0666 & ~077 = 0600` (owner only). See [chapter 2](02-background.md#211-unix-sockets-file-permissions-and-umask).
 
+**User namespace.** A Linux namespace that maps user ids: "root" (uid 0) inside a container is an
+ordinary unprivileged id on the host. mirafleet gives every slot its own range, so an escape
+lands as a nobody and workspaces cannot touch each other's files. See
+[chapter 2](02-background.md#29-containers-containerd-and-opensandbox) and
+[chapter 5](05-security.md#59-the-workspace-container-boundary).
+
 **Unix domain socket.** A local-only connection endpoint that is a file. See
 [chapter 2](02-background.md#211-unix-sockets-file-permissions-and-umask).
 
@@ -480,11 +554,14 @@ time step. mirafleet's registration code is TOTP-style but long and with 60 s st
 **WAL (write-ahead log).** SQLite mode where changes go to a log file first so readers and the
 writer do not block each other. See [chapter 2](02-background.md#26-sqlite-transactions-and-wal).
 
-**Workspace.** A per-session container with its own directory where an agent may run any command
-(planned, M3). See [chapter 1](01-what-is-mirafleet.md#14-two-fleet-modes).
+**Workspace.** A per-session container with its own directory (`/workspace`) where an agent may
+run any command. It has an id (`ws_id`), an owner, a state (`opening`, `open`, `closing`,
+`closed`, `failed`, `lost`) and a time to live. Built in M3. See
+[chapter 1](01-what-is-mirafleet.md#the-workspace-running-example) and
+[chapter 6](06-data-model.md#the-workspace-state-machine).
 
-**workspace mode.** The fleet mode for workspaces. Stored today; the feature is planned (M3).
-See [../M3.md](../M3.md).
+**workspace mode.** The fleet mode for workspaces (built in M3). Its runner takes `-workspace
+FILE` (`workspace.yaml`) instead of an actions file. See [../M3.md](../M3.md).
 
 ## Y
 

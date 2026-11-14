@@ -78,6 +78,18 @@ func TestRunnerTLSInitAndFront(t *testing.T) {
 	if err := runnerTLSInit([]string{"-dir", dir}, &out); err == nil || !strings.Contains(err.Error(), "not empty") {
 		t.Errorf("second tls-init: %v", err)
 	}
+	// A symlink is refused before anything is chmodded through it.
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := runnerTLSInit([]string{"-dir", link}, &out); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("symlink dir: %v", err)
+	}
+	if ents, _ := os.ReadDir(target); len(ents) != 0 {
+		t.Errorf("tls-init wrote through the symlink: %v", ents)
+	}
 	for _, a := range [][]string{{}, {"-dir", filepath.Join(t.TempDir(), "x"), "-days", "0"}, {"-dir", dir, "extra"}} {
 		if err := runnerTLSInit(a, &out); err == nil {
 			t.Errorf("%v accepted", a)
@@ -157,6 +169,7 @@ func wsRunnerEnv(t *testing.T, maxAge string) (data, wsFile string, ex *fake.Exe
 	}
 	key := filepath.Join(dir, "api.key")
 	os.WriteFile(key, []byte("secret\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "c-key.pem"), []byte("k\n"), 0o600)
 	wsFile = filepath.Join(dir, "workspace.yaml")
 	yaml := `
 executor: opensandbox

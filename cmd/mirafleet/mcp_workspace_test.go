@@ -65,6 +65,7 @@ func TestParseMCPAPIArgs(t *testing.T) {
 		"read without out":    {api.MethodWorkspaceReadFile, "{}"},
 		"write without in":    {api.MethodWorkspaceWriteFile, "{}"},
 		"unknown flag":        {"hello", "-nope"},
+		"out stdout":          {api.MethodWorkspaceReadFile, "{}", "-out", "-"},
 	} {
 		if _, err := parseMCPAPIArgs(args); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -129,5 +130,18 @@ func TestReadBodyFile(t *testing.T) {
 	}
 	if _, err := readBodyFile(filepath.Join(dir, "missing"), nil); err == nil {
 		t.Error("missing file accepted")
+	}
+}
+
+func TestCheckOutPath(t *testing.T) {
+	dir := t.TempDir()
+	if err := checkOutPath(filepath.Join(dir, "f.bin")); err != nil {
+		t.Errorf("good path: %v", err)
+	}
+	if err := checkOutPath(filepath.Join(dir, "nodir", "f.bin")); err == nil {
+		t.Error("missing directory accepted")
+	}
+	if err := checkOutPath(dir); err == nil {
+		t.Error("directory as output accepted")
 	}
 }

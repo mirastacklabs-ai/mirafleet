@@ -1367,6 +1367,11 @@ func workspaceClose(t *testing.T, s store.Store) {
 			}
 		}
 	}
+	bad := wsRow(99, f, rs[0], ops[0], "bad")
+	bad.Spec = "{not json"
+	if _, _, err := s.ReserveWorkspace(ctx, bad, 100, 0, now, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("invalid spec JSON: %v", err)
+	}
 	mk(1, rs[0], ops[0], true)  // open
 	mk(2, rs[0], ops[1], false) // opening
 	mk(3, rs[1], ops[0], true)  // open, other runner
@@ -1388,6 +1393,13 @@ func workspaceClose(t *testing.T, s store.Store) {
 	ids, err := s.CloseWorkspacesOf(ctx, store.WorkspaceOwner{RunnerID: rs[0].ID}, "runner revoked", later, ev("runner.revoke"))
 	if err != nil || strings.Join(ids, ",") != wsID(1)+","+wsID(2) {
 		t.Fatalf("by runner: %v %v", ids, err)
+	}
+	evs, err := s.ListAudit(ctx, 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := evs[len(evs)-1]; last.Action != "runner.revoke" || last.Params["count"] != "2" || last.Params["ws_ids"] != wsID(1)+","+wsID(2) {
+		t.Fatalf("close audit lacks count and ids: %+v", last)
 	}
 	if auditCount(t, s) != base+1 {
 		t.Fatalf("CloseWorkspacesOf must write ev once: %d/%d", auditCount(t, s), base)

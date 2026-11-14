@@ -7,12 +7,14 @@ numbers are drawn in each SVG. Colours come from [../../BRAND.md](../../BRAND.md
 Cast: Dana is the admin and works on the central server. alice and bob are operators.
 
 ## big-picture.svg
-Caption: look at the arrow directions; every connection points at central.
+Caption: look at the arrow directions; every connection points at central. Fleet dev is a
+workspace fleet (containerd on the runner), fleet prod an actions fleet.
 1. Claude Code starts `mirafleet mcp`. The LLM API key and the SSH key stay on the laptop.
 2. `mcp` dials central `:2222` as SSH user `operator`; each request is one `api@` channel.
 3. Central checks the key and the policy against SQLite, then acts.
 4. Runners dial OUT to central (user `runner`). Nothing listens on a runner.
-5. Central sends work back down that same connection as an `exec@` channel.
+5. Central sends work back down that same connection: an `exec@` channel (actions fleet) or a
+   `workspace@` channel (workspace fleet, where the runner drives containerd locally).
 6. Dana runs the admin CLI on central. It uses a local unix socket, never the network.
 
 ## runner-join.svg
@@ -67,3 +69,51 @@ Example response `{"v":1,"id":"1","result":{}}` is 28 bytes; header `00 00 00 1C
 4. Central reads 4 bytes, checks the length against its limit BEFORE allocating, reads that many.
 5. Central runs the method and builds the JSON response (a small example: 28 bytes).
 6. The response is framed the same way: 28 = 0x0000001C. The operator reads it back.
+7. `write_file` and `exec` with stdin add a body frame right behind the request: a 4-byte length,
+   then raw bytes (here 5 bytes, `hello`), at most 1 MiB. Not JSON.
+8. Central reads the body frame only after policy, ownership and confirm pass, within 30 s.
+
+## workspace-open.svg
+Caption: follow `workspace.open` from the agent to a container; note where it can stop early.
+1. alice's agent calls `workspace.open` (fleet `dev`, session `s1`) through `mirafleet mcp`.
+2. The `api@` frame reaches `service.OpenWorkspace`: active operator, workspace-mode fleet, image on
+   the allowlist, `confirm` on a guarded fleet, valid session id.
+3. Sticky reuse: a live workspace for (alice, `dev`, `s1`) is returned with `reused:true`. If its
+   runner is offline the answer is `unavailable`; a fresh workspace is never created elsewhere.
+4. Placement: active, online runners whose executor, trusted labels and image patterns fit, with
+   free slots (heartbeat slots minus live rows). The most free slots wins, random tie-break.
+5. `ReserveWorkspace` recounts the slots in one transaction and inserts the `opening` row with the
+   start audit row.
+6. A full runner (`ErrFull`) or a busy one moves to the next candidate (3 tries at most). Otherwise
+   central sends op `create` on `workspace@mirafleet`.
+7. The runner re-validates the spec against its own `workspace.yaml`, builds the container spec
+   from its fixed template, pulls the image if needed and creates the container.
+8. The row becomes `open`, the outcome audit row is written and the reply says `reused:false`.
+
+## workspace-exec.svg
+Caption: one `workspace.exec` down through every layer and back, with both audit rows.
+1. alice's agent calls `workspace.exec` (argv `go test ./...`) through `mirafleet mcp`.
+2. One `api@` frame arrives; the method table routes it to `service.ExecWorkspace`.
+3. Operator, ownership (`not_found` for others), state `open`, argv, cwd, env (denylist), confirm and
+   timeout are checked; then the `start` audit row is written FIRST. No row, no exec.
+4. `registry.Workspace` opens a `workspace@mirafleet` channel on the runner's own SSH connection; the
+   op is JSON in the channel-open data, any stdin follows as raw bytes.
+5. The runner re-validates argv, cwd, env (its `env_allow` plus the denylist) and the timeout. Central
+   is not trusted.
+6. The command runs inside the container as an unprivileged user, with no shell. Output is captured
+   head and tail, trimmed to the budget; timeout or cancel sends SIGKILL.
+7. The runner writes one result frame: exit code, stdout, stderr, `truncated`, `timed_out`.
+8. Central writes the `outcome` audit row (same `request_id`) and replies to alice.
+
+## workspace-boundary.svg
+Caption: the dotted box is the boundary; read it from the outside in.
+1. User namespace: uid 1000 inside is an unused high host uid (`uid_base` + slot x 65536), so container
+   root is not host root.
+2. All capabilities dropped, `no_new_privs`, and containerd's default seccomp profile.
+3. Read-only root filesystem. Writable: a size-limited `/tmp` and `/workspace`, the one host directory.
+4. Empty network namespace. In egress mode the only way out is the allow-list proxy on
+   `127.0.0.1:3128`.
+5. cgroup limits: CPU, memory with swap equal to memory, pids; a soft disk quota on `/workspace`.
+6. What crosses: argv, allow-listed env and file bytes in; exit code, output and file bytes out.
+7. What cannot: host mounts, devices, the containerd socket, API keys, host networking.
+8. The LLM API key and the SSH key stay on alice's laptop; the agent never runs in the container.

@@ -4,7 +4,8 @@ Design: [ARCHITECTURE.md](ARCHITECTURE.md). Module: `github.com/mirastacklabs-ai
 One static binary (`CGO_ENABLED=0`). Dependencies kept small:
 `golang.org/x/crypto/ssh`, `golang.org/x/sys` (unix/windows syscalls), `modernc.org/sqlite`
 (pure Go), `gopkg.in/yaml.v3`,
-`github.com/containerd/containerd/v2` (M3), `github.com/modelcontextprotocol/go-sdk` (M5).
+`github.com/containerd/containerd/v2` (M3, linux only; darwin and windows link none of it),
+`github.com/modelcontextprotocol/go-sdk` (M5).
 CLI uses the standard library (`flag` with subcommands).
 
 **Build order (13 Nov 2026): M1 → M2 → M3 → M5 → M4 → M6.** M5 (orchestrator) comes before M4
@@ -43,11 +44,17 @@ The "M2 done when" scenario is `TestM2Done` in `internal/central/m2_done_test.go
   still sit behind a firewall or rate limiter.
 
 ## M3 — Workspaces
-Decisions: [M3.md](M3.md) (executor interface; opt-in OpenSandbox executor, HTTPS-only).
-- `WorkspaceExecutor` interface on the runner; executors: containerd (default) and OpenSandbox
-  (opt-in per fleet, stdlib HTTPS with pinned certs, no SDK).
-- containerd executor (namespace `mirafleet`), workspace dir, open/exec/file/close,
-  resource limits, `concurrent: N`, scheduling with sticky sessions, TTL reaper.
+**Status: done (14 Nov 2026).** Reviewed twice; P0/P1 fixed, P2/P3 batched for M5 (M3.md E-01…E-17). Decisions, steps and rules: [M3.md](M3.md);
+design: [ARCHITECTURE.md](ARCHITECTURE.md#workspace-mode). The "M3 done when" scenario is `TestM3Done`
+(fake executor on every run; real containerd under `scripts/dev.sh integration`).
+- Runner: `workspace.Executor` interface; hardened containerd sandbox (user namespace, no caps,
+  read-only rootfs, seccomp, cgroup limits, in-netns egress allowlist proxy) and an opt-in
+  OpenSandbox executor (HTTPS/TLS 1.3/mTLS only, `runner tls-init` and `tls-front`).
+- Central: `workspace.*` operator methods with body frames, `workspace@mirafleet` channel,
+  sticky sessions, placement on trusted labels, ownership, audit, TTL reaper, reconcile, revoke
+  cascades; migration 0002; per-fleet workspace config and exec timeouts.
+- CLI: `runner run -workspace`, `runner workspace list|prune`, `central fleet ... / workspace
+  list|kill`, `mcp api -in/-out`.
 - Integration tests build-tagged `linux && integration` (need a real containerd; on macOS run in
   a privileged containerd container on the Docker runtime).
 
@@ -56,7 +63,8 @@ Decisions: [M3.md](M3.md) (executor interface; opt-in OpenSandbox executor, HTTP
   first start. CSRF protection, secure session cookies, `127.0.0.1` default bind.
 
 ## M5 — Orchestrator
-- `mirafleet mcp` stdio server with the tools in ARCHITECTURE.md, contexts, project default
+- `mirafleet mcp` stdio server with the tools in ARCHITECTURE.md (thin wrappers over the existing
+  `fleets.list`, `runners.list`, `action.run` and `workspace.*` methods), contexts, project default
   fleet, output capping, `confirm` argument for guarded fleets, idle-on-exit. Must be fully
   usable with no hooks at all.
 - `integrations/claude-code/`: plugin with `.mcp.json`, `SessionStart`/`SessionEnd`/`PreToolUse`
@@ -120,5 +128,9 @@ syft are MIT or Apache-2.0).
 - M2 built (store, join tokens, rotating operator registration codes, lifecycle on central only,
   `api@mirafleet`, admin socket, CLI, `runner join`, `mcp login|api`). **M2 done** 13 Nov 2026:
   reviewed, all findings fixed (docs/M2.md §4b), built-binary smoke test and `TestM2Done` pass.
-- Next: M3 (workspaces, executor interface, OpenSandbox opt-in), then M5, M4, M6.
+- M3 built (workspaces: containerd default, OpenSandbox opt-in, egress proxy, sticky sessions,
+  reaper and reconcile, migration 0002, CLI). **M3 done** 14 Nov 2026: final review P1s fixed
+  (destroy racing an in-flight create), full gate and integration green, `TestM3Done`,
+  `TestM3DoneIntegration` and `TestIntegrationWorkspaceCLI` pass.
+- Next: M5 (orchestrator), then M4 (GUI), then M6 (release).
   Central and runner are Linux only; `mcp` is cross-platform.

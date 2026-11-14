@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
@@ -139,28 +140,53 @@ func (s *Service) ReapOnce(ctx context.Context) {
 
 	s.freeDeadRunnerRows(ctx)
 
+	// C-13: one goroutine per online runner, at most reapParallel at once, each with its own
+	// time budget, so one hung runner cannot stall the others. ReapOnce still returns only after
+	// every goroutine has finished (RunReaper's "stops before store close" guarantee).
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, reapParallel)
 	for _, si := range s.live.Snapshot() {
 		if ctx.Err() != nil {
-			return
+			break
 		}
 		if !si.Online {
 			continue
 		}
-		rows, err := s.st.ListWorkspaces(ctx, store.WorkspaceFilter{RunnerID: si.ID,
-			States: []store.WorkspaceState{store.WorkspaceClosing}, Limit: sweepLimit})
-		if err != nil {
-			if ctx.Err() == nil {
-				s.logf("service: reaper list closing: %v", err)
-			}
-			continue
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(runnerID int64) {
+			defer func() { <-sem; wg.Done() }()
+			rctx, cancel := context.WithTimeout(ctx, reapRunnerBudget)
+			defer cancel()
+			s.reapRunner(rctx, runnerID)
+		}(si.ID)
+	}
+	wg.Wait()
+}
+
+// reapParallel bounds the runners destroyed against concurrently; reapRunnerBudget bounds one
+// runner's share of a sweep.
+const (
+	reapParallel     = 8
+	reapRunnerBudget = 3 * workspaceCloseTimeout
+)
+
+// reapRunner destroys the closing rows of one runner and marks them closed.
+func (s *Service) reapRunner(ctx context.Context, runnerID int64) {
+	rows, err := s.st.ListWorkspaces(ctx, store.WorkspaceFilter{RunnerID: runnerID,
+		States: []store.WorkspaceState{store.WorkspaceClosing}, Limit: sweepLimit})
+	if err != nil {
+		if ctx.Err() == nil {
+			s.logf("service: reaper list closing: %v", err)
 		}
-		for _, w := range rows {
-			if ctx.Err() != nil {
-				return
-			}
-			if s.destroyOn(ctx, w.RunnerID, w.WsID) {
-				s.setState(ctx, w, store.WorkspaceClosing, store.WorkspaceClosed, w.Reason, actionDestroy)
-			}
+		return
+	}
+	for _, w := range rows {
+		if ctx.Err() != nil {
+			return
+		}
+		if s.destroyOn(ctx, w.RunnerID, w.WsID) {
+			s.setState(ctx, w, store.WorkspaceClosing, store.WorkspaceClosed, w.Reason, actionDestroy)
 		}
 	}
 }

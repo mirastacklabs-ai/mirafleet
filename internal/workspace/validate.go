@@ -23,6 +23,11 @@ const (
 // p is relative to /workspace or absolute under it; "" and "." mean /workspace itself.
 // It refuses NUL, invalid UTF-8, more than 4 KiB, and anything that cleans to a place
 // outside /workspace (including via "..").
+//
+// The check is purely lexical: it knows nothing about symlinks. A symlink inside /workspace can
+// point anywhere, so the executor must resolve paths safely at use time (ctrd opens them with
+// os.Root, which refuses escapes; opensandbox runs inside the sandbox where only the sandbox's
+// own filesystem is reachable). Never use the result to open a host path directly.
 func CleanPath(p string) (string, error) {
 	if len(p) > MaxPathBytes {
 		return "", errors.New("path too long")
@@ -72,7 +77,8 @@ func ValidArgv(argv []string) error {
 var envName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
 
 // EnvDenied reports whether name is on the hard env denylist: *_API_KEY, *_TOKEN, *_SECRET*,
-// ANTHROPIC_*, OPENAI_*, AWS_*, SSH_AUTH_SOCK, GIT_ASKPASS, *PROXY*. It applies to every
+// ANTHROPIC_*, OPENAI_*, AWS_*, SSH_AUTH_SOCK, GIT_ASKPASS, GIT_SSH_COMMAND, *PROXY*, LD_*,
+// BASH_ENV, ENV, NODE_OPTIONS, PYTHONSTARTUP, *_PASSWORD, *_KEY. It applies to every
 // workspace regardless of any allowlist, on central and on the runner.
 func EnvDenied(name string) bool {
 	n := strings.ToUpper(name)
@@ -81,8 +87,12 @@ func EnvDenied(name string) bool {
 		strings.Contains(n, "_SECRET"),
 		n == "API_KEY", n == "TOKEN", n == "SECRET" || strings.HasPrefix(n, "SECRET"),
 		strings.HasPrefix(n, "ANTHROPIC_"), strings.HasPrefix(n, "OPENAI_"), strings.HasPrefix(n, "AWS_"),
-		n == "SSH_AUTH_SOCK", n == "GIT_ASKPASS",
-		strings.Contains(n, "PROXY"):
+		n == "SSH_AUTH_SOCK", n == "GIT_ASKPASS", n == "GIT_SSH_COMMAND",
+		strings.Contains(n, "PROXY"),
+		// Variables that change what code runs or what is injected into a process.
+		strings.HasPrefix(n, "LD_"), n == "BASH_ENV", n == "ENV", n == "NODE_OPTIONS", n == "PYTHONSTARTUP",
+		// Credential-looking names.
+		strings.HasSuffix(n, "_PASSWORD"), strings.HasSuffix(n, "_KEY"), n == "PASSWORD", n == "KEY":
 		return true
 	}
 	return false
@@ -207,6 +217,7 @@ func NormalizeImage(ref string) (string, error) {
 // "repo@sha256:*" (any digest-pinned ref of repo), or "repo:*" (any tagged ref of repo).
 // Both sides are normalised, so "alpine" matches "docker.io/library/alpine:latest".
 // Invalid refs or patterns never match, and a digest-only ref never matches "repo:*".
+// When both pattern and ref carry a digest, the tag is ignored: the digest decides.
 func MatchImage(patterns []string, ref string) bool {
 	if strings.Contains(ref, "*") {
 		return false
@@ -242,6 +253,14 @@ func MatchImage(patterns []string, ref string) bool {
 		default:
 			pr, err := parseImage(p, false)
 			if err != nil {
+				continue
+			}
+			if pr.digest != "" && want.digest != "" {
+				// A digest identifies the content; the tag is informational and ignored, so
+				// "repo@sha256:X" matches "repo:tag@sha256:X" and vice versa.
+				if pr.name() == want.name() && pr.digest == want.digest {
+					return true
+				}
 				continue
 			}
 			if pr.tag == "" && pr.digest == "" {

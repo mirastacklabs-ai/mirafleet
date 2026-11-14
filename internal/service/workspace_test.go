@@ -779,3 +779,55 @@ func TestWorkspaceStartRowFailsClosed(t *testing.T) {
 }
 
 func errOf3[A, B any](_ A, _ B, err error) error { return err }
+
+// A create that finishes after the row was closed (kill, revoke) must not leave the container behind.
+func TestOpenWorkspaceDestroysStrayContainer(t *testing.T) {
+	type wsFn = func(context.Context, int64, transport.WorkspaceRequest, io.Reader, io.Writer) (*transport.WorkspaceResult, error)
+	for name, tc := range map[string]struct {
+		setup       func(e *env) wsFn
+		wantDestroy int
+	}{
+		"ok but row already closed": {func(e *env) wsFn {
+			return func(ctx context.Context, _ int64, r transport.WorkspaceRequest, _ io.Reader, _ io.Writer) (*transport.WorkspaceResult, error) {
+				if r.Op == transport.OpCreate { // killed while the create ran
+					ev := store.AuditEvent{Time: t0, Source: "system", ActorKind: "system", Action: "workspace.kill", Outcome: "ok"}
+					for _, st := range [][2]store.WorkspaceState{{store.WorkspaceOpening, store.WorkspaceClosing}, {store.WorkspaceClosing, store.WorkspaceClosed}} {
+						if _, err := e.db.SetWorkspaceState(e.ctx, r.ID, []store.WorkspaceState{st[0]}, st[1], "killed", t0, ev); err != nil {
+							t.Error(err)
+						}
+					}
+				}
+				return &transport.WorkspaceResult{Code: transport.CodeOK}, nil
+			}
+		}, 1},
+		"timeout": {func(e *env) wsFn {
+			e.svc.openTimeout = 20 * time.Millisecond
+			return func(ctx context.Context, _ int64, r transport.WorkspaceRequest, _ io.Reader, _ io.Writer) (*transport.WorkspaceResult, error) {
+				if r.Op == transport.OpCreate {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+				return &transport.WorkspaceResult{Code: transport.CodeOK}, nil
+			}
+		}, 1},
+		"runner refusal": {func(e *env) wsFn {
+			return func(ctx context.Context, _ int64, r transport.WorkspaceRequest, _ io.Reader, _ io.Writer) (*transport.WorkspaceResult, error) {
+				return &transport.WorkspaceResult{Code: transport.CodeRefused, Message: "no"}, nil
+			}
+		}, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			e.wsFleet("dev", false, nil)
+			e.wsRunner("dev", rspec{slots: 2})
+			e.live.wsFn = tc.setup(e)
+			op := e.operator("ann")
+			if err := errOf3(e.svc.OpenWorkspace(e.ctx, op, SourceAPI, "dev", "s", "", nil, "")); err == nil {
+				t.Fatal("open succeeded")
+			}
+			if n := len(e.wsCalls("destroy")); n != tc.wantDestroy {
+				t.Fatalf("%d destroy calls, want %d (%v)", n, tc.wantDestroy, e.log.get())
+			}
+		})
+	}
+}

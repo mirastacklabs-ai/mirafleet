@@ -977,3 +977,84 @@ func TestDiskSamplerRunsFromRunAndStops(t *testing.T) {
 		t.Fatal("Run did not stop")
 	}
 }
+
+// gateEx blocks Create until released and records Destroy calls.
+type gateEx struct {
+	*fake.Executor
+	entered  chan struct{}
+	release  chan struct{}
+	mu       sync.Mutex
+	destroyd []workspace.ID
+}
+
+func (g *gateEx) Create(ctx context.Context, s workspace.Spec) error {
+	g.entered <- struct{}{}
+	<-g.release
+	return g.Executor.Create(ctx, s)
+}
+
+func (g *gateEx) Destroy(ctx context.Context, id workspace.ID) error {
+	g.mu.Lock()
+	g.destroyd = append(g.destroyd, id)
+	g.mu.Unlock()
+	return g.Executor.Destroy(ctx, id)
+}
+
+func (g *gateEx) destroyed(id workspace.ID) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, d := range g.destroyd {
+		if d == id {
+			return true
+		}
+	}
+	return false
+}
+
+// A destroy that lands while the create is still in flight must not lose the container: the
+// runner answers ok, runs the destroy once the create settles, and only then frees the slot.
+func TestWorkspaceDestroyDuringCreate(t *testing.T) {
+	g := &gateEx{Executor: fake.New(), entered: make(chan struct{}, 4), release: make(chan struct{})}
+	h := newHarness(t, wsYAML, g.Executor, func(c *Config) { c.Workspace = g })
+	id := workspace.NewID()
+	created := make(chan error, 1)
+	go func() {
+		res, _, err := h.try(createReq(id), nil)
+		if err == nil && res.Code != transport.CodeOK {
+			err = errors.New("create: " + res.Code)
+		}
+		created <- err
+	}()
+	<-g.entered
+	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeOK)
+	h.want(transport.WorkspaceRequest{Op: transport.OpExec, ID: string(id), Argv: []string{"x"}}, nil, transport.CodeNotFound)
+	if _, _, err := h.try(createReq(id), nil); !busy(err) {
+		t.Fatalf("create of a doomed id: %v, want busy", err)
+	}
+	close(g.release)
+	if err := <-created; err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !g.destroyed(id) {
+		if time.Now().After(deadline) {
+			t.Fatal("deferred destroy never ran")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for {
+		infos, _ := g.Executor.List(context.Background())
+		h.runnr.ws.mu.Lock()
+		n := len(h.runnr.ws.live)
+		h.runnr.ws.mu.Unlock()
+		if len(infos) == 0 && n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("not cleaned up: %d containers, %d entries", len(infos), n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	h.create() // slots are free again (concurrent: 2)
+	h.create()
+}

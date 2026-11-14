@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,6 +103,13 @@ func New(cfg *wsconfig.Config, opts Options) (workspace.Executor, error) {
 	}
 	if err := checkInitBinary(bin); err != nil {
 		return nil, err
+	}
+
+	// Go probes IPv4/IPv6 support once (ipStackCaps) on the first listen or dial. Do that now in the
+	// host netns: the first listen may otherwise happen on a thread that has setns'd into a
+	// workspace netns (egress), and the probe would cache that namespace's capabilities.
+	if l, lerr := net.Listen("tcp", "127.0.0.1:0"); lerr == nil {
+		_ = l.Close()
 	}
 
 	c, err := containerd.New(cc.Address, containerd.WithDefaultNamespace(cc.Namespace))
@@ -369,8 +377,13 @@ func (e *Executor) Create(ctx context.Context, s workspace.Spec) (err error) {
 		return unavailable("write resolv.conf", merr)
 	}
 
+	diskQuota := int64(e.cfg.Limits.Disk)
+	if d := s.Limits.DiskBytes; d > 0 && d < diskQuota {
+		diskQuota = d
+	}
 	spec, serr := buildSpec(specParams{
-		ID: name, UserNS: e.userns, CtrUID: ctrID, CtrGID: ctrID, HostBase: hostBase,
+		DiskBytes: diskQuota,
+		ID:        name, UserNS: e.userns, CtrUID: ctrID, CtrGID: ctrID, HostBase: hostBase,
 		CPUMilli: cpu, MemoryBytes: mem, Pids: pids, TmpfsBytes: tmpfs,
 		WorkspaceDir: wsDir, HostsFile: hosts, ResolvFile: resolv, InitBinary: e.initBin,
 		AppArmorProfile: e.apparm,

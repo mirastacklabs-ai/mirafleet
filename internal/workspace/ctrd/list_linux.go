@@ -15,7 +15,9 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
 )
 
-// List returns every workspace container in the configured namespace.
+// List returns the workspace containers of this executor's owner (the mirafleet.runner label =
+// Options.Runner) in the configured namespace; other owners' workspaces are invisible, so list and
+// prune never touch them. With no owner configured it returns every workspace container.
 func (e *Executor) List(ctx context.Context) ([]workspace.Info, error) {
 	ctx = namespaces.WithNamespace(ctx, e.ns)
 	cs, err := e.client.Containers(ctx, `labels."`+labelWorkspace+`"`)
@@ -30,6 +32,9 @@ func (e *Executor) List(ctx context.Context) ([]workspace.Info, error) {
 				continue // deleted while listing
 			}
 			return nil, fmt.Errorf("%w: container info: %v", workspace.ErrUnavailable, err)
+		}
+		if e.runner != "" && info.Labels[labelRunner] != e.runner {
+			continue // another runner's workspace in a shared namespace (C-16)
 		}
 		id := workspace.ID(info.Labels[labelWorkspace])
 		if !workspace.ValidID(id) {
@@ -88,10 +93,10 @@ func (e *Executor) fillDisk(ctx context.Context, infos []workspace.Info) {
 			if !en.mu.TryLock() { // a walk is in progress: do not wait for it
 				continue
 			}
-			used, at := en.used, en.measured
+			used, at, partial := en.used, en.measured, en.partial
 			en.mu.Unlock()
 			infos[i].DiskBytes = used
-			if !at.IsZero() && time.Since(at) <= diskInterval {
+			if !at.IsZero() && time.Since(at) <= staleAfter(diskInterval, partial) {
 				continue
 			}
 		}

@@ -124,7 +124,7 @@ func (e *Executor) usage(ctx context.Context, id workspace.ID, ws *wsDir, maxAge
 		}
 		en.quota = q
 	}
-	if en.measured.IsZero() || time.Since(en.measured) > maxAge {
+	if en.measured.IsZero() || time.Since(en.measured) > staleAfter(maxAge, en.partial) {
 		wctx, cancel := context.WithTimeout(ctx, walkTimeout)
 		used, partial, err := measure(wctx, ws.root.FS())
 		cancel()
@@ -134,6 +134,17 @@ func (e *Executor) usage(ctx context.Context, id workspace.ID, ws *wsDir, maxAge
 		en.used, en.partial, en.measured = used, partial, time.Now()
 	}
 	return en.snapshot(), nil
+}
+
+// partialFactor lengthens the cache lifetime of a partial (timed-out or entry-capped) walk: such a
+// walk is expensive and already counts as over quota, so repeating it every interval helps nobody.
+const partialFactor = 10
+
+func staleAfter(maxAge time.Duration, partial bool) time.Duration {
+	if partial {
+		return maxAge * partialFactor
+	}
+	return maxAge
 }
 
 func (en *diskEntry) snapshot() DiskUsage {

@@ -31,6 +31,7 @@ type wsChan struct {
 	once       sync.Once
 	wonce      sync.Once
 	blockWrite bool
+	cwErr      error // returned by CloseWrite
 }
 
 func newWSChan(blockWrite bool) *wsChan {
@@ -52,7 +53,10 @@ func (c *wsChan) Close() error {
 	c.once.Do(func() { close(c.closed); c.pr.Close() })
 	return nil
 }
-func (c *wsChan) CloseWrite() error                              { c.wonce.Do(func() { close(c.wclosed) }); return nil }
+func (c *wsChan) CloseWrite() error {
+	c.wonce.Do(func() { close(c.wclosed) })
+	return c.cwErr
+}
 func (c *wsChan) SendRequest(string, bool, []byte) (bool, error) { return false, nil }
 func (c *wsChan) Stderr() io.ReadWriter                          { return nil }
 func (c *wsChan) got() []byte {
@@ -64,6 +68,7 @@ func (c *wsChan) got() []byte {
 type wsConn struct {
 	openErr    error
 	blockWrite bool
+	cwErr      error
 	opened     chan *wsChan
 	datas      chan []byte
 	script     func(c *wsChan)
@@ -87,6 +92,7 @@ func (c *wsConn) OpenChannel(name string, data []byte) (ssh.Channel, <-chan *ssh
 		return nil, nil, c.openErr
 	}
 	ch := newWSChan(c.blockWrite)
+	ch.cwErr = c.cwErr
 	c.opened <- ch
 	c.datas <- data
 	if c.script != nil {
@@ -186,6 +192,29 @@ func TestWorkspaceOps(t *testing.T) {
 				t.Fatal("channel left open")
 			}
 		})
+	}
+}
+
+// The runner may answer and close the channel before central's CloseWrite; x/crypto then returns
+// io.EOF from CloseWrite, but the result frame is still readable. Other errors stay fatal.
+func TestWorkspaceCloseWriteAfterPeerClose(t *testing.T) {
+	req := transport.WorkspaceRequest{Op: transport.OpCreate, ID: wsID, Spec: &transport.WorkspaceSpec{Image: "img:1"}}
+	run := func(cwErr error) error {
+		conn := newWSConn(func(c *wsChan) {
+			// Write errors are expected when central gives up early.
+			_ = transport.WriteResult(c.pw, &transport.WorkspaceResult{Code: transport.CodeOK}, MaxWorkspaceResultBytes)
+			c.pw.Close()
+		})
+		conn.cwErr = cwErr
+		r := wsReg(t, StatusActive, conn)
+		_, err := r.Workspace(context.Background(), 1, req, nil, nil)
+		return err
+	}
+	if err := run(io.EOF); err != nil {
+		t.Fatalf("EOF from CloseWrite: %v", err)
+	}
+	if err := run(errors.New("boom")); err == nil || !strings.Contains(err.Error(), "close write") {
+		t.Fatalf("other CloseWrite error: %v", err)
 	}
 }
 

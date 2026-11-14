@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -34,14 +35,34 @@ func ReadFrame(r io.Reader, limit int) ([]byte, error) {
 	if uint64(n) > uint64(limit) {
 		return nil, ErrFrameTooLarge
 	}
-	buf := make([]byte, n)
-	if _, err := io.ReadFull(r, buf); err != nil {
+	return readPayload(r, n)
+}
+
+// readPayload reads exactly n bytes. Up to 64 KiB it allocates once; beyond that it grows with
+// the data actually received, so a peer that announces a large frame and then stalls or hangs up
+// cannot make us allocate the full announced size (A-20). A short read is io.ErrUnexpectedEOF.
+func readPayload(r io.Reader, n uint32) ([]byte, error) {
+	const chunk = 64 << 10
+	if n <= chunk {
+		buf := make([]byte, n)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			return nil, err
+		}
+		return buf, nil
+	}
+	var b bytes.Buffer
+	b.Grow(chunk)
+	_, err := io.CopyN(&b, r, int64(n))
+	if err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
 		return nil, err
 	}
-	return buf, nil
+	return b.Bytes(), nil
 }
 
 // WriteFrame writes payload as one frame. Empty payloads and payloads over MaxResponseBytes
@@ -130,12 +151,5 @@ func readBody(r io.Reader, max int) ([]byte, error) {
 	if uint64(n) > uint64(max) {
 		return nil, ErrFrameTooLarge
 	}
-	buf := make([]byte, n)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		if err == io.EOF {
-			err = io.ErrUnexpectedEOF
-		}
-		return nil, err
-	}
-	return buf, nil
+	return readPayload(r, n)
 }

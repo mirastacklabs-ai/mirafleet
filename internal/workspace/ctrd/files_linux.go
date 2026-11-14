@@ -253,13 +253,19 @@ func (w *wsDir) write(rel string, r io.Reader, off int64, truncate bool, mode fs
 	// At most maxFile-off bytes may arrive; one more byte proves the limit was exceeded.
 	allow := maxFile - off
 	n, cerr := io.Copy(io.NewOffsetWriter(f, off), io.LimitReader(r, allow+1))
+	// Bytes that stay on disk after a failure (an existing file written in place) still count
+	// against the quota; a removed temp or new file frees them.
+	kept := n
+	if tmp != "" || created {
+		kept = 0
+	}
 	if cerr != nil {
 		cleanup()
-		return workspace.FileInfo{}, 0, fmt.Errorf("write %s: %w", rel, cerr)
+		return workspace.FileInfo{}, kept, fmt.Errorf("write %s: %w", rel, cerr)
 	}
 	if n > allow {
 		cleanup()
-		return workspace.FileInfo{}, 0, fmt.Errorf("%w: file would exceed max_file", workspace.ErrTooLarge)
+		return workspace.FileInfo{}, kept, fmt.Errorf("%w: file would exceed max_file", workspace.ErrTooLarge)
 	}
 	st, err = f.Stat()
 	if err != nil {

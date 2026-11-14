@@ -303,7 +303,7 @@ type Store interface {
 	// opening, open or closing (the slots it holds). Runners with none map to 0.
 	CountLiveWorkspaces(ctx context.Context, runnerIDs []int64) (map[int64]int, error)
 	// CloseWorkspacesOf moves every opening and open workspace of the runner or operator to closing
-	// (so a destroy is attempted even for an in-flight create) with reason, in one transaction, writing ev once (ev.Message carries the count).
+	// (so a destroy is attempted even for an in-flight create) with reason, in one transaction, writing ev once (Params gains "count" and "ws_ids", the comma-joined affected ids; ev.Message defaults to the count).
 	// It returns the affected ws_ids. ErrInvalid unless exactly one owner id is non-zero.
 	CloseWorkspacesOf(ctx context.Context, who WorkspaceOwner, reason string, now time.Time, ev AuditEvent) ([]string, error)
 
@@ -500,6 +500,16 @@ func badEntry(s string) bool {
 	return false
 }
 
+// Upper bounds on the per-workspace resource limits (A-15), far above any real host and low enough
+// that MB-to-byte conversions cannot overflow int64.
+const (
+	MaxCPUMilli = 1_024_000
+	MaxMemoryMB = 16_777_216
+	MaxPids     = 4_194_304
+	MaxTmpfsMB  = 16_777_216
+	MaxDiskMB   = 1_073_741_824
+)
+
 // Validate checks the configuration; every error wraps ErrInvalid.
 func (c WorkspaceConfig) Validate() error {
 	bad := func(format string, a ...any) error {
@@ -545,9 +555,12 @@ func (c WorkspaceConfig) Validate() error {
 	if c.Network == NetworkNone && len(c.Egress) > 0 {
 		return bad("egress rules require network egress")
 	}
-	for name, v := range map[string]int{"cpu_milli": c.CPUMilli, "memory_mb": c.MemoryMB, "pids": c.Pids, "tmpfs_mb": c.TmpfsMB, "disk_mb": c.DiskMB} {
-		if v <= 0 {
-			return bad("%s must be > 0", name)
+	for _, l := range []struct {
+		name     string
+		v, limit int
+	}{{"cpu_milli", c.CPUMilli, MaxCPUMilli}, {"memory_mb", c.MemoryMB, MaxMemoryMB}, {"pids", c.Pids, MaxPids}, {"tmpfs_mb", c.TmpfsMB, MaxTmpfsMB}, {"disk_mb", c.DiskMB, MaxDiskMB}} {
+		if l.v <= 0 || l.v > l.limit {
+			return bad("%s must be 1 to %d", l.name, l.limit)
 		}
 	}
 	if c.IdleTTL < time.Second || c.MaxTTL < c.IdleTTL {

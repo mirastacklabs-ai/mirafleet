@@ -5,6 +5,7 @@ package ctrd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -17,7 +18,9 @@ import (
 	"github.com/containerd/containerd/v2/pkg/cio"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/pkg/oci"
+	"github.com/containerd/errdefs"
 
+	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/initproc"
 )
 
@@ -77,7 +80,7 @@ func importTestImage(t *testing.T, c *containerd.Client, ctx context.Context) co
 	}
 	t.Cleanup(func() {
 		for _, i := range imgs {
-			_ = c.ImageService().Delete(context.Background(), i.Name, images.SynchronousDelete())
+			deleteImage(t, c, i.Name, images.SynchronousDelete())
 		}
 	})
 	img, err := c.GetImage(ctx, ref)
@@ -110,7 +113,9 @@ func TestSmokeCreateStartDelete(t *testing.T) {
 	deleted := false
 	t.Cleanup(func() {
 		if !deleted {
-			_ = ctr.Delete(context.Background(), containerd.WithSnapshotCleanup)
+			cctx, cancel := cleanupCtx()
+			defer cancel()
+			cleanupErr(t, "delete container", ctr.Delete(cctx, containerd.WithSnapshotCleanup))
 		}
 	})
 
@@ -183,4 +188,40 @@ func TestDaemonVersionAndIdmap(t *testing.T) {
 	_, _ = fmt.Sscanf(string(rel), "%d.%d", &major, &minor)
 	t.Logf("kernel %s: idmapped mounts=%v, idmapped overlayfs=%v",
 		rel, major > 5 || (major == 5 && minor >= 12), major > 5 || (major == 5 && minor >= 19))
+}
+
+// cleanupCtx is the context for t.Cleanup work: the test namespace and its own deadline, so
+// cleanup neither depends on the (possibly cancelled) test context nor falls back to a default
+// namespace.
+func cleanupCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(namespaces.WithNamespace(context.Background(), testNamespace), 2*time.Minute)
+}
+
+// cleanupErr reports a failed cleanup step; "already gone" is fine.
+func cleanupErr(t *testing.T, what string, err error) {
+	t.Helper()
+	if err != nil && !errdefs.IsNotFound(err) && !errors.Is(err, workspace.ErrNotFound) {
+		t.Errorf("cleanup: %s: %v", what, err)
+	}
+}
+
+// destroyAll removes every workspace the executor knows and closes it.
+func destroyAll(t *testing.T, e *Executor) {
+	t.Helper()
+	ctx, cancel := cleanupCtx()
+	defer cancel()
+	infos, err := e.List(ctx)
+	cleanupErr(t, "list workspaces", err)
+	for _, i := range infos {
+		cleanupErr(t, "destroy "+string(i.ID), e.Destroy(ctx, i.ID))
+	}
+	cleanupErr(t, "close executor", e.Close())
+}
+
+// deleteImage removes an image on cleanup.
+func deleteImage(t *testing.T, c *containerd.Client, name string, opts ...images.DeleteOpt) {
+	t.Helper()
+	ctx, cancel := cleanupCtx()
+	defer cancel()
+	cleanupErr(t, "delete image "+name, c.ImageService().Delete(ctx, name, opts...))
 }

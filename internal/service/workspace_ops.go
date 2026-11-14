@@ -279,6 +279,20 @@ func (c *countWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// capBuffer collects at most max bytes and fails the write beyond that.
+type capBuffer struct {
+	b   []byte
+	max int
+}
+
+func (c *capBuffer) Write(p []byte) (int, error) {
+	if len(c.b)+len(p) > c.max {
+		return 0, errors.New("read reply exceeds the chunk limit")
+	}
+	c.b = append(c.b, p...)
+	return len(p), nil
+}
+
 // ReadWorkspaceFile reads up to limit bytes (0 or above api.MaxFileChunk means MaxFileChunk) of
 // path from offset and streams them to out. The result's Length is the number of bytes written to
 // out. Owner only, workspace open; the runner's status gating is the registry's. The audit rows
@@ -303,6 +317,9 @@ func (s *Service) ReadWorkspaceFile(ctx context.Context, p auth.Principal, src S
 	if out == nil {
 		out = io.Discard
 	}
+	// C-17: the reply is buffered (at most limit <= MaxFileChunk bytes) and checked against the
+	// runner's stated length BEFORE anything reaches out, so an inconsistent reply sends nothing.
+	buf := &capBuffer{max: limit}
 	rid, err := newRequestID()
 	if err != nil {
 		return api.WorkspaceReadFileResult{}, s.fail("request id", err)
@@ -319,7 +336,7 @@ func (s *Service) ReadWorkspaceFile(ctx context.Context, p auth.Principal, src S
 	defer s.beginOp(w.WsID)()
 	dctx, cancel := context.WithTimeout(ctx, fileOpTimeout)
 	defer cancel()
-	cw := &countWriter{w: out}
+	cw := &countWriter{w: buf}
 	res, lerr := s.live.Workspace(dctx, w.RunnerID, transport.WorkspaceRequest{Op: transport.OpRead, ID: w.WsID,
 		Path: clean, Offset: offset, Limit: int64(limit), TimeoutMs: fileOpTimeout.Milliseconds()}, nil, cw)
 
@@ -330,6 +347,11 @@ func (s *Service) ReadWorkspaceFile(ctx context.Context, p auth.Principal, src S
 	var result api.WorkspaceReadFileResult
 	if retErr == nil && (res.File == nil || res.File.Length != cw.n) {
 		outcome, msg, retErr = OutcomeError, "runner read result inconsistent", api.Internal(errors.New("read result inconsistent"))
+	}
+	if retErr == nil {
+		if _, werr := out.Write(buf.b); werr != nil {
+			outcome, msg, retErr = OutcomeError, "write to caller failed", api.Internal(werr)
+		}
 	}
 	if retErr == nil {
 		f := res.File

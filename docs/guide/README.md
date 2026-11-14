@@ -8,9 +8,9 @@ those as they come up.
 After reading it you should be able to explain the whole design, find any piece of code, run the
 tests, and make your first change without asking the authors.
 
-> **Status:** M1 and M2 are done (13 Nov 2026). Next: M3 (workspaces), then M5 (MCP server),
-> M4 (GUI), M6 (release). Where a feature is planned, the guide says so and links the milestone in
-> [../PLAN.md](../PLAN.md).
+> **Status:** M1, M2 and M3 (workspaces) are done (13 Nov 2026). Next: M5 (MCP server), then
+> M4 (GUI) and M6 (release). Where a feature is planned, the guide says so and links the
+> milestone in [../PLAN.md](../PLAN.md).
 
 ## The story in one paragraph
 
@@ -19,7 +19,9 @@ agent (Claude Code) and want it to help run those servers. Letting an AI log in 
 with a shell is dangerous. mirafleet puts one server, **central**, in the middle. Each fleet
 server runs a small **runner** that dials out to central. The agent talks to central, and central
 passes along only the work that the runner's own allowlist permits. Every request is audited.
-This is the same shape as GitLab CI runners.
+This is the same shape as GitLab CI runners. For coding work the `dev` fleet runs in
+**workspace mode**: the agent gets a private container on a runner, where it may run any command
+(`go test`, edits) without being able to reach the host, the network or anyone else's files.
 
 ## Reading order and time estimates
 
@@ -29,11 +31,11 @@ Read in order the first time. Later, jump around with the map below.
 |---|---|---|---|
 | 0 | [Glossary](glossary.md) | Every term, alphabetical. Keep it open in a tab. | skim 10 min, then look things up |
 | 1 | [What is mirafleet?](01-what-is-mirafleet.md) | The problem, the three roles, the big picture | 25 min |
-| 2 | [Background](02-background.md) | Public-key crypto, SSH, HMAC, TOTP, SQLite, context, containers, MCP, Unix sockets | 60 min |
-| 3 | [Architecture](03-architecture.md) | Components, packages and how they fit | 45 min |
-| 4 | [Flows](04-flows.md) | Eleven step-by-step flows: join, register, run an action, revoke and more | 45 min |
-| 5 | [Security](05-security.md) | Every defence, and what would go wrong without it | 60 min |
-| 6 | [Data model](06-data-model.md) | The SQLite tables, migrations and the audit log | 30 min |
+| 2 | [Background](02-background.md) | Public-key crypto, SSH, HMAC, TOTP, SQLite, context, containers (namespaces, seccomp, cgroups, egress proxy, `os.Root`), MCP, Unix sockets | 70 min |
+| 3 | [Architecture](03-architecture.md) | Components, packages, executors, trust boundaries and how they fit | 55 min |
+| 4 | [Flows](04-flows.md) | Eighteen step-by-step flows: join, register, run an action, revoke, and the workspace flows (open, exec, files, close, reaper, reconcile) | 75 min |
+| 5 | [Security](05-security.md) | Every defence, the workspace container boundary, and what would go wrong without it | 80 min |
+| 6 | [Data model](06-data-model.md) | The SQLite tables (including the workspace tables), migrations and the audit log | 40 min |
 | 7 | [Protocols](07-protocols.md) | SSH users, channels, framing, the JSON API | 40 min |
 | 8 | [Code tour](08-code-tour.md) | Package by package, with function names | 60 min |
 | 9 | [Dev setup and testing](09-dev-setup-and-testing.md) | Build, run, test, debug | 30 min |
@@ -41,7 +43,7 @@ Read in order the first time. Later, jump around with the map below.
 | 11 | [Contributing](11-contributing.md) | Rules, review process, your first change | 20 min |
 | 12 | [Why mirafleet?](12-why-mirafleet.md) | How it compares with CI runners, Salt, Teleport, ssh-mcp and sandboxes; where AI API keys live | 30 min |
 
-Total: about 8 hours (the times above add up to 495 minutes). If you are short on time, read 1, 3, 4
+Total: about 9.5 hours (the times above add up to about 565 minutes). If you are short on time, read 1, 3, 4
 and skim 5, 2.2, 2.3 and 2.7; that is enough to
 review most changes.
 
@@ -52,10 +54,11 @@ review most changes.
 2. **Background.** The ideas from outside mirafleet that you need first, each with "why we need
    this".
 3. **Architecture.** The components, how they connect, and which Go package owns what.
-4. **Flows.** Eleven flows (join, register, run an action, revoke and more), told one numbered
-   step at a time.
-5. **Security.** The threat model and every defence layer.
-6. **Data model.** Tables, statuses, migrations, append-only audit.
+4. **Flows.** Eighteen flows (join, register, run an action, revoke, and the workspace flows:
+   open, exec, files, close, reaper, reconcile, revoke cascades), told one numbered step at a time.
+5. **Security.** The threat model, every defence layer, and the workspace container boundary.
+6. **Data model.** Tables (including `fleet_workspace` and `workspaces`), statuses, the workspace
+   state machine, migrations, append-only audit.
 7. **Protocols.** The wire format: SSH users, channels, length-prefixed JSON frames.
 8. **Code tour.** Where to find things in the repository.
 9. **Dev setup and testing.** How to build and test, and the testing rules.
@@ -99,7 +102,10 @@ instead of a picture, the code itself is readable: `A -->|label| B` means "A sen
 - **Running example.** Company Acme. Central is `central.example.com:2222`. Fleets are `dev` and
   `prod`. Runners are `build-1` (in `dev`) and `db-1` (in `prod`). Operators (people who use fleets) are `alice`
   and `bob`. Dana is the admin who runs `mirafleet central ...` on the central host. All hostnames
-  use `example.com`; nothing is real.
+  use `example.com`; nothing is real. For **actions** the story is alice running `tail-logs` on
+  `prod/db-1`. For **workspaces** it is Dana creating `dev` in workspace mode, then alice's Claude
+  Code opening a workspace on `build-1`, running `go test` and reading and writing files (told in
+  [chapter 1](01-what-is-mirafleet.md#the-workspace-running-example)).
 - **Names, not line numbers.** The guide points at files and functions such as
   `internal/service/exec.go` so it does not rot when lines move.
 - **Planned vs built.** "Planned" means not written yet.

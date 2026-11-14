@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 592" width="840" height="592" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 776" width="840" height="776" role="img" aria-labelledby="t d">
 <title id="t">Framing: a 4-byte length, then JSON</title>
 <desc id="d">On an SSH channel every message is a frame: four bytes giving the payload length in big-endian order, followed by that many bytes of JSON. The example request is 33 bytes, so its header is 00 00 00 21. The response uses the same framing.</desc>
 <style>
 :root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
 @media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
-svg{--T:12s;--slot:2s}
+svg{--T:16s;--slot:2s}
 .bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
 .pn{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
 text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
@@ -29,11 +29,11 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 .st{animation:lit var(--T) linear infinite both;animation-delay:calc((var(--i) - 1) * var(--slot))}
 .pk{display:inline;animation:mv var(--T) linear infinite}
 }
-@keyframes lit{0%{opacity:.25}1%{opacity:1}15.5%{opacity:1}16.67%{opacity:.25}100%{opacity:.25}}
-@keyframes mv{0%,33.33%{transform:translate(110px,92px)}45%,52%{transform:translate(700px,92px)}54%,66.67%{transform:translate(760px,110px)}68%,83.33%{transform:translate(760px,130px)}97%,100%{transform:translate(110px,130px)}}
+@keyframes lit{0%{opacity:.25}1%{opacity:1}11.5%{opacity:1}12.5%{opacity:.25}100%{opacity:.25}}
+@keyframes mv{0%,25%{transform:translate(110px,92px)}31%,37.5%{transform:translate(700px,92px)}41%,50%{transform:translate(760px,110px)}53%,62.5%{transform:translate(760px,130px)}68%,72%{transform:translate(110px,130px)}76%,85%{transform:translate(150px,477px)}92%,100%{transform:translate(760px,110px)}}
 </style>
 <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0,0L10,5L0,10z"/></marker></defs>
-<rect class="bg" width="840" height="592"/>
+<rect class="bg" width="840" height="776"/>
 <text class="ttl" x="10" y="32">One frame: length, then JSON</text>
 <line class="rule" x1="10" y1="42" x2="70" y2="42"/>
 
@@ -151,11 +151,32 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <g class="st" style="--i:5"><circle class="bdg" cx="140" cy="406" r="11"/><text class="bt" x="140" y="410.5">5</text><text x="158" y="411">payload: 28 bytes of JSON</text></g>
 <circle class="dot pk" cx="0" cy="0" r="7"/>
 
-<text class="h" x="10" y="446">Steps</text>
-<g class="st" style="--i:1"><text x="10" y="470"><tspan class="b">1</tspan> The operator builds the JSON request: 33 bytes. Hex above, letters below each byte.</text></g>
-<g class="st" style="--i:2"><text x="10" y="490"><tspan class="b">2</tspan> It puts the payload length first, as 4 bytes, big-endian: 33 = 0x00000021.</text></g>
-<g class="st" style="--i:3"><text x="10" y="510"><tspan class="b">3</tspan> Header and payload go out in one Write on the channel.</text></g>
-<g class="st" style="--i:4"><text x="10" y="530"><tspan class="b">4</tspan> Central reads 4 bytes, checks the length against its limit BEFORE allocating, reads that many.</text></g>
-<g class="st" style="--i:5"><text x="10" y="550"><tspan class="b">5</tspan> Central runs the method and builds the JSON response (a small example: 28 bytes).</text></g>
-<g class="st" style="--i:6"><text x="10" y="570"><tspan class="b">6</tspan> The response is framed the same way: 28 = 0x0000001C. The operator reads it back.</text></g>
+<text class="h" x="10" y="458">Body frame (M3): after a write_file request, 5 bytes &quot;hello&quot;</text>
+<g class="st" style="--i:7">
+<rect class="cph" x="13" y="476" width="22" height="46"/><text class="hh" x="24" y="496">00</text><text class="as" x="24" y="514">·</text>
+<rect class="cph" x="35" y="476" width="22" height="46"/><text class="hh" x="46" y="496">00</text><text class="as" x="46" y="514">·</text>
+<rect class="cph" x="57" y="476" width="22" height="46"/><text class="hh" x="68" y="496">00</text><text class="as" x="68" y="514">·</text>
+<rect class="cph" x="79" y="476" width="22" height="46"/><text class="hh" x="90" y="496">05</text><text class="as" x="90" y="514">·</text>
+<rect class="cpp" x="101" y="476" width="22" height="46"/><text class="hx" x="112" y="496">68</text><text class="as" x="112" y="514">h</text>
+<rect class="cpp" x="123" y="476" width="22" height="46"/><text class="hx" x="134" y="496">65</text><text class="as" x="134" y="514">e</text>
+<rect class="cpp" x="145" y="476" width="22" height="46"/><text class="hx" x="156" y="496">6C</text><text class="as" x="156" y="514">l</text>
+<rect class="cpp" x="167" y="476" width="22" height="46"/><text class="hx" x="178" y="496">6C</text><text class="as" x="178" y="514">l</text>
+<rect class="cpp" x="189" y="476" width="22" height="46"/><text class="hx" x="200" y="496">6F</text><text class="as" x="200" y="514">o</text>
+<text class="m" x="230" y="494">[4-byte length][raw bytes]: not JSON</text>
+<text class="m" x="230" y="512">up to 1 MiB, right behind the request</text>
+<path class="br" d="M13,530v6h88v-6"/><path class="br" d="M105,530v6h110v-6"/>
+<circle class="bdg" cx="24" cy="556" r="11"/><text class="bt" x="24" y="560.5">7</text><text x="40" y="561">length = 5</text>
+</g>
+<g class="st" style="--i:8"><circle class="bdg" cx="150" cy="556" r="11"/><text class="bt" x="150" y="560.5">8</text><text x="168" y="561">read only AFTER the checks pass</text></g>
+<circle class="dot pk" cx="0" cy="0" r="7"/>
+
+<text class="h" x="10" y="598">Steps</text>
+<g class="st" style="--i:1"><text x="10" y="622"><tspan class="b">1</tspan> The operator builds the JSON request: 33 bytes. Hex above, letters below each byte.</text></g>
+<g class="st" style="--i:2"><text x="10" y="642"><tspan class="b">2</tspan> It puts the payload length first, as 4 bytes, big-endian: 33 = 0x00000021.</text></g>
+<g class="st" style="--i:3"><text x="10" y="662"><tspan class="b">3</tspan> Header and payload go out in one Write on the channel.</text></g>
+<g class="st" style="--i:4"><text x="10" y="682"><tspan class="b">4</tspan> Central reads 4 bytes, checks the length against its limit BEFORE allocating, reads that many.</text></g>
+<g class="st" style="--i:5"><text x="10" y="702"><tspan class="b">5</tspan> Central runs the method and builds the JSON response (a small example: 28 bytes).</text></g>
+<g class="st" style="--i:6"><text x="10" y="722"><tspan class="b">6</tspan> The response is framed the same way: 28 = 0x0000001C. The operator reads it back.</text></g>
+<g class="st" style="--i:7"><text x="10" y="742"><tspan class="b">7</tspan> write_file and stdin add a body frame right behind the request: 4-byte length, then raw bytes.</text></g>
+<g class="st" style="--i:8"><text x="10" y="762"><tspan class="b">8</tspan> Central reads it ONLY after policy, ownership and confirm pass; a slow sender is cut off at 30 s.</text></g>
 </svg>

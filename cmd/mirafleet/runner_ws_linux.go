@@ -51,6 +51,9 @@ func loadWorkspace(path string, rc *runner.FileConfig) (*wsconfig.Config, worksp
 	if err != nil {
 		return nil, nil, err
 	}
+	if d := wc.HeartbeatImagesDropped(); len(d) > 0 {
+		logf("warning: %d image pattern(s) in %s cannot be advertised to central (limit 32 entries of 256 bytes); they still apply here: %q", len(d), path, d)
+	}
 	ex, err := newExecutor(wc, ownerName(rc))
 	if err != nil {
 		return nil, nil, fmt.Errorf("start %s executor: %w", wc.Executor, err)
@@ -69,6 +72,17 @@ func runnerTLSInit(args []string, out io.Writer) error {
 	}
 	if *dir == "" || fs.NArg() > 0 {
 		return errors.New("usage: mirafleet runner tls-init -dir DIR [-days N]")
+	}
+	// Lstat first: EnsureDir chmods 0700 through a symlink, so a planted link must not be followed.
+	if fi, err := os.Lstat(*dir); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink: tls-init refuses to follow it; give the real directory", *dir)
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("%s exists and is not a directory", *dir)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	if ents, err := os.ReadDir(*dir); err == nil {
 		if len(ents) > 0 {
@@ -128,7 +142,10 @@ func newTLSFront(args []string) (*osb.Front, error) {
 
 // runnerWorkspace is the local admin command on the runner host: it talks to the executor
 // directly (no central), so it works after a runner revoke, when central can no longer reach
-// the host. Stop `runner run` first when pruning with -all.
+// the host. List and prune see only this runner's workspaces (the executor filters on its
+// ownership name "<fleet>/<runner>", docs/M3.md C-16), so several runners may share one
+// containerd namespace. Prune with -all while `runner run` is active races with its reaper (a
+// destroy of an already-gone workspace is harmless), but stopping it first is still cleaner.
 func runnerWorkspace(args []string, out io.Writer, now time.Time) error {
 	if len(args) == 0 || (args[0] != "list" && args[0] != "prune") {
 		return errors.New("usage: mirafleet runner workspace list|prune [-data DIR] [-workspace FILE] [-all] [-yes]")
@@ -174,6 +191,9 @@ func runnerWorkspace(args []string, out io.Writer, now time.Time) error {
 		}
 		victims = nil
 		for _, i := range infos {
+			if i.Created.IsZero() {
+				continue // unknown age: only -all may destroy it
+			}
 			if now.Sub(i.Created) > wc.MaxAge {
 				victims = append(victims, i)
 			}

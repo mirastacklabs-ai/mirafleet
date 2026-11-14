@@ -341,3 +341,49 @@ func TestChanWorkspaceName(t *testing.T) {
 		t.Fatal(ChanWorkspace)
 	}
 }
+
+func TestWorkspaceResultCap(t *testing.T) {
+	if MaxWorkspaceResultBytes != MaxBodyBytes+64<<10 || MaxWorkspaceResultBytes >= MaxResultBytes {
+		t.Fatalf("cap %d", MaxWorkspaceResultBytes)
+	}
+	// A frame under the exec cap but over the workspace cap is refused by default.
+	big := &WorkspaceResult{Code: CodeOK, Message: strings.Repeat("x", 100)}
+	var buf bytes.Buffer
+	if err := WriteResult(&buf, big, 50); err == nil {
+		t.Error("write over explicit max accepted")
+	}
+	hdr := make([]byte, 4)
+	binary.BigEndian.PutUint32(hdr, MaxWorkspaceResultBytes+1)
+	if _, err := ReadResult(bytes.NewReader(hdr), 0); err == nil || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Errorf("default read cap: %v", err)
+	}
+	buf.Reset()
+	if err := WriteResult(&buf, big, 0); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := ReadResult(&buf, 0); err != nil || r.Code != CodeOK {
+		t.Fatalf("%v %v", r, err)
+	}
+}
+
+func TestHeartbeatEnumAndCharset(t *testing.T) {
+	good := []Heartbeat{
+		{Executor: "containerd"}, {Executor: "fake"}, {Executor: "opensandbox", SecureRuntime: "io.containerd.runsc.v1"},
+		{SecureRuntime: "gvisor"}, {Images: []string{"alpine:*", "ghcr.io/o/i@sha256:*", "a/b:1.2_3-x"}},
+	}
+	for i, h := range good {
+		if err := h.Validate(); err != nil {
+			t.Errorf("good %d: %v", i, err)
+		}
+	}
+	bad := []Heartbeat{
+		{Executor: "1x"}, {Executor: "Containerd"}, {Executor: "x y"}, {Executor: strings.Repeat("a", 33)},
+		{SecureRuntime: "gvisor\n"}, {SecureRuntime: "a b"}, {SecureRuntime: "é"},
+		{Images: []string{"alpine latest"}}, {Images: []string{"a\x00b"}}, {Images: []string{"a\nb"}}, {Images: []string{""}},
+	}
+	for i, h := range bad {
+		if err := h.Validate(); err == nil {
+			t.Errorf("bad %d accepted", i)
+		}
+	}
+}

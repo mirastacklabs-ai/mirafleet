@@ -13,9 +13,12 @@ to write `actions.yaml`, and a table of error messages with fixes.
 - How to write `actions.yaml` safely.
 - How to read an error message and know what to do about it.
 - How to back up, restore and upgrade central, and what to do if its host key is lost.
+- **Workspace mode (M3):** the `workspace.yaml` reference, containerd on a Docker host, the
+  OpenSandbox option with its TLS front, every new command and flag, the on-disk layout, pruning
+  and troubleshooting ([section 10.9](#109-workspace-mode-m3)).
 
-> **Status:** M1 and M2 are done (13 Nov 2026). Next: M3 (workspaces), then M5 (MCP server),
-> M4 (GUI), M6 (release). There are no packages or systemd units yet (planned for M6, see
+> **Status:** M1, M2 and M3 are done (13 Nov 2026). Next: M5 (MCP server), M4 (GUI), M6
+> (release). There are no packages or systemd units yet (planned for M6, see
 > [PLAN.md](../PLAN.md)); you run the binary yourself. The MCP server that Claude Code talks to
 > (`mirafleet mcp` with no arguments) arrives in M5; today `mirafleet mcp login` and
 > `mirafleet mcp api` are the operator tools. Where the guide shows something planned, it says
@@ -376,8 +379,11 @@ positional arguments. `FLEET/RUNNER` is a fleet name, a slash and a runner name.
 |---|---|---|
 | `central init` | `-data DIR`, `-listen ADDR` (default `0.0.0.0:2222`) | Create the data dir, host key, database and registration secret. Offline, idempotent. `-listen` only appears in the hint. |
 | `central run` | `-data DIR`, `-listen ADDR` (default `0.0.0.0:2222`) | Run central: SSH server plus admin socket, until SIGINT/SIGTERM. Takes the data-dir lock. |
-| `central fleet create NAME` | `-mode actions\|workspace` (default `actions`), `-confirm` | Create a fleet. `-confirm` makes it guarded. |
-| `central fleet list` | `-json` | List fleets with mode, confirm and non-revoked runner count. |
+| `central fleet create NAME` | `-mode actions\|workspace` (default `actions`), `-confirm`, and for workspace mode the **workspace flags** below | Create a fleet. `-confirm` makes it guarded. |
+| `central fleet workspace set NAME` | the workspace flags below (at least one) | Change a workspace fleet's config. Reads the current config, applies your flags, sends the whole result (a full replace). Existing workspaces keep the spec they were opened with. |
+| `central fleet list` | `-json` | List fleets with mode, confirm and non-revoked runner count; workspace fleets show image, network and (admin only) the full config. |
+| `central workspace list` | `-fleet F`, `-json` | List workspaces of every operator: id, fleet, runner, operator, session, state, image, last used, expires. |
+| `central workspace kill ID` | | Destroy a workspace now. If its runner is offline it prints `closing; the reaper will finish`. |
 | `central token create` | `-fleet F` (required), `-labels k=v,k=v`, `-approve`, `-uses N` (0 = 1, max 1000), `-ttl DURATION` (0 = 24h, max 720h, min 1s) | Create a join token; prints it once on stdout. |
 | `central token list` | `-fleet F`, `-json` | List tokens (id, fleet, approve, uses/max, expiry, revoked, labels). Never secrets. |
 | `central token revoke ID` | | Revoke a token by its 16-hex id. Already-enrolled runners are unaffected. |
@@ -397,19 +403,46 @@ Valid runner transitions: `pending` to `active`; `active` to and from `disabled`
 non-revoked state to `revoked`; `revoked` is final. Anything else answers
 `conflict: runner is <status>: cannot <op>`.
 
+**Workspace flags** (`fleet create` with `-mode workspace`, and `fleet workspace set`). For
+`create`, omitted flags take the defaults; for `set`, omitted flags keep their current value.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-executor containerd\|opensandbox` | `containerd` | Which backend the fleet's runners use. A runner is only placed work whose fleet executor equals its own. |
+| `-image REF` | **required** on create | The default image; must match `-images`. A digest reference (`name@sha256:...`) is recommended. |
+| `-images REF,REF,...` | the default image | The allowlist: exact references, `repo:*` or `repo@sha256:*`. A tag-only pattern is allowed but is only as stable as the registry's tag. |
+| `-pull if-not-present\|always\|never` | `if-not-present` | When the runner may pull. `never` needs pre-pulled images (and OpenSandbox cannot honour it). |
+| `-network none\|egress` | `none` | `none`: no network at all. `egress`: only through the allow-list proxy. |
+| `-egress HOST[:PORT],...` | none | The proxy allowlist: `host[:port]`, `*.domain[:port]`, or `cidr:port` (the runner must opt in, see `egress_cidr_rules`). Port defaults to 443. An empty value clears it. |
+| `-cpus N` | 2 | CPUs per workspace (fractions allowed, `0.5`). |
+| `-memory SIZE` | 4GiB | Memory per workspace, swap equals memory (`512MiB`, `4GiB`). |
+| `-pids N` | 1024 | Process limit per workspace. |
+| `-tmpfs SIZE` | 512MiB | Size of `/tmp`. |
+| `-disk SIZE` | 10GiB | Soft quota for `/workspace`. |
+| `-idle-ttl DURATION` | 24h | Close a workspace unused for this long. |
+| `-max-ttl DURATION` | 168h | Close a workspace after this long, however busy. Must be at least `-idle-ttl`. |
+| `-exec-timeout DURATION` | 2m | Default timeout of one exec (when the caller gives none). |
+| `-exec-max DURATION` | 30m | Longest exec any caller may ask for (at most 24h; the runner's `limits.exec_max` caps it again). |
+
+Durations are whole seconds or more (`90s`, `2m`, `24h`). Sizes use `MiB`, `GiB`, `TiB`.
+
 ### Runner (runs on each fleet node)
 
 | Command | Flags | What it does |
 |---|---|---|
 | `runner join ADDR` | `-name NAME` (required), `-data DIR` (default `/var/lib/mirafleet/runner`), `-token -` (required, reads stdin) | Enrol with central. `ADDR` is `host:port`, and comes first (flags may follow). Writes key, `known_hosts`, `runner.yaml`. |
-| `runner run` | `-data DIR` (same default), `-actions FILE` (default `/etc/mirafleet/actions.yaml`) | Connect and serve actions until SIGINT/SIGTERM. |
+| `runner run` | `-data DIR` (same default), `-actions FILE` (default `/etc/mirafleet/actions.yaml`) **or** `-workspace FILE` (typically `/etc/mirafleet/workspace.yaml`) | Connect and serve until SIGINT/SIGTERM. **Exactly one mode**: giving both is refused, and workspace mode never falls back to actions. Starting workspace mode loads and checks `workspace.yaml` and the executor first; any failure stops the runner with a message. |
+| `runner tls-init` | `-dir DIR` (required; new or empty; created 0700), `-days N` (default 365, 1 to 3650) | Mint the per-node PKI for the OpenSandbox option: a CA (its private key is discarded after signing), the TLS front's server certificate (SAN `127.0.0.1`, `::1`, `localhost`) and the runner's client certificate; ECDSA P-256, all files 0600. Prints the paths, the expiry and the lines for `workspace.yaml` (`ca_file`, `pin_sha256`, `client_cert`, `client_key`). Never overwrites; refuses a symlink. |
+| `runner tls-front` | `-dir DIR` (required: the `tls-init` directory), `-listen ADDR` (default `127.0.0.1:8443`, loopback only), `-upstream ADDR` (default `127.0.0.1:8080`, loopback, plain HTTP) | Run the small TLS 1.3 + mTLS reverse proxy that sits in front of OpenSandbox. Runs until SIGINT/SIGTERM. |
+| `runner workspace list` | `-data DIR`, `-workspace FILE` (default `/etc/mirafleet/workspace.yaml`) | **Local, no central:** list this runner's workspaces straight from the executor (id, state, age, disk bytes, image). Works after a runner revoke. |
+| `runner workspace prune` | `-data DIR`, `-workspace FILE`, `-all`, `-yes` | **Local:** destroy this runner's workspaces, by default only those older than `max_age`; `-all` destroys every one. Without `-yes` it only lists what it would destroy. Stop `runner run` first when you can. |
 
 ### Operator (runs on a laptop; cross-platform)
 
 | Command | Flags | What it does |
 |---|---|---|
 | `mcp login ADDR` | `-name NAME` (required), `-code -` (required, reads stdin) | Generate a key (first time), register with central, pin its host key, save a context. |
-| `mcp api METHOD [JSON]` | | Call one operator method on the current context and print the JSON result. `JSON` is the params object. |
+| `mcp api METHOD [JSON]` | `-in FILE\|-` (body for `workspace.write_file`, or stdin of `workspace.exec`; `-` reads stdin), `-out FILE` (where the body of `workspace.read_file` goes) | Call one operator method on the current context and print the JSON result. `JSON` is the params object. With `-in`, `length` and `sha256` are filled in for `write_file` when absent, and `stdin: true` is set for `exec`. With `-out`, the file is written 0600 and atomically. Bodies are at most 1 MiB; bigger files go in chunks with `offset`. |
 | `mcp` (no arguments) | | Prints a note that the MCP stdio server arrives in M5. |
 
 Environment variable: `MIRAFLEET_CONFIG_DIR` overrides the operator config directory (must be
@@ -423,10 +456,19 @@ an absolute path).
 | `fleets.list` | none | fleets with mode, confirm, runner count |
 | `runners.list` | `{"fleet":"dev"}` | runners with status, online, labels, last_seen |
 | `action.run` | `{"fleet","runner","action","params":{},"timeout_s":N,"confirm":"FLEET"}` | exit_code, stdout, stderr, truncated, duration_ms, request_id |
+| `workspace.open` | `{"fleet","session","image"?,"labels"?,"confirm"?}` | workspace (id, runner, state, expires...), reused |
+| `workspace.exec` | `{"workspace","argv":[...],"cwd"?,"env"?,"timeout_s"?,"stdin"?,"confirm"?}` | exit_code, stdout, stderr, truncated, timed_out, duration_ms, request_id |
+| `workspace.read_file` | `{"workspace","path","offset"?,"limit"?}` with `-out FILE` | size, offset, length, mode, eof (+ the bytes into the file) |
+| `workspace.write_file` | `{"workspace","path","offset"?,"truncate"?,"mode"?,"confirm"?}` with `-in FILE` | size |
+| `workspace.close` | `{"workspace"}` | `{}` |
+| `workspace.list` | `{"fleet"?}` | your own workspaces |
 
 `timeout_s`: 0 or absent means 120 s; it is capped at 600 s. `mirafleet mcp api` waits for an
 `action.run` as long as that timeout plus 30 s (other methods: 2 minutes), so a long action only
-needs a larger `timeout_s`. Limits: request at most 64 KiB, at most 32 params, param keys up to 64 bytes and
+needs a larger `timeout_s`. For workspace methods the wait is: `workspace.open` 5 minutes 30 s
+(it may pull an image), `workspace.exec` its `timeout_s` plus 30 s (24 h plus 30 s when absent;
+the fleet enforces the real default), file calls 100 s. Full parameter rules are in
+[chapter 7](07-protocols.md). Limits: request at most 64 KiB, at most 32 params, param keys up to 64 bytes and
 values up to 4 KiB, output up to 1 MiB (stdout and stderr together; `truncated: true` if cut).
 
 ## 10.4 Files and directories
@@ -455,6 +497,11 @@ values up to 4 KiB, output up to 1 MiB (stdout and stderr together; `truncated: 
 Outside the data directory: `/etc/mirafleet/actions.yaml` (default location), the allowlist. It
 should be owned by root and not writable by the user the runner runs as, so a compromised
 runner process cannot widen its own permissions.
+
+A **workspace runner** keeps the same files, plus `/etc/mirafleet/workspace.yaml` (its policy,
+section 10.9.2) and the workspace root (default `/var/lib/mirafleet/ws`, section 10.9.4). In
+workspace mode `audit.jsonl` has the runner's `start` and outcome lines for every `workspace.*`
+operation (argv clipped, env names only, file paths and byte counts, never content).
 
 ### On an operator's machine (`~/.config/mirafleet` on Linux, `~/Library/Application Support/mirafleet` on macOS)
 
@@ -632,7 +679,7 @@ central log. The tables are grouped by where you are when it goes wrong.
 | `bad_request: invalid fleet or runner name` / `invalid fleet name` | Name does not match the name rules or the field is empty (`runners.list` needs `{"fleet":"..."}`). | Fix the JSON. |
 | `bad_request: invalid params` | The JSON had an unknown field or trailing junk (params are decoded strictly). | Check field names against the table in 10.3. |
 | `bad_request: fleet requires confirm to equal the fleet name` | A guarded fleet needs `"confirm":"<fleet name>"`. | Add it (or `-confirm FLEET` for `central exec`). It is audited as `denied`. |
-| `conflict: fleet is not in actions mode` | `action.run` on a workspace fleet. | Workspaces arrive in M3. |
+| `conflict: fleet is not in actions mode` | `action.run` on a workspace fleet. | Use the `workspace.*` methods, or call an actions fleet. |
 | `conflict: runner is pending` (or `disabled`) | The runner is not `active`. | `central runner approve` / `enable`. |
 | `not_found: not found` | The fleet or runner does not exist, or the runner is revoked. | `central fleet list`, `central runner list`. |
 | `unavailable: runner unavailable` | Central could not reach the runner: it is offline, busy, or the connection broke. | `central runner list` (ONLINE column); check the runner's log and network. If busy, wait: a runner runs 4 actions at a time. |
@@ -645,6 +692,56 @@ central log. The tables are grouped by where you are when it goes wrong.
 | result has `exit_code: -1` and `timed_out: true` / stderr mentions the binary | The action timed out and was killed, or the program could not start (not executable, missing). | Check `timeout:` and the command path. |
 | `timeout: request not received within 10s` | A client opened a channel and sent nothing. | Usually a broken client; retry. |
 | `too_large: request exceeds 65536 bytes` | Request over 64 KiB. | Send less data. |
+### Workspaces (M3): starting a workspace runner
+
+Every row here comes from a fail-closed check. None of them is "fixed" by loosening a safety
+setting: fix the host or the file instead.
+
+| Message you see | What it means | What to do |
+|---|---|---|
+| `runner run: -actions and -workspace are mutually exclusive (one runner, one mode)` | You passed both flags. | Pick one. A host that needs both modes needs two runners (two `-data` directories, two fleets). |
+| `workspace config: yaml: unmarshal errors: ... field concurent not found in type wsconfig.Config` | `workspace.yaml` has an unknown or misspelled key (it is parsed strictly). | Fix the key; see 10.9.2. |
+| `workspace config: containerd.root "...": must be owned by root (uid 0), is uid N` / `mode must be 0700, is 0755` | The workspace root is not root-owned and 0700. | `chown root:root DIR && chmod 0700 DIR`. |
+| `workspace config: containerd.namespace "moby" is refused: it belongs to another runtime` (also `k8s.io`) | You pointed at Docker's or Kubernetes' namespace. | Use `mirafleet` (or any other name). Never share a namespace with those. |
+| `workspace config: images: allowlist must not be empty` | No `images` entries. | List at least one image pattern. |
+| `workspace config: opensandbox.server "http://...": scheme must be https (plain http is refused)` | Plain HTTP to OpenSandbox is not allowed, even on loopback. | Put the TLS front in front of it (10.9.6) and use `https://127.0.0.1:8443`. |
+| `workspace config: opensandbox.api_key_file "...": mode must be 0600 or 0400, is 0644` (also `client_key`, or "must be owned by the runner user") | A secret file is readable by others or owned by someone else. | `chmod 0600` and `chown` it to the user that runs the runner. |
+| `workspace config: opensandbox.ca_file: required (pin-only trust is not supported ...)` | A pin alone cannot anchor the TLS chain. | Set `ca_file` (for a self-signed front, the front's certificate itself); `pin_sha256` is an extra check. |
+| `ctrd: userns: required is not supported on this host: kernel 5.15 lacks idmapped overlayfs mounts (need >= 5.19) ...` | Hosts without user namespaces or id-mapped snapshots cannot give each workspace its own uid range. | Use a newer kernel and containerd 2.x. `containerd.userns: off` runs, but weakens isolation *between* workspaces (and containers share the host uid `uid_base + slot`); that is a conscious choice, never a default. |
+| `ctrd: connect to containerd at /run/containerd/containerd.sock: ...` or `not answering` | containerd is not running, or the runner user cannot open the socket. | Start containerd; run the runner as root (it needs the socket anyway). On a Docker host see 10.9.3. |
+| `ctrd: secure_runtime: runtime "io.containerd.runsc.v1": shim containerd-shim-runsc-v1 not found on PATH` | You declared gVisor/Kata but its shim is not installed. | Install it or remove `secure_runtime`. Without it the runner refuses guarded fleets. |
+| `ctrd: apparmor: required but AppArmor is not available on this host` | `apparmor: required` on a host without AppArmor. | Use `auto` (apply when available) or enable AppArmor. |
+| `ctrd: init binary /usr/local/bin/mirafleet must be world readable and executable (mode 0700)` | PID 1 inside the container is not root and must be able to execute the mirafleet binary. | `chmod 0755` the binary. |
+| `warning: N image pattern(s) in workspace.yaml cannot be advertised to central (limit 32 entries of 256 bytes)` | Placement only sees the first 32 patterns. | Harmless for safety (the runner still enforces them all); shorten the list if placement misses. |
+| Runner starts, central lists it with `slots` but never gives it work | Central places only on `active`, online runners whose `executor` equals the fleet's, with a free slot, matching trusted token labels, and an image the runner advertises. | `central runner list -json`: check `status`, `online`, `executor`, `slots`; check the fleet's `-executor` and the token labels. |
+
+### Workspaces (M3): calling the API
+
+| Message you see | What it means | What to do |
+|---|---|---|
+| `conflict: fleet is not in workspace mode` | `workspace.*` on an actions fleet. | Use `action.run`, or a workspace fleet. |
+| `bad_request: image is not allowed by the fleet` | The image is not in the fleet's `-images`. | Use an allowed image, or `fleet workspace set -images ...`. |
+| `bad_request: refused by runner: image not allowed on this runner` | The fleet allows it but this runner's own `images` list does not. | Add the pattern to that runner's `workspace.yaml` and restart it. The **intersection** applies. |
+| `bad_request: refused by runner: ... limit above this runner's cap` | The fleet asks for more CPU, memory, pids, tmpfs or disk than `limits` in the runner's file. | Lower the fleet's value or raise the runner's cap. |
+| `bad_request: refused by runner: network mode "egress" not allowed on this runner` | The runner's `network:` does not list `egress`. | Add it (deliberately) or use `-network none`. |
+| `bad_request: refused by runner: egress is not supported with secure runtimes yet` | A guarded fleet (gVisor/Kata) cannot use egress mode on containerd yet. | Use `-network none` for that fleet. |
+| `unavailable: no runner can take this workspace right now` | No candidate: no online active runner, all slots taken, labels or image not matching, or a guarded fleet with no secure-runtime runner. | See the row above about slots; `central workspace list` shows who holds them; `workspace kill` or wait for the reaper. |
+| `unavailable: the runner holding this session's workspace is offline` | A sticky session's files are on a runner that is down. Central never creates a fresh workspace elsewhere. | Bring the runner back. To abandon the files: `central workspace kill ID`, then open again. |
+| `conflict: workspace limit reached (8)` | The operator already has the maximum live workspaces. | Close some (`workspace.close`), or an admin kills them. |
+| `conflict: workspace is still opening` / `workspace is closing` | Open in progress or already being closed. | Wait, then retry; open a new session if closing. |
+| `not_found: not found` on a workspace id | Wrong id, malformed id, or **someone else's** workspace (deliberately the same). | `workspace.list` shows your own. |
+| `bad_request: env ANTHROPIC_API_KEY is denied` | Secrets must not enter a workspace; the denylist always wins. | Do not pass it. Agents keep their keys on the laptop. |
+| `bad_request: refused by runner: env CI is not allowed` | The name is not in the runner's `env_allow`. | Add it to `env_allow` in `workspace.yaml` if it is harmless. |
+| `bad_request: sha256 mismatch` / `body shorter than length` | The body bytes do not match the request. | Use `mcp api -in FILE` (it computes both) or fix the client. |
+| `too_large: body exceeds 1048576 bytes` | A body frame over 1 MiB. | Send chunks with `offset`. |
+| `bad_request: refused by runner: file would exceed this runner's max_file` | `offset + length` over `limits.max_file`. | Raise it, or write a smaller file. |
+| `unavailable: runner busy` | All of the runner's slots or exec permits are taken (4 execs per workspace). | Retry; `open` already tries 3 runners by itself. |
+| result `exit_code: 127` or `126` and the reason on stderr | The command was not found or not executable in the image (like a shell would say). | Use an absolute path or an image that has the tool. |
+| result `timed_out: true` (the exit code is usually 137) | The command hit its timeout and was killed. | Raise `timeout_s` (up to the fleet's `-exec-max`). Daemonised children survive until the workspace is closed. |
+| `git clone` or `curl` hangs or fails in an egress workspace | The tool ignores `HTTP_PROXY`/`HTTPS_PROXY` (it fails closed, there is no other route), or the host is not on `-egress`, or it resolves to a private range. | Allow the host (`fleet workspace set -egress ...`); for private ranges the runner must set `egress_cidr_rules: true` and the fleet use a `cidr:port` rule. |
+| Workspace stays `closing` | Its runner is offline; the row keeps its slot. | Bring the runner back (reconcile finishes it), or `runner workspace prune` on that host. Rows of a *revoked* runner become `lost`. |
+| Containers still exist on a host after its runner was revoked | A revoked runner never reconnects, so nothing can destroy them remotely. | On that host: `mirafleet runner workspace prune -all -yes ...` (it works without central). |
+
 ### What to look for in central's log
 
 | Message you see | What it means | What to do |
@@ -715,6 +812,12 @@ available on the CLI.
 - **A runner's audit** is `audit.jsonl` in its data directory: one JSON line per event, appended
   forever. The runner does not rotate it; rotate or ship it yourself (copy-and-truncate with
   your usual log tool).
+- **Workspace calls write more audit rows**: `open`, `exec`, `read_file`, `write_file` and `close`
+  each write a `start` and an outcome row, and even `workspace.list` writes one row (an actions
+  `list` writes none). An agent that runs hundreds of commands in a session writes hundreds of
+  row pairs. The `workspace` column is indexed, so `central audit -json` piped through `jq` (or
+  your log store) can follow one workspace. Rows for reaper, reconcile and revoke work use source
+  `system`.
 
 ### Backup and restore of the data directory
 
@@ -751,6 +854,420 @@ fresh `runner join` with a new token (new `-data` directory), and every operator
    ([chapter 7](07-protocols.md)). A runner that rejects a new `actions.yaml` field is an older
    binary: upgrade it first.
 
+**Upgrading from M2 to M3 (migration `0002_workspaces.sql`).** The first start of an M3 central
+runs one extra migration inside one transaction:
+
+- it creates two tables, `fleet_workspace` (a workspace fleet's config) and `workspaces` (one row
+  per workspace, with the indexes that enforce "one live workspace per operator, fleet and
+  session"), and adds an indexed `workspace` column to `audit` (old rows get an empty value);
+- the append-only triggers on `audit` still hold after the change;
+- existing fleets stay in `actions` mode and keep working untouched; existing runners need no
+  change (an M2 runner sends no workspace fields in its heartbeat, which M3 central accepts);
+- `PRAGMA user_version` becomes 2. An M2 binary refuses that database
+  (`database schema version 2 is newer than this binary supports`), so the backup of step 2 is
+  your only way back.
+
+Then, to use workspaces: upgrade central first, then give the workspace hosts the M3 binary,
+containerd and a `workspace.yaml` (section 10.9), and create a workspace fleet. Do not try to
+turn an existing actions fleet into a workspace fleet: a fleet's mode is fixed at creation, and
+one runner serves exactly one mode.
+
+## 10.9 Workspace mode (M3)
+
+A **workspace** is a private, disposable Linux container on a runner where an agent can run
+commands and read and write files, without ever touching the host. The agent (and its API keys)
+stays on the operator's laptop; only commands and file bytes cross
+([chapter 5](05-security.md) explains the boundary, the diagram below summarises it).
+
+![The workspace container boundary: user namespace, no capabilities, seccomp, read-only rootfs, /workspace, egress proxy, what crosses and what cannot](diagrams/workspace-boundary.svg)
+
+*Look at: the dotted box is the container; the runner on its left is trusted and the box is not.*
+
+1. User namespace: uid 1000 inside is an unused high host uid (`uid_base` + slot x 65536), so container
+   root is not host root.
+2. All capabilities dropped, `no_new_privs`, and containerd's default seccomp profile.
+3. Read-only root filesystem. Writable: a size-limited `/tmp` and `/workspace`, the one host directory.
+4. Empty network namespace. In egress mode the only way out is the allow-list proxy on
+   `127.0.0.1:3128`.
+5. cgroup limits: CPU, memory with swap equal to memory, pids; a soft disk quota on `/workspace`.
+6. What crosses: argv, allow-listed env and file bytes in; exit code, output and file bytes out.
+7. What cannot: host mounts, devices, the containerd socket, API keys, host networking.
+8. The LLM API key and the SSH key stay on alice's laptop; the agent never runs in the container.
+
+### 10.9.1 What you are setting up
+
+- **A workspace fleet** on central (`fleet create -mode workspace`): the image allowlist, limits,
+  network mode and lifetimes, set by Dana. Alice cannot change them.
+- **A workspace runner** per host: `mirafleet runner run -workspace /etc/mirafleet/workspace.yaml`.
+  The runner's file is a second, independent policy. The **effective policy is the intersection**
+  of fleet and runner: the runner builds the whole container spec itself from a fixed template and
+  takes from central only an image (on both allowlists), numbers within its caps, a network mode it
+  allows and allowlisted env. So even a compromised central cannot obtain a privileged container,
+  a host network or a host mount: the runner has no code path that produces one.
+- **An executor** on that runner: `containerd` (the default, driven directly through its Go
+  client) or `opensandbox` (opt-in). One runner serves one fleet, one mode, one executor.
+
+> **A workspace runner is root-equivalent.** Access to the containerd socket amounts to root on the
+> host. Run workspace runners on **dedicated, disposable hosts or VMs** (nothing else on the box),
+> keep `workspace.yaml` root-owned, and treat the runner key like a root key. The actions runner is
+> deliberately different (it never needs root), which is why the two modes are never mixed.
+
+Placement and lifetimes, in one paragraph: when an agent opens a workspace, central picks a runner
+that is `active`, online, runs the fleet's executor, has a free slot (the runner's `concurrent`
+minus live workspaces), whose **trusted token labels** contain the requested labels and whose image
+list covers the image; the most free slots wins. The workspace is sticky per `(operator, fleet,
+session)`. A reaper on central (every 60 s) closes workspaces idle longer than `-idle-ttl`, older
+than `-max-ttl`, or belonging to a revoked operator or runner. When a runner reconnects, central
+compares what the runner has with its database (reconcile) and cleans up orphans.
+([Chapter 4](04-flows.md) walks through all of it; [10.9.8](#1098-day-2-with-workspaces) is the
+operator's view.)
+
+### 10.9.2 `workspace.yaml` reference
+
+The runner's policy file. Default location `/etc/mirafleet/workspace.yaml`; the `-workspace` flag
+points elsewhere. It is parsed **strictly** (an unknown key is an error) and checked when the runner
+starts, and **any failed check stops the runner**; there is no "ignore". Own it as root, readable
+by the runner user, not writable by it. There is deliberately **no key** for privileged containers,
+unconfined profiles or host mounts: they cannot be configured.
+
+```yaml
+executor: containerd
+concurrent: 4
+max_age: 168h
+images: ["docker.io/library/golang@sha256:*", "ghcr.io/acme/dev@sha256:*"]
+limits: {cpus: 4, memory: 8GiB, pids: 2048, tmpfs: 1GiB, disk: 20GiB, max_file: 64MiB, exec_max: 1h}
+network: [none, egress]
+env_allow: [LANG, LC_ALL, TERM, CI, GOFLAGS, NODE_ENV]
+egress_cidr_rules: false
+containerd:
+  address: /run/containerd/containerd.sock
+  namespace: mirafleet
+  snapshotter: overlayfs
+  runtime: io.containerd.runc.v2
+  secure_runtime: ""
+  root: /var/lib/mirafleet/ws
+  userns: required
+  uid_base: 1000000
+  apparmor: auto
+```
+
+Top-level keys:
+
+| Key | Required | Default | Meaning and rules |
+|---|---|---|---|
+| `executor` | yes | none | `containerd` or `opensandbox`. Selects which block below is required; the other block must be **absent**. |
+| `concurrent` | yes | none | How many workspaces this runner holds at once, 1 to 1024. Sent to central as `slots`; also the runner's own semaphore. Each slot gets its own user-namespace range. |
+| `max_age` | no | `0` (none) | At most 365 days. Caps the lifetime a fleet may request (a create asking for a longer `-max-ttl` is refused: `max age above this runner's cap`), fills in a missing one, and is the age `runner workspace prune` uses. The runner does **not** delete anything by itself: central's reaper does. On OpenSandbox it becomes the sandbox's timeout. |
+| `images` | yes | none | The runner-side **image allowlist** (a boundary of its own): exact references, `repo:*` or `repo@sha256:*`; no other wildcards; at least one, at most 1024. A fleet's image must match here too. Checked on the *resolved* reference **before** any pull. The first 32 entries (up to 256 bytes each) are advertised to central for placement. |
+| `limits.cpus` | yes | none | Cap per workspace, > 0, at most 1024. A fleet asking for more is refused. |
+| `limits.memory`, `limits.tmpfs`, `limits.disk` | yes | none | Caps. Sizes: `512MiB`, `8GiB`, `1TiB`, or plain bytes; binary units only. |
+| `limits.pids` | yes | none | Cap on processes per workspace. |
+| `limits.max_file` | yes | none | The largest file `write_file` may build (`offset + length`), up to 64 GiB. |
+| `limits.exec_max` | no | `1h` | Hard cap on one exec, at most 24h; applies on top of the fleet's `-exec-max`. |
+| `network` | yes | none | Which modes this runner allows: `none`, `egress`, or both. |
+| `env_allow` | no | none | Variable names an exec may set (at most 256, `^[A-Z_][A-Z0-9_]{0,63}$`). A name on the hard denylist (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, `*_PASSWORD`, `*_KEY`, `ANTHROPIC_*`, `OPENAI_*`, `AWS_*`, `SSH_AUTH_SOCK`, `GIT_ASKPASS`, `GIT_SSH_COMMAND`, `*PROXY*`, `LD_*`, `BASH_ENV`, `NODE_OPTIONS`, ...) is **refused at load**, even here. |
+| `egress_cidr_rules` | no | `false` | Lets a fleet use CIDR or IP-literal egress rules. Default: only host names (the proxy always refuses loopback, link-local and metadata addresses, whatever the rule says). |
+
+`containerd:` block (required when `executor: containerd`):
+
+| Key | Default | Meaning and rules |
+|---|---|---|
+| `address` | `/run/containerd/containerd.sock` | Absolute path of containerd's socket. |
+| `namespace` | **required** | containerd namespace for everything mirafleet creates. **`moby` (Docker) and `k8s.io` (Kubernetes) are refused.** Use `mirafleet`. |
+| `snapshotter` | `overlayfs` | Must support id remapping when `userns: required` (containerd 2.x overlayfs does). |
+| `runtime` | `io.containerd.runc.v2` | The OCI runtime shim for normal workspaces. |
+| `secure_runtime` | empty | e.g. `io.containerd.runsc.v1` (gVisor) or a Kata shim. Declaring it lets the runner serve **guarded** fleets (`-confirm`), which require a secure runtime; its shim must exist on `PATH`. At most 64 characters. Guarded workspaces cannot use egress mode on containerd yet. |
+| `root` | **required** | Where workspace directories live; a clean absolute path other than `/`; must be a directory **owned by root with mode 0700** (checked at load). Layout in 10.9.4. |
+| `userns` | `required` | `required`: every slot gets its own user namespace and an id-mapped snapshot; the runner refuses to start on a host that cannot do it (kernel 5.19 or newer, user namespaces enabled, an id-mapping snapshotter). `off`: no user namespace; the process runs as the unprivileged host uid `uid_base + slot` (never a real user), so isolation between workspaces rests on those distinct uids alone. A conscious weakening, never a default. |
+| `uid_base` | `1000000` | Start of the host uid/gid ranges: slot N gets `uid_base + N x 65536`. At least 65536 and clear of real users. |
+| `apparmor` | `auto` | `auto`: apply containerd's default profile when the host supports AppArmor; `required`: refuse to start without it; `off`. |
+
+`opensandbox:` block (required when `executor: opensandbox`; every key but the three marked is required):
+
+| Key | Default | Meaning and rules |
+|---|---|---|
+| `server` | none | `https://127.0.0.1:8443`: **https only** (plain `http://` is refused, even on loopback), a loopback host, no path, no credentials. |
+| `front` | `builtin` | `builtin` (`mirafleet runner tls-front`) or `external` (your own proxy, 10.9.7). Records which one you run; the runner applies the same rules to both. |
+| `ca_file` | none | Absolute path of the CA that signed the front's certificate. **Required**: TLS is never trusted by pin alone, and the system CA pool is never used. |
+| `pin_sha256` | optional | 64 hex characters: SHA-256 of the front certificate's public key (SPKI), checked in addition to the chain. `tls-init` prints it. |
+| `client_cert`, `client_key` | none | The runner's mTLS client certificate and key. The key file must be 0600 or 0400 and owned by the runner's user. |
+| `api_key_file` | none | File holding OpenSandbox's API key; 0600 or 0400, owned by the runner's user. Never read from env or argv, never logged, never put into a sandbox. |
+| `secure_runtime` | empty | Declare `gvisor` or `kata` **only if** your OpenSandbox server really runs sandboxes with it; that is what permits guarded fleets. |
+
+Rules for the TLS connection are fixed in code: TLS 1.3 only, mTLS, no redirects followed, every
+URL rebuilt from the configured `server` (OpenSandbox's own endpoint hosts are ignored).
+
+### 10.9.3 containerd, and containerd on a Docker host
+
+mirafleet talks to containerd directly through its Go client. It never calls Docker Engine and
+never needs the `docker` CLI on a runner (project rule: containers mean containerd). It needs
+**containerd 2.x**: the client mirafleet is built with is 2.4.2, and `userns: required` needs
+2.x's id-mapped overlayfs snapshots. Check with `containerd --version`.
+
+A host that already runs **Docker Engine** also runs containerd. The intended set-up is that the
+two share the daemon and **containerd namespaces keep them apart**: Docker's containers live in the
+`moby` namespace, mirafleet's in `mirafleet`. `workspace.yaml` refuses `moby` and `k8s.io`
+outright, so a typo cannot make mirafleet list, adopt or delete Docker's containers. (That refusal
+is enforced and unit-tested; the notes below are documented set-up guidance, not something the
+project has tested on every Docker install, so check them on your own host.) Notes:
+
+- Use the system containerd socket (default `/run/containerd/containerd.sock`). On some Docker
+  installs Docker manages a private containerd with its own socket under `/var/run/docker/`; point
+  `address` at whichever socket you intend to use.
+- If the containerd on the host is still 1.x, install a separate containerd 2.x with **its own
+  socket and root** (a second systemd unit) and set `address` to that socket. Do not upgrade the
+  containerd that Docker depends on just for this.
+- Several runners on one host may share a containerd namespace: the executor tags every workspace
+  with an ownership name `<fleet>/<runner>` and `runner workspace list|prune` see only their own.
+  A separate namespace per runner is still the tidier choice.
+- `runc` (or your `runtime`) and, for guarded fleets, the gVisor or Kata shim must be installed.
+- **Pull** happens in containerd, anonymously: private registries are **not** supported in M3.
+  Pre-pull the image (`ctr -n mirafleet images pull ...`) and use `-pull never`, or use public images.
+  The allowlist is checked on the normalised reference before anything is pulled.
+
+### 10.9.4 What is on disk: `/var/lib/mirafleet/ws`
+
+The `containerd.root` directory (default `/var/lib/mirafleet/ws`, **root-owned, 0700**, checked on
+every start) holds the only host directories a workspace can touch:
+
+```
+/var/lib/mirafleet/ws/                 root 0700
+├── 3f9a6c1e5b7d4820a1c3e5f708192a4b/  one workspace's /workspace; owned by its mapped uid, 0700
+│   └── (the agent's files)
+├── .meta/
+│   └── 3f9a6c1e5b7d4820a1c3e5f708192a4b/
+│       ├── hosts                      generated /etc/hosts, mounted read-only
+│       └── resolv.conf                generated /etc/resolv.conf, mounted read-only
+└── ...
+```
+
+- The directory name is the workspace id (32 lowercase hex characters, **assigned by central**; the
+  runner validates it and uses it as the container id `mf-<id>` and the label
+  `mirafleet.workspace`). `.meta` can never be a valid id.
+- Inside the container `/workspace` is this directory (read-write, `nosuid`, `nodev`); `/tmp` is a
+  size-limited tmpfs; everything else is read-only. Nothing else from the host is mounted except
+  the mirafleet binary itself at `/.mirafleet/init` (read-only), which is PID 1.
+- Disk use is a **soft quota**: measured every 60 s and before writes; over `-disk` refuses
+  `write_file`; at twice the quota the workspace is destroyed. One file can never exceed the quota
+  (`RLIMIT_FSIZE`). It is not a hard filesystem quota: a command can briefly exceed it. Put
+  `containerd.root` on its own filesystem if the host has other work.
+- Image layers live in containerd's own storage (`/var/lib/containerd`), not here.
+- A workspace's files vanish when it is closed (directory removed). There is no backup: workspaces
+  are disposable by design. Anything worth keeping must be copied out with `read_file` or pushed by
+  the agent (for example to a git remote the egress list allows).
+
+### 10.9.5 Step by step: a containerd workspace fleet
+
+For Acme: central is running ([10.2](#102-install-and-run-step-by-step)); Dana adds a **new** fleet
+(a fleet's mode is fixed at creation, so on the central of the earlier walkthrough, where `dev` is an
+actions fleet, pick another name such as `dev2`). Everything below the first command runs on the
+**runner host**, as root, on a dedicated machine.
+
+```bash
+# On central (as Dana): a workspace fleet. Digest-pinned image, no network, modest limits.
+IMG=docker.io/library/golang@sha256:<64 hex digits you verified>
+mirafleet central fleet create dev -mode workspace -executor containerd \
+  -image "$IMG" -images 'docker.io/library/golang@sha256:*' \
+  -network none -cpus 2 -memory 4GiB -pids 1024 -tmpfs 512MiB -disk 10GiB \
+  -idle-ttl 24h -max-ttl 168h -exec-timeout 2m -exec-max 30m
+TOKEN=$(mirafleet central token create -fleet dev -labels zone=a -approve)
+```
+
+```bash
+# On the runner host (root): policy, root directory, join, run.
+mkdir -p /etc/mirafleet /var/lib/mirafleet/ws && chmod 0700 /var/lib/mirafleet/ws
+cat > /etc/mirafleet/workspace.yaml <<'EOF'
+executor: containerd
+concurrent: 4
+max_age: 168h
+images: ["docker.io/library/golang@sha256:*"]
+limits: {cpus: 4, memory: 8GiB, pids: 2048, tmpfs: 1GiB, disk: 20GiB, max_file: 64MiB, exec_max: 1h}
+network: [none]
+env_allow: [LANG, CI, GOFLAGS]
+containerd: {namespace: mirafleet, root: /var/lib/mirafleet/ws}
+EOF
+chmod 0644 /etc/mirafleet/workspace.yaml
+printf '%s\n' "$TOKEN" | mirafleet runner join central.example.com:2222 -name build-1 -token -
+mirafleet runner run -workspace /etc/mirafleet/workspace.yaml
+```
+
+`runner run` prints a clear error and exits if a check fails (10.6). When it is up,
+`central runner list -fleet dev -json` shows `"online": true`, `"slots": 4`,
+`"executor": "containerd"`. Then register operators as in steps 9 and 10, and use the methods of
+10.3. `zone=a` is a **trusted label**: it comes from the join token, and only runners with it match
+an agent's `labels: {"zone":"a"}`; whatever the runner claims about itself in a heartbeat is ignored.
+
+To let a workspace reach the network, change both sides deliberately:
+
+```bash
+# runner: allow the mode (and, if you need them, CIDR rules); restart the runner
+#   network: [none, egress]
+# central: choose it per fleet, with a host allowlist
+mirafleet central fleet workspace set dev -network egress -egress 'proxy.golang.org:443,*.golang.org:443'
+```
+
+In egress mode the container still has **no** network of its own. The runner opens a listener on
+`127.0.0.1:3128` *inside the container's network namespace*, feeds it into a small HTTP/CONNECT proxy
+on the host side, and every exec gets `HTTP_PROXY` and `HTTPS_PROXY`. The proxy does its own DNS,
+checks the **resolved address** (so rebinding games fail), allows only listed host and port
+combinations, and refuses loopback, link-local, cloud-metadata and private ranges unless a CIDR rule
+inside the runner's `egress_cidr_rules: true` opt-in lists them. Tools that ignore proxy variables
+simply fail: that is the design.
+
+### 10.9.6 The OpenSandbox option, with `tls-init` and `tls-front`
+
+[OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) (Apache-2.0) is an existing
+sandbox server. Choose it if you already run it or need its runtimes (gVisor, Kata, Firecracker)
+behind the same API. mirafleet keeps what it is for: identity, policy, central audit, instant
+revoke and outbound-only runners; OpenSandbox supplies the box. It is **opt-in per fleet**
+(`-executor opensandbox`), and the runner speaks its REST API with the Go standard library only
+(no SDK, nothing of theirs linked). As of this writing the server is 0.1.x, so its API may change.
+
+**Why a TLS front.** OpenSandbox's lifecycle server and its in-sandbox agent (`execd`) speak
+plain HTTP and have no TLS or mTLS settings. mirafleet's rule is HTTPS only, TLS 1.3, never plain
+HTTP, not even on loopback. So a small TLS front must sit **next to OpenSandbox**, ideally in its own
+network namespace, so the plaintext hop never leaves it. (Putting the front inside the runner would
+just move the plaintext hop to runner-to-OpenSandbox. That was rejected.)
+
+```
+runner process --TLS 1.3 + mTLS--> front 127.0.0.1:8443 --plain http, same namespace--> OpenSandbox 127.0.0.1:8080
+```
+
+Set-up, in order:
+
+1. **Configure OpenSandbox** (its own settings, server-wide; the names below follow OpenSandbox's
+   documentation as of writing and were **not verified against a live server**, so check them
+   against the version you run): set `[server].api_key` (the server
+   only starts without one after an explicit insecure override: do not use that); bind it to
+   `127.0.0.1:8080`; use `[docker].network_mode = bridge` (the default `host` cannot enforce
+   network policy); `[egress].mode = dns+nft` (mode `dns` does not enforce CIDRs); keep
+   `no_new_privileges`, a seccomp and AppArmor profile, `drop_capabilities` and a `pids_limit`
+   (OpenSandbox applies these server-wide, not per request, so **you** must set them); add
+   `[secure_runtime]` if you want guarded fleets. mirafleet cannot check these; it sends a
+   deny-default network policy with every create, so a server that cannot enforce one fails the
+   create (fail closed).
+2. **Mint the node PKI** on the runner host:
+   ```bash
+   mirafleet runner tls-init -dir /etc/mirafleet/tls
+   ```
+   It creates `ca.pem`, `front.pem` and `front-key.pem`, `client.pem` and `client-key.pem` (ECDSA
+   P-256, all 0600, the directory 0700, valid 365 days by default), **discards the CA's private
+   key** after signing (rotate by running `tls-init` into a new empty directory and restarting
+   both ends), and prints the exact lines for `workspace.yaml`, including `pin_sha256`.
+3. **Run the front next to OpenSandbox** (same host, preferably its network namespace: same pod,
+   or `network_mode: service:opensandbox` in compose):
+   ```bash
+   mirafleet runner tls-front -dir /etc/mirafleet/tls -listen 127.0.0.1:8443 -upstream 127.0.0.1:8080
+   ```
+   It accepts only TLS 1.3 and **only the runner's client certificate** (verified against
+   `ca.pem`). Listen and upstream must be loopback IPs and the upstream is plain HTTP. Only
+   `/v1/sandboxes` (and below) and `/sandboxes/{id}/(proxy|port)/44772/...` (execd's port, optionally
+   `/v1`-prefixed) are routed; everything else, and any path with dot segments, doubled slashes or
+   backslashes, is 404 and never reaches OpenSandbox. It streams responses (server-sent events),
+   drops hop-by-hop and `X-Forwarded-*` headers, and **never logs** headers, bodies or query strings,
+   so the API key and execd tokens stay out of logs.
+4. **Store OpenSandbox's API key** where only the runner can read it:
+   ```bash
+   ( umask 077; cat > /etc/mirafleet/opensandbox.key )    # paste the key, then Ctrl-D
+   # the file must be owned by the user that runs the runner
+   ```
+5. **Write `workspace.yaml`:**
+   ```yaml
+   executor: opensandbox
+   concurrent: 4
+   max_age: 168h
+   images: ["docker.io/library/golang@sha256:*"]
+   limits: {cpus: 4, memory: 8GiB, pids: 2048, tmpfs: 1GiB, disk: 20GiB, max_file: 64MiB}
+   network: [none, egress]
+   env_allow: [LANG, CI]
+   opensandbox:
+     server: https://127.0.0.1:8443
+     ca_file: /etc/mirafleet/tls/ca.pem
+     pin_sha256: <printed by tls-init>
+     client_cert: /etc/mirafleet/tls/client.pem
+     client_key: /etc/mirafleet/tls/client-key.pem
+     api_key_file: /etc/mirafleet/opensandbox.key
+     secure_runtime: ""        # "gvisor" or "kata" only if the server really uses it
+   ```
+6. `mirafleet central fleet create dev -mode workspace -executor opensandbox ...` and run the runner
+   with `-workspace`, as in 10.9.5.
+
+Differences you must know about (OpenSandbox's API, not mirafleet's choice):
+
+- **No stdin:** `workspace.exec` with `stdin: true` is refused as unsupported.
+- **`-pull never` cannot be honoured** (refused).
+- **Egress policies carry no ports:** an allowed host is open on every port inside the sandbox, so
+  mirafleet refuses rules for ports other than 443 and 80. Treat an allowed host as open on those.
+- **Read-only rootfs, seccomp, AppArmor and pids are server-wide** (step 1), not enforced per
+  workspace by mirafleet.
+- Python and Go components of OpenSandbox run on the node outside mirafleet's linked code; their
+  licences are theirs to review (the guide's licence rule covers what mirafleet links).
+
+### 10.9.7 The alternative: your own TLS proxy
+
+Instead of `tls-front` you may run nginx, Caddy, HAProxy, Envoy or a service-mesh sidecar. Set
+`opensandbox.front: external`. The runner applies **the same rules** to whichever front is used, so
+your proxy must provide:
+
+- `https` only, **TLS 1.3 only**, listening on a **loopback** address;
+- a server certificate that chains to the runner's `ca_file` (and matches `pin_sha256` if set);
+- **client-certificate authentication required**, verified against a CA that signed only the runner's
+  client certificate (mTLS);
+- upstream `http://127.0.0.1:8080` (OpenSandbox's lifecycle server) and the **same route
+  allow-list** as `tls-front`, 404 for everything else; no redirects, no response caching, no
+  buffering of `text/event-stream` responses;
+- the `OPEN-SANDBOX-API-KEY` and `X-EXECD-ACCESS-TOKEN` headers passed through and kept **out of
+  access logs**.
+
+`tls-init` can still mint the CA and the runner's client certificate for such a proxy.
+
+### 10.9.8 Day-2 with workspaces
+
+- **See what exists.** Central: `central workspace list [-fleet F] [-json]` (all operators; states
+  `opening`, `open`, `closing`, `closed`, `failed`, `lost`). Runner host: `runner workspace list`
+  (straight from the executor, no central needed).
+- **Kill one.** `central workspace kill ID`. If its runner is offline you get `closing; the reaper
+  will finish` and the row keeps its slot until the runner returns.
+- **Automatic cleanup.** The reaper (every 60 s) closes a workspace that is idle past `-idle-ttl`
+  (measured from the later of its last use and central's start, so a long outage does not wipe
+  everything on restart), past `-max-ttl`, or owned by a revoked operator or runner. A workspace
+  with a command running is never idle-reaped.
+- **Restarting things.** Restart the runner: its workspaces survive (they are containers in
+  containerd) and reconcile keeps them; egress listeners are re-attached when `egress` is still
+  allowed. Restart central: `opening` rows (a create it crashed in) become `failed`, everything else
+  persists and is reconciled when each runner reconnects.
+- **Reconcile in a nutshell.** Container exists but no row, or a finished row: destroyed (orphan).
+  Row `closing`: destroyed, then `closed`. Row `opening` for too long: destroyed, `failed`. Row `open`
+  but the container is missing or stopped: `lost` (slot freed, audited as `system`).
+- **Revoking.** Revoking an operator closes their workspaces (destroyed on the next sweep).
+  Revoking a runner marks its workspaces `closing` and then `lost`; **the containers stay on that
+  host**, because a revoked runner never reconnects. Clean them up locally.
+- **Prune.** On a runner host: `mirafleet runner workspace prune -data DIR -workspace FILE` lists
+  workspaces older than `max_age` and does nothing; add `-yes` to destroy them; `-all -yes`
+  destroys every workspace of this runner. It talks to the executor directly, so it works with
+  central gone or the runner revoked. Stop `runner run` first when you can (a destroy of something
+  already gone is harmless, but two actors are untidy). A workspace with an unknown age is only
+  removed by `-all`.
+- **Disk and kernel limits.** Watch `containerd.root` and `/var/lib/containerd`. A fork bomb is
+  stopped by `pids`, a memory hog is OOM-killed inside its cgroup, a runaway writer by the soft quota.
+  Daemonised children of a command survive its timeout until the workspace is destroyed, bounded by
+  those limits.
+- **Upgrades.** Replace the binary and restart the runner. Existing containers keep working. A
+  changed `workspace.yaml` applies on restart; a changed fleet config (`fleet workspace set`) applies
+  to *new* workspaces only.
+
+### 10.9.9 Checklist before real use
+
+- Dedicated host or VM; `workspace.yaml` root-owned; `containerd.root` root-owned, 0700.
+- `userns: required` (the default) works on this host; `apparmor: auto` or `required`.
+- Image allowlists use digests (`@sha256:*`), on **both** the fleet and the runner.
+- `network: [none]` unless you need egress; egress hosts listed as narrowly as possible.
+- `env_allow` as short as possible; no secrets in workspaces, ever (the denylist is a backstop).
+- Guarded fleets (`-confirm`) only on runners with a `secure_runtime`, and without egress on
+  containerd.
+- You know how to `prune`, and where to look: `central audit`, `central workspace list`, the runner's
+  `audit.jsonl`.
+
 ## Check your understanding
 
 1. Dana runs `mirafleet central fleet list` from her laptop and gets
@@ -763,6 +1280,15 @@ fresh `runner join` with a new token (new `-data` directory), and every operator
 4. `central operator code` shows `valid for: 7s`. alice pastes it, but her `mcp login` takes
    10 seconds to start. Will it work? Does bob need his own code?
 5. Why is a pattern like `.*` on a path parameter dangerous even though there is no shell?
+6. A workspace runner refuses to start with `userns: required is not supported on this host`. Is
+   setting `userns: off` the fix? What do you give up, and what are the alternatives?
+7. alice's `workspace.open` returns `unavailable: the runner holding this session's workspace is
+   offline`. Why does central not simply create a fresh workspace on another runner, and what
+   can Dana do if the runner is gone for good?
+8. You revoke runner `build-1`. Its three workspaces show `lost`, and `docker ps`-style tools
+   still show containers on the host. Why, and what do you run?
+9. A fleet allows image `golang@sha256:*` but alice gets `refused by runner: image not allowed
+   on this runner`. Where do you look?
 
 <details>
 <summary>Answers</summary>
@@ -783,5 +1309,18 @@ fresh `runner join` with a new token (new `-data` directory), and every operator
    path (`/etc/shadow`, `../..`) or, if the program takes options, a value that changes its
    behaviour. The guard stops injection into the command line structure; it cannot know what is
    safe *for the program*, which is why patterns must be as narrow as the use case allows.
+6. Not as a quick fix. `required` fails because the kernel (older than 5.19), user-namespace
+   settings or snapshotter cannot give each workspace its own uid range. `off` runs, but isolation
+   between workspaces then rests on distinct unprivileged host uids alone, so choose it
+   consciously. Better: a newer kernel and containerd 2.x, or a different host. The runner never
+   falls back by itself.
+7. The files live on the offline runner; a fresh workspace elsewhere would silently lose them and
+   the agent would not know. Dana can `central workspace kill ID` (the row goes `closing`, then
+   `closed` or `lost`), after which alice can open a new workspace, or bring the runner back.
+8. A revoked runner never reconnects, so central cannot ask it to destroy anything and marks the
+   rows `lost`. On that host, as root: `mirafleet runner workspace prune -all -yes -data DIR
+   -workspace FILE` (it talks to containerd directly).
+9. The runner's own `images` list in `workspace.yaml`: the effective policy is the intersection of
+   the fleet's and the runner's allowlists. Add the pattern there and restart the runner.
 
 </details>

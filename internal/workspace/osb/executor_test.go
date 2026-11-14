@@ -669,3 +669,62 @@ func TestCreateRefusesNonWebPorts(t *testing.T) {
 		t.Fatalf("port 80: %v", err)
 	}
 }
+
+func TestCreateConcurrentSameIDMakesOneSandbox(t *testing.T) {
+	createPoll = 5 * time.Millisecond
+	f, p := newEFake(t)
+	ex := f.executor(t, p, "")
+	id := workspace.NewID()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := ex.Create(ctx, spec(id)); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.creates) != 1 {
+		t.Fatalf("%d sandboxes created for one ID", len(f.creates))
+	}
+}
+
+func TestLabelsReservedAndImageNormalised(t *testing.T) {
+	createPoll = 5 * time.Millisecond
+	f, p := newEFake(t)
+	ex := f.executor(t, p, "")
+	s := spec(workspace.NewID())
+	s.Image = "alpine"
+	s.Labels = map[string]string{"team": "a", MetaRunner: "evil", "mirafleet.other": "x"}
+	if err := ex.Create(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	c := f.creates[0]
+	if c.Image.URI != "docker.io/library/alpine:latest" {
+		t.Errorf("image %q", c.Image.URI)
+	}
+	if c.Metadata[MetaRunner] != testRunner || c.Metadata["mirafleet.other"] != "" || c.Metadata["team"] != "a" {
+		t.Errorf("metadata %v", c.Metadata)
+	}
+	l, err := ex.List(ctx)
+	if err != nil || len(l) != 1 {
+		t.Fatalf("%v %v", err, l)
+	}
+	for k := range l[0].Labels {
+		if strings.HasPrefix(k, "mirafleet.") {
+			t.Errorf("listed label %q", k)
+		}
+	}
+	if l[0].Labels["team"] != "a" {
+		t.Errorf("labels %v", l[0].Labels)
+	}
+	s.Image = "bad image!"
+	s.ID = workspace.NewID()
+	if err := ex.Create(ctx, s); !errors.Is(err, workspace.ErrRefused) {
+		t.Errorf("bad image: %v", err)
+	}
+}

@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 600" width="840" height="600" role="img" aria-labelledby="t d">
+<title id="t">workspace.open: placement, sticky reuse, reserve, create</title>
+<desc id="d">alice's agent calls workspace.open for fleet dev and session s1. The service checks the operator, fleet mode, image allowlist and confirm, then looks for a live workspace of the same session (sticky reuse). Otherwise it picks the runner with the most free slots, reserves a row in one transaction with a start audit row, asks the runner to create the container over workspace@mirafleet, then marks the row open and writes the outcome audit row.</desc>
+<style>
+:root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
+@media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
+svg{--T:12s;--slot:1.5s}
+.bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
+.pn{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.bx{fill:#F6F5F1;fill:var(--band,#F6F5F1);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
+.ttl{font:600 21px Oswald,"Arial Narrow",Arial,sans-serif;text-transform:uppercase;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.h{font-weight:600;letter-spacing:.08em;text-transform:uppercase;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.m{fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.b{font-weight:700;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.ln{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none}
+.ahp{fill:#00695F;fill:var(--accent,#00695F)}
+.dot{fill:#FF671F;fill:var(--signal,#FF671F)}
+.bdg{fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.bt{font-weight:700;fill:#FFFFFF;fill:var(--bg,#FFFFFF);text-anchor:middle}
+.chw{fill:#FBEFDC;fill:var(--warnbg,#FBEFDC);stroke:#8A5300;stroke:var(--warn,#8A5300)}
+.cho{fill:#E0F0EE;fill:var(--okbg,#E0F0EE);stroke:#00695F;stroke:var(--ok,#00695F)}
+.chb{fill:#FDE8E6;fill:var(--badbg,#FDE8E6);stroke:#B42318;stroke:var(--bad,#B42318)}
+.tw{fill:#8A5300;fill:var(--warn,#8A5300);font-weight:700}
+.to{fill:#00695F;fill:var(--ok,#00695F);font-weight:700}
+.tb{fill:#B42318;fill:var(--bad,#B42318);font-weight:700}
+.rule{stroke:#FF671F;stroke:var(--signal,#FF671F);stroke-width:2}
+.pk{display:none}
+@media (prefers-reduced-motion:no-preference){
+.st{animation:lit var(--T) linear infinite both;animation-delay:calc((var(--i) - 1) * var(--slot))}
+.pk{display:inline;animation:mv var(--T) linear infinite}
+}
+@keyframes lit{0%{opacity:.25}1%{opacity:1}11.5%{opacity:1}12.5%{opacity:.25}100%{opacity:.25}}
+@keyframes mv{0%,10%{transform:translate(75px,120px)}15%,23%{transform:translate(320px,112px)}28%,35%{transform:translate(660px,112px)}40%,48%{transform:translate(330px,265px)}53%,60%{transform:translate(660px,150px)}65%,73%{transform:translate(520px,265px)}78%,85%{transform:translate(680px,345px)}95%,100%{transform:translate(75px,145px)}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0,0L10,5L0,10z"/></marker></defs>
+<rect class="bg" width="840" height="600"/>
+<text class="ttl" x="10" y="32">workspace.open: place, reserve, create</text>
+<line class="rule" x1="10" y1="42" x2="70" y2="42"/>
+
+<!-- row A -->
+<rect class="pn" x="10" y="60" width="130" height="130" rx="4"/>
+<text class="h" x="20" y="80">alice</text>
+<text x="20" y="102">Claude Code</text>
+<text class="m" x="20" y="120">mirafleet mcp</text>
+<text class="b" x="20" y="146">workspace.open</text>
+<text class="m" x="20" y="164">dev, session s1</text>
+
+<rect class="pn" x="190" y="60" width="260" height="130" rx="4"/>
+<text class="b" x="200" y="80">service.OpenWorkspace</text>
+<text x="200" y="102">active operator?</text>
+<text x="200" y="120">fleet mode: workspace?</text>
+<text x="200" y="138">image on allowlist?</text>
+<text x="200" y="156">guarded: confirm = dev?</text>
+<text class="m" x="200" y="176">session matches regex</text>
+
+<rect class="pn" x="500" y="60" width="330" height="130" rx="4"/>
+<text class="h" x="510" y="80">Store (SQLite)</text>
+<text x="510" y="102">unique index: one live row</text>
+<text class="m" x="510" y="120">per (alice, dev, s1)</text>
+<g class="st" style="--i:5"><rect class="chw" x="510" y="132" width="86" height="24" rx="2"/><text class="tw" x="518" y="149">opening</text></g>
+<g class="st" style="--i:8"><rect class="cho" x="606" y="132" width="60" height="24" rx="2"/><text class="to" x="614" y="149">open</text></g>
+<g class="st" style="--i:5"><rect class="chw" x="510" y="160" width="86" height="24" rx="2"/><text class="tw" x="518" y="177">start</text></g>
+<g class="st" style="--i:8"><rect class="cho" x="606" y="160" width="100" height="24" rx="2"/><text class="to" x="614" y="177">outcome</text></g>
+<text class="m" x="716" y="177">audit</text>
+
+<!-- row B -->
+<rect class="pn" x="190" y="220" width="290" height="170" rx="4"/>
+<text class="h" x="200" y="240">Placement, dev fleet</text>
+<rect class="cho" x="200" y="250" width="270" height="44" rx="2"/>
+<text class="b" x="208" y="268">build-1</text><text class="to" x="400" y="268">chosen</text>
+<text class="m" x="208" y="285">2 slots, 1 live, 1 free</text>
+<rect class="bx" x="200" y="302" width="270" height="44" rx="2"/>
+<text class="b" x="208" y="320">build-2</text><text class="m" x="400" y="320">skipped</text>
+<text class="m" x="208" y="337">1 slot, 1 live, 0 free</text>
+<text class="m" x="200" y="368">most free wins, random tie</text>
+<text class="m" x="200" y="384">labels match token labels</text>
+
+<rect class="pn" x="530" y="220" width="300" height="170" rx="4"/>
+<text class="h" x="540" y="240">Runner build-1 (containerd)</text>
+<text x="540" y="264">re-validate everything</text>
+<text x="540" y="282">build the OCI spec itself</text>
+<text x="540" y="300">pull image if needed</text>
+<g class="st" style="--i:7"><rect class="cho" x="540" y="316" width="200" height="56" rx="2"/>
+<text class="to" x="550" y="336">container mf-3f9a...</text>
+<text class="m" x="550" y="356">/workspace dir created</text></g>
+
+<!-- arrows -->
+<g class="st" style="--i:1"><circle class="bdg" cx="126" cy="70" r="11"/><text class="bt" x="126" y="74.5">1</text></g>
+<g class="st" style="--i:2">
+<line class="ln" x1="142" y1="125" x2="188" y2="125" marker-end="url(#ah)"/>
+<circle class="bdg" cx="165" cy="108" r="11"/><text class="bt" x="165" y="112.5">2</text>
+</g>
+<g class="st" style="--i:3">
+<line class="ln" x1="452" y1="112" x2="498" y2="112" marker-end="url(#ah)"/>
+<circle class="bdg" cx="475" cy="95" r="11"/><text class="bt" x="475" y="99.5">3</text>
+<text class="m" x="458" y="136">sticky</text>
+</g>
+<g class="st" style="--i:4">
+<line class="ln" x1="320" y1="192" x2="320" y2="218" marker-end="url(#ah)"/>
+<circle class="bdg" cx="297" cy="205" r="11"/><text class="bt" x="297" y="209.5">4</text>
+</g>
+<g class="st" style="--i:5">
+<line class="ln" x1="482" y1="260" x2="590" y2="192" marker-end="url(#ah)"/>
+<circle class="bdg" cx="520" cy="224" r="11"/><text class="bt" x="520" y="228.5">5</text>
+<text class="m" x="500" y="206">reserve</text>
+</g>
+<g class="st" style="--i:6">
+<line class="ln" x1="482" y1="300" x2="528" y2="300" marker-end="url(#ah)"/>
+<circle class="bdg" cx="505" cy="282" r="11"/><text class="bt" x="505" y="286.5">6</text>
+<text class="m" x="482" y="322">create</text>
+</g>
+<g class="st" style="--i:7"><circle class="bdg" cx="814" cy="236" r="11"/><text class="bt" x="814" y="240.5">7</text></g>
+<g class="st" style="--i:8">
+<line class="ln" x1="188" y1="178" x2="144" y2="178" marker-end="url(#ah)"/>
+<circle class="bdg" cx="166" cy="160" r="11"/><text class="bt" x="166" y="164.5">8</text>
+<text class="m" x="146" y="206">reply</text>
+</g>
+<circle class="dot pk" cx="0" cy="0" r="7"/>
+
+<!-- steps -->
+<text class="h" x="10" y="424">Steps</text>
+<g class="st" style="--i:1"><text x="10" y="448"><tspan class="b">1</tspan> alice's agent calls workspace.open (fleet dev, session s1) through mirafleet mcp.</text></g>
+<g class="st" style="--i:2"><text x="10" y="468"><tspan class="b">2</tspan> The api@ frame reaches service.OpenWorkspace: operator, fleet mode, image, confirm, session.</text></g>
+<g class="st" style="--i:3"><text x="10" y="488"><tspan class="b">3</tspan> Sticky: a live (alice, dev, s1) row comes back reused:true; its runner offline = unavailable.</text></g>
+<g class="st" style="--i:4"><text x="10" y="508"><tspan class="b">4</tspan> Placement: active online runners fitting executor, labels and image; the most free slots wins.</text></g>
+<g class="st" style="--i:5"><text x="10" y="528"><tspan class="b">5</tspan> ReserveWorkspace recounts slots in one transaction, inserts "opening" and the start audit row.</text></g>
+<g class="st" style="--i:6"><text x="10" y="548"><tspan class="b">6</tspan> Full or busy: try the next runner (3 tries). Otherwise send op "create" on workspace@mirafleet.</text></g>
+<g class="st" style="--i:7"><text x="10" y="568"><tspan class="b">7</tspan> The runner re-validates, builds the spec from its own template, pulls, creates the container.</text></g>
+<g class="st" style="--i:8"><text x="10" y="588"><tspan class="b">8</tspan> Row becomes "open", the outcome audit row is written, the reply says reused:false.</text></g>
+</svg>

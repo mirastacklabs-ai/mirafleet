@@ -282,6 +282,8 @@ func parseMCPAPIArgs(args []string) (*mcpAPIArgs, error) {
 	switch {
 	case a.in != "" && a.method != api.MethodWorkspaceWriteFile && a.method != api.MethodWorkspaceExec:
 		return nil, fmt.Errorf("-in only applies to %s and %s", api.MethodWorkspaceWriteFile, api.MethodWorkspaceExec)
+	case a.out == "-":
+		return nil, errors.New("-out - is not supported: the body is binary and stdout carries the JSON result; give a file path")
 	case a.out != "" && a.method != api.MethodWorkspaceReadFile:
 		return nil, fmt.Errorf("-out only applies to %s", api.MethodWorkspaceReadFile)
 	case a.method == api.MethodWorkspaceReadFile && a.out == "":
@@ -290,6 +292,19 @@ func parseMCPAPIArgs(args []string) (*mcpAPIArgs, error) {
 		return nil, fmt.Errorf("%s needs -in FILE for the file body (an empty file writes an empty file)", api.MethodWorkspaceWriteFile)
 	}
 	return a, nil
+}
+
+// checkOutPath fails early (before any network call) when the -out file could not be written: its
+// directory must exist and the path itself must not be a directory.
+func checkOutPath(out string) error {
+	dir := filepath.Dir(out)
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return fmt.Errorf("-out %s: directory %s does not exist", out, dir)
+	}
+	if fi, err := os.Lstat(out); err == nil && fi.IsDir() {
+		return fmt.Errorf("-out %s is a directory", out)
+	}
+	return nil
 }
 
 // readBodyFile reads the request body from path ("-" is stdin), refusing more than
@@ -346,6 +361,11 @@ func mcpAPI(args []string, stdin io.Reader, stdout io.Writer) error {
 	pa, err := parseMCPAPIArgs(args)
 	if err != nil {
 		return err
+	}
+	if pa.out != "" {
+		if err := checkOutPath(pa.out); err != nil {
+			return err
+		}
 	}
 	args = []string{pa.method}
 	params := pa.params
@@ -408,6 +428,10 @@ func mcpAPI(args []string, stdin io.Reader, stdout io.Writer) error {
 		return err
 	}
 	if pa.out != "" {
+		var rr api.WorkspaceReadFileResult
+		if err := json.Unmarshal(res, &rr); err != nil || rr.Length != len(rbody) {
+			return fmt.Errorf("read_file body is %d bytes but the result announces %d: not writing %s", len(rbody), rr.Length, pa.out)
+		}
 		// 0600 and atomic: a partial file is never visible under the final name.
 		if err := writeAtomic0600(filepath.Dir(pa.out), filepath.Base(pa.out), rbody); err != nil {
 			return fmt.Errorf("write %s: %w", pa.out, err)

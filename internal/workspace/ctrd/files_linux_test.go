@@ -324,3 +324,20 @@ func TestInWorkspaceSymlinkStaysInside(t *testing.T) {
 		t.Errorf("read via in-workspace link: %q %v", got, err)
 	}
 }
+
+func TestWritePartialBytesCounted(t *testing.T) {
+	w, _ := newWS(t)
+	if _, _, err := w.write("f", strings.NewReader("seed"), 0, false, 0o644, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	// In place over max_file: the bytes stay on disk and are reported.
+	_, n, err := w.write("f", strings.NewReader("0123456789"), 0, false, 0o644, 4)
+	if !errors.Is(err, workspace.ErrTooLarge) || n == 0 {
+		t.Errorf("in-place too large: n=%d err=%v", n, err)
+	}
+	// A new file is removed on failure: nothing to count.
+	_, n, err = w.write("g", strings.NewReader("0123456789"), 0, false, 0o644, 4)
+	if !errors.Is(err, workspace.ErrTooLarge) || n != 0 {
+		t.Errorf("new file too large: n=%d err=%v", n, err)
+	}
+}

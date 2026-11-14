@@ -56,6 +56,8 @@ func TestFleetCreateWorkspaceFlagErrors(t *testing.T) {
 		"zero memory":                     {"fleet", "create", "x", "-mode", "workspace", "-memory", "0"},
 		"zero cpus":                       {"fleet", "create", "x", "-mode", "workspace", "-cpus", "0"},
 		"huge cpus":                       {"fleet", "create", "x", "-mode", "workspace", "-cpus", "1e9"},
+		"nan cpus":                        {"fleet", "create", "x", "-mode", "workspace", "-cpus", "NaN"},
+		"inf cpus":                        {"fleet", "create", "x", "-mode", "workspace", "-cpus", "Inf"},
 		"negative pids":                   {"fleet", "create", "x", "-mode", "workspace", "-pids", "-1"},
 		"sub-second ttl":                  {"fleet", "create", "x", "-mode", "workspace", "-idle-ttl", "500ms"},
 		"fractional second":               {"fleet", "create", "x", "-mode", "workspace", "-exec-max", "1500ms"},

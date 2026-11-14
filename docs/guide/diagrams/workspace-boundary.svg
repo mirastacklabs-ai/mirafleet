@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 664" width="840" height="664" role="img" aria-labelledby="t d">
+<title id="t">The workspace container boundary</title>
+<desc id="d">A workspace is a container on the runner host. It has a user namespace so uid 1000 inside is an unused high uid outside, no capabilities, no new privileges and a seccomp filter, a read-only root filesystem with only /workspace and a small /tmp writable, an empty network namespace whose only way out is a local allow-list proxy, and cgroup limits. Commands and file bytes cross the boundary. Host mounts, devices, the containerd socket and API keys never do. The LLM API key and the SSH key stay on the operator's laptop.</desc>
+<style>
+:root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
+@media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
+svg{--T:12s;--slot:1.5s}
+.bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
+.pn{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.bx{fill:#F6F5F1;fill:var(--band,#F6F5F1);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.ctr{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;stroke-dasharray:6 4}
+text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
+.ttl{font:600 21px Oswald,"Arial Narrow",Arial,sans-serif;text-transform:uppercase;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.h{font-weight:600;letter-spacing:.08em;text-transform:uppercase;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.m{fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.b{font-weight:700;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.ac{fill:#00695F;fill:var(--accent,#00695F)}
+.ln{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none}
+.ahp{fill:#00695F;fill:var(--accent,#00695F)}
+.dot{fill:#FF671F;fill:var(--signal,#FF671F)}
+.bdg{fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.bt{font-weight:700;fill:#FFFFFF;fill:var(--bg,#FFFFFF);text-anchor:middle}
+.key{fill:none;stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:1}
+.cho{fill:#E0F0EE;fill:var(--okbg,#E0F0EE);stroke:#00695F;stroke:var(--ok,#00695F)}
+.chb{fill:#FDE8E6;fill:var(--badbg,#FDE8E6);stroke:#B42318;stroke:var(--bad,#B42318)}
+.tb{fill:#B42318;fill:var(--bad,#B42318);font-weight:700}
+.rule{stroke:#FF671F;stroke:var(--signal,#FF671F);stroke-width:2}
+.pk{display:none}
+@media (prefers-reduced-motion:no-preference){
+.st{animation:lit var(--T) linear infinite both;animation-delay:calc((var(--i) - 1) * var(--slot))}
+.pk{display:inline;animation:mv var(--T) linear infinite}
+}
+@keyframes lit{0%{opacity:.25}1%{opacity:1}11.5%{opacity:1}12.5%{opacity:.25}100%{opacity:.25}}
+@keyframes mv{0%,10%{transform:translate(600px,122px)}15%,23%{transform:translate(600px,164px)}28%,35%{transform:translate(600px,227px)}40%,48%{transform:translate(600px,290px)}53%,60%{transform:translate(600px,332px)}65%,73%{transform:translate(385px,205px)}78%,85%{transform:translate(500px,407px)}92%,100%{transform:translate(90px,160px)}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0,0L10,5L0,10z"/></marker></defs>
+<rect class="bg" width="840" height="664"/>
+<text class="ttl" x="10" y="32">The workspace container boundary</text>
+<line class="rule" x1="10" y1="42" x2="70" y2="42"/>
+
+<!-- laptop -->
+<rect class="pn" x="10" y="85" width="160" height="200" rx="4"/>
+<text class="h" x="20" y="105">alice</text>
+<text x="20" y="127">Claude Code</text>
+<text class="m" x="20" y="145">mirafleet mcp</text>
+<g class="st" style="--i:8">
+<rect class="key" x="18" y="160" width="144" height="86" rx="2"/>
+<text class="ac b" x="26" y="180">KEYS STAY HERE</text>
+<text x="26" y="200">LLM API key</text>
+<text x="26" y="218">ssh key</text>
+<text class="m" x="26" y="236">not in the box</text>
+<circle class="bdg" cx="150" cy="96" r="11"/><text class="bt" x="150" y="100.5">8</text>
+</g>
+<text class="m" x="20" y="272">via central, over SSH</text>
+
+<!-- runner -->
+<rect class="pn" x="200" y="85" width="170" height="280" rx="4"/>
+<text class="h" x="210" y="105">Runner host</text>
+<text class="b" x="210" y="127">mirafleet runner</text>
+<text class="m" x="210" y="145">root-equivalent</text>
+<text x="210" y="173">re-validates</text>
+<text x="210" y="191">builds OCI spec</text>
+<text x="210" y="209">files: os.Root</text>
+<text x="210" y="227">proxy + DNS here</text>
+<text x="210" y="245">containerd socket</text>
+<text class="m" x="210" y="263">stays on the host</text>
+
+<!-- container -->
+<rect class="ctr" x="400" y="85" width="430" height="280" rx="4"/>
+<text class="h" x="410" y="101">Container mf-3f9a... (the boundary)</text>
+<g class="st" style="--i:1"><rect class="bx" x="410" y="108" width="410" height="34" rx="2"/><circle class="bdg" cx="428" cy="125" r="11"/><text class="bt" x="428" y="129.5">1</text><text x="448" y="129">user namespace: uid 1000 = host 1000000+</text></g>
+<g class="st" style="--i:2"><rect class="bx" x="410" y="150" width="410" height="34" rx="2"/><circle class="bdg" cx="428" cy="167" r="11"/><text class="bt" x="428" y="171.5">2</text><text x="448" y="171">no caps, no_new_privs, seccomp filter</text></g>
+<g class="st" style="--i:3"><rect class="bx" x="410" y="192" width="410" height="34" rx="2"/><circle class="bdg" cx="428" cy="209" r="11"/><text class="bt" x="428" y="213.5">3</text><text x="448" y="213">rootfs read-only; /tmp small tmpfs</text>
+<rect class="bx" x="410" y="234" width="410" height="34" rx="2"/><text x="448" y="255">/workspace read-write: the one host dir</text></g>
+<g class="st" style="--i:4"><rect class="bx" x="410" y="276" width="410" height="34" rx="2"/><circle class="bdg" cx="428" cy="293" r="11"/><text class="bt" x="428" y="297.5">4</text><text x="448" y="297">network empty; only 127.0.0.1:3128 proxy</text></g>
+<g class="st" style="--i:5"><rect class="bx" x="410" y="318" width="410" height="34" rx="2"/><circle class="bdg" cx="428" cy="335" r="11"/><text class="bt" x="428" y="339.5">5</text><text x="448" y="339">cgroups: cpu, memory (no swap), pids</text></g>
+
+<!-- arrows -->
+<g class="st" style="--i:8"><line class="ln" x1="172" y1="200" x2="198" y2="200" marker-end="url(#ah)"/></g>
+<g class="st" style="--i:6">
+<line class="ln" x1="372" y1="195" x2="398" y2="195" marker-end="url(#ah)"/>
+<line class="ln" x1="398" y1="225" x2="372" y2="225" marker-end="url(#ah)"/>
+<circle class="bdg" cx="385" cy="165" r="11"/><text class="bt" x="385" y="169.5">6</text>
+<text class="m" x="204" y="289">in: argv, env, bytes</text>
+<text class="m" x="204" y="307">out: exit, output</text>
+</g>
+
+<!-- never crosses -->
+<g class="st" style="--i:7">
+<rect class="chb" x="200" y="382" width="630" height="52" rx="2"/>
+<circle class="bdg" cx="222" cy="408" r="11"/><text class="bt" x="222" y="412.5">7</text>
+<text class="tb" x="244" y="402">NEVER crosses into the container</text>
+<text x="244" y="422">host mounts, devices, containerd socket, API keys, host network</text>
+</g>
+<text class="m" x="10" y="454">Dotted outline = the boundary. The runner is trusted; the container is not.</text>
+
+<!-- steps -->
+<text class="h" x="10" y="486">Steps</text>
+<g class="st" style="--i:1"><text x="10" y="510"><tspan class="b">1</tspan> User namespace: uid 1000 inside is an unused high uid outside. Its root is not host root.</text></g>
+<g class="st" style="--i:2"><text x="10" y="530"><tspan class="b">2</tspan> All capabilities dropped, no_new_privs, and containerd's default seccomp filter.</text></g>
+<g class="st" style="--i:3"><text x="10" y="550"><tspan class="b">3</tspan> Read-only rootfs. Writable: a small /tmp and /workspace (the one host directory).</text></g>
+<g class="st" style="--i:4"><text x="10" y="570"><tspan class="b">4</tspan> Empty network namespace. In egress mode the only way out is the proxy on 127.0.0.1:3128.</text></g>
+<g class="st" style="--i:5"><text x="10" y="590"><tspan class="b">5</tspan> cgroup limits: CPU, memory with swap equal to memory, pids; a soft disk quota on /workspace.</text></g>
+<g class="st" style="--i:6"><text x="10" y="610"><tspan class="b">6</tspan> What crosses: argv, allow-listed env and file bytes in; exit code, output and file bytes out.</text></g>
+<g class="st" style="--i:7"><text x="10" y="630"><tspan class="b">7</tspan> What cannot: host mounts, devices, the containerd socket, API keys, host networking.</text></g>
+<g class="st" style="--i:8"><text x="10" y="650"><tspan class="b">8</tspan> The LLM API key and the SSH key stay on alice's laptop; the agent never runs in the box.</text></g>
+<circle class="dot pk" cx="0" cy="0" r="7"/>
+</svg>

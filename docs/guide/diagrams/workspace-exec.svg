@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 632" width="840" height="632" role="img" aria-labelledby="t d">
+<title id="t">One workspace.exec through every layer</title>
+<desc id="d">alice's agent sends workspace.exec on an api@ channel. service.ExecWorkspace checks the operator, ownership, workspace state, argv, cwd, env and confirm, then writes the start audit row before anything runs. registry.Workspace opens a workspace@mirafleet channel to the runner. The runner re-validates the request against its own workspace.yaml, runs the command inside the container as an unprivileged user, and returns one result frame. Central writes the outcome audit row with the same request id and replies to alice.</desc>
+<style>
+:root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
+@media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
+svg{--T:12s;--slot:1.5s}
+.bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
+.pn{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.bx{fill:#F6F5F1;fill:var(--band,#F6F5F1);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
+.ttl{font:600 21px Oswald,"Arial Narrow",Arial,sans-serif;text-transform:uppercase;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.h{font-weight:600;letter-spacing:.08em;text-transform:uppercase;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.m{fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.b{font-weight:700;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.ln{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none}
+.ahp{fill:#00695F;fill:var(--accent,#00695F)}
+.dot{fill:#FF671F;fill:var(--signal,#FF671F)}
+.bdg{fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.bt{font-weight:700;fill:#FFFFFF;fill:var(--bg,#FFFFFF);text-anchor:middle}
+.chw{fill:#FBEFDC;fill:var(--warnbg,#FBEFDC);stroke:#8A5300;stroke:var(--warn,#8A5300)}
+.cho{fill:#E0F0EE;fill:var(--okbg,#E0F0EE);stroke:#00695F;stroke:var(--ok,#00695F)}
+.tw{fill:#8A5300;fill:var(--warn,#8A5300);font-weight:700}
+.to{fill:#00695F;fill:var(--ok,#00695F);font-weight:700}
+.rule{stroke:#FF671F;stroke:var(--signal,#FF671F);stroke-width:2}
+.pk{display:none}
+@media (prefers-reduced-motion:no-preference){
+.st{animation:lit var(--T) linear infinite both;animation-delay:calc((var(--i) - 1) * var(--slot))}
+.pk{display:inline;animation:mv var(--T) linear infinite}
+}
+@keyframes lit{0%{opacity:.25}1%{opacity:1}11.5%{opacity:1}12.5%{opacity:.25}100%{opacity:.25}}
+@keyframes mv{0%,10%{transform:translate(75px,125px)}15%,23%{transform:translate(335px,110px)}28%,35%{transform:translate(680px,110px)}40%,48%{transform:translate(290px,300px)}53%,60%{transform:translate(545px,299px)}65%,73%{transform:translate(735px,299px)}78%,85%{transform:translate(290px,340px)}90%,92%{transform:translate(680px,150px)}98%,100%{transform:translate(75px,160px)}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0,0L10,5L0,10z"/></marker></defs>
+<rect class="bg" width="840" height="632"/>
+<text class="ttl" x="10" y="32">One workspace.exec, every layer</text>
+<line class="rule" x1="10" y1="42" x2="70" y2="42"/>
+
+<!-- row A -->
+<rect class="pn" x="10" y="60" width="130" height="150" rx="4"/>
+<text class="h" x="20" y="80">alice</text>
+<text x="20" y="102">Claude Code</text>
+<text class="m" x="20" y="120">mirafleet mcp</text>
+<text class="b" x="20" y="146">workspace.exec</text>
+<text class="m" x="20" y="164">go test ./...</text>
+
+<rect class="pn" x="190" y="60" width="290" height="150" rx="4"/>
+<text class="b" x="200" y="80">service.ExecWorkspace</text>
+<text x="200" y="102">active operator, owner?</text>
+<text x="200" y="120">workspace state: open?</text>
+<text x="200" y="138">argv, cwd, env checked</text>
+<text x="200" y="156">guarded: confirm = prod?</text>
+<text x="200" y="174">timeout within fleet max</text>
+<text class="m" x="200" y="196">then the stdin body frame</text>
+
+<rect class="pn" x="530" y="60" width="300" height="150" rx="4"/>
+<text class="h" x="540" y="80">Audit (workspace column)</text>
+<g class="st" style="--i:3"><rect class="chw" x="540" y="90" width="120" height="24" rx="2"/><text class="tw" x="550" y="107">start</text></g>
+<g class="st" style="--i:8"><rect class="cho" x="540" y="120" width="120" height="24" rx="2"/><text class="to" x="550" y="137">outcome</text></g>
+<text class="m" x="540" y="168">argv clipped to 4 KiB</text>
+<text class="m" x="540" y="186">env NAMES only, never values</text>
+<text class="m" x="540" y="204">same request_id on both</text>
+
+<!-- row B -->
+<rect class="pn" x="190" y="250" width="190" height="130" rx="4"/>
+<text class="b" x="200" y="270">registry.Workspace</text>
+<text x="200" y="292">opens workspace@</text>
+<text x="200" y="310">on the runner's own</text>
+<text x="200" y="328">SSH connection,</text>
+<text x="200" y="346">waits for one frame</text>
+
+<rect class="pn" x="450" y="250" width="380" height="170" rx="4"/>
+<text class="h" x="460" y="270">Runner build-1</text>
+<rect class="bx" x="460" y="280" width="170" height="54" rx="2"/>
+<text class="b" x="468" y="299">re-validate</text>
+<text class="m" x="468" y="317">own workspace.yaml</text>
+<rect class="bx" x="650" y="280" width="170" height="54" rx="2"/>
+<text class="b" x="658" y="299">container exec</text>
+<text class="m" x="658" y="317">uid 1000, no caps</text>
+<text x="460" y="360">no shell: argv goes as given</text>
+<text x="460" y="378">output: head + tail, 1 MiB</text>
+<text x="460" y="396">timeout or cancel: SIGKILL</text>
+
+<!-- arrows -->
+<g class="st" style="--i:1"><circle class="bdg" cx="126" cy="70" r="11"/><text class="bt" x="126" y="74.5">1</text></g>
+<g class="st" style="--i:2">
+<line class="ln" x1="142" y1="100" x2="188" y2="100" marker-end="url(#ah)"/>
+<circle class="bdg" cx="165" cy="82" r="11"/><text class="bt" x="165" y="86.5">2</text>
+</g>
+<g class="st" style="--i:3">
+<line class="ln" x1="482" y1="100" x2="528" y2="100" marker-end="url(#ah)"/>
+<circle class="bdg" cx="505" cy="82" r="11"/><text class="bt" x="505" y="86.5">3</text>
+</g>
+<g class="st" style="--i:4">
+<line class="ln" x1="330" y1="212" x2="330" y2="248" marker-end="url(#ah)"/>
+<line class="ln" x1="382" y1="305" x2="448" y2="305" marker-end="url(#ah)"/>
+<text class="m" x="386" y="290">op JSON</text>
+<circle class="bdg" cx="352" cy="230" r="11"/><text class="bt" x="352" y="234.5">4</text>
+</g>
+<g class="st" style="--i:5"><circle class="bdg" cx="618" cy="270" r="11"/><text class="bt" x="618" y="274.5">5</text></g>
+<g class="st" style="--i:6">
+<line class="ln" x1="632" y1="307" x2="648" y2="307" marker-end="url(#ah)"/>
+<circle class="bdg" cx="808" cy="270" r="11"/><text class="bt" x="808" y="274.5">6</text>
+</g>
+<g class="st" style="--i:7">
+<line class="ln" x1="448" y1="350" x2="382" y2="350" marker-end="url(#ah)"/>
+<line class="ln" x1="240" y1="248" x2="240" y2="212" marker-end="url(#ah)"/>
+<text class="m" x="392" y="370">result</text>
+<circle class="bdg" cx="415" cy="336" r="11"/><text class="bt" x="415" y="340.5">7</text>
+</g>
+<g class="st" style="--i:8">
+<line class="ln" x1="482" y1="150" x2="528" y2="150" marker-end="url(#ah)"/>
+<line class="ln" x1="188" y1="170" x2="142" y2="170" marker-end="url(#ah)"/>
+<text class="m" x="144" y="188">reply</text>
+<circle class="bdg" cx="505" cy="132" r="11"/><text class="bt" x="505" y="136.5">8</text>
+</g>
+<circle class="dot pk" cx="0" cy="0" r="7"/>
+
+<!-- steps -->
+<text class="h" x="10" y="454">Steps</text>
+<g class="st" style="--i:1"><text x="10" y="478"><tspan class="b">1</tspan> alice's agent calls workspace.exec (argv go test ./...) through mirafleet mcp.</text></g>
+<g class="st" style="--i:2"><text x="10" y="498"><tspan class="b">2</tspan> One api@ frame arrives; the method table routes it to service.ExecWorkspace.</text></g>
+<g class="st" style="--i:3"><text x="10" y="518"><tspan class="b">3</tspan> Checks pass, then the "start" audit row is written FIRST. No row, no exec (fail closed).</text></g>
+<g class="st" style="--i:4"><text x="10" y="538"><tspan class="b">4</tspan> registry.Workspace opens a workspace@mirafleet channel; the op travels as JSON open data.</text></g>
+<g class="st" style="--i:5"><text x="10" y="558"><tspan class="b">5</tspan> The runner re-validates argv, cwd, env and timeout itself. Central is not trusted.</text></g>
+<g class="st" style="--i:6"><text x="10" y="578"><tspan class="b">6</tspan> The command runs inside the container as uid 1000. Output is captured, trimmed to the budget.</text></g>
+<g class="st" style="--i:7"><text x="10" y="598"><tspan class="b">7</tspan> The runner writes one result frame: exit code, stdout, stderr, truncated, timed_out.</text></g>
+<g class="st" style="--i:8"><text x="10" y="618"><tspan class="b">8</tspan> Central writes the "outcome" row and replies to alice.</text></g>
+</svg>

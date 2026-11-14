@@ -2,7 +2,10 @@
 // SSH channel/request names and the JSON messages carried over them.
 package transport
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // SSH names. Central->runner channels and runner->central global requests.
 // ChanWorkspace (workspace@mirafleet) is defined in workspace.go with the workspace messages.
@@ -51,8 +54,17 @@ func (h *Heartbeat) Validate() error {
 	if h.Slots < 0 || h.Slots > MaxHeartbeatSlots {
 		return errors.New("heartbeat slots out of range")
 	}
-	if len(h.Executor) > maxHeartbeatNameBytes || len(h.SecureRuntime) > maxHeartbeatNameBytes {
-		return errors.New("heartbeat executor/secure_runtime too long")
+	// Executor is a name, not an enum: central places workspaces by exact match against the fleet's
+	// configured executor, so only the shape is checked here.
+	if h.Executor != "" && (len(h.Executor) > 32 || !heartbeatCharsOK(h.Executor, "-") ||
+		h.Executor[0] < 'a' || h.Executor[0] > 'z' || strings.ToLower(h.Executor) != h.Executor) {
+		return errors.New("heartbeat executor has an invalid name")
+	}
+	if len(h.SecureRuntime) > maxHeartbeatNameBytes {
+		return errors.New("heartbeat secure_runtime too long")
+	}
+	if !heartbeatCharsOK(h.SecureRuntime, "._-/:") {
+		return errors.New("heartbeat secure_runtime has invalid characters")
 	}
 	if len(h.Images) > MaxHeartbeatImages {
 		return errors.New("too many heartbeat images")
@@ -61,8 +73,22 @@ func (h *Heartbeat) Validate() error {
 		if len(im) > MaxHeartbeatImageBytes {
 			return errors.New("heartbeat image too long")
 		}
+		if im == "" || !heartbeatCharsOK(im, "._-/:@*") {
+			return errors.New("heartbeat image has invalid characters")
+		}
 	}
 	return nil
+}
+
+// heartbeatCharsOK reports whether s consists only of ASCII letters, digits and the extra bytes.
+func heartbeatCharsOK(s, extra string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.IndexByte(extra, c) >= 0) {
+			return false
+		}
+	}
+	return true
 }
 
 // ExecRequest is sent as the extra data of an exec@mirafleet channel open.

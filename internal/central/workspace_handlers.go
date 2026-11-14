@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
-	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 	"github.com/mirastacklabs-ai/mirafleet/internal/service"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
@@ -219,6 +218,9 @@ func handleFleetWorkspaceSet(ctx context.Context, c *callCtx, req *api.Request) 
 	if e := api.DecodeParams(req.Params, &p); e != nil {
 		return nil, e
 	}
+	if e := checkWorkspaceSeconds(&p.Workspace); e != nil {
+		return nil, e
+	}
 	// Full replace: the complete config is mapped field by field, nothing is merged.
 	if _, err := c.svc.SetFleetWorkspace(ctx, c.p, c.src, p.Fleet, *workspaceFromAPI(&p.Workspace)); err != nil {
 		return nil, err
@@ -227,7 +229,7 @@ func handleFleetWorkspaceSet(ctx context.Context, c *callCtx, req *api.Request) 
 	if err != nil {
 		return nil, err
 	}
-	return api.FleetWorkspaceSetResult{Fleet: fleetInfo(f, c.p.Kind == auth.KindAdmin)}, nil
+	return api.FleetWorkspaceSetResult{Fleet: fleetInfo(f, c.exposeConfig())}, nil
 }
 
 func handleWorkspaceAdminList(ctx context.Context, c *callCtx, req *api.Request) (any, error) {
@@ -251,8 +253,9 @@ func handleWorkspaceKill(ctx context.Context, c *callCtx, req *api.Request) (any
 	if e := api.DecodeParams(req.Params, &p); e != nil {
 		return nil, e
 	}
-	if _, err := c.svc.KillWorkspace(ctx, c.p, c.src, p.ID); err != nil {
+	w, err := c.svc.KillWorkspace(ctx, c.p, c.src, p.ID)
+	if err != nil {
 		return nil, err
 	}
-	return api.WorkspaceKillResult{}, nil
+	return api.WorkspaceKillResult{State: string(w.State)}, nil
 }
