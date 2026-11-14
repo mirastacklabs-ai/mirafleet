@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -198,3 +199,70 @@ func TestEncodeResultWorstCase(t *testing.T) {
 }
 
 func writeFile(p, s string) error { return os.WriteFile(p, []byte(s), 0o600) }
+
+// S5: an actions-mode runner advertises its actions (bounded, valid); a workspace-mode or
+// unconfigured runner sends none.
+func TestFillActions(t *testing.T) {
+	set, err := actions.Parse([]byte(`{actions: {b: {run: ["/bin/echo", "{{x}}"], params: {x: {pattern: "[a-z]+", default: "d"}}}, a: {run: ["/usr/bin/true"]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hb transport.Heartbeat
+	(&Runner{cfg: Config{Actions: set}}).fillActions(&hb)
+	if len(hb.Actions) != 2 || hb.Actions[0].Name != "a" || hb.Actions[1].Name != "b" ||
+		len(hb.Actions[1].Params) != 1 || hb.Actions[1].Params[0].Default == nil || *hb.Actions[1].Params[0].Default != "d" {
+		t.Fatalf("actions: %+v", hb.Actions)
+	}
+	if err := hb.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	var none transport.Heartbeat
+	(&Runner{}).fillActions(&none)
+	if none.Actions != nil {
+		t.Fatalf("no actions config sent actions: %+v", none.Actions)
+	}
+	// Oversize entries are dropped rather than breaking the heartbeat.
+	big, err := actions.Parse([]byte(`{actions: {ok: {run: ["/usr/bin/true"]}, "` + strings.Repeat("n", 65) + `": {run: ["/usr/bin/true"]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h2 transport.Heartbeat
+	(&Runner{cfg: Config{Actions: big}}).fillActions(&h2)
+	if len(h2.Actions) != 1 || h2.Actions[0].Name != "ok" || h2.Validate() != nil {
+		t.Fatalf("oversize not dropped: %+v", h2.Actions)
+	}
+}
+
+// A huge actions.yaml must not push the heartbeat over the byte cap or stop registration.
+func TestFillActionsByteBudget(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString("{actions: {")
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&sb, "a%03d: {run: [\"/usr/bin/true\"], params: {", i)
+		for j := 0; j < 8; j++ {
+			fmt.Fprintf(&sb, "p%d: {pattern: \"%s\", default: \"x\"}, ", j, "x"+strings.Repeat("|x", 120))
+		}
+		sb.WriteString("}}, ")
+	}
+	sb.WriteString("}}")
+	set, err := actions.Parse([]byte(sb.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged string
+	r := &Runner{cfg: Config{Actions: set, Logf: func(f string, a ...any) { logged = fmt.Sprintf(f, a...) }}}
+	var hb transport.Heartbeat
+	r.fillActions(&hb)
+	if len(hb.Actions) == 0 || len(hb.Actions) >= 100 {
+		t.Fatalf("actions kept: %d", len(hb.Actions))
+	}
+	if n := transport.ActionsEncodedSize(hb.Actions); n > transport.MaxActionsBytes {
+		t.Fatalf("encoded %d > cap", n)
+	}
+	if err := hb.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logged, "left out") {
+		t.Fatalf("nothing logged: %q", logged)
+	}
+}

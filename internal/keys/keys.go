@@ -17,19 +17,82 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// Platform hooks, set by acl_windows.go. On Windows os.Chmod/os.OpenFile modes do not set a DACL,
+// so directories and private files are created with a protected owner-only DACL instead.
+var (
+	mkdirPrivate func(dir string) error
+	createExcl   func(path string, mode os.FileMode) (*os.File, error)
+)
+
 // EnsureDir creates dir with mode 0700 and tightens it to 0700 if it already exists. On Windows
-// os.Chmod(0700) is effectively a no-op (it only toggles the read-only attribute); owner-only
-// DACLs arrive with M5, and until then the Windows key loader fails closed.
+// it creates the missing directories with a protected owner-only DACL (acl_windows.go).
 func EnsureDir(dir string) error {
+	if mkdirPrivate != nil {
+		return mkdirPrivate(dir)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	return os.Chmod(dir, 0o700)
 }
 
-// WriteNew creates path exclusively (it must not exist) with the given mode.
+// ACE policy shared by all platforms so it can be unit-tested anywhere; only Windows feeds it.
+const (
+	aceTypeAllow = 0 // ACCESS_ALLOWED_ACE_TYPE; every other value (deny, audit, callback...) is refused
+	sidSystem    = "S-1-5-18"
+	sidAdmins    = "S-1-5-32-544"
+)
+
+type aceEntry struct {
+	Type      byte
+	Inherited bool
+	SID       string // set for allow ACEs only
+}
+
+type aclInfo struct {
+	Owner     string
+	Protected bool // SE_DACL_PROTECTED: no inheritance from the parent
+	HasDACL   bool // a NULL DACL grants everyone full access
+	ACEs      []aceEntry
+}
+
+// aclPolicy fails closed unless the owner is user, the DACL is present and protected, and every
+// ACE is an explicit allow for user, SYSTEM or BUILTIN\Administrators. Deny ACEs are refused too:
+// a deny on a foreign SID would be harmless, but accepting some denies means reasoning about
+// ordering and group membership; a key we created never has one, so refusing costs nothing.
+func aclPolicy(a aclInfo, user string) error {
+	if a.Owner != user {
+		return fmt.Errorf("owner %s is not the current user", a.Owner)
+	}
+	if !a.HasDACL {
+		return fmt.Errorf("no DACL (grants everyone access)")
+	}
+	if !a.Protected {
+		return fmt.Errorf("DACL is not protected from inheritance")
+	}
+	for _, e := range a.ACEs {
+		switch {
+		case e.Type != aceTypeAllow:
+			return fmt.Errorf("unsupported ACE type %d", e.Type)
+		case e.Inherited:
+			return fmt.Errorf("inherited ACE for %s", e.SID)
+		case e.SID != user && e.SID != sidSystem && e.SID != sidAdmins:
+			return fmt.Errorf("access granted to %s", e.SID)
+		}
+	}
+	return nil
+}
+
+// WriteNew creates path exclusively (it must not exist) with the given mode. On Windows a mode
+// without group/other bits yields a protected owner-only DACL from creation.
 func WriteNew(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	var f *os.File
+	var err error
+	if createExcl != nil {
+		f, err = createExcl(path, mode)
+	} else {
+		f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	}
 	if err != nil {
 		return err
 	}

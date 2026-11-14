@@ -3,9 +3,79 @@
 package transport
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
+
+// Action discovery bounds (Heartbeat.Actions). Informational only: the runner's actions.yaml
+// stays the security boundary.
+const (
+	MaxHeartbeatActions     = 128
+	MaxActionNameBytes      = 64
+	MaxActionParams         = 32
+	MaxActionPatternBytes   = 256
+	MaxActionDefaultBytes   = 256
+	maxActionParamNameBytes = 64
+	// MaxActionsBytes caps the JSON-encoded size of Heartbeat.Actions, so discovery can neither
+	// overflow the SSH packet limit nor blow up runners.list.
+	MaxActionsBytes = 16 << 10
+)
+
+// ActionsEncodedSize returns the JSON-encoded size of an actions list.
+func ActionsEncodedSize(as []ActionInfo) int {
+	b, _ := json.Marshal(as)
+	return len(b)
+}
+
+// ActionParam describes one action parameter. Default is nil when the parameter is required.
+type ActionParam struct {
+	Name    string  `json:"name"`
+	Pattern string  `json:"pattern"`
+	Default *string `json:"default,omitempty"`
+}
+
+// ActionInfo describes one action a runner offers (no argv, paths or environment).
+type ActionInfo struct {
+	Name   string        `json:"name"`
+	Params []ActionParam `json:"params,omitempty"`
+}
+
+func printable(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsPrint(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidateAction bounds one ActionInfo.
+func ValidateAction(a ActionInfo) error {
+	if a.Name == "" || len(a.Name) > MaxActionNameBytes || !printable(a.Name) {
+		return errors.New("heartbeat action name invalid")
+	}
+	if len(a.Params) > MaxActionParams {
+		return errors.New("heartbeat action has too many params")
+	}
+	for _, p := range a.Params {
+		if p.Name == "" || len(p.Name) > maxActionParamNameBytes || !printable(p.Name) {
+			return errors.New("heartbeat action param name invalid")
+		}
+		if len(p.Pattern) > MaxActionPatternBytes || !printable(p.Pattern) {
+			return errors.New("heartbeat action pattern invalid")
+		}
+		if p.Default != nil && (len(*p.Default) > MaxActionDefaultBytes || !printable(*p.Default)) {
+			return errors.New("heartbeat action default invalid")
+		}
+	}
+	return nil
+}
 
 // SSH names. Central->runner channels and runner->central global requests.
 // ChanWorkspace (workspace@mirafleet) is defined in workspace.go with the workspace messages.
@@ -47,6 +117,10 @@ type Heartbeat struct {
 	Executor      string   `json:"executor,omitempty"`       // "containerd" or "opensandbox"
 	SecureRuntime string   `json:"secure_runtime,omitempty"` // "gvisor", "kata" or empty
 	Images        []string `json:"images,omitempty"`         // advertised image patterns, <= 32 entries of <= 256 bytes
+
+	// Actions (M5, additive): the actions an actions-mode runner offers, for discovery only.
+	// <= 128 actions; see ValidateAction. M2/M3 runners omit it.
+	Actions []ActionInfo `json:"actions,omitempty"`
 }
 
 // Validate bounds the optional workspace fields of a heartbeat.
@@ -76,6 +150,17 @@ func (h *Heartbeat) Validate() error {
 		if im == "" || !heartbeatCharsOK(im, "._-/:@*") {
 			return errors.New("heartbeat image has invalid characters")
 		}
+	}
+	if len(h.Actions) > MaxHeartbeatActions {
+		return errors.New("too many heartbeat actions")
+	}
+	for _, a := range h.Actions {
+		if err := ValidateAction(a); err != nil {
+			return err
+		}
+	}
+	if len(h.Actions) > 0 && ActionsEncodedSize(h.Actions) > MaxActionsBytes {
+		return errors.New("heartbeat actions too large")
 	}
 	return nil
 }

@@ -2,12 +2,9 @@
 
 package keys
 
-import (
-	"errors"
-	"os"
-)
+import "os"
 
-// checkPrivateKeyPerm fails closed: a DACL check lands in M5.
-func checkPrivateKeyPerm(_ string, _ os.FileInfo) error {
-	return errors.New("private key permissions cannot be verified on windows yet (M5)")
+// checkPrivateKeyPerm verifies the key file's owner and DACL (see acl_windows.go).
+func checkPrivateKeyPerm(path string, _ os.FileInfo) error {
+	return checkPathACL(path)
 }

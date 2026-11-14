@@ -154,6 +154,45 @@ func (s *Set) Names() []string {
 	return n
 }
 
+// ParamInfo describes one parameter of an action for discovery.
+type ParamInfo struct {
+	Name    string
+	Pattern string
+	Default *string // nil: the parameter is required
+}
+
+// ActionInfo describes one action for discovery. It carries no argv, path or environment.
+type ActionInfo struct {
+	Name   string
+	Params []ParamInfo
+}
+
+// Describe lists the actions, sorted by name, with params sorted by name. It is informational
+// (action discovery); authorisation always goes through Plan.
+func (s *Set) Describe() []ActionInfo {
+	out := make([]ActionInfo, 0, len(s.Actions))
+	for _, name := range s.Names() {
+		ai := ActionInfo{Name: name}
+		a := s.Actions[name]
+		pns := make([]string, 0, len(a.Params))
+		for pn := range a.Params {
+			pns = append(pns, pn)
+		}
+		sort.Strings(pns)
+		for _, pn := range pns {
+			p := a.Params[pn]
+			pi := ParamInfo{Name: pn, Pattern: p.Pattern}
+			if p.Default != nil {
+				d := *p.Default
+				pi.Default = &d
+			}
+			ai.Params = append(ai.Params, pi)
+		}
+		out = append(out, ai)
+	}
+	return out
+}
+
 // Plan validates a request and returns the final argv and timeout, or a *RefusedError.
 func (s *Set) Plan(name string, params map[string]string) ([]string, time.Duration, error) {
 	a, ok := s.Actions[name]

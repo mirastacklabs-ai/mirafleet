@@ -8,6 +8,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 	"github.com/mirastacklabs-ai/mirafleet/internal/central/registry"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
+	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
 // RevokeReason is the kick reason and audit message for a revoked runner.
@@ -23,6 +24,9 @@ type RunnerView struct {
 	Slots     int
 	FreeSlots int
 	Executor  string
+	// Actions an actions-mode runner advertised (informational, from the latest heartbeat,
+	// bounded by Heartbeat.Validate). Never used for authorisation.
+	Actions []transport.ActionInfo
 }
 
 // ListRunners lists a fleet's non-revoked runners merged with the registry snapshot. Allowed
@@ -52,6 +56,7 @@ func (s *Service) ListRunners(ctx context.Context, p auth.Principal, src Source,
 			if si.LastHeartbeat.After(v.LastSeenAt) {
 				v.LastSeenAt = si.LastHeartbeat
 			}
+			v.Actions = si.Info.Actions
 			if si.Slots > 0 {
 				v.Slots, v.Executor, v.FreeSlots = si.Slots, si.Executor, si.Slots
 				ids = append(ids, r.ID)

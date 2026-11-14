@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -35,11 +36,54 @@ func Dir() (string, error) {
 		}
 		return filepath.Clean(d), nil
 	}
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("locate user config dir: %w", err)
+	return platformConfigDir()
+}
+
+// EnvStateDir overrides the state directory (tests). It must be an absolute path.
+const EnvStateDir = "MIRAFLEET_STATE_DIR"
+
+// StateDir returns the per-user state directory (session handoff files): $MIRAFLEET_STATE_DIR,
+// else linux os.UserCacheDir()/mirafleet, darwin ~/Library/Caches/mirafleet, windows
+// %LocalAppData%\mirafleet\state. It does not create it.
+func StateDir() (string, error) {
+	if d := os.Getenv(EnvStateDir); d != "" {
+		if !filepath.IsAbs(d) {
+			return "", fmt.Errorf("%s must be an absolute path", EnvStateDir)
+		}
+		return filepath.Clean(d), nil
 	}
-	return filepath.Join(base, "mirafleet"), nil
+	return platformStateDir()
+}
+
+// windowsConfigDir is the Windows config dir computed from env: %LocalAppData%\mirafleet, never
+// Roaming (it would copy the key to a profile server). Pure so it is testable on any OS.
+func windowsConfigDir(getenv func(string) string) (string, error) {
+	base := getenv("LocalAppData")
+	if base == "" {
+		return "", errors.New("%LocalAppData% is not set")
+	}
+	if !isWinAbs(base) {
+		return "", errors.New("%LocalAppData% must be an absolute path")
+	}
+	return strings.TrimRight(base, `\/`) + `\mirafleet`, nil
+}
+
+// windowsStateDir is %LocalAppData%\mirafleet\state.
+func windowsStateDir(getenv func(string) string) (string, error) {
+	d, err := windowsConfigDir(getenv)
+	if err != nil {
+		return "", err
+	}
+	return d + `\state`, nil
+}
+
+// isWinAbs accepts drive-letter (C:\ or C:/) and UNC (\\host) paths.
+func isWinAbs(p string) bool {
+	if len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') &&
+		(p[0] >= 'A' && p[0] <= 'Z' || p[0] >= 'a' && p[0] <= 'z') {
+		return true
+	}
+	return strings.HasPrefix(p, `\\`)
 }
 
 // EnsureDir returns Dir after creating it with mode 0700 (tightened if it already exists).
@@ -67,18 +111,132 @@ func ContextsPath(dir string) string { return filepath.Join(dir, ContextsName) }
 type Context struct {
 	Name string `yaml:"name"`
 	Addr string `yaml:"addr"` // host:port
+	// DefaultFleet is used when neither a tool argument, a flag nor .mirafleet.yaml names a fleet.
+	DefaultFleet string `yaml:"default_fleet,omitempty"`
 }
+
+// Output cap bounds and default (bytes).
+const (
+	MinOutputCap     = 4096
+	MaxOutputCap     = 262144
+	DefaultOutputCap = 30720
+)
 
 // Contexts is the contents of contexts.yaml.
 type Contexts struct {
 	Current  string    `yaml:"current,omitempty"`
 	Contexts []Context `yaml:"contexts"`
+	// OutputCapBytes caps tool output; 0 (absent) means DefaultOutputCap.
+	OutputCapBytes int `yaml:"output_cap_bytes,omitempty"`
 }
 
+// OutputCap returns the effective output cap in bytes.
+func (c *Contexts) OutputCap() int {
+	if c.OutputCapBytes == 0 {
+		return DefaultOutputCap
+	}
+	return c.OutputCapBytes
+}
+
+// Find returns the named context.
+func (c *Contexts) Find(name string) (Context, bool) {
+	for _, x := range c.Contexts {
+		if x.Name == name {
+			return x, true
+		}
+	}
+	return Context{}, false
+}
+
+// Names lists context names in file order.
+func (c *Contexts) Names() []string {
+	out := make([]string, 0, len(c.Contexts))
+	for _, x := range c.Contexts {
+		out = append(out, x.Name)
+	}
+	return out
+}
+
+// Use sets the current context; it must exist.
+func (c *Contexts) Use(name string) error {
+	if _, ok := c.Find(name); !ok {
+		return fmt.Errorf("no such context %q", name)
+	}
+	c.Current = name
+	return nil
+}
+
+// Remove deletes a context, clearing Current if it pointed at it.
+func (c *Contexts) Remove(name string) error {
+	for i, x := range c.Contexts {
+		if x.Name == name {
+			c.Contexts = append(c.Contexts[:i:i], c.Contexts[i+1:]...)
+			if c.Current == name {
+				c.Current = ""
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("no such context %q", name)
+}
+
+// UseContext loads contexts.yaml from dir, sets the current context and saves atomically.
+func UseContext(dir, name string) error {
+	c, err := LoadContexts(dir)
+	if err != nil {
+		return err
+	}
+	if err := c.Use(name); err != nil {
+		return err
+	}
+	return SaveContexts(dir, c)
+}
+
+// RemoveContext loads contexts.yaml from dir, removes the context and saves atomically.
+func RemoveContext(dir, name string) error {
+	c, err := LoadContexts(dir)
+	if err != nil {
+		return err
+	}
+	if err := c.Remove(name); err != nil {
+		return err
+	}
+	return SaveContexts(dir, c)
+}
+
+// nameRE is the context and fleet name grammar. It matches store.FleetNameRE; opconf cannot import
+// store (SQLite) on the orchestrator side.
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
-// Validate checks names and addresses and that Current, if set, exists.
+// errJump is returned when a contexts file carries a jump key.
+var errJump = errors.New("SSH jump hosts are not supported yet (remove the \"jump\" key)")
+
+// rejectJump walks the YAML tree and fails on any mapping key named "jump".
+func rejectJump(n *yaml.Node) error {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].Value == "jump" {
+				return errJump
+			}
+		}
+	}
+	for _, ch := range n.Content {
+		if err := rejectJump(ch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Validate checks names, addresses, default fleets, the output cap and that Current, if set,
+// exists.
 func (c *Contexts) Validate() error {
+	if c.OutputCapBytes != 0 && (c.OutputCapBytes < MinOutputCap || c.OutputCapBytes > MaxOutputCap) {
+		return fmt.Errorf("output_cap_bytes %d out of range %d..%d", c.OutputCapBytes, MinOutputCap, MaxOutputCap)
+	}
 	seen := map[string]bool{}
 	for _, x := range c.Contexts {
 		if !nameRE.MatchString(x.Name) {
@@ -90,6 +248,9 @@ func (c *Contexts) Validate() error {
 		seen[x.Name] = true
 		if x.Addr == "" {
 			return fmt.Errorf("context %q: addr required", x.Name)
+		}
+		if x.DefaultFleet != "" && !nameRE.MatchString(x.DefaultFleet) {
+			return fmt.Errorf("context %q: invalid default_fleet %q", x.Name, x.DefaultFleet)
 		}
 	}
 	if c.Current != "" && !seen[c.Current] {
@@ -107,6 +268,12 @@ func LoadContexts(dir string) (*Contexts, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(b, &root); err == nil {
+		if err := rejectJump(&root); err != nil {
+			return nil, fmt.Errorf("%s: %w", ContextsPath(dir), err)
+		}
 	}
 	var c Contexts
 	dec := yaml.NewDecoder(bytes.NewReader(b))

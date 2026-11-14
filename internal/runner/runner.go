@@ -186,6 +186,7 @@ func (r *Runner) session(ctx context.Context) (healthy bool, err error) {
 	hostname, _ := os.Hostname()
 	hb := transport.Heartbeat{Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, Version: r.cfg.Version, Labels: r.cfg.Labels}
 	r.fillHeartbeat(&hb)
+	r.fillActions(&hb)
 	payload, _ := json.Marshal(hb)
 	tick := time.NewTicker(r.cfg.HeartbeatEvery)
 	defer tick.Stop()
@@ -201,6 +202,48 @@ func (r *Runner) session(ctx context.Context) (healthy bool, err error) {
 			return false, fmt.Errorf("connection lost: %v", err)
 		case <-tick.C:
 		}
+	}
+}
+
+// fillActions adds action discovery (actions mode only), dropping anything that would fail
+// Heartbeat.Validate: discovery is informational and must never stop a runner from connecting.
+func (r *Runner) fillActions(hb *transport.Heartbeat) {
+	if r.cfg.Actions == nil {
+		return
+	}
+	all := r.cfg.Actions.Describe()
+	size := 2 // "[]"
+	added := 0
+	for _, a := range all {
+		if len(hb.Actions) >= transport.MaxHeartbeatActions {
+			break
+		}
+		ai := transport.ActionInfo{Name: a.Name}
+		for _, p := range a.Params {
+			ai.Params = append(ai.Params, transport.ActionParam{Name: p.Name, Pattern: p.Pattern, Default: p.Default})
+		}
+		if transport.ValidateAction(ai) != nil {
+			continue
+		}
+		b, _ := json.Marshal(ai)
+		next := size + len(b)
+		if added > 0 {
+			next++ // comma
+		}
+		if next > transport.MaxActionsBytes {
+			break
+		}
+		size = next
+		added++
+		hb.Actions = append(hb.Actions, ai)
+	}
+	if left := len(all) - added; left > 0 {
+		logf := r.cfg.Logf
+		if logf == nil {
+			logf = func(string, ...any) {}
+		}
+		logf("action discovery: %d of %d actions left out (invalid, or over the %d-byte / %d-action budget)",
+			left, len(all), transport.MaxActionsBytes, transport.MaxHeartbeatActions)
 	}
 }
 

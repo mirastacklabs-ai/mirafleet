@@ -79,15 +79,24 @@ licenses)
 	# --ignore modernc.org/mathutil: its LICENSE is verbatim BSD-3-Clause text (reviewed by hand)
 	# but go-licenses' classifier cannot match it ("The mathutil Authors" wording). The ignore is
 	# valid only for the reviewed version, pinned below; any bump fails until re-reviewed.
+	# --ignore github.com/segmentio/asm: its LICENSE is verbatim MIT-0 (MIT No Attribution,
+	# approved and on the CLAUDE.md allowlist), reviewed by hand, but go-licenses v1.6.0 has no
+	# MIT-0 classifier and reports it as unknown. MIT-0 stays in --allowed_licenses for when it does.
+	# Pinned to the reviewed version like mathutil. Linked via go-sdk -> segmentio/encoding (M5 §10).
+	# github.com/modelcontextprotocol/go-sdk (Apache-2.0 + MIT combined file) needs no ignore:
+	# go-licenses classifies it as an allowed licence.
 	run ro "v=\$(go list -m -f '{{.Version}}' modernc.org/mathutil)
 		[ \"\$v\" = v1.7.1 ] || { echo 're-review modernc.org/mathutil licence' >&2; exit 1; }
+		v=\$(go list -m -f '{{.Version}}' github.com/segmentio/asm)
+		[ \"\$v\" = v1.2.1 ] || { echo 're-review github.com/segmentio/asm licence' >&2; exit 1; }
 		GOBIN=/tmp/bin go install github.com/google/go-licenses@v1.6.0
 		for t in $TARGETS; do
 			export GOOS=\${t%/*} GOARCH=\${t#*/} CGO_ENABLED=0
 			echo \"== \$t\"
 			/tmp/bin/go-licenses check ./... \\
 				--ignore modernc.org/mathutil \\
-				--allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,0BSD
+				--ignore github.com/segmentio/asm \\
+				--allowed_licenses=Apache-2.0,MIT,MIT-0,BSD-2-Clause,BSD-3-Clause,ISC,0BSD
 		done"
 	;;
 integration)

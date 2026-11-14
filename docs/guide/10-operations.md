@@ -655,7 +655,6 @@ central log. The tables are grouped by where you are when it goes wrong.
 | `host key does not match the pinned key (server presented SHA256:...)` | During join/login: the server's key is not the one in your token/code. Could be the wrong address, a rebuilt central, or an attack. | Do not continue. Verify the address and the fingerprint (`central operator code` prints it). |
 | `invalid name "Alice" (lowercase letters, digits, . _ -; max 63)` | Name rules. | Use a lowercase name. |
 | `central address "central.example.com": ... missing port in address` | The address needs a port. | `central.example.com:2222` |
-| `operator key storage is not supported on windows yet ...` | `mirafleet mcp` builds on Windows but cannot verify private-key permissions yet, so key loading fails closed. | Use Linux or macOS; Windows runs from M5. |
 
 ### Starting and running a runner
 

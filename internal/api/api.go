@@ -585,6 +585,24 @@ type RunnerInfo struct {
 	Slots     int    `json:"slots,omitempty"`
 	FreeSlots int    `json:"free_slots,omitempty"`
 	Executor  string `json:"executor,omitempty"`
+	// Actions-mode runners (additive, informational: actions.yaml on the runner is the boundary).
+	Actions []ActionInfo `json:"actions,omitempty"`
+	// ActionsOmitted: the runner advertises actions, but the response's action budget was used up
+	// by earlier runners; query it alone or ask for fewer runners to see them.
+	ActionsOmitted bool `json:"actions_omitted,omitempty"`
+}
+
+// ActionParamInfo describes one action parameter. Default is absent when required.
+type ActionParamInfo struct {
+	Name    string  `json:"name"`
+	Pattern string  `json:"pattern"`
+	Default *string `json:"default,omitempty"`
+}
+
+// ActionInfo is an action a runner advertises: name and parameter shapes only.
+type ActionInfo struct {
+	Name   string            `json:"name"`
+	Params []ActionParamInfo `json:"params,omitempty"`
 }
 type RunnersListResult struct {
 	Runners []RunnerInfo `json:"runners"`

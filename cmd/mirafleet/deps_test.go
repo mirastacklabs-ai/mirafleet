@@ -89,3 +89,71 @@ func TestLinuxLinksContainerd(t *testing.T) {
 	}
 	t.Fatal("linux binary links no containerd package: the non-linux check proves nothing")
 }
+
+const mcpSDK = "github.com/modelcontextprotocol/go-sdk"
+
+// goListPkgs runs `go list` with args for the whole module and returns the output lines.
+func goListPkgs(t *testing.T, goos string, args ...string) []string {
+	t.Helper()
+	cmd := exec.Command("go", append([]string{"list"}, args...)...)
+	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list %v for %s: %v\n%s", args, goos, err, out)
+	}
+	return strings.Split(strings.TrimSpace(string(out)), "\n")
+}
+
+// forbiddenForOrchestrator reports packages the orchestrator side (MCP server, orch core, hooks)
+// must never link: the server-side stack, SQLite and containerd (docs/M5.md §1.2).
+func forbiddenForOrchestrator(pkg string) bool {
+	const mod = "github.com/mirastacklabs-ai/mirafleet/"
+	for _, p := range []string{"internal/service", "internal/store", "internal/central", "internal/runner", "internal/workspace/ctrd"} {
+		if pkg == mod+p || strings.HasPrefix(pkg, mod+p+"/") {
+			return true
+		}
+	}
+	return strings.HasPrefix(pkg, "modernc.org/") || strings.HasPrefix(pkg, "github.com/containerd/")
+}
+
+// The orchestrator side must stay light and pure Go on all six targets. Packages that do not
+// exist yet are skipped; only the ones present are checked. The go-sdk may be imported only by
+// internal/mcpserver.
+func TestOrchestratorDeps(t *testing.T) {
+	requireGo(t)
+	const mod = "github.com/mirastacklabs-ai/mirafleet/"
+	targets := []string{"internal/orch", "internal/mcpserver", "integrations/claude-code/hook"}
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		for _, rel := range targets {
+			if _, err := os.Stat("../../" + rel); err != nil {
+				continue // not written yet
+			}
+			for _, dep := range goListPkgs(t, goos, "-deps", "-f", "{{.ImportPath}}", "./../../"+rel) {
+				if forbiddenForOrchestrator(dep) {
+					t.Errorf("%s: %s links %s", goos, rel, dep)
+				}
+			}
+		}
+
+		// go-sdk importers: no package but internal/mcpserver may import it directly.
+		for _, line := range goListPkgs(t, goos, "-test", "-f", "{{.ImportPath}} {{join .Imports \",\"}} {{join .TestImports \",\"}} {{join .XTestImports \",\"}}", "../../...") {
+			f := strings.SplitN(line, " ", 2)
+			if len(f) < 2 {
+				continue
+			}
+			pkg := strings.TrimSuffix(strings.Fields(f[0])[0], "_test")
+			if i := strings.Index(pkg, " ["); i >= 0 {
+				pkg = pkg[:i]
+			}
+			if pkg == mod+"internal/mcpserver" || strings.HasPrefix(pkg, mod+"internal/mcpserver.") ||
+				strings.HasPrefix(pkg, mod+"internal/mcpserver/") {
+				continue
+			}
+			for _, imp := range strings.FieldsFunc(f[1], func(r rune) bool { return r == ',' || r == ' ' }) {
+				if imp == mcpSDK || strings.HasPrefix(imp, mcpSDK+"/") {
+					t.Errorf("%s: %s imports %s; only internal/mcpserver may", goos, pkg, imp)
+				}
+			}
+		}
+	}
+}

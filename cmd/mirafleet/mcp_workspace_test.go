@@ -145,3 +145,25 @@ func TestCheckOutPath(t *testing.T) {
 		t.Error("directory as output accepted")
 	}
 }
+
+func TestWriteReadFileBodyErrors(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "o.bin")
+	// E-09: an undecodable result is reported as such, not as a length mismatch.
+	err := writeReadFileBody(out, json.RawMessage(`{"length":"x"}`), []byte("abc"))
+	if err == nil || !strings.Contains(err.Error(), "bad result") || strings.Contains(err.Error(), "announces") {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	err = writeReadFileBody(out, json.RawMessage(`{"length":5}`), []byte("abc"))
+	if err == nil || !strings.Contains(err.Error(), "announces 5") || strings.Contains(err.Error(), "bad result") {
+		t.Fatalf("length mismatch: %v", err)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Fatal("file written despite errors")
+	}
+	if err := writeReadFileBody(out, json.RawMessage(`{"length":3}`), []byte("abc")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(out); string(b) != "abc" {
+		t.Fatalf("body %q", b)
+	}
+}

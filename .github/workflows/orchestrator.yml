@@ -1,0 +1,61 @@
+name: orchestrator
+
+# Orchestrator-side packages (mirafleet mcp, keys, config) on the OSes where central is not built.
+# Central and runner are Linux-only and are gated locally by scripts/dev.sh.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orchestrator-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Orchestrator packages under test. Append as they land (do not list a package before it exists):
+  #   ./internal/handoff/... ./internal/orch/... ./internal/mcpserver/...
+  #   ./integrations/claude-code/hook/...
+  PKGS: ./internal/keys/... ./internal/opconf/...
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: vet
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+        run: go vet $PKGS
+      - name: build (shipped config, CGO_ENABLED=0)
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+        run: go build -o "$RUNNER_TEMP/mirafleet-bin.exe" ./cmd/mirafleet
+      - name: test (CGO_ENABLED=0, as shipped)
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+        run: go test $PKGS
+      - name: test -race (CGO_ENABLED=1 because the race detector needs cgo)
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race $PKGS

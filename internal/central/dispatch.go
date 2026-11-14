@@ -2,6 +2,7 @@ package central
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -184,17 +185,46 @@ func handleRunnersList(ctx context.Context, c *callCtx, req *api.Request) (any, 
 	if err != nil {
 		return nil, err
 	}
+	return buildRunnersList(vs), nil
+}
+
+// maxListActionsBytes budgets the encoded action bytes in one runners.list response, so action
+// discovery can never push the fleet listing over api.MaxResponseBytes.
+const maxListActionsBytes = 512 << 10
+
+// buildRunnersList keeps the order of vs. Runners are listed with their actions while the running
+// total of encoded action bytes stays within maxListActionsBytes; later ones are listed without
+// actions and flagged ActionsOmitted.
+func buildRunnersList(vs []service.RunnerView) api.RunnersListResult {
 	out := api.RunnersListResult{Runners: make([]api.RunnerInfo, len(vs))}
+	used := 0
 	for i, v := range vs {
 		ri := api.RunnerInfo{Name: v.Name, Status: string(v.Status), Online: v.Online, Labels: v.Labels,
 			Slots: v.Slots, FreeSlots: v.FreeSlots, Executor: v.Executor}
+		var acts []api.ActionInfo
+		for _, a := range v.Actions {
+			ai := api.ActionInfo{Name: a.Name}
+			for _, p := range a.Params {
+				ai.Params = append(ai.Params, api.ActionParamInfo{Name: p.Name, Pattern: p.Pattern, Default: p.Default})
+			}
+			acts = append(acts, ai)
+		}
+		if len(acts) > 0 {
+			b, _ := json.Marshal(acts)
+			if used+len(b) <= maxListActionsBytes {
+				used += len(b)
+				ri.Actions = acts
+			} else {
+				ri.ActionsOmitted = true
+			}
+		}
 		if !v.LastSeenAt.IsZero() {
 			t := v.LastSeenAt
 			ri.LastSeen = &t
 		}
 		out.Runners[i] = ri
 	}
-	return out, nil
+	return out
 }
 
 func handleActionRun(ctx context.Context, c *callCtx, req *api.Request) (any, error) {
