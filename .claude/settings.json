@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(python*)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(perl*)",
+      "Bash(perl *)",
+      "Bash(sed -i*)",
+      "Bash(sed * -i*)"
+    ]
+  }
+}

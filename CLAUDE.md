@@ -15,7 +15,7 @@ Milestones: [docs/PLAN.md](docs/PLAN.md). Developer guide (for new engineers):
 - Central's OSS store is SQLite via `modernc.org/sqlite` (pure Go), behind the `Store` interface.
 - Keep dependencies to those listed in docs/PLAN.md; ask before adding others.
 - Licenses (all deps, transitive included, and any bundled binary or asset): permissive only —
-  Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD. Never GPL, LGPL, AGPL, MPL, SSPL, BUSL
+  Apache-2.0, MIT, MIT-0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD. Never GPL, LGPL, AGPL, MPL, SSPL, BUSL
   or other copyleft/source-available. `scripts/dev.sh licenses` enforces this with `go-licenses` (CI from M6).
   Exception: font files may be SIL OFL-1.1 (shipped with their licence text, never sold alone).
 - Branding: follow [docs/BRAND.md](docs/BRAND.md) for the GUI, CLI colours, docs and store assets.
