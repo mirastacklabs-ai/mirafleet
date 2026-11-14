@@ -60,8 +60,10 @@ func mcpMain(args []string, stdin io.Reader, stdout io.Writer) error {
 		return mcpLogin(args[1:], stdin, stdout)
 	case "api":
 		return mcpAPI(args[1:], stdin, stdout)
+	case "hook":
+		return mcpHookMain(args[1:], stdin, stdout)
 	}
-	return fmt.Errorf("unknown mcp command %q (want serve, context, login or api)", args[0])
+	return fmt.Errorf("unknown mcp command %q (want serve, context, login, api or hook)", args[0])
 }
 
 // loadOperatorKey loads the operator key through internal/keys, whose per-platform permission

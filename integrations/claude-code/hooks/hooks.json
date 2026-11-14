@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mirafleet",
+            "args": ["mcp", "hook", "claude-code", "session-start"]
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mirafleet",
+            "args": ["mcp", "hook", "claude-code", "session-end"],
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__plugin_mirafleet_mirafleet__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mirafleet",
+            "args": ["mcp", "hook", "claude-code", "pre-tool-use"]
+          }
+        ]
+      }
+    ]
+  }
+}

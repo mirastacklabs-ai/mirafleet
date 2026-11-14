@@ -154,18 +154,18 @@ func checkOrchestratorDeps(t *testing.T, mod string, targets []string, goos, goa
 			}
 		}
 
-		// go-sdk importers: no package but internal/mcpserver may import it directly.
-		for _, line := range goListPkgs(t, goos, goarch, "-test", "-f", "{{.ImportPath}} {{join .Imports \",\"}} {{join .TestImports \",\"}} {{join .XTestImports \",\"}}", "../../...") {
+		// go-sdk importers: no non-test package but internal/mcpserver may import it directly.
+		// Test files are exempt on purpose: the rule keeps the SDK out of shipped code, and test
+		// files never ship. Tests (e.g. the TestM5Done acceptance test) may use the SDK's MCP client
+		// to drive the server. So this lists WITHOUT -test: the Imports field then covers only
+		// non-test files, and _test / [pkg.test] variants are never visited.
+		for _, line := range goListPkgs(t, goos, goarch, "-f", "{{.ImportPath}} {{join .Imports \",\"}}", "../../...") {
 			f := strings.SplitN(line, " ", 2)
 			if len(f) < 2 {
 				continue
 			}
-			pkg := strings.TrimSuffix(strings.Fields(f[0])[0], "_test")
-			if i := strings.Index(pkg, " ["); i >= 0 {
-				pkg = pkg[:i]
-			}
-			if pkg == mod+"internal/mcpserver" || strings.HasPrefix(pkg, mod+"internal/mcpserver.") ||
-				strings.HasPrefix(pkg, mod+"internal/mcpserver/") {
+			pkg := f[0]
+			if pkg == mod+"internal/mcpserver" || strings.HasPrefix(pkg, mod+"internal/mcpserver/") {
 				continue
 			}
 			for _, imp := range strings.FieldsFunc(f[1], func(r rune) bool { return r == ',' || r == ' ' }) {

@@ -1,0 +1,14 @@
+{
+  "name": "mirafleet",
+  "displayName": "mirafleet",
+  "version": "0.5.0",
+  "description": "Orchestrate fleets of servers from Claude Code through a central mirafleet server: allowlisted actions and isolated workspaces.",
+  "author": {
+    "name": "mirastacklabs-ai",
+    "url": "https://github.com/mirastacklabs-ai"
+  },
+  "homepage": "https://github.com/mirastacklabs-ai/mirafleet",
+  "repository": "https://github.com/mirastacklabs-ai/mirafleet",
+  "license": "Apache-2.0",
+  "keywords": ["fleet", "mcp", "servers", "ops"]
+}
