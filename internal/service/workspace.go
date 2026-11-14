@@ -189,6 +189,11 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		return store.Workspace{}, false, s.fail("get fleet", err)
 	}
 	if f.Mode != store.ModeWorkspace {
+		// F-41: a mode mismatch is audited as one denied row (no start row exists yet).
+		den := s.event(p, src, api.MethodWorkspaceOpen)
+		den.Fleet, den.Subject = fleet, session
+		den.Outcome, den.Message = OutcomeDenied, "fleet is not in workspace mode"
+		s.recordBestEffort(ctx, den)
 		return store.Workspace{}, false, api.Errorf(api.CodeConflict, "fleet is not in workspace mode")
 	}
 	cfg := store.WorkspaceConfig{}
@@ -204,7 +209,7 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		if _, aerr := s.st.RecordAudit(ctx, den); aerr != nil {
 			s.logf("service: audit of refused confirm failed: %v", aerr)
 		}
-		return store.Workspace{}, false, badRequest("fleet requires confirm to equal the fleet name")
+		return store.Workspace{}, false, badRequest(api.MsgConfirmRequired)
 	}
 	if image == "" {
 		image = cfg.DefaultImage
@@ -293,6 +298,7 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 					why = "recording the open failed"
 				}
 				s.destroyStray(ctx, c.info.ID, id, why)
+				s.failStuckOpening(ctx, p, src, fleet, c.runner.Name, id, session, rid, why)
 				return store.Workspace{}, false, s.fail("open workspace", serr)
 			}
 			ow.Fleet, ow.Runner, ow.Operator = fleet, c.runner.Name, p.Name
@@ -325,6 +331,7 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		if !busy && (deadline || ctx.Err() != nil || lerr != nil) {
 			// The runner may still finish the create: make sure what it builds does not survive.
 			s.destroyStray(ctx, c.info.ID, id, reason)
+			s.failStuckOpening(ctx, p, src, fleet, c.runner.Name, id, session, rid, reason)
 		}
 		if busy && tried < maxPlacementTries {
 			continue
@@ -344,6 +351,28 @@ func (s *Service) destroyStray(ctx context.Context, runnerID int64, id, why stri
 		s.logf("service: destroyed stray workspace %s on runner %d (%s)", id, runnerID, why)
 	} else {
 		s.logf("service: could not destroy stray workspace %s on runner %d (%s); reconcile will retry", id, runnerID, why)
+	}
+}
+
+// failStuckOpening (F-27) re-reads the row after destroyStray and, if it is still opening (the
+// open could not be recorded), moves it to failed with an audit row, so session reuse is not
+// blocked until the stale sweep. Best effort: errors are logged only.
+func (s *Service) failStuckOpening(ctx context.Context, p auth.Principal, src Source, fleet, runner, id, session, rid, why string) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeWriteTimeout)
+	defer cancel()
+	w, err := s.st.GetWorkspace(rctx, id)
+	if err != nil {
+		s.logf("service: re-read stray workspace %s: %v", id, err)
+		return
+	}
+	if w.State != store.WorkspaceOpening {
+		return
+	}
+	ev := s.wsEvent(p, src, api.MethodWorkspaceOpen, fleet, runner, id, rid)
+	ev.Subject, ev.Outcome, ev.Message = session, OutcomeError, "open failed: "+why
+	if _, err := s.finishWorkspace(ctx, id, store.WorkspaceOpening, store.WorkspaceFailed, why, ev); err != nil &&
+		!errors.Is(err, store.ErrConflict) {
+		s.logf("service: mark stray workspace %s failed: %v", id, err)
 	}
 }
 
@@ -395,7 +424,10 @@ func (s *Service) reuse(ctx context.Context, p auth.Principal, src Source, w sto
 
 // ownedWorkspace loads a workspace the principal owns; anyone else gets not_found so existence
 // does not leak.
-func (s *Service) ownedWorkspace(ctx context.Context, p auth.Principal, wsID string) (store.Workspace, error) {
+//
+// F-43: a refusal on an existing workspace of another operator is audited as denied (requester as
+// actor, the workspace id); the caller still sees plain not_found.
+func (s *Service) ownedWorkspace(ctx context.Context, p auth.Principal, src Source, method, wsID string) (store.Workspace, error) {
 	if !workspace.ValidID(workspace.ID(wsID)) {
 		return store.Workspace{}, api.Errorf(api.CodeNotFound, "not found")
 	}
@@ -404,6 +436,9 @@ func (s *Service) ownedWorkspace(ctx context.Context, p auth.Principal, wsID str
 		return store.Workspace{}, s.fail("get workspace", err)
 	}
 	if w.OperatorID != p.ID {
+		den := s.wsEvent(p, src, method, w.Fleet, w.Runner, w.WsID, "")
+		den.Subject, den.Outcome, den.Message = w.Session, OutcomeDenied, "not the workspace owner"
+		s.recordBestEffort(ctx, den)
 		return store.Workspace{}, api.Errorf(api.CodeNotFound, "not found")
 	}
 	return w, nil
@@ -418,7 +453,7 @@ func (s *Service) CloseWorkspace(ctx context.Context, p auth.Principal, src Sour
 	if err := s.requireOperator(ctx, p, src, api.MethodWorkspaceClose); err != nil {
 		return store.Workspace{}, err
 	}
-	w, err := s.ownedWorkspace(ctx, p, wsID)
+	w, err := s.ownedWorkspace(ctx, p, src, api.MethodWorkspaceClose, wsID)
 	if err != nil {
 		return store.Workspace{}, err
 	}

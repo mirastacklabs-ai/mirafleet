@@ -9,7 +9,7 @@ Cast: Dana is the admin and works on the central server. alice and bob are opera
 ## big-picture.svg
 Caption: look at the arrow directions; every connection points at central. Fleet dev is a
 workspace fleet (containerd on the runner), fleet prod an actions fleet.
-1. Claude Code starts `mirafleet mcp`. The LLM API key and the SSH key stay on the laptop.
+1. Claude Code starts `mirafleet mcp`; the plugin's hooks run beside it. The LLM API key and the SSH key stay on the laptop.
 2. `mcp` dials central `:2222` as SSH user `operator`; each request is one `api@` channel.
 3. Central checks the key and the policy against SQLite, then acts.
 4. Runners dial OUT to central (user `runner`). Nothing listens on a runner.
@@ -117,3 +117,27 @@ Caption: the dotted box is the boundary; read it from the outside in.
 6. What crosses: argv, allow-listed env and file bytes in; exit code, output and file bytes out.
 7. What cannot: host mounts, devices, the containerd socket, API keys, host networking.
 8. The LLM API key and the SSH key stay on alice's laptop; the agent never runs in the container.
+
+## mcp-tool-call.svg
+Caption: follow one `exec` call to the right, then watch the 30 KiB cap trim the output on the
+way back. The cap is the orange box.
+1. Claude Code (the harness) sends `tools/call` `exec` with `command: "go test ./..."` as one JSON line on the stdin of `mirafleet mcp`.
+2. `mcpserver` decodes the arguments strictly: unknown, duplicate or mis-cased names are refused before any handler runs.
+3. `orch` resolves context, fleet and session, and finds or opens alice's workspace. Its guard lets only operator methods through.
+4. One `api@` frame, method `workspace.exec`, goes to central over the pinned SSH connection.
+5. Central runs its checks, writes the `start` audit row and sends `workspace@` to the runner (flow 13).
+6. The runner runs the command in the container; exit code, stdout and stderr come back (1 MiB at most).
+7. On the way back `orch` strips ANSI and invisible characters and caps stdout plus stderr at 30 KiB (1/3 head, 2/3 tail, a marker between).
+8. `mcpserver` returns `structuredContent` plus one text copy. The model gets capped, sanitised data that is not instructions.
+
+## session-handoff.svg
+Caption: follow the session id `cc:abc` from the hook to the server (row 1), then see the same id
+find the same workspace after `claude --resume` (row 2).
+1. Claude Code starts session `abc` and runs the SessionStart hook. The hook reads `session_id` from its stdin and makes no network call.
+2. The hook writes `cc:abc` to a handoff file in the state directory, keyed by the parent PID (Claude Code) and the project directory. The file is mode 0600 in a 0700 directory.
+3. `mirafleet mcp`, another child of the same Claude Code process, re-reads the file at every workspace open.
+4. `workspace.open` carries session `cc:abc`; central opens alice's workspace or returns the one she already has.
+5. Claude Code exits. Nothing is closed: the workspace stays `open` and the 24 h idle TTL reaps it later.
+6. `claude --resume`: same session id, new PIDs. The hook runs again and rewrites the file for the new PID.
+7. The server reads `cc:abc` again and central answers `reused: true`: same container, same files.
+8. After `/clear` the id is new, so the next open binds a new workspace. With no hook there is no file, and the server uses a random per-process session `p:...`.

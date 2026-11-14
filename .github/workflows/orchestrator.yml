@@ -17,9 +17,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Orchestrator packages under test. Append as they land (do not list a package before it exists):
-  #   ./integrations/claude-code/hook/...
-  PKGS: ./internal/keys/... ./internal/opconf/... ./internal/handoff/... ./internal/orch/... ./internal/mcpserver/...
+  # Orchestrator packages under test. Append as they land (do not list a package before it exists).
+  # Nothing is pending. The integrations/ tests (plugin files, harness docs) are not listed: they
+  # compare file bytes and need LF checkouts (see .gitattributes) before they can run on Windows.
+  PKGS: ./internal/keys/... ./internal/opconf/... ./internal/handoff/... ./internal/orch/... ./internal/mcpserver/... ./integrations/claude-code/hook/...
 
 jobs:
   test:

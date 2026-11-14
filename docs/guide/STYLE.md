@@ -46,6 +46,8 @@ guide they understand the whole design and code and never need to ask the author
 | `diagrams/workspace-open.svg` | `workspace.open`: checks, sticky reuse, placement, reserve, create on the runner |
 | `diagrams/workspace-exec.svg` | one `workspace.exec` through every layer and back, with both audit rows |
 | `diagrams/workspace-boundary.svg` | the container boundary: what is locked down, what crosses, what cannot |
+| `diagrams/mcp-tool-call.svg` | one `exec` MCP tool call: harness → `mcp` → central → runner, with the output cap on the way back |
+| `diagrams/session-handoff.svg` | the session handoff file: hook writes `cc:<id>`, server reads it, `--resume` reattaches |
 
 ## Chapter files
 `README.md` (index and reading order), `glossary.md`, `01-what-is-mirafleet.md`,

@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math/big"
 	"net"
 	"os"
@@ -44,6 +45,10 @@ type PKI struct {
 
 // InitPKI mints the node PKI into dir, which must exist with mode 0700 (no group/other access).
 // No existing file is overwritten. days is the validity of all three certificates (1..3650).
+//
+// The files are created relative to a handle on the directory (os.Root), not by path, so a swap
+// of dir (or of a component above it) after the check cannot redirect the writes (F-19). On linux
+// a caller that already holds a verified directory fd uses InitPKIAt instead.
 func InitPKI(dir string, days int, now time.Time) (*PKI, error) {
 	if days < 1 || days > 3650 {
 		return nil, fmt.Errorf("days %d out of range (1..3650)", days)
@@ -55,9 +60,56 @@ func InitPKI(dir string, days int, now time.Time) (*PKI, error) {
 	if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("%s is not a directory", dir)
 	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("%s: mode %04o is too open (want 0700)", dir, fi.Mode().Perm())
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
 	}
+	defer root.Close()
+	// Verify the handle we will write through, not the path: it must be the directory Lstat saw.
+	rfi, err := root.Stat(".")
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(fi, rfi) {
+		return nil, fmt.Errorf("%s changed while opening it", dir)
+	}
+	if rfi.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("%s: mode %04o is too open (want 0700)", dir, rfi.Mode().Perm())
+	}
+	return mintPKI(dir, days, now, rootSink{root})
+}
+
+// pkiSink creates files exclusively (mode 0600, never following a final symlink) inside one
+// already-verified directory, and removes them again on rollback.
+type pkiSink interface {
+	create(name string, b []byte) error
+	remove(name string)
+}
+
+type rootSink struct{ r *os.Root }
+
+func (s rootSink) create(name string, b []byte) error {
+	f, err := s.r.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		s.r.Remove(name)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		s.r.Remove(name)
+		return err
+	}
+	return nil
+}
+
+func (s rootSink) remove(name string) { s.r.Remove(name) }
+
+// mintPKI generates the keys and certificates and writes them through sink. dir is only used to
+// build the returned paths.
+func mintPKI(dir string, days int, now time.Time, sink pkiSink) (*PKI, error) {
 	notBefore := now.Add(-5 * time.Minute)
 	notAfter := now.Add(time.Duration(days) * 24 * time.Hour)
 
@@ -119,28 +171,25 @@ func InitPKI(dir string, days int, now time.Time) (*PKI, error) {
 		FrontPinSHA: SPKIPin(srvCert), NotAfter: notAfter,
 	}
 	files := []struct {
-		path, typ string
+		name, typ string
 		der       []byte
 	}{
-		{p.CAFile, "CERTIFICATE", caDER}, {p.FrontCert, "CERTIFICATE", srvDER}, {p.FrontKey, "PRIVATE KEY", srvKey},
-		{p.ClientCert, "CERTIFICATE", cliDER}, {p.ClientKey, "PRIVATE KEY", cliKey},
+		{PKICAFile, "CERTIFICATE", caDER}, {PKIFrontCertFile, "CERTIFICATE", srvDER}, {PKIFrontKeyFile, "PRIVATE KEY", srvKey},
+		{PKIClientCertFile, "CERTIFICATE", cliDER}, {PKIClientKeyFile, "PRIVATE KEY", cliKey},
 	}
-	for _, f := range files { // refuse before writing anything
-		if _, err := os.Lstat(f.path); err == nil {
-			return nil, fmt.Errorf("%s already exists: use an empty directory (nothing was written)", f.path)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-	}
+	// O_EXCL refuses an existing name; files this call created are rolled back (never others).
 	var written []string
 	for _, f := range files {
-		if err := writeNew0600(f.path, pem.EncodeToMemory(&pem.Block{Type: f.typ, Bytes: f.der})); err != nil {
+		if err := sink.create(f.name, pem.EncodeToMemory(&pem.Block{Type: f.typ, Bytes: f.der})); err != nil {
 			for _, w := range written {
-				os.Remove(w)
+				sink.remove(w)
+			}
+			if errors.Is(err, fs.ErrExist) {
+				return nil, fmt.Errorf("%s already exists: use an empty directory (nothing was written)", filepath.Join(dir, f.name))
 			}
 			return nil, err
 		}
-		written = append(written, f.path)
+		written = append(written, f.name)
 	}
 	return p, nil
 }
@@ -151,18 +200,4 @@ func serial() *big.Int {
 		panic(err) // crypto/rand failing is unrecoverable
 	}
 	return n.Add(n, big.NewInt(1))
-}
-
-// writeNew0600 creates path exclusively with mode 0600.
-func writeNew0600(path string, b []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		os.Remove(path)
-		return err
-	}
-	return f.Close()
 }

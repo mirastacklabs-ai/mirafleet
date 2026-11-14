@@ -95,8 +95,43 @@ type wsState struct {
 	b       Backend
 	mu      sync.Mutex
 	bound   map[bindKey]string
-	fleetOf map[wsRef]string // explicit workspace id -> its real fleet (looked up once)
-	openMu  sync.Mutex       // serialises implicit opens
+	fleetOf map[wsRef]string     // explicit workspace id -> its real fleet (looked up once)
+	locks   map[bindKey]*keyLock // per-binding open locks (guarded by mu)
+}
+
+// keyLock serialises opens of one binding. It is a channel so a waiter can give up with its
+// context; refs frees the map entry when nobody holds or awaits it.
+type keyLock struct {
+	ch   chan struct{}
+	refs int
+}
+
+// lockKey takes the open lock of k. Implicit and explicit opens of the same (context, fleet,
+// session) serialise on it; opens of other keys never wait for each other, and no lock is held
+// by anything but the open of its own key.
+func (s *wsState) lockKey(ctx context.Context, k bindKey) (func(), error) {
+	s.mu.Lock()
+	l := s.locks[k]
+	if l == nil {
+		l = &keyLock{ch: make(chan struct{}, 1)}
+		s.locks[k] = l
+	}
+	l.refs++
+	s.mu.Unlock()
+	release := func() {
+		s.mu.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(s.locks, k)
+		}
+		s.mu.Unlock()
+	}
+	select {
+	case l.ch <- struct{}{}:
+		return func() { <-l.ch; release() }, nil
+	case <-ctx.Done():
+		release()
+		return nil, &Error{Code: api.CodeTimeout, Message: "gave up waiting for another open of this workspace"}
+	}
 }
 
 func (s *wsState) cachedFleet(r wsRef) (string, bool) {
@@ -146,7 +181,7 @@ func (s *wsState) unbindID(cname, id string) {
 // WorkspaceTools returns workspace_open, exec, read_file, write_file and workspace_close. Each
 // call creates its own binding state, so every server process (and test) is independent.
 func WorkspaceTools(b Backend) []Tool {
-	s := &wsState{b: b, bound: map[bindKey]string{}, fleetOf: map[wsRef]string{}}
+	s := &wsState{b: b, bound: map[bindKey]string{}, fleetOf: map[wsRef]string{}, locks: map[bindKey]*keyLock{}}
 	return []Tool{
 		{
 			Name: "workspace_open",
@@ -219,8 +254,8 @@ func checkWorkspaceArg(id string) error {
 }
 
 func guardedErr(t orch.Target) error {
-	return &Error{Code: api.CodeBadRequest, Message: guardedText(t) + " Open it with workspace_open first " +
-		"(ask the user; only after they explicitly agree, set `confirm` to the fleet name)."}
+	return &Error{Code: api.CodeBadRequest, Message: guardedText(t) + " Open it with workspace_open first (not with this tool). " +
+		askUserSentence}
 }
 
 // srcWorkspace is the fleet source reported for an explicit workspace id.
@@ -286,10 +321,18 @@ func (s *wsState) pick(ctx context.Context, contextArg, fleetArg, wsArg string, 
 		return selection{t: t, id: id, key: k}, nil
 	}
 	if !allowOpen {
+		// No binding (a fresh server process, or another one opened it): find this session's
+		// live workspace on the fleet instead of making the model open one just to close it.
+		if id, ok := s.sessionWorkspace(ctx, t, session); ok {
+			return selection{t: t, id: id, key: k}, nil
+		}
 		return selection{}, badRequest("no workspace is open on this fleet: call workspace_open first")
 	}
-	s.openMu.Lock()
-	defer s.openMu.Unlock()
+	unlock, lerr := s.lockKey(ctx, k)
+	if lerr != nil {
+		return selection{}, lerr
+	}
+	defer unlock()
 	if id, ok := s.get(k); ok { // opened by a concurrent call
 		return selection{t: t, id: id, key: k}, nil
 	}
@@ -315,6 +358,21 @@ func (s *wsState) pick(ctx context.Context, contextArg, fleetArg, wsArg string, 
 	}
 	s.set(k, r.Workspace.ID)
 	return selection{t: t, id: r.Workspace.ID, key: k}, nil
+}
+
+// sessionWorkspace finds the caller's live workspace for session on t's fleet through the
+// workspace list (central only lists the caller's own). A failing list means "none".
+func (s *wsState) sessionWorkspace(ctx context.Context, t orch.Target, session string) (string, bool) {
+	lr, err := s.b.WorkspaceList(ctx, t.Context, t.Fleet)
+	if err != nil {
+		return "", false
+	}
+	for _, w := range lr.Workspaces {
+		if w.Session == session && w.Fleet == t.Fleet && liveState(w.State) {
+			return w.ID, true
+		}
+	}
+	return "", false
 }
 
 // failed maps a backend error. A not_found on a bound (not explicit) workspace may mean the
@@ -390,6 +448,12 @@ func (s *wsState) open(ctx context.Context, req Request) (any, error) {
 		return nil, err
 	}
 	session, source := s.b.SessionFor(t) // re-read at every open
+	k := bindKey{t.Context, t.Fleet, session}
+	unlock, lerr := s.lockKey(ctx, k) // serialised with implicit opens of the same binding
+	if lerr != nil {
+		return nil, lerr
+	}
+	defer unlock()
 	r, err := s.b.WorkspaceOpen(ctx, t.Context, api.WorkspaceOpenParams{
 		Fleet: t.Fleet, Session: session, Image: a.Image, Labels: a.Labels,
 		Confirm: a.Confirm, // verbatim: never defaulted or cached
@@ -397,7 +461,7 @@ func (s *wsState) open(ctx context.Context, req Request) (any, error) {
 	if err != nil {
 		return nil, guardedRewrite(toolError(err), t)
 	}
-	s.set(bindKey{t.Context, t.Fleet, session}, r.Workspace.ID)
+	s.set(k, r.Workspace.ID)
 	w := r.Workspace
 	return openOut{
 		Workspace: wsInfoOut{ID: w.ID, Fleet: w.Fleet, Runner: w.Runner, Session: w.Session, Image: w.Image,
@@ -544,8 +608,12 @@ func (s *wsState) readFile(ctx context.Context, req Request) (any, error) {
 		return nil, badRequest("`offset` and `limit` must be >= 0")
 	}
 	limit := a.Limit
-	if limit == 0 {
+	defaultPage := limit == 0
+	if defaultPage { // size the page by what it costs once encoded, not by raw bytes
 		limit = s.b.OutputCap()
+		if enc == "base64" {
+			limit = limit / 4 * 3
+		}
 	}
 	if limit > api.MaxFileChunk {
 		limit = api.MaxFileChunk
@@ -567,6 +635,11 @@ func (s *wsState) readFile(ctx context.Context, req Request) (any, error) {
 		return nil, &Error{Code: api.CodeUnavailable, Message: "central sent an unexpected reply"}
 	}
 	eof := r.EOF
+	if defaultPage && enc == "text" {
+		if cut := fitEncoded(body, s.b.OutputCap()); len(cut) < len(body) {
+			body, eof = cut, false // the rest comes on the next page
+		}
+	}
 	out := readOut{Encoding: enc, Offset: r.Offset, Size: r.Size, Where: whereOf(sel.t)}
 	if enc == "base64" {
 		out.Content = base64.StdEncoding.EncodeToString(body)
@@ -597,6 +670,31 @@ func (s *wsState) readFile(ctx context.Context, req Request) (any, error) {
 		out.EOF = true
 	}
 	return out, nil
+}
+
+// fitEncoded returns the longest prefix of b (cut at a rune boundary, at least one rune) whose
+// JSON-string encoding takes at most max bytes. The cost is counted on the raw bytes, which is
+// never less than the cost of the sanitised text (sanitising only removes or shortens).
+func fitEncoded(b []byte, max int) []byte {
+	cost, i := 0, 0
+	for i < len(b) {
+		r, w := utf8.DecodeRune(b[i:])
+		c := w
+		switch {
+		case r == utf8.RuneError && w == 1: // invalid byte: encoded as �
+			c = 6
+		case r == '"' || r == '\\' || r == '\n' || r == '\r' || r == '\t':
+			c = 2
+		case r < 0x20 || r == '<' || r == '>' || r == '&' || r == 0x2028 || r == 0x2029:
+			c = 6
+		}
+		if cost+c > max && i > 0 {
+			break
+		}
+		cost += c
+		i += w
+	}
+	return b[:i]
 }
 
 // trimPartialRune drops a trailing incomplete UTF-8 sequence (a page that ended inside a rune).

@@ -63,7 +63,7 @@ func windowsConfigDir(getenv func(string) string) (string, error) {
 		return "", errors.New("%LocalAppData% is not set")
 	}
 	if !isWinAbs(base) {
-		return "", errors.New("%LocalAppData% must be an absolute path")
+		return "", errors.New("%LocalAppData% must be a local absolute path (drive letter; UNC paths are refused)")
 	}
 	return strings.TrimRight(base, `\/`) + `\mirafleet`, nil
 }
@@ -77,13 +77,12 @@ func windowsStateDir(getenv func(string) string) (string, error) {
 	return d + `\state`, nil
 }
 
-// isWinAbs accepts drive-letter (C:\ or C:/) and UNC (\\host) paths.
+// isWinAbs accepts drive-letter (C:\ or C:/) paths only. UNC paths (\\host\share) are refused:
+// the operator key would live on a network share, where the local owner-only DACL check does not
+// apply (F-10).
 func isWinAbs(p string) bool {
-	if len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') &&
-		(p[0] >= 'A' && p[0] <= 'Z' || p[0] >= 'a' && p[0] <= 'z') {
-		return true
-	}
-	return strings.HasPrefix(p, `\\`)
+	return len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') &&
+		(p[0] >= 'A' && p[0] <= 'Z' || p[0] >= 'a' && p[0] <= 'z')
 }
 
 // EnsureDir returns Dir after creating it with mode 0700 (tightened if it already exists).
@@ -182,26 +181,43 @@ func (c *Contexts) Remove(name string) error {
 
 // UseContext loads contexts.yaml from dir, sets the current context and saves atomically.
 func UseContext(dir, name string) error {
-	c, err := LoadContexts(dir)
-	if err != nil {
-		return err
-	}
-	if err := c.Use(name); err != nil {
-		return err
-	}
-	return SaveContexts(dir, c)
+	return UpdateContexts(dir, func(c *Contexts) error { return c.Use(name) })
 }
 
 // RemoveContext loads contexts.yaml from dir, removes the context and saves atomically.
 func RemoveContext(dir, name string) error {
+	return UpdateContexts(dir, func(c *Contexts) error { return c.Remove(name) })
+}
+
+// LockName is the advisory lock file next to contexts.yaml. It stays on disk (empty); the lock is
+// held on an open file, so a leftover file never blocks anyone.
+const LockName = ".contexts.lock"
+
+// UpdateContexts is a locked load-modify-save of contexts.yaml (F-11): it takes an exclusive
+// advisory lock (flock; LockFileEx on Windows) on LockName, loads the file (a missing one is
+// empty), runs fn, and saves only if fn returns nil. Two concurrent updates (two `mcp login`
+// runs, or login racing `mcp context use`) therefore cannot lose each other's change. The lock
+// is advisory: it protects only against other callers of UpdateContexts / SaveContexts. A plain
+// LoadContexts followed by SaveContexts has no such protection and can overwrite a concurrent
+// change; use UpdateContexts for any read-modify-write. The lock is not re-entrant: fn must not
+// call any opconf function that takes it (SaveContexts, UseContext, RemoveContext, UpdateContexts).
+func UpdateContexts(dir string, fn func(*Contexts) error) error {
+	if err := keys.EnsureDir(dir); err != nil {
+		return err
+	}
+	lk, err := lockFile(filepath.Join(dir, LockName))
+	if err != nil {
+		return fmt.Errorf("lock %s: %w", ContextsPath(dir), err)
+	}
+	defer lk.Close()
 	c, err := LoadContexts(dir)
 	if err != nil {
 		return err
 	}
-	if err := c.Remove(name); err != nil {
+	if err := fn(c); err != nil {
 		return err
 	}
-	return SaveContexts(dir, c)
+	return saveContexts(dir, c)
 }
 
 // nameRE is the context and fleet name grammar. It matches store.FleetNameRE; opconf cannot import
@@ -276,9 +292,7 @@ func LoadContexts(dir string) (*Contexts, error) {
 		}
 	}
 	var c Contexts
-	dec := yaml.NewDecoder(bytes.NewReader(b))
-	dec.KnownFields(true)
-	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
+	if err := decodeSingle(b, &c); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", ContextsPath(dir), err)
 	}
 	if err := c.Validate(); err != nil {
@@ -287,9 +301,50 @@ func LoadContexts(dir string) (*Contexts, error) {
 	return &c, nil
 }
 
-// SaveContexts validates and writes contexts.yaml (0600) via a temp file, fsync and rename. It
-// creates dir (0700) if needed.
+// errMultiDoc is returned when a YAML file carries more than one document (F-07).
+var errMultiDoc = errors.New("more than one YAML document (remove the extra \"---\" section)")
+
+// decodeSingle strictly decodes exactly one YAML document into out: unknown fields are an error,
+// an empty input leaves out untouched, and a second document is refused rather than ignored.
+func decodeSingle(b []byte, out any) error {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if err := dec.Decode(out); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	var extra yaml.Node
+	switch err := dec.Decode(&extra); {
+	case err == nil:
+		return errMultiDoc
+	case !errors.Is(err, io.EOF):
+		return err
+	}
+	return nil
+}
+
+// SaveContexts validates and writes contexts.yaml (0600; on Windows an explicit owner-only DACL)
+// via a private temp file, fsync, rename and a directory fsync, under the contexts lock. It
+// creates dir (0700) if needed. For a read-modify-write use UpdateContexts.
 func SaveContexts(dir string, c *Contexts) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if err := keys.EnsureDir(dir); err != nil {
+		return err
+	}
+	lk, err := lockFile(filepath.Join(dir, LockName))
+	if err != nil {
+		return fmt.Errorf("lock %s: %w", ContextsPath(dir), err)
+	}
+	defer lk.Close()
+	return saveContexts(dir, c)
+}
+
+// saveContexts is SaveContexts for a caller that already holds the lock and has made dir.
+func saveContexts(dir string, c *Contexts) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
@@ -297,25 +352,5 @@ func SaveContexts(dir string, c *Contexts) error {
 	if err != nil {
 		return err
 	}
-	if err := keys.EnsureDir(dir); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, ".contexts-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, ContextsPath(dir))
+	return keys.WriteAtomic0600(dir, ContextsName, b)
 }

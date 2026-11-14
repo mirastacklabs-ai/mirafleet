@@ -78,6 +78,7 @@ func runnerTLSInit(args []string, out io.Writer) error {
 	if *days < 1 || *days > 3650 {
 		return fmt.Errorf("-days %d out of range (1..3650)", *days)
 	}
+	*dir = filepath.Clean(*dir)
 	syscall.Umask(0o077)
 	dirf, err := openPrivateDir(*dir)
 	if err != nil {
@@ -89,19 +90,20 @@ func runnerTLSInit(args []string, out io.Writer) error {
 	} else if len(ents) > 0 {
 		return fmt.Errorf("%s is not empty: tls-init never overwrites; use a fresh directory", *dir)
 	}
-	p, err := osb.InitPKI(*dir, *days, time.Now())
+	// The files are created relative to the verified fd (openat O_EXCL|O_NOFOLLOW), so a swap of
+	// the path after the check cannot redirect them (F-19).
+	p, err := osb.InitPKIAt(dirf, *dir, *days, time.Now())
 	if err != nil {
 		return err
 	}
-	// osb.InitPKI writes by path (it is outside this file's remit to change). The verified
-	// directory is 0700 and ours, so only a writer of the parent could swap the leaf; detect that
-	// after the fact by comparing the path with the verified fd (see openPrivateDir).
+	// The printed paths are by name; if the path no longer names the verified directory the
+	// operator must not use them.
 	fst, err := dirf.Stat()
 	if err != nil {
 		return err
 	}
 	if pst, err := os.Lstat(*dir); err != nil || !os.SameFile(fst, pst) {
-		return fmt.Errorf("%s was replaced while tls-init ran: do not use the generated files; remove them and retry in a private parent directory", *dir)
+		return fmt.Errorf("%s was replaced while tls-init ran: the files are in the original (renamed) directory, not at this path; remove them and retry in a private parent directory", *dir)
 	}
 	fmt.Fprintf(out, "node CA certificate: %s\nfront certificate:   %s (key %s)\nrunner client cert:  %s (key %s)\n"+
 		"valid until:         %s\nThe CA private key was discarded; rotate by running tls-init into a new directory.\n\n"+
@@ -117,9 +119,19 @@ func runnerTLSInit(args []string, out io.Writer) error {
 // fd for it, opened O_DIRECTORY|O_NOFOLLOW and verified through that fd: a directory, owned by
 // the effective uid, mode exactly 0700. An existing leaf that fails any of this is refused, never
 // chmodded or chowned (an attacker-owned or looser directory in a shared parent is not ours).
+//
+// dir is cleaned first (F-21): a trailing slash ("x/") would make the kernel follow a symlinked
+// leaf despite O_NOFOLLOW. On a setgid parent a directory created here inherits the setgid bit
+// (02700); since this call created it, it is Fchmod'ed to 0700 through the fd (F-22). A
+// pre-existing leaf is never chmodded: with setgid set it is refused with a message saying so.
 func openPrivateDir(dir string) (*os.File, error) {
-	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return nil, err
+	dir = filepath.Clean(dir)
+	created := true
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+		created = false
 	}
 	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -141,13 +153,25 @@ func openPrivateDir(dir string) (*os.File, error) {
 		return nil, err
 	}
 	runtime.KeepAlive(f)
+	if created && st.Mode&unix.S_IFMT == unix.S_IFDIR && int(st.Uid) == os.Geteuid() && st.Mode&0o7777 != 0o700 {
+		// Our own fresh directory (inherited setgid from the parent): normalise it via the fd.
+		if err := unix.Fchmod(fd, 0o700); err != nil {
+			f.Close()
+			return nil, err
+		}
+		st.Mode = st.Mode&^0o7777 | 0o700
+	}
 	switch {
 	case st.Mode&unix.S_IFMT != unix.S_IFDIR:
 		err = fmt.Errorf("%s is not a directory", dir)
 	case int(st.Uid) != os.Geteuid():
 		err = fmt.Errorf("%s is owned by uid %d, not by this user (uid %d): refusing; use a directory you create", dir, st.Uid, os.Geteuid())
 	case st.Mode&0o7777 != 0o700:
-		err = fmt.Errorf("%s has mode %04o, want exactly 0700: refusing (tls-init does not chmod an existing directory)", dir, st.Mode&0o7777)
+		hint := ""
+		if st.Mode&unix.S_ISGID != 0 {
+			hint = "; the setgid bit is set (inherited from a setgid parent?): run chmod 0700 on it or use a fresh name"
+		}
+		err = fmt.Errorf("%s has mode %04o, want exactly 0700: refusing (tls-init does not chmod an existing directory)%s", dir, st.Mode&0o7777, hint)
 	}
 	if err != nil {
 		f.Close()

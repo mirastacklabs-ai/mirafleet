@@ -82,6 +82,11 @@ func (s *Service) RunAction(ctx context.Context, p auth.Principal, src Source, f
 		return RunActionResult{}, s.fail("get fleet", err)
 	}
 	if f.Mode != store.ModeActions {
+		// F-41: a mode mismatch is audited as one denied row (no start row exists yet).
+		den := s.event(p, src, api.MethodActionRun)
+		den.Fleet, den.Runner, den.Subject = ref.Fleet, ref.Runner, action
+		den.Outcome, den.Message = OutcomeDenied, "fleet is not in actions mode"
+		s.recordBestEffort(ctx, den)
 		return RunActionResult{}, api.Errorf(api.CodeConflict, "fleet is not in actions mode")
 	}
 	if f.Confirm && confirm != f.Name {
@@ -92,7 +97,7 @@ func (s *Service) RunAction(ctx context.Context, p auth.Principal, src Source, f
 		if _, aerr := s.st.RecordAudit(ctx, den); aerr != nil {
 			s.logf("service: audit of refused confirm failed: %v", aerr)
 		}
-		return RunActionResult{}, badRequest("fleet requires confirm to equal the fleet name")
+		return RunActionResult{}, badRequest(api.MsgConfirmRequired)
 	}
 	r, err := s.st.GetRunner(ctx, ref)
 	if err != nil {

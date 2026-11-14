@@ -12,8 +12,11 @@
 - How a workspace is opened, placed on a runner and kept sticky; how `workspace.exec` and file
   transfers work (flows 12 to 14); and how closing, the TTL reaper, reconcile and revoke cascades
   clean up (flows 15 to 18).
+- How one MCP `exec` tool call travels from the harness to a container and back, how the session
+  handoff makes `--resume` reattach, what happens to a workspace when the harness exits, and how
+  the guarded `confirm` prompt works (flows 19 to 23).
 
-[Chapter 3](03-architecture.md) showed the parts. This chapter shows them moving: eighteen flows,
+[Chapter 3](03-architecture.md) showed the parts. This chapter shows them moving: twenty-three flows,
 each following one thing that really happens in mirafleet, from the command someone types to the
 rows that end up in the database. Every flow starts with a one-sentence summary, then a diagram and
 a numbered explanation that names the functions involved, so you can open the code and follow
@@ -650,8 +653,10 @@ failure outcome), both with the same `request_id`.*
 
 ### In detail
 
-The command, from alice's laptop (the MCP server of milestone M5 will wrap this same call). The
-`"confirm":"prod"` is required because `prod` is a guarded fleet:
+The command, from alice's laptop. The diagram above shows it as an agent's call; the MCP tool
+`run_action` makes this same `action.run` request (flows 19 and 23 show the MCP side), and
+`mcp api` is the hand-typed way to send it. The `"confirm":"prod"` is required because `prod` is a
+guarded fleet:
 
 ```
 mirafleet mcp api action.run '{"fleet":"prod","runner":"db-1","action":"tail-logs","params":{"lines":"200"},"confirm":"prod"}'
@@ -1590,6 +1595,250 @@ their own transaction with their own audit row, with the reaper as a backstop.
 
 ---
 
+## MCP flows (M5)
+
+Flows 19 to 23 are the orchestrator story (new in M5): what happens on alice's laptop between
+her harness and central. Chapter 3 draws the [packages](03-architecture.md#operator-side);
+chapter 2 explains [MCP](02-background.md#210-mcp-and-harnesses). The cast: alice runs Claude
+Code with the mirafleet plugin in a project that has a `.mirafleet.yaml` saying `fleet: dev`,
+and her `contexts.yaml` has one context, `acme`, pointing at `central.example.com:2222`. A
+**session** is still the client-chosen name from flow 12; here the client is Claude Code, so the
+session is `cc:` plus Claude Code's own session id.
+
+---
+
+## 19. One `exec` tool call, end to end
+
+**In one sentence:** Claude Code asks the MCP server to run `go test ./...`; the server resolves
+where it should run, sends one `workspace.exec` to central, and returns capped, cleaned output
+that the model must treat as data.
+
+![One exec tool call: harness to mirafleet mcp to central to runner, with the output cap on the way back](diagrams/mcp-tool-call.svg)
+
+*Look at the orange box: the output is trimmed on the laptop, after central and the runner have
+done their work, so the model never sees more than the cap.*
+
+1. Claude Code (the harness) sends `tools/call` `exec` with `command: "go test ./..."` as one JSON line on the stdin of `mirafleet mcp`.
+2. `mcpserver` decodes the arguments strictly: unknown, duplicate or mis-cased names are refused before any handler runs.
+3. `orch` resolves context, fleet and session, and finds or opens alice's workspace. Its guard lets only operator methods through.
+4. One `api@` frame, method `workspace.exec`, goes to central over the pinned SSH connection.
+5. Central runs its checks, writes the `start` audit row and sends `workspace@` to the runner (flow 13).
+6. The runner runs the command in the container; exit code, stdout and stderr come back (1 MiB at most).
+7. On the way back `orch` strips ANSI and invisible characters and caps stdout plus stderr at 30 KiB (1/3 head, 2/3 tail, a marker between).
+8. `mcpserver` returns `structuredContent` plus one text copy. The model gets capped, sanitised data that is not instructions.
+
+The same flow as a sequence diagram:
+
+```mermaid
+sequenceDiagram
+  participant H as Claude Code
+  participant S as mcpserver (exec handler)
+  participant O as orch
+  participant C as central (flow 13)
+
+  H->>S: tools/call exec {command: "go test ./..."}
+  S->>S: DecodeArgs (exact-case, no unknown fields), one of command or argv
+  S->>O: Resolve (context, fleet), SessionFor
+  O->>C: fleets.list (guarded?), workspace.open if not bound
+  C-->>O: workspace id
+  S->>O: WorkspaceExec(argv /bin/sh -c ..., env, timeout)
+  O->>C: api@ frame workspace.exec
+  C-->>O: exit_code, stdout, stderr
+  O-->>S: result
+  S->>S: CapOutput (sanitise, 30 KiB)
+  S-->>H: structuredContent + text, isError false
+```
+
+1. **Decode.** `wrap` (in `internal/mcpserver/server.go`) refuses arguments that are not a JSON
+   object. `DecodeArgs` then checks every key of the tool's argument struct for an exact-case
+   match, refuses duplicates and unknown fields, and refuses trailing data. The go-sdk does no
+   argument checking for raw tools, so this is the only checker. Chapter 5 explains why exact case
+   matters.
+2. **Shape the command.** `exec` needs exactly one of `command` and `argv`. A `command` becomes
+   `["/bin/sh","-c",command]`; the shell runs *inside* the container, which is the boundary.
+   `api.ValidateArgv`, `ValidatePath` (for `cwd`) and `ValidateEnv` run locally first so an
+   obviously bad request never costs a network round trip. `stdin` is text, at most 1 MiB.
+3. **Resolve the target.** `Orch.Resolve` picks the context and fleet in this order: the tool
+   argument, then the `-context`/`-fleet` flags, then `.mirafleet.yaml`, then the context's
+   `default_fleet`. For alice that is `acme` and `dev` (source "project file"). A guarded fleet
+   that came from a default (the project file or `default_fleet`) is refused: it must be named
+   explicitly (flow 23). Every result carries a `where` object naming the context and fleet and
+   where each came from, because a cloned repository's `.mirafleet.yaml` can steer unqualified
+   calls, and the user should be able to see that.
+4. **Find the workspace.** `SessionFor` gives the session (flow 20). The handler looks up the
+   binding for (context, fleet, session). With no binding it opens one **only on an unguarded
+   fleet** (`fleets.list` first; an unknown fleet fails closed), through the same `workspace.open`
+   as flow 12; for a guarded fleet it says to call `workspace_open` after asking the user.
+5. **One guarded path.** `Orch.WorkspaceExec` goes through the private `call`, the only code that
+   reaches `apiclient`. `call` refuses any method for which `api.IsOperatorMethod` is false, takes
+   one of 8 per-connection slots (`api.MaxChannelsPerConn`), applies the client-side time limit
+   (`CallLimit`: `timeout_s` plus a 30 s margin) and gets the context's one SSH connection from
+   the pool (dialled lazily, with the host key pinned from `known_hosts`; never trust on first use).
+6. **Central and the runner** do flow 13, unchanged. Nothing in central knows an MCP server was
+   involved: it sees an operator key and a `workspace.exec` request.
+7. **Cap and clean.** `orch.CapOutput` sanitises stdout and stderr (ANSI sequences, control
+   characters, invisible Unicode) and fits both into the output cap (default 30 KiB, set by
+   `output_cap_bytes` in `contexts.yaml`, 4 KiB to 256 KiB). A stream that does not fit keeps a
+   third head and two thirds tail around `[mirafleet: N bytes omitted]`, and the result says
+   `truncated: true`. Why 30 KiB: it stays under Claude Code's warning size for tool output.
+8. **Answer.** The result object (`exit_code`, `stdout`, `stderr`, `truncated`, `omitted_bytes`,
+   `duration`, `workspace`, `where`) is JSON-encoded once and sent as `structuredContent` plus the
+   same text. If the harness sent a `progressToken`, a progress notification went out every 15 s
+   while this waited. If central dropped the connection mid-call, `exec` is **never retried**
+   (it may have run): the error says "the connection to central was lost; the call may or may not
+   have completed". Lists, `read_file` and `workspace_open` are retried once on a fresh connection.
+9. **Cancel.** If the user presses Esc, `notifications/cancelled` cancels the handler's context.
+   `call` returns, the channel closes, and central cancels the exec exactly as in flow 13 step 11;
+   the audit outcome is `cancelled`.
+
+---
+
+## 20. Session resolution and `--resume` reattach
+
+**In one sentence:** the workspace is tied to a *session* name, and a tiny file lets the server
+learn Claude Code's session id, so resuming the conversation brings back the same container.
+
+![The session handoff file: hook writes cc:abc, server reads it, resume reattaches](diagrams/session-handoff.svg)
+
+*Look at the middle box: it is the only thing the hook and the server share, and it holds a
+session id, not a secret.*
+
+1. Claude Code starts session `abc` and runs the SessionStart hook. The hook reads `session_id` from its stdin and makes no network call.
+2. The hook writes `cc:abc` to a handoff file in the state directory, keyed by the parent PID (Claude Code) and the project directory. The file is mode 0600 in a 0700 directory.
+3. `mirafleet mcp`, another child of the same Claude Code process, re-reads the file at every workspace open.
+4. `workspace.open` carries session `cc:abc`; central opens alice's workspace or returns the one she already has.
+5. Claude Code exits. Nothing is closed: the workspace stays `open` and the 24 h idle TTL reaps it later.
+6. `claude --resume`: same session id, new PIDs. The hook runs again and rewrites the file for the new PID.
+7. The server reads `cc:abc` again and central answers `reused: true`: same container, same files.
+8. After `/clear` the id is new, so the next open binds a new workspace. With no hook there is no file, and the server uses a random per-process session `p:...`.
+
+In detail:
+
+1. **Why a file.** The MCP server never sees Claude Code's session id: MCP does not carry it.
+   The hook does (it is in the hook's input), but the hook and the server are separate processes.
+   So the hook leaves the id where the server can find it.
+2. **The order.** `Orch.SessionFor` tries, every time: (a) the `-session` flag (works with any
+   harness, no hooks); (b) the handoff file for (parent PID, project directory), written by a
+   hook; (c) a random `p:<32 hex>` made once per server process (`crypto/rand`). The result is
+   reported back as `session_source` (`flag`, `handoff` or `process`) in `workspace_open`.
+3. **The handoff file.** `internal/handoff` stores `{v, session, project, pid, written}` as
+   `sessions/<sha256(pid|project) first 32 hex>.json` in the state directory
+   ([per-OS paths](03-architecture.md#where-does-each-secret-and-key-live)). The directory is `0700`
+   and the file `0600`, written atomically (temp file, then rename). A symlinked `sessions`
+   directory is refused, files older than 7 days are pruned on write, and `Read` returns
+   "not found" for a file whose pid or project differs from the key.
+4. **Why the parent PID.** One laptop can run several Claude Code windows in the same project. Each
+   has its own PID, so each gets its own file and its own workspace. This relies on the hook
+   process and the MCP server both being direct children of Claude Code (`os.Getppid()` is the
+   same in both). That topology is an assumption checked in the real-Claude-Code smoke test; if it
+   is false the server falls back to (c), which is safe and only loses `--resume` reattach.
+5. **Re-read at every open.** After `/clear`, Claude Code starts a new session with a new id; the
+   SessionStart hook rewrites the file; the next open sees the new session and binds a different
+   workspace. The server's in-memory binding is keyed by (context, fleet, *session*), so the old
+   binding is simply not used.
+6. **Validated.** Every value passes `api.ValidateSession` (letters, digits, `.`, `_`, `:`, `-`,
+   at most 128 characters).
+7. **A planted file is harmless.** If someone plants a handoff file, the worst it can do is point
+   the server at another session of the *same operator*: central enforces ownership of workspaces
+   per operator key (`not_found` for anyone else's).
+
+---
+
+## 21. Idle on exit, and the reaper
+
+**In one sentence:** when the harness goes away the MCP server shuts down in seconds but leaves
+the workspace alone; central's reaper deletes it later if nobody comes back.
+
+1. The harness closes the server's stdin (or sends SIGTERM or SIGHUP; on Windows `os.Interrupt`).
+2. `mcpserver.Serve` returns. `runServe` (`cmd/mirafleet/mcp_serve.go`) calls `Orch.Close`, which
+   cancels every in-flight call (closing a channel makes central cancel the work, flow 13 step 11)
+   and closes the SSH connections. It waits at most 5 seconds, then exits 0.
+3. **No workspace is closed.** The row stays `open` and holds its slot. Closing on every exit
+   would destroy the files of a user who merely restarted Claude Code.
+4. If a session id is stable (the handoff file, or `-session`), the next server finds the same
+   workspace (flow 20). With a random per-process session (no hooks), it cannot: the new server
+   opens a *new* workspace, which takes another slot. The old one waits for the reaper.
+5. Flow 16's reaper moves a workspace to `closing` when it has been idle for the fleet's
+   `idle_ttl` (default 24 h) and destroys it. The integration test `TestM5Done` shows the whole
+   chain: close alice's stdin, `Serve` returns within 5 seconds, the row is still `open`; a new
+   server with a new random session gets the other runner (`concurrent: 1`); a third gets
+   `unavailable` (no slot free); advance the injected clock past the idle TTL and the reaper closes
+   the first row.
+6. To free the slot sooner: call `workspace_close`, or (in Claude Code) end the session with
+   `/clear` or logout, which runs flow 22.
+
+---
+
+## 22. SessionEnd closes the workspace (clear and logout only)
+
+**In one sentence:** the Claude Code plugin cleans up after a session that is truly over, and
+keeps the workspace when the session may come back.
+
+1. Claude Code runs the SessionEnd hook (`mirafleet mcp hook claude-code session-end`) and passes
+   a JSON object with `session_id` and `reason`.
+2. The hook removes its handoff file, but only if the file still names this session
+   (`handoff.RemoveIf`). After a `/clear`, a newer session may already have rewritten it.
+3. If `reason` is not `clear` or `logout`, it stops. `resume`, `prompt_input_exit` (the user
+   quits Claude Code) and `other` keep the workspace, because the user may `--resume` it; the idle
+   TTL is the safety net.
+4. For `clear` and `logout` it builds its own `orch` (a SessionEnd hook is a new process: it has
+   no connection), lists the workspaces of every context (`workspace.list`, own only), picks the
+   ones whose `session` is `cc:<this session id>` and sends `workspace.close` for each.
+5. It is bounded and never blocks the session: 10 seconds of its own (the hook's registered
+   timeout is 15), every error goes to stderr, and the exit code is **always 0**.
+
+Why not close on every exit? A closed workspace loses its files. Quitting Claude Code is far more
+often "see you after lunch" than "I am done forever", and a forgotten workspace costs only a
+slot for at most `idle_ttl`.
+
+---
+
+## 23. A guarded call and the `confirm` prompt
+
+**In one sentence:** on a guarded fleet (`prod`), the first call is refused, the model must ask
+the human, and only the repeated call with `confirm: "prod"` goes through, after one more
+question from the harness.
+
+1. The model calls `run_action` with `fleet: "prod"`, `runner: "db-1"`, `action: "tail-logs"`
+   and **no** `confirm`. (Before that, the PreToolUse hook runs, sees no `confirm`, prints nothing,
+   and the call proceeds.)
+2. `Orch` sends `action.run`. Central refuses: `bad_request`, "fleet requires confirm to equal the
+   fleet name", and writes a `denied` audit row (flow 7).
+3. `mcpserver` (`guardedRewrite`) replaces central's text with: "fleet `prod` in context `acme`
+   (...) is guarded. Ask the user. Only after the user explicitly agrees, repeat the call with
+   `confirm` set to the fleet name." The model is told to stop and ask.
+4. alice reads the model's question and agrees. The model repeats the call with
+   `confirm: "prod"`.
+5. **PreToolUse hook.** Before the harness runs the tool, Claude Code runs the plugin's hook with
+   the tool call as JSON on stdin. The hook sees `confirm` is set and prints a decision of `ask`
+   with a reason built from sanitised, clipped fields: `Guarded fleet "prod": run_action tail-logs
+   on db-1`. Claude Code shows that to alice as a permission prompt, whatever its permission mode
+   is (this is checked in the smoke test; see the note below). The hook can only ever say `ask`,
+   never `allow`.
+6. alice approves. `mcpserver` passes `confirm` **verbatim**: it is never filled from config,
+   never cached, never defaulted.
+7. Central checks `confirm == "prod"`, writes the `start` audit row, and flow 7 continues.
+
+Three rules keep the model out of trouble:
+
+- **Central is the enforcer.** If the plugin is not installed, the hook crashes, or the harness
+  is not Claude Code, central still refuses every guarded call without the exact `confirm`. The
+  hook only adds a clear question for the human. In other harnesses the human gate is the harness's
+  normal tool-approval prompt.
+- **No guarded fleet by default.** A fleet named only by `.mirafleet.yaml` or `default_fleet` is
+  refused when it is guarded, and the implicit open in `exec`, `read_file` and `write_file` never
+  targets a guarded fleet. The model has to name `prod` explicitly, which is the moment to ask.
+- **Be exact.** The hook and the server read the argument names exactly. A call with `Confirm`
+  (capital C) is refused by the server, and the hook, which cannot tell what such a call means,
+  asks with a fixed "ambiguous arguments" reason. So a disguised `confirm` cannot slip past either
+  one ([section 5.11](05-security.md#511-prompt-injection-through-tool-output) tells the story).
+
+Note on verification: whether a PreToolUse `ask` still prompts in a permissive permission mode is
+one of the conventions to check by hand with real Claude Code (M5 step S17). Nothing depends on it,
+because central refuses without `confirm`; it only changes who sees the question.
+
+---
+
 ## Lifecycle at a glance
 
 | Thing | States | Changed by | Effect on live connections |
@@ -1599,6 +1848,7 @@ their own transaction with their own audit row, with the reaper as a backstop.
 | Operator | `active`, `revoked` | `mcp login` with a valid code; `operator revoke` | revoke: connections closed, in-flight actions cancelled |
 | Join token | usable until used up, expired or revoked | `token create`, `token revoke`, enroll | n/a |
 | Registration code | valid for its 60 s step | time; `rotate-secret` invalidates all | n/a |
+| Session handoff file | written (SessionStart), rewritten (resume, `/clear`), removed (SessionEnd), pruned after 7 days | the Claude Code hooks (flows 20 and 22) | none: a file only; the MCP server re-reads it at every open |
 | Workspace | `opening`, `open`, `closing`, `closed`, `failed`, `lost` (see [chapter 6](06-data-model.md#the-workspace-state-machine)) | `workspace.open` / `close`, the reaper, reconcile, revoke cascades, `workspace.kill` | runner revoke: its workspaces go `closing` then `lost`; operator revoke: `closing` then `closed`; runner disable: no new open, exec or write |
 
 ## Failure: what you see and what the system does
@@ -1636,6 +1886,20 @@ their own transaction with their own audit row, with the reaper as a backstop.
 | Central restarts during a create | The row is `failed` after restart | `RecoverWorkspaces`; reconcile destroys the leftover container (flow 17). |
 | Container vanished (host reboot, manual delete) | The row becomes `lost` | Reconcile frees the slot and writes `workspace.lost` (flow 17). |
 | Runner or operator revoked | Their workspaces are closed | Cascade, then reaper as backstop (flow 18). |
+| Central is down or unreachable | Every tool call answers `unavailable`: "cannot reach central". `tools/list` still works | `orch` dials lazily; the next call dials again. Lists, `read_file` and `workspace_open` are retried once on a fresh connection; `exec`, `write_file` and `run_action` are never retried (flow 19). |
+| Connection to central lost mid-`exec` | `unavailable`: "the connection to central was lost; the call may or may not have completed" | The connection is dropped and redialled on the next call. The model must check the effect before repeating (flow 19). |
+| One of several contexts is dead | `list_fleets` returns the live contexts plus one `errors[]` entry for the dead one; a call that names the dead context gets `unavailable` | The other contexts are unaffected: each has its own connection (flow 19). |
+| Context name unknown | `not_found`: "unknown context ..." with the list of known names | Nothing is sent (flow 19). |
+| No login yet (no contexts, key or pinned host key) | `unavailable`: "not set up: run `mirafleet mcp login …`" (no paths in the text) | The server still starts and lists its tools; it never dials without a pinned host key, so there is no trust on first use (flow 19). |
+| Central rejects the operator key (revoked, or login redone elsewhere) | `unauthenticated`: "central rejected the operator key: run `mirafleet mcp login …`" | Nothing runs; the model is told the human fix (flow 9). |
+| Central's host key changed | `unavailable`: "central's host key does not match the pinned key; the server may have been rebuilt or intercepted" | The connection is refused; no data is sent (chapter 5). |
+| Central is at its channel limit | `unavailable`: "central is busy: too many concurrent calls; try again" | `orch` retries the open three times with a short back-off first, because nothing had been sent (flow 19). |
+| Guarded fleet, no `confirm` | `bad_request` with "... is guarded. Ask the user. Only after the user explicitly agrees, repeat the call with `confirm` ..." | A `denied` audit row (flow 23). |
+| Guarded fleet came from `.mirafleet.yaml` or `default_fleet` | `bad_request`: "fleet ... is guarded and was taken from the project file: name it explicitly" | Nothing is sent to the fleet (flow 23). |
+| Invalid `.mirafleet.yaml` | `bad_request`: "the project file .mirafleet.yaml is invalid" (details on stderr only) | Nothing is sent (flow 19). |
+| Argument with a wrong case (`Confirm`) or an unknown name | `bad_request`: "unknown or mis-cased argument ..." | The handler never runs (flow 19, chapter 5). |
+| Harness closes stdin | The server exits 0 within 5 s | In-flight calls are cancelled; the workspace stays `open` until `idle_ttl` (flow 21). |
+| SessionEnd for `prompt_input_exit`, `resume` or `other` | Nothing visible | The workspace is kept for a possible `--resume` (flow 22). |
 
 ## Check your understanding
 
@@ -1657,6 +1921,12 @@ their own transaction with their own audit row, with the reaper as a backstop.
    its row in, and what finally deletes the container?
 9. Why does `workspace.exec` write a `start` audit row before dispatch, and what does it record
    about the environment?
+10. The MCP `exec` tool is called while the connection to central drops. Is the call retried? Is
+    a `list_fleets` call retried? Why the difference?
+11. alice quits Claude Code for lunch and comes back with `claude --resume`. What happens to her
+    workspace in between, and which file makes the reattach work? What changes with no hooks?
+12. The model calls `run_action` on `prod` and the hook shows alice a prompt. Which two components
+    would still stop a call that has no `confirm`, even with no plugin installed?
 
 <details>
 <summary>Answers</summary>
@@ -1695,6 +1965,17 @@ their own transaction with their own audit row, with the reaper as a backstop.
 9. Fail closed: if the audit database is down, no command should run unrecorded. The row stores
    the argv, the cwd and the env variable **names**, never the values, so a secret passed in
    an environment variable does not land in the audit log.
+10. `exec` is never retried: it may already have run, so the error says "the call may or may not
+    have completed". `list_fleets` is retried once on a fresh connection, because repeating a
+    read changes nothing (`orch` retries only lists, `read_file` and `workspace_open`).
+11. Nothing happens to it: the server shuts down without closing workspaces (flow 21), and
+    SessionEnd with reason `prompt_input_exit` keeps it. On resume the SessionStart hook rewrites
+    the handoff file with the same `cc:<id>`; `SessionFor` reads it and `workspace.open` answers
+    `reused: true`. With no hooks there is no file and the server's session is random, so a new
+    server opens a new workspace and the old one waits for the idle TTL (unless `-session` is set).
+12. The MCP server (it relays central's refusal and rewrites it into "ask the user") and, above
+    all, central: `service` refuses a guarded fleet's call unless `confirm` equals the fleet name,
+    and writes a `denied` audit row. The hook is only convenience.
 
 </details>
 

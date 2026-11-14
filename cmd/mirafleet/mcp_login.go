@@ -68,29 +68,41 @@ func mcpLogin(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := pinHost(dir, addr, hk); err != nil {
-		return fmt.Errorf("registered, but writing known_hosts failed: %w", err)
-	}
-	cs, err := opconf.LoadContexts(dir)
-	if err != nil {
+	if err := recordLogin(dir, *name, addr, hk); err != nil {
 		return err
-	}
-	found := false
-	for i := range cs.Contexts {
-		if cs.Contexts[i].Name == *name {
-			cs.Contexts[i].Addr, found = addr, true
-		}
-	}
-	if !found {
-		cs.Contexts = append(cs.Contexts, opconf.Context{Name: *name, Addr: addr})
-	}
-	cs.Current = *name
-	if err := opconf.SaveContexts(dir, cs); err != nil {
-		return fmt.Errorf("registered, but saving the context failed: %w", err)
 	}
 	fmt.Fprintf(stdout, "registered operator %q (%s); context %q -> %s is now current\nconfig: %s\n",
 		res.Operator, res.Status, *name, addr, dir)
 	return nil
+}
+
+// recordLogin pins the central host key and makes name the current context for addr. One lock
+// covers both the known_hosts pin and the contexts.yaml change, so two concurrent logins cannot
+// drop each other's pin or context. UpdateContexts' lock is not re-entrant: nothing in the
+// callback may call another opconf function that takes it.
+func recordLogin(dir, name, addr string, hk ssh.PublicKey) error {
+	pinned := false
+	err := opconf.UpdateContexts(dir, func(cs *opconf.Contexts) error {
+		if err := pinHost(dir, addr, hk); err != nil {
+			return fmt.Errorf("registered, but writing known_hosts failed: %w", err)
+		}
+		pinned = true
+		found := false
+		for i := range cs.Contexts {
+			if cs.Contexts[i].Name == name {
+				cs.Contexts[i].Addr, found = addr, true
+			}
+		}
+		if !found {
+			cs.Contexts = append(cs.Contexts, opconf.Context{Name: name, Addr: addr})
+		}
+		cs.Current = name
+		return nil
+	})
+	if err != nil && pinned {
+		return fmt.Errorf("registered, but saving the context failed: %w", err)
+	}
+	return err
 }
 
 // pinHost records the verified central key for addr in the operator known_hosts, replacing any

@@ -22,6 +22,38 @@ const listParallel = 4
 // nameRE is the context and fleet name grammar (same as opconf and store.FleetNameRE).
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
+// validActionName accepts the printable, non-space ASCII an action name is written in (at most
+// transport.MaxActionNameBytes, 64). Anything else cannot be an action a runner advertises.
+func validActionName(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] <= ' ' || s[i] >= 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// cleanLabels sanitises admin-set runner labels before they reach the model: control and
+// invisible characters are stripped (orch.Sanitize), and an entry whose key is empty afterwards
+// is dropped. Clean labels pass through unchanged.
+func cleanLabels(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		k = orch.Sanitize([]byte(k))
+		if k == "" {
+			continue
+		}
+		out[k] = orch.Sanitize([]byte(v))
+	}
+	return out
+}
+
 func badRequest(msg string) error { return &Error{Code: api.CodeBadRequest, Message: msg} }
 
 // checkName validates an optional context or fleet name argument.
@@ -327,7 +359,7 @@ func listRunners(ctx context.Context, b Backend, req Request) (any, error) {
 			break
 		}
 		ro := runnerOut{
-			Name: x.Name, Status: x.Status, Online: x.Online, Labels: x.Labels, Slots: x.Slots,
+			Name: x.Name, Status: x.Status, Online: x.Online, Labels: cleanLabels(x.Labels), Slots: x.Slots,
 			FreeSlots: x.FreeSlots, Executor: x.Executor, ActionsOmitted: x.ActionsOmitted,
 		}
 		for _, ac := range x.Actions {
@@ -422,6 +454,12 @@ func runAction(ctx context.Context, b Backend, req Request) (any, error) {
 	if len(a.Runner) > 128 || len(a.Action) > api.MaxParamKey {
 		return nil, badRequest("`runner` or `action` too long")
 	}
+	if !nameRE.MatchString(a.Runner) { // the runner name grammar, checked before the call
+		return nil, badRequest("invalid runner name")
+	}
+	if !validActionName(a.Action) {
+		return nil, badRequest("invalid action name")
+	}
 	if e := api.ValidateActionParams(a.Params); e != nil {
 		return nil, badRequest(e.Message)
 	}
@@ -459,12 +497,15 @@ func guardedRewrite(err error, t orch.Target) error {
 		return err
 	}
 	code, msg := pe.PublicError()
-	if code == api.CodeBadRequest && strings.Contains(msg, "requires confirm") {
-		return &Error{Code: code, Message: guardedText(t) + " Ask the user. " +
-			"Only after the user explicitly agrees, repeat the call with `confirm` set to the fleet name."}
+	if code == api.CodeBadRequest && strings.Contains(msg, api.MsgConfirmRequired) {
+		return &Error{Code: code, Message: guardedText(t) + " " + askUserSentence}
 	}
 	return err
 }
+
+// askUserSentence is the one consent instruction every guarded refusal ends with (guardedRewrite
+// and the implicit-open guardedErr), so the model sees the same words either way.
+const askUserSentence = "Ask the user. Only after the user explicitly agrees, repeat the call with `confirm` set to the fleet name."
 
 func guardedText(t orch.Target) string {
 	return "fleet `" + t.Fleet + "` in context `" + t.Context + "` (" + t.ContextSource + ") is guarded."

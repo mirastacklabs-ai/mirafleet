@@ -569,6 +569,12 @@ func checkSecretFile(name, p string) error {
 // checkParentDir requires the directory holding a secret file to be owned by root or the
 // runner's uid and not group- or world-writable: otherwise another local user could swap the
 // file between Load and the later read. It fails closed when ownership cannot be determined.
+//
+// Only the immediate parent is checked, by design (F-23): a walk to "/" would have to accept
+// sticky world-writable ancestors (/tmp) and per-user homes owned by other uids, so it would
+// either reject common layouts or need exemptions that are themselves hard to get right. A
+// writer of a higher ancestor can rename the whole parent away; the operator must keep the
+// path to the secret directory root-owned (the installer puts secrets under /etc/mirafleet).
 func checkParentDir(name, p string) error {
 	dir := filepath.Dir(p)
 	st, err := statFn(dir)

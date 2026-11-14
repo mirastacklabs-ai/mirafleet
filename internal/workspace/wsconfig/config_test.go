@@ -461,3 +461,31 @@ func TestHeartbeatImagesDropped(t *testing.T) {
 		t.Errorf("dropped %d, want 3 (2 over the count, 1 too long)", len(d))
 	}
 }
+
+// F-23: only the immediate parent directory is checked (documented on checkParentDir); the
+// ancestors above it are never stat'ed, so a group-writable grandparent does not matter.
+func TestCheckParentDirImmediateOnly(t *testing.T) {
+	var seen []string
+	oldS, oldU := statFn, getuid
+	t.Cleanup(func() { statFn, getuid = oldS, oldU })
+	getuid = func() int { return 0 }
+	statFn = func(p string) (FileStat, error) {
+		seen = append(seen, p)
+		return FileStat{Mode: os.ModeDir | 0o700, UID: 0, IsDir: true}, nil
+	}
+	if err := checkParentDir("api_key_file", "/a/b/c/key"); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 || seen[0] != "/a/b/c" {
+		t.Errorf("stat calls %v, want only /a/b/c", seen)
+	}
+	statFn = func(p string) (FileStat, error) {
+		if p == "/a/b/c" {
+			return FileStat{Mode: os.ModeDir | 0o700, UID: 0, IsDir: true}, nil
+		}
+		return FileStat{Mode: os.ModeDir | 0o777, UID: 4242, IsDir: true}, nil
+	}
+	if err := checkParentDir("api_key_file", "/a/b/c/key"); err != nil {
+		t.Errorf("ancestor above the parent affected the result: %v", err)
+	}
+}

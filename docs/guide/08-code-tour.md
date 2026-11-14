@@ -11,9 +11,14 @@ use them.
 - Which package imports which, and why the arrows only point one way.
 - The key types and functions of each package, and the traps ("gotchas") that bit us before.
 - The exact function-by-function path of an `action.run`, a runner join and a revoke, and (section
-  8.9) of one `workspace.exec` from the agent into a container and back.
+  8.9) of one `workspace.exec` from the agent into a container and back (section 8.10 adds the
+  agent's side: the MCP tool call that starts it).
 - The M3 packages: `internal/workspace` and its children (`ctrd`, `osb`, `egress`, `wsconfig`,
   `initproc`, `fake`), and where each sits in the import layers.
+- The M5 packages on the operator side (`internal/orch`, `internal/mcpserver`,
+  `internal/handoff`, `integrations/claude-code/hook`), the import rules that keep them light
+  (`TestOrchestratorDeps`), the function-by-function path of one `exec` **tool call** (section
+  8.10), and how to add a tool (section 8.8).
 - How build tags keep SQLite out of the macOS and Windows binaries (and containerd out of every
   non-Linux build), and where to add a new operator method, admin command, store method,
   action field or **workspace executor**.
@@ -36,13 +41,17 @@ mirafleet/
 ├── docs/
 │   ├── ARCHITECTURE.md        the design
 │   ├── PLAN.md                milestones M1..M6 and the build order
-│   ├── M2.md, M3.md           per-milestone plans and decisions (M3 = workspaces)
+│   ├── M2.md, M3.md, M5.md    per-milestone plans and decisions (M3 = workspaces, M5 = MCP)
 │   ├── BRAND.md               colours, fonts, tone
 │   └── guide/                 this developer guide
 ├── cmd/mirafleet/             the one binary: central | runner | mcp | version
 │   ├── main.go                os.Args switch, usage text, requireServerOS
 │   ├── admin.go               every `mirafleet central <admin command>` (a socket client)
-│   ├── mcp.go                 `mirafleet mcp login|api` (operator side, cross-platform)
+│   ├── mcp.go                 `mirafleet mcp` routing and the helpers shared by the mcp files
+│   ├── mcp_serve.go           `mcp [serve]`: flags, signals, wires orch to the MCP server (M5)
+│   ├── mcp_context.go         `mcp context list|use|remove` (M5)
+│   ├── mcp_hook.go            `mcp hook claude-code <event>`: routes to integrations/ (M5)
+│   ├── mcp_login.go, mcp_api.go   `mcp login` and `mcp api` (operator side, cross-platform)
 │   ├── central_linux.go       `central init|run`: opens SQLite, builds service, starts server
 │   ├── server_linux.go        `runner join|run`, heartbeat constant (linux only)
 │   ├── runner_ws_linux.go     `runner run -workspace`, `tls-init`, `tls-front`, `workspace list|prune`;
@@ -53,7 +62,15 @@ mirafleet/
 │   ├── platform_linux.go      const serverSupported = true
 │   ├── platform_other.go      const serverSupported = false
 │   └── *_test.go              CLI parsing, central init, enrol end to end, deps_test.go,
-│                              e2e_integration_linux_test.go (built binary, real containerd)
+│                              e2e_integration_linux_test.go (built binary, real containerd),
+│                              mcp_stdio_linux_test.go (TestM5NoHooks: the built `mcp` over stdio)
+├── integrations/              harness-specific files, one directory each (M5)
+│   ├── claude-code/           the plugin: .claude-plugin/, .mcp.json, hooks/hooks.json, skills/,
+│   │   └── hook/              Go package behind `mirafleet mcp hook claude-code <event>`
+│   ├── opencode/, generic/   commands and config snippets for other harnesses (no hooks)
+│   ├── commands/mirafleet.md  the one shared command body
+│   └── *_test.go              the plugin and the harness files are checked by tests
+├── .github/workflows/         orchestrator.yml: tests on windows-latest and macos-latest (M5)
 └── internal/                  all other code; nothing outside the module can import it
     ├── api/                   wire protocol: methods, DTOs, error codes, framing, limits
     ├── transport/             SSH names (channel types, users), Heartbeat, ExecRequest/Result
@@ -78,7 +95,10 @@ mirafleet/
     │   ├── ctrd/              containerd executor (linux only)
     │   └── osb/               OpenSandbox executor, TLS client, TLS front, PKI
     ├── apiclient/             SSH client for operators and enrol (cross-platform)
-    └── opconf/                operator config dir: key, known_hosts, contexts.yaml
+    ├── opconf/                operator config and state dirs, contexts.yaml, .mirafleet.yaml (cross-platform)
+    ├── handoff/               M5: the session id a hook leaves for the MCP server (cross-platform)
+    ├── orch/                  M5: context/fleet/session resolution, SSH pool, typed calls, output cap
+    └── mcpserver/             M5: the MCP stdio server and the nine tools (the only go-sdk importer)
 ```
 
 A rule of thumb: `cmd/` only parses flags and wires things together. All behaviour lives in
@@ -119,7 +139,7 @@ executor: it is handed a `workspace.Executor` value (the interface, in a leaf pa
 
 | Package | Imports (inside this repo) |
 |---|---|
-| `cmd/mirafleet` | actions, api, apiclient, audit, auth, central, central/registry, keys, opconf, policy, runner, service, store, store/sqlite, transport, workspace, workspace/ctrd, workspace/initproc, workspace/osb, workspace/wsconfig |
+| `cmd/mirafleet` | actions, api, apiclient, audit, auth, central, central/registry, keys, mcpserver, opconf, orch, policy, runner, service, store, store/sqlite, transport, workspace, workspace/ctrd, workspace/initproc, workspace/osb, workspace/wsconfig, and `integrations/claude-code/hook` |
 | `internal/central` | api, auth, central/registry, service, store, transport |
 | `internal/central/registry` | transport |
 | `internal/service` | api, auth, central/registry, policy, store, tokens, transport, workspace |
@@ -135,10 +155,19 @@ executor: it is handed a `workspace.Executor` value (the interface, in a leaf pa
 | `internal/workspace/fake` | workspace |
 | `internal/apiclient` | api, keys, tokens, transport |
 | `internal/opconf` | keys |
+| `internal/handoff` (M5) | api |
+| `internal/orch` (M5) | api, apiclient, handoff, keys, opconf, transport |
+| `internal/mcpserver` (M5) | api, orch (and the go-sdk, from here only) |
+| `integrations/claude-code/hook` (M5) | api, handoff, opconf, orch |
 | `internal/api` | workspace (for the shared validators `CleanPath`, `ValidArgv`, `FilterEnv`) |
 | `transport`, `keys`, `tokens`, `actions`, `audit`, `workspace`, `workspace/egress`, `workspace/initproc` | nothing (leaves) |
 
-Four consequences worth remembering:
+The M5 packages form a separate, small stack: the **orchestrator side** (what runs on the
+operator's laptop). `mcpserver` sits on `orch`, `orch` on `apiclient`, `opconf`, `handoff` and
+`keys`, and the Claude Code hook package sits beside `mcpserver` on the same `orch`. None of it
+imports the server side, which `TestOrchestratorDeps` enforces (section 8.7, point 4).
+
+Five consequences worth remembering:
 
 1. **`internal/central` never imports `store/sqlite`.** It sees only the `store.Store`
    interface. Only `cmd/mirafleet/central_linux.go` (a file that exists only on Linux) imports
@@ -155,6 +184,11 @@ Four consequences worth remembering:
    `workspace.Executor`; `service` never touches a container at all (it sends `workspace@`
    requests through `registry`). So containerd and gRPC reach exactly one place in the linked
    binary, `cmd/mirafleet/runner_ws_linux.go`, and only on Linux (section 8.7).
+5. **`orch`, `mcpserver` and the hook never import the server side.** Not `service`, `store`,
+   `central`, `runner`, `workspace/ctrd`, SQLite or containerd. They reach central only the way a
+   remote operator does: over SSH, through `apiclient`. Without this rule the laptop binary could
+   quietly start linking the database, and an agent's tool call could bypass the SSH boundary
+   with a function call.
 
 ## 8.3 Package by package
 
@@ -208,9 +242,11 @@ Each package below has an **If you only read one** line: the single file to open
   `EnsureDir` (0700, tightened if it exists), `PinnedHostKeys(path)` (a `HostKeyCallback` that
   accepts only keys listed in a known_hosts-style file, re-read on every connection),
   `RunnerNameRE`.
-- **Platform files:** `perm_unix.go` checks the mode bits; `perm_windows.go` and `perm_other.go`
-  fail closed (key loading returns an error) because owner-only ACL checks are not written yet
-  (planned for M5).
+- **Platform files:** `perm_unix.go` checks the mode bits. On Windows (M5), `acl_windows.go`
+  creates every directory and private file with a protected DACL (inheritance off, owner is the
+  current user, allow-entries only for that user, SYSTEM and Administrators) and
+  `perm_windows.go` re-checks all of it on load; anything else fails closed. `perm_other.go` (not
+  unix, not Windows) still refuses to load any key.
 - **Gotcha:** `PinnedHostKeys` has no "trust on first use" mode. A key not in the file is an
   error: `host key for ... not pinned in ...`.
 
@@ -466,11 +502,69 @@ the `TestM3Done` scenario use it, so the logic is tested without a daemon.
   fallback), `Client.Call`, typed helpers (`Hello`, `FleetsList`, `RunnersList`, `ActionRun`),
   `Join` and `Register` (enrol with the host key pinned from the token or code), host-key
   callbacks `PinnedHash`, `KnownHosts`, `Fingerprint`, `Prompt`.
-- **`opconf`:** `Dir()` (`$MIRAFLEET_CONFIG_DIR` or the OS user config dir plus `mirafleet`),
-  `KeyPath`, `KnownHostsPath`, `ContextsPath`, `Contexts` with `LoadContexts` / `SaveContexts`.
+- **`opconf`:** `Dir()` (`$MIRAFLEET_CONFIG_DIR` or the OS user config dir plus `mirafleet`; on
+  Windows `%LocalAppData%\mirafleet`, never Roaming), `StateDir()` (where handoff files live;
+  `$MIRAFLEET_STATE_DIR` overrides), `KeyPath`, `KnownHostsPath`, `ContextsPath`, `Contexts` with
+  `LoadContexts` / `SaveContexts` / `UseContext` / `RemoveContext` (M5: per-context
+  `default_fleet`, the top-level `output_cap_bytes`, a `jump` key refused), and `LoadProject` for
+  `.mirafleet.yaml` (keys `fleet` and `context` only, looked up from the project directory
+  upward, stopping at a `.git` or at home).
 - **Gotcha:** both are cross-platform on purpose (the operator runs on a laptop). They must not
   import anything unix-only. `Prompt` refuses to ask when stdin is not a terminal, so a script
   can never be tricked into trust-on-first-use.
+
+### The orchestrator side (M5): `handoff`, `orch`, `mcpserver`, and the hook
+
+These four are what turn "an agent wants to run a command" into the SSH calls of earlier
+chapters. They run on the operator's machine (linux, darwin or windows) and never link the server
+side (section 8.2, point 5).
+
+**`internal/handoff`**: a harness-neutral note passed from a hook to the MCP server.
+- **If you only read one:** `handoff.go`. **Key functions:** `Write(stateDir, Key{PID, Project},
+  session, now)`, `Read`, `Remove`, `RemoveIf` (removes only if the file still names that
+  session). The file is `<state>/sessions/<sha256(pid|project)[:32]>.json`, directory 0700, file
+  0600, written atomically; files older than 7 days are pruned on write.
+- **Gotcha:** a planted file can only point at another session of the *same* operator, because
+  central checks ownership on every call. It carries no secret.
+
+**`internal/orch`**: the orchestrator core. It has **no MCP code** and does not read the process
+environment (a test, `TestNoEnvAccessInSource`, scans the source).
+- **If you only read one:** `calls.go` (`call`, the only path to `apiclient`).
+- **`orch.go`:** `New(Config)` always succeeds, even with no key or contexts (calls then return
+  `ErrNotSetUp`); `Close` cancels in-flight calls and closes connections, never workspaces.
+- **`resolve.go`:** `Resolve` (context and fleet, with sources, precedence argument > flag >
+  `.mirafleet.yaml` > context default; refuses a guarded fleet that came from a default),
+  `SessionFor` (flag, else handoff file, else a random `p:<32 hex>`, re-read on every call).
+- **`pool.go`:** one SSH connection per context, dialled lazily with `known_hosts` pinning and
+  never trust-on-first-use, a 30 s keepalive, a semaphore of `api.MaxChannelsPerConn` (8).
+- **`calls.go`:** typed wrappers (`FleetsList`, `RunnersList`, `ActionRun`, `WorkspaceOpen`,
+  `WorkspaceExec`, `WorkspaceReadFile`, `WorkspaceWriteFile`, `WorkspaceClose`,
+  `WorkspaceList`). `call` refuses any method for which `api.IsOperatorMethod` is false, redials
+  once on a dead connection but retries only idempotent methods (never `exec`, `write_file`,
+  `action.run`, `workspace.close`), and maps every error to an `*orch.Error` whose text holds no
+  path, fingerprint or internal detail.
+- **`output.go`:** `Sanitize` and `CapOutput` ([chapter 7](07-protocols.md#output-cap-and-sanitising-internalorchoutputgo)). **`limit.go`:** `CallLimit`, the client-side timeout per method.
+- **Gotcha:** the guard in `call` is gate 1 of three for "no admin reach from the agent" (the
+  others: central refuses admin methods on `api@` whatever the principal; the tool table is
+  fixed). A test makes it panic instead of return an error, so a new code path that reaches it
+  cannot go unnoticed.
+
+**`internal/mcpserver`**: the MCP server and the tools.
+- **If you only read one:** `tools_ws.go` (`exec`, `read_file`, `write_file`).
+- **`server.go`:** `Serve`, `Config`, `Tool`, `Request`, `Handler`, `DecodeArgs`, `Error`,
+  `PublicError`, the result and error encoding. **`backend.go`:** the `Backend` interface (what
+  tools need; `*orch.Orch` implements it, a fake does in tests) and the `where` type.
+  **`tools_list.go`:** `ListTools` (`list_fleets`, `list_runners`, `run_action`,
+  `workspace_list`). **`tools_ws.go`:** `WorkspaceTools` (`workspace_open`, `exec`, `read_file`,
+  `write_file`, `workspace_close`) and the per-process binding of (context, fleet, session) to a
+  workspace id.
+- **Gotcha:** this is the *only* package allowed to import the go-sdk (`github.com/modelcontextprotocol/go-sdk`).
+  Tools are plain structs; if you ever swap the SDK, only this package changes.
+
+**`integrations/claude-code/hook`**: parses Claude Code's hook JSON and implements the three
+events (`session-start`, `session-end`, `pre-tool-use`). It imports `orch`, `handoff`, `opconf`
+and `api`, and is reached only through `cmd/mirafleet/mcp_hook.go`. It always exits 0, so a
+broken hook can never block a session ([chapter 11](11-contributing.md#117-adding-a-harness-integration)).
 
 ### `cmd/mirafleet`
 
@@ -484,10 +578,20 @@ admin subcommands go through `adminCLI.run` in `admin.go`; its `call` field is a
 M3 added: `admin_workspace.go` (the `wsFlags` shared by `fleet create` and `fleet workspace set`,
 `workspaceList`, `workspaceKill`; no SQLite or containerd), `runner_ws_linux.go` (`runnerWorkspace`
 for `list` and `prune`, `runnerTLSInit`, `runnerTLSFront`, `loadWorkspace`, and the `newExecutor`
-variable that tests replace with a fake), and in `mcp.go` the `-in` and `-out` flags of
-`mcp api` (bodies for `write_file`, stdin of `exec`, the file a `read_file` writes) and
-`mcpCallLimit` (the client-side deadline per method). `runner run` takes exactly one of
+variable that tests replace with a fake), and in `mcp_api.go` the `-in` and `-out` flags of
+`mcp api` (bodies for `write_file`, stdin of `exec`, the file a `read_file` writes). The
+client-side deadline per method started life there as `mcpCallLimit`; M5 moved it to
+`orch.CallLimit` so `mcp api` and the MCP server share it. `runner run` takes exactly one of
 `-actions FILE` or `-workspace FILE`; workspace mode never falls back to actions.
+
+M5 added the `mcp` files: `mcp.go` routes `mirafleet mcp [serve|context|login|api|hook]` (no
+subcommand, or a first argument starting with `-`, means `serve`); `mcp_login.go` and `mcp_api.go`
+were split out of the old `mcp.go` unchanged; `mcp_serve.go` parses the flags (`-context`,
+`-fleet`, `-session`, `-project-dir`), builds an `orch.Orch` (the only place the server reads its
+environment: the config and state directories and the parent PID), starts `mcpserver.Serve` with
+`append(mcpserver.ListTools(o), mcpserver.WorkspaceTools(o)...)`, and on return closes `orch` with
+a 5 s bound; `mcp_context.go` is `context list|use|remove`; `mcp_hook.go` hands a hook event to
+`integrations/claude-code/hook`. They are cross-platform and import no server-side package.
 
 ## 8.4 Follow one request: `action.run`
 
@@ -520,7 +624,7 @@ The list below is the same journey with function names. Follow it with the files
 **On alice's laptop**
 
 1. `main` in `cmd/mirafleet/main.go` sees `mcp` and calls `mcpMain`, which calls `mcpAPI`
-   (`cmd/mirafleet/mcp.go`).
+   (`cmd/mirafleet/mcp_api.go`).
 2. `mcpAPI` checks the JSON with `json.Valid`, then finds the config directory
    (`opconf.Dir`), reads `contexts.yaml` (`opconf.LoadContexts`) and picks the address of the
    current context. It loads the key with `loadOperatorKey`, which calls `keys.LoadSigner`.
@@ -739,7 +843,9 @@ checks.
 | `internal/central/admin_peer_other.go` | `unix && !linux && !darwin` | rejects every peer |
 | `internal/central/admin_other.go` | `!unix` | every admin-socket function returns an error (fails closed) |
 | `internal/keys/perm_unix.go` | `unix` | refuse keys with group/other mode bits |
-| `internal/keys/perm_windows.go`, `perm_other.go` | `windows`, `!unix && !windows` | refuse to load any key (no ACL check yet) |
+| `internal/keys/acl_windows.go`, `perm_windows.go` | `windows` | create directories and key files with a protected owner-only DACL; check it on load (M5) |
+| `internal/keys/perm_other.go` | `!unix && !windows` | refuse to load any key (no check is possible) |
+| `internal/opconf/dir_windows.go` / `dir_other.go` | `windows` / `!windows` | config and state dirs under `%LocalAppData%` / from `os.UserConfigDir` and `os.UserCacheDir` (M5) |
 | `internal/actions/kill_unix.go` / `kill_other.go` | `unix` / `!unix` | kill the whole process group / plain `Kill` |
 | `internal/store/sqlite/open_unix.go` / `open_other.go` | `unix` / `!unix` | open with `O_NOFOLLOW` / without |
 | `internal/workspace/ctrd/*_linux.go` | `_linux` suffix | the whole containerd executor; only `doc.go` has no tag, so tools can still list the package on other systems |
@@ -771,6 +877,29 @@ code with its own licences to review. Only `ctrd` (Linux-only files) imports
 checks that a *Linux* build does link them, so a broken filter cannot make the first test pass for
 the wrong reason. The OpenSandbox executor (`osb`) and the egress proxy are pure stdlib and
 compile everywhere, but are wired only on Linux, because only a Linux runner runs workspaces.
+
+**4. The orchestrator side links only what it needs (M5).** `TestOrchestratorDeps` in
+`cmd/mirafleet/deps_test.go` has three rules, checked for all six targets (linux, darwin and
+windows, each on amd64 and arm64):
+
+- `internal/orch`, `internal/mcpserver` and `integrations/claude-code/hook` never link
+  `internal/service`, `internal/store`, `internal/central`, `internal/runner`,
+  `internal/workspace/ctrd`, `modernc.org/*`, `github.com/containerd/*`, gRPC or JWT packages.
+  Why: these are the packages that run on a laptop at the request of an agent. If one linked the
+  service layer, a tool handler could call it directly and skip the SSH boundary and its policy
+  and audit; and the laptop binary would carry a database.
+- **The go-sdk is imported only from `internal/mcpserver`'s shipped code.** The test lists every
+  package's imports *without* test files and fails if anything else imports
+  `github.com/modelcontextprotocol/go-sdk`. Test files are exempt on purpose: `TestM5Done`, in
+  `internal/central`, uses the SDK's *client* to drive the server, and tests never ship.
+- A **positive control**: `internal/mcpserver` must link some go-sdk package. Without it, a broken
+  filter would let both checks above pass for the wrong reason (the same trick as
+  `TestLinuxLinksSQLite`). Every target package must also exist, so renaming one cannot silently
+  disable the check.
+
+Everything in these packages must also build on Windows, which `scripts/dev.sh cross` checks
+(compile and vet only) and the CI workflow actually *tests* on Windows and macOS
+([chapter 9](09-dev-setup-and-testing.md#913-the-orchestrator-workflow-windows-and-macos)).
 
 ## 8.8 Where to add things
 
@@ -887,6 +1016,55 @@ sessions, the reaper, audit, policy, `concurrent` slots, the wire protocol) stay
 4. Tests in `config_test.go` (table tests with `t.TempDir()`), update the reference in
    [chapter 10](10-operations.md).
 
+### A new MCP tool (something the model may call)
+
+Example: `workspace_stat`, which would wrap a new operator method `workspace.stat`.
+
+**The rule first: a tool may only wrap an operator method.** Never an admin method, never an
+enrol method. The tool table is fixed in code, and `orch.call` is the only path to
+`apiclient` and refuses any method for which `api.IsOperatorMethod` is false. If the capability you
+want is an admin action (create a fleet, revoke a runner), it does not become a tool: that is the
+point of the three gates in [chapter 5](05-security.md#536-lifecycle-only-on-central-prompt-injection).
+
+1. **The operator method.** If `workspace.stat` does not exist yet, add it first with the recipe
+   "A new operator method" above (`api`, `policy`, `service`, `central`, `apiclient`). A tool adds
+   no power by itself; it only lets the model reach what an operator could already reach.
+2. `internal/orch/calls.go`: add a typed wrapper `WorkspaceStat(ctx, cname, ...)` that builds the
+   params and calls `o.call(ctx, cname, api.MethodWorkspaceStat, params, &callIO{result: &r})`.
+   Decide here whether the method is idempotent (`idempotent()` in the same file): only then is it
+   retried after a dead connection. If in doubt, it is not. Never read the process environment.
+3. `internal/mcpserver/backend.go`: add the method to the `Backend` interface (`*orch.Orch` already
+   satisfies it, which the line `var _ Backend = (*orch.Orch)(nil)` checks), and to the fake in
+   `fake_backend_test.go`.
+4. `internal/mcpserver/tools_ws.go` or `tools_list.go`: add the `Tool` in `WorkspaceTools` or
+   `ListTools`: a name, a description (which must say that results are data, not instructions),
+   `InputSchema` with `additionalProperties:false`, an `OutputSchema`, `Annotations` (set all four
+   honestly: a tool that changes state is `Destructive`; a pure read is `ReadOnly` and
+   `Idempotent`), and a handler.
+5. **The handler, in this order:** `DecodeArgs(req, &a)` first (exact-case, strict; it is what
+   makes the Claude Code hook and the server agree on what `confirm` is); validate every field
+   (`checkName`, `api.Validate*`); resolve the target (`resolveFleet` for fleet-level tools,
+   `s.pick` for workspace tools); call the backend; pass `confirm` through verbatim and wrap errors
+   with `guardedRewrite(toolError(err), t)`; cap any text that came from a remote machine with
+   `orch.CapOutput` or `orch.Sanitize`; return a struct that includes `Where: whereOf(t)` (and
+   add `whereSchema` to the output schema).
+6. If the tool changes state on a fleet that can be guarded, give it the `confirm` property (copy
+   `confirmProp`). Central enforces it regardless; the property is what lets the model supply it.
+7. `integrations/claude-code/hook/hook.go`: add the name to `knownTools`. The hook cannot import
+   the server (it would link the SDK), so `TestKnownToolsMatchMCPServer` fails until you do.
+   The `PreToolUse` matcher in `hooks/hooks.json` matches every tool of the plugin's server by
+   prefix, so it needs no change.
+8. `integrations/commands/mirafleet.md` (and its tested copies in `skills/`, `opencode/commands/`):
+   mention the tool only if the workflow changes; the tests require the copies to stay identical.
+9. **Tests, in the same change:** a schema and annotation test (add the tool to the expected set in
+   `TestListToolsSchemasAndAnnotations` or `TestWSToolSet`); a case in
+   `TestEveryToolRejectsMiscasedAndDuplicateKeys`; argument-validation tests; a test that the
+   result carries `where`; for a state-changing tool, `confirm` pass-through. `TestM5Done` asserts
+   that `tools/list` returns exactly the nine tools, so update that list on purpose. Run the
+   `mcpserver`, `orch` and `integrations` tests and `scripts/dev.sh cross`.
+10. Docs: the tool table in [chapter 7](07-protocols.md#713-the-mcp-layer-m5), and
+    `docs/ARCHITECTURE.md`.
+
 ## 8.9 Follow one `workspace.exec`
 
 alice's agent runs a command in the workspace it opened earlier. This is the M3 counterpart of
@@ -917,9 +1095,9 @@ central sent.*
 mirafleet mcp api workspace.exec '{"workspace":"3f9a6c1e5b7d4820a1c3e5f708192a4b","argv":["go","test","./..."],"cwd":"src","env":{"CI":"1"},"timeout_s":300}'
 ```
 
-**On alice's laptop** (`cmd/mirafleet/mcp.go`, `internal/apiclient/client.go`)
+**On alice's laptop** (`cmd/mirafleet/mcp_api.go`, `internal/apiclient/client.go`)
 
-1. `mcpAPI` parses `METHOD [JSON] [-in FILE] [-out FILE]`. For `workspace.exec`, `mcpCallLimit`
+1. `mcpAPI` parses `METHOD [JSON] [-in FILE] [-out FILE]`. For `workspace.exec`, `orch.CallLimit`
    computes the client deadline: `timeout_s` plus a 30 s margin, and when `timeout_s` is absent
    the server's 24 h ceiling plus the margin (the client cannot see the fleet's default; the
    server enforces the real one). With `-in FILE`, the file becomes the body and `"stdin":true`
@@ -1026,6 +1204,83 @@ The code for that picture: `OpenWorkspace` (checks, sticky `reuse`, the 3-try lo
 `wsState.prepare`/`admit` and `ctrd.Executor.Create` on the runner (allowlist re-check, pull,
 `buildSpec`, user-namespace id range for the slot, egress listener).
 
+## 8.10 Follow one `exec` tool call
+
+Section 8.9 started at `mirafleet mcp api`, the hand-driven way in. This is the same command from
+the real front door: Claude Code, with the plugin installed, running in alice's project. The
+model has decided to call the `exec` tool with `{"command":"go test ./..."}`. The project's
+`.mirafleet.yaml` says `fleet: dev`; alice's `contexts.yaml` has one context, `work`, pointing at
+`central.example.com:2222`. No workspace is open yet.
+
+1. **Harness.** Claude Code asks its tool-approval prompt (and the plugin's `PreToolUse` hook
+   runs: `hook.preToolUse` reads the call, finds no `confirm`, prints nothing). It then writes one
+   JSON-RPC line to the stdin of `mirafleet mcp`:
+   `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"exec","arguments":{"command":"go test ./..."}}}`.
+
+**In the MCP server** (`internal/mcpserver`)
+
+2. The go-sdk reads the line and calls the handler registered by `newServer` through `wrap`
+   (`server.go`). `wrap` checks the arguments are a JSON object, starts the progress ticker if the
+   request has a `progressToken`, and runs `safeCall`, which recovers panics.
+3. `safeCall` calls `wsState.exec` (`tools_ws.go`). It runs `DecodeArgs` (strict, exact-case),
+   enforces exactly one of `command` or `argv` (`command` becomes `["/bin/sh","-c","go test ./..."]`)
+   and validates argv, `cwd`, `env`, `timeout_s` and `stdin` with the same `api.Validate*` functions
+   central uses.
+4. `wsState.pick` chooses the target and the workspace. `resolveFleet` calls `Backend.Resolve`
+   (`orch.Resolve`, below) and gets context `work` (only context) and fleet `dev` (project file).
+   `Backend.SessionFor` returns the session: no `-session` flag and no handoff file, so with
+   Claude Code the hook's `cc:<session_id>`, otherwise a random `p:<32 hex>`. There is no binding
+   for (`work`, `dev`, session), so this is an **implicit open**, allowed only because `dev` is
+   not guarded: `pick` calls `FleetsList` to check, then `WorkspaceOpen` (each goes through
+   steps 7 to 9 below, with its own method), and remembers the workspace id in `wsState`.
+
+**In the orchestrator** (`internal/orch`)
+
+5. `orch.Resolve` re-reads `contexts.yaml` and `.mirafleet.yaml` (`opconf.LoadContexts`,
+   `opconf.LoadProject`) on every call, applies the precedence argument, flag, project file,
+   context default, and returns a `Target` that records where each value came from. If the fleet
+   had come from the project file and were guarded, `Resolve` would refuse it here.
+6. `Orch.WorkspaceExec` re-checks `env` with `api.ValidateEnv`, caps stdin at 1 MiB, sets
+   `Stdin` true when there is any, and calls `Orch.call`.
+7. `call` is the choke point. It refuses any method that is not an operator method; finds the
+   context in `contexts.yaml`; takes the context's connection pool; sets the deadline
+   (`CallLimit`: `timeout_s` plus 30 s, or the 24 h ceiling plus 30 s when none was given); and
+   waits for one of the 8 channel slots.
+8. `pool.get` returns the live SSH connection or dials one. `pool.connect` first requires a
+   non-empty `known_hosts` and a key file (else `ErrNotSetUp`: "run `mirafleet mcp login ...`",
+   and nothing is dialled), loads the operator key (`keys.LoadSigner`, which checks the file's
+   permissions or Windows DACL), builds the host-key callback from `known_hosts`
+   (`apiclient.KnownHosts`: pinned or refused, no trust on first use) and calls `apiclient.Dial`
+   as SSH user `operator`, then says `hello` and checks the protocol version.
+9. `invoke` sends the request: `Client.CallBody` opens an `api@mirafleet` channel and writes the
+   request frame and, because there is stdin, a body frame. **From here the path is exactly 8.9,
+   from step 3 on:** the method table, `service.ExecWorkspace`, the start audit row, the runner,
+   the container, the outcome audit row, the reply frame.
+   If the connection is dead, `call` drops it and redials **only** for idempotent methods;
+   `workspace.exec` is not one, so the model gets `unavailable: the connection to central was lost;
+   the call may or may not have completed`, never a silent re-run of `go test` (or worse, of
+   `rm`).
+
+**Back in the MCP server**
+
+10. The result is `api.WorkspaceExecResult`. `exec` runs it through `orch.CapOutput` with the
+    output cap (30 KiB by default): sanitises, keeps head and tail with a
+    `[mirafleet: N bytes omitted]` marker if needed. It builds `execOut`, which includes
+    `workspace` and `where`.
+11. `toResult` JSON-encodes it once and returns it as `structuredContent` plus one text item. If
+    any step above had failed, `errResult` would produce an `isError` result with the code and a
+    safe message instead, and `guardedRewrite` would have turned central's "requires confirm" into
+    "ask the user" text.
+12. The SDK writes one JSON line to stdout. Claude Code shows the tool result to the model. Nothing
+    else was ever printed on stdout. On the other side, central's audit log has the `start` and
+    `outcome` rows with alice as the operator: it cannot tell (and does not need to tell) that the
+    command came from an agent rather than from `mirafleet mcp api`.
+
+What to look at first when debugging: `mirafleet mcp context list` and the `where` in the result
+(step 5), the stderr of `mirafleet mcp` (Claude Code's `/mcp` panel or `--debug`; step 8 errors),
+then central's audit log (steps 9 onwards). [Chapter 10](10-operations.md#10108-troubleshooting-the-orchestrator)
+has the symptom table.
+
 ## Check your understanding
 
 1. `internal/central` handles SSH connections for a database-backed server, yet it does not
@@ -1045,6 +1300,12 @@ The code for that picture: `OpenWorkspace` (checks, sticky `reuse`, the 3-try lo
    binary from accidentally linking containerd?
 8. A refused `workspace.exec` from an unauthorised caller carries a 1 MiB stdin body. At which
    step of the trace is it *not* read, and what would go wrong if it were read first?
+9. Which test stops `internal/mcpserver` from reaching into `internal/service` to "save a round
+   trip", and what does it list as the one place the go-sdk may be imported?
+10. In section 8.10, why does a dead connection make `exec` fail with "may or may not have
+    completed" instead of quietly trying again?
+11. You want a tool that revokes a runner. Where does the plan fail, and at how many places?
+
 <details>
 <summary>Answers</summary>
 
@@ -1079,5 +1340,16 @@ The code for that picture: `OpenWorkspace` (checks, sticky `reuse`, the 3-try lo
    confirm and timeout. The body is read only in step 7, through the lazy `lazyStdin`. Reading it
    first would let any authenticated caller make central buffer 1 MiB per channel (8 channels per
    connection) before being told `not_found` or `forbidden`.
+9. `TestOrchestratorDeps` in `cmd/mirafleet/deps_test.go`: it runs `go list -deps` for `orch`,
+   `mcpserver` and the hook on all six OS/architecture pairs and fails on any server-side
+   package. The go-sdk may be imported only by non-test files of `internal/mcpserver`.
+10. A dead connection says nothing about whether central already ran the command. Repeating a
+    `go test` is harmless; repeating a `deploy` or an `rm` is not. `orch.call` therefore redials
+    and retries only the methods in `idempotent()` (lists, `read_file`, `workspace.open`), and
+    reports an honest uncertainty for the rest.
+11. At three gates: `revoke` is an admin method, so there is no operator method to wrap; `orch.call`
+    would refuse it because `api.IsOperatorMethod` is false; and central refuses admin methods on
+    the `api@` channel whatever the caller. The tool table is also fixed in code, so
+    `tools/call` for such a name finds nothing. See "A new MCP tool" in section 8.8.
 
 </details>

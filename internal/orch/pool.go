@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,7 +84,10 @@ type pool struct {
 	mu      sync.Mutex
 	cur     *live
 	dialing *dialState
+	retired bool // replaced by a pool for another address (or closed): never keep a connection
 }
+
+var errRetired = errf(api.CodeUnavailable, nil, "the context was changed while the call was running: try again")
 
 func (o *Orch) poolFor(name, addr string) (*pool, error) {
 	o.mu.Lock()
@@ -109,6 +113,7 @@ func (o *Orch) poolFor(name, addr string) (*pool, error) {
 
 func (p *pool) closeAll() {
 	p.mu.Lock()
+	p.retired = true
 	lv := p.cur
 	p.cur = nil
 	p.mu.Unlock()
@@ -138,6 +143,10 @@ func (p *pool) drop(lv *live) {
 // which runs under the pool's context so one caller cancelling does not abort the others.
 func (p *pool) get(ctx context.Context) (*live, error) {
 	p.mu.Lock()
+	if p.retired {
+		p.mu.Unlock()
+		return nil, errRetired
+	}
 	if lv := p.cur; lv != nil {
 		p.mu.Unlock()
 		return lv, nil
@@ -166,6 +175,13 @@ func (p *pool) dial(d *dialState) {
 	lv, err := p.connect()
 	p.mu.Lock()
 	p.dialing = nil
+	if err == nil && p.retired { // replaced or closed while dialling: do not keep it
+		lv.close()
+		lv, err = nil, errRetired
+		if p.o.isClosed() {
+			err = errClosed
+		}
+	}
 	if err == nil {
 		if p.o.goStart() {
 			p.cur = lv
@@ -186,8 +202,8 @@ func (p *pool) connect() (*live, error) {
 		return nil, ErrNotSetUp
 	}
 	kp := opconf.KnownHostsPath(o.cfg.ConfigDir)
-	if _, err := os.Stat(kp); err != nil {
-		return nil, ErrNotSetUp // no pinned host key: never trust on first use
+	if !hasPinnedKey(kp) {
+		return nil, ErrNotSetUp // no pinned host key: never trust on first use, never dial
 	}
 	kf := opconf.KeyPath(o.cfg.ConfigDir)
 	if _, err := os.Stat(kf); err != nil {
@@ -203,6 +219,23 @@ func (p *pool) connect() (*live, error) {
 		return nil, err
 	}
 	return &live{conn: conn, stop: make(chan struct{})}, nil
+}
+
+// hasPinnedKey reports whether the known_hosts file exists and holds at least one entry (a
+// non-blank, non-comment line). An empty file would fail every handshake after the key exchange;
+// refusing before the dial keeps the "not set up" answer and sends nothing.
+func hasPinnedKey(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			return true
+		}
+	}
+	return false
 }
 
 // keepalive pings lv every KeepaliveInterval and drops it when a ping fails.

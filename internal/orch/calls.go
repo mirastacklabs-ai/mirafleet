@@ -15,6 +15,7 @@ import (
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/apiclient"
+	"github.com/mirastacklabs-ai/mirafleet/internal/keys"
 )
 
 // panicOnGuard makes the guard panic instead of returning an error. Tests set it so a code path
@@ -62,6 +63,7 @@ type callIO struct {
 	hasBody  bool
 	wantBody bool // a response body frame follows the result
 	got      []byte
+	addr     string // set by call: the address of the context the call went to
 }
 
 // clean makes a string safe to put in an error: sanitised and clipped.
@@ -97,6 +99,7 @@ func (o *Orch) call(ctx context.Context, cname, method string, params any, x *ca
 	if !ok {
 		return errf(api.CodeNotFound, nil, fmt.Sprintf("unknown context %q", clean(cname)))
 	}
+	x.addr = c.Addr
 	p, err := o.poolFor(c.Name, c.Addr)
 	if err != nil {
 		return err
@@ -191,7 +194,7 @@ func (o *Orch) mapErr(ctx context.Context, err error) error {
 		return errf(api.CodeTimeout, nil, "the call timed out")
 	case errors.Is(err, context.Canceled):
 		return err
-	case errors.Is(err, apiclient.ErrHostKeyMismatch):
+	case errors.Is(err, apiclient.ErrHostKeyMismatch), errors.Is(err, keys.ErrHostKeyMismatch):
 		return errf(api.CodeUnavailable, nil, "central's host key does not match the pinned key; the server may have been rebuilt or intercepted")
 	case strings.Contains(err.Error(), "unable to authenticate"):
 		return errf(api.CodeUnauthenticated, nil, "central rejected the operator key: run `mirafleet mcp login …`")
@@ -203,10 +206,11 @@ func (o *Orch) mapErr(ctx context.Context, err error) error {
 // FleetsList lists the fleets of a context and refreshes the guarded-fleet cache.
 func (o *Orch) FleetsList(ctx context.Context, cname string) (*api.FleetsListResult, error) {
 	var r api.FleetsListResult
-	if err := o.call(ctx, cname, api.MethodFleetsList, nil, &callIO{result: &r}); err != nil {
+	x := &callIO{result: &r}
+	if err := o.call(ctx, cname, api.MethodFleetsList, nil, x); err != nil {
 		return nil, err
 	}
-	o.noteFleets(cname, &r)
+	o.noteFleets(cname, x.addr, &r)
 	return &r, nil
 }
 

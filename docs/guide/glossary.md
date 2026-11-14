@@ -130,14 +130,25 @@ containers (colima on macOS). Access to its socket is equivalent to root on the 
 **context (Go).** A value carrying cancellation and deadlines through function calls. See
 [chapter 2](02-background.md#27-go-context-cancellation).
 
-**context (contexts.yaml).** A different thing with the same word: a named connection setting
-(central address and pinned host-key hash) in the operator's `contexts.yaml`, like a `kubectl`
-context. See [chapter 8](08-code-tour.md).
+**context (contexts.yaml).** A different thing with the same word: a named central the operator
+can talk to (a name, an address and an optional `default_fleet`), listed in the operator's
+`contexts.yaml`, like a `kubectl` context. The MCP server keeps one SSH connection per context
+and every tool result names the context it used. `mcp context list|use|remove` edits the list.
+The pinned host key lives in `known_hosts`. See
+[chapter 6](06-data-model.md#616-local-files-on-the-operators-machine-and-heartbeat-actions-m5-no-schema-change)
+and [chapter 3](03-architecture.md#operator-side).
 
 **CVE.** "Common Vulnerabilities and Exposures": a public id for a known security bug, such as
 CVE-2024-45337 in the Go SSH library. See [chapter 5](05-security.md).
 
 ## D
+
+**DACL (discretionary access-control list).** The Windows list of "which account may do what" on
+a file or folder. Windows has no `0600`, so mirafleet creates the operator key and its directory
+with a *protected* DACL (no inheritance) that allows only the current user, SYSTEM and
+Administrators, and checks it on every load, failing closed otherwise. See
+[chapter 5](05-security.md#511-prompt-injection-through-tool-output) and
+[chapter 3](03-architecture.md#where-does-each-secret-and-key-live).
 
 **Data dir.** The directory where central keeps its state (default `/var/lib/mirafleet/central`):
 host key, SQLite database, admin socket, lock file. A runner has its own data dir with
@@ -233,10 +244,18 @@ at once; a context tells them when to stop. See [chapter 2](02-background.md#27-
 name and its parameters against `actions.yaml`, then runs it without a shell. This is the
 security boundary. See [chapter 5](05-security.md).
 
+**Guarded fleet.** A fleet created with `-confirm`. Every state-changing call on it (`run_action`,
+`workspace_open`, `exec`, `write_file`) must carry `confirm` equal to the fleet's name, or central
+refuses with `bad_request` and writes a `denied` audit row. The MCP server never fills `confirm`
+itself and tells the model to ask the human first; a guarded fleet is never used as a default.
+See [chapter 5, 5.3.7](05-security.md#537-guarded-fleets-confirm-must-equal-the-fleet-name) and
+[flow 23](04-flows.md#23-a-guarded-call-and-the-confirm-prompt).
+
 ## H
 
-**Harness.** The program that hosts an AI agent and its tools: Claude Code, opencode, Kilo Code.
-See [chapter 2](02-background.md#210-mcp-and-harnesses).
+**Harness.** The program that hosts an AI agent loop and connects it to tools: Claude Code,
+opencode, Kilo Code. It launches MCP servers, shows tool results to the model, and asks the human
+for permission. See [chapter 2](02-background.md#210-mcp-and-harnesses).
 
 **Harness-agnostic.** Core behaviour and safety do not depend on any one harness's features;
 harness-specific code lives only in `integrations/<harness>/`. See
@@ -246,7 +265,8 @@ harness-specific code lives only in `integrations/<harness>/`. See
 [chapter 2](02-background.md#24-hashes-hmac-and-constant-time-comparison).
 
 **Heartbeat.** A `heartbeat@mirafleet` SSH global request the runner sends every 15 s with its
-hostname, OS, architecture, version and labels. Open and heartbeating means online. Heartbeats
+hostname, OS, architecture, version and labels (and, since M5, an optional bounded list of the
+actions the runner offers, for discovery only). Open and heartbeating means online. Heartbeats
 stay in memory. See [chapter 7](07-protocols.md).
 
 **HMAC.** A hash mixed with a secret key, so only secret holders can create or verify it. See
@@ -255,6 +275,13 @@ stay in memory. See [chapter 7](07-protocols.md).
 **`hello`.** The simplest API method: it takes at most a client name hint and returns the
 operator's name, the protocol versions central speaks and the server name. It also fails if the
 operator is no longer active, so it doubles as a "does my login still work?" test. See [chapter 7](07-protocols.md).
+
+**Hook.** A program the *harness* runs at a fixed event, such as session start, session end or
+just before a tool call. The mirafleet Claude Code plugin has three: SessionStart writes the
+session handoff file, SessionEnd closes the workspace on `clear` or `logout`, and PreToolUse asks
+the human when a call carries `confirm`. Hooks only add convenience: the MCP server and central
+are safe without them. See [chapter 2](02-background.md#210-mcp-and-harnesses) and
+[flows 20 to 23](04-flows.md#mcp-flows-m5).
 
 **Host key.** An SSH server's own key pair. Central's host key is created by `central init`;
 clients pin its hash. See [chapter 2](02-background.md#23-host-key-pinning-versus-trust-on-first-use).
@@ -275,6 +302,11 @@ operator key is idempotent (but still audited). See [chapter 4](04-flows.md).
 
 **JSON.** A text format for structured data: `{"v":1,"method":"hello"}`. Every API message is
 JSON. See [chapter 7](07-protocols.md).
+
+**JSON-RPC.** A small standard for remote calls in JSON: a request has an `id`, a `method` and
+`params`; the reply has the same `id` and a `result` or an `error`; a message without an `id` is a
+notification. MCP is built on JSON-RPC 2.0, one message per line over stdio. See
+[chapter 2](02-background.md#json-rpc-over-stdio).
 
 **Join token.** A credential `mfj1.<id>.<secret>.<host-key-hash>` that lets one runner enrol. Single
 use by default, 24 h lifetime, maximum 30 days. Central stores only a SHA-256 of the secret. See
@@ -306,8 +338,15 @@ never over `api@mirafleet`. See [chapter 5](05-security.md).
 ## M
 
 **MCP (Model Context Protocol).** A standard for an agent harness to discover and call tools,
-spoken over stdio. mirafleet's MCP server is planned for M5. See
+spoken as JSON-RPC over stdio. mirafleet's MCP server is `mirafleet mcp` (built in M5). See
 [chapter 2](02-background.md#210-mcp-and-harnesses).
+
+**MCP tool.** One named capability the MCP server advertises, with a JSON Schema for its
+arguments and result. mirafleet has nine: `list_fleets`, `list_runners`, `run_action`,
+`workspace_open`, `exec`, `read_file`, `write_file`, `workspace_close` and `workspace_list`. Each
+is a thin wrapper over operator API methods; there is none for admin work. See
+[chapter 2](02-background.md#210-mcp-and-harnesses) and
+[flow 19](04-flows.md#19-one-exec-tool-call-end-to-end).
 
 **Migration.** A numbered SQL file that moves the database schema forward one version. Embedded
 in the binary; forward-only; a newer database than the binary fails closed. See
@@ -359,6 +398,12 @@ operation stays inside that directory, even across symlinks and `..`. The contai
 uses one per workspace for `read_file` and `write_file`. See
 [chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
 
+**Output cap.** The limit on stdout plus stderr that `exec`, `run_action` and text `read_file`
+return to the model: 30 KiB by default (`output_cap_bytes` in `contexts.yaml`, 4 KiB to 256 KiB).
+The text is sanitised first (ANSI sequences, control characters and invisible Unicode removed or
+made visible), then trimmed to a third head and two thirds tail around an omission marker, and the
+result says `truncated: true`. See [chapter 5](05-security.md#511-prompt-injection-through-tool-output).
+
 **Outbound-only.** All connections start from the runner or operator toward central; nothing
 dials in to a runner. See [chapter 1](01-what-is-mirafleet.md#12-what-mirafleet-does).
 
@@ -378,6 +423,11 @@ until approved (unless the token had `-approve`). See [chapter 6](06-data-model.
 anything else, with no prompt. See
 [chapter 2](02-background.md#23-host-key-pinning-versus-trust-on-first-use).
 
+**Plugin.** A folder a harness installs to add tools, commands, skills and hooks in one package.
+mirafleet's Claude Code plugin is `integrations/claude-code/`: it starts `mirafleet mcp`, adds the
+`/mirafleet` skill (and the `/openfleet` and `/claudefleet` aliases) and three hooks. See
+[chapter 2](02-background.md#210-mcp-and-harnesses).
+
 **Policy / PolicyEngine.** The Go interface `Authorize(ctx, Principal, Action, Resource)` that
 decides whether a principal may do something. The OSS table: local admin may do everything; an
 active operator may only call `hello`, list methods and `action.run`; all else denied. See
@@ -390,9 +440,16 @@ See [chapter 5](05-security.md).
 **Principal.** The authenticated identity behind a request: `admin` (local socket, `local:uid=N`),
 an operator, or a runner. See [chapter 5](05-security.md).
 
-**Prompt injection.** An attack where text the agent reads (a log line, a web page) contains
-instructions that trick the agent. mirafleet limits the damage with the guard, confirm and by
-keeping lifecycle off the operator API. See [chapter 1](01-what-is-mirafleet.md#11-the-problem).
+**Project default.** The optional `.mirafleet.yaml` in a project directory with a default `fleet`
+and `context` for that project. It holds nothing else (no addresses, keys or caps), and a guarded
+fleet named only there is refused. See
+[chapter 6](06-data-model.md#616-local-files-on-the-operators-machine-and-heartbeat-actions-m5-no-schema-change).
+
+**Prompt injection.** An attack where text the agent reads (a log line, a web page, a README)
+contains instructions that trick the agent. mirafleet limits the damage with the guard, confirm,
+a fixed set of nine tools, the output cap and sanitising, and by keeping lifecycle off the
+operator API. See [chapter 1](01-what-is-mirafleet.md#11-the-problem) and
+[chapter 5, 5.11](05-security.md#511-prompt-injection-through-tool-output).
 
 **Public key / private key.** The shareable and secret halves of a key pair. See
 [chapter 2](02-background.md#21-public-key-cryptography-and-ed25519).
@@ -457,6 +514,17 @@ containers use containerd's default profile and never run unconfined. See
 workspace it wants. At most one live workspace exists per operator, fleet and session. See
 [chapter 4](04-flows.md#12-open-a-workspace).
 
+**Session handoff.** A small file (`sessions/<hash>.json` in the state directory) in which a
+harness hook leaves the harness's session id (`cc:<id>` for Claude Code), keyed by the parent
+PID and the project directory, so the MCP server can reuse the same workspace after
+`--resume`. It holds an id, not a secret. Without it the server uses a random per-process
+session. See [flow 20](04-flows.md#20-session-resolution-and---resume-reattach).
+
+**Skill.** A Markdown file of instructions a harness hands to the model on demand or when the user
+types a slash command. mirafleet's `/mirafleet` skill explains how to use the tools safely. A
+skill is text only and cannot enforce anything. See
+[chapter 2](02-background.md#210-mcp-and-harnesses).
+
 **Slot.** One place for a workspace on a runner. The runner's `concurrent: N` setting gives N slots;
 a workspace in `opening`, `open` or `closing` holds one. See
 [chapter 4](04-flows.md#12-open-a-workspace).
@@ -500,6 +568,11 @@ account. See [chapter 7](07-protocols.md).
 
 **stdio.** Standard input and output; how tokens are passed in (`-token -`) and how MCP servers
 talk to harnesses. See [chapter 2](02-background.md#210-mcp-and-harnesses).
+
+**stdio server.** An MCP server that the harness launches as a child process and talks to over
+that process's standard input and output, with no network port. `mirafleet mcp` is one: stdout
+carries only protocol messages, logs go to stderr, and the server exits when stdin closes. See
+[chapter 2](02-background.md#210-mcp-and-harnesses).
 
 **Step (time step).** `floor(unix_seconds / 60)`: the number of the current minute, input to the
 registration code. See [chapter 2](02-background.md#25-totp-style-rotating-codes).

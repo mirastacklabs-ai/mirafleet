@@ -11,22 +11,24 @@ with the code, a checklist for reviewing a change, and some real first tasks.
 - How milestone plans (`docs/M*.md`) work and how to read one.
 - The documentation rule, and how to add a diagram.
 - A review checklist and a list of small, real tasks to start with.
+- How to add support for a new agent tool (a *harness integration*) without touching the core
+  ([section 11.7](#117-adding-a-harness-integration)).
 
 ## 11.1 The ground rules, with reasons
 
 These come from [CLAUDE.md](../../CLAUDE.md) **as of 13 Nov 2026**. If the two ever disagree,
 CLAUDE.md wins and this table should be fixed. Read the file itself too; it is short and
-binding. Status today: M1 and M2 are done, and M3 (workspaces) is done (13 Nov 2026) pending its
-final review; next come M5 (MCP server), M4 (GUI) and M6 (release). A rule without a reason gets broken the first time it is inconvenient, so here is the reason for
+binding. Status today: M1, M2, M3 (workspaces) and M5 (the MCP server and harness integrations)
+are done; next come M4 (GUI) and M6 (release). A rule without a reason gets broken the first time it is inconvenient, so here is the reason for
 each.
 
 | Rule | Why |
 |---|---|
 | **One static Go binary** (`mirafleet central \| runner \| mcp`); `CGO_ENABLED=0` must keep building. | A static binary copies to any Linux host and runs, with no libraries to match. It makes packaging, containers and the "download and run" install easy. A dependency that needs a C compiler (cgo) would break this, which is why SQLite is the pure-Go `modernc.org/sqlite` and not the C one. |
-| **Platforms:** central and runner are **Linux only**; `mirafleet mcp` runs on Linux and macOS (it builds on Windows and runs there from M5). The binary must still build for all six targets. OS-specific code goes behind build tags and **fails closed** elsewhere. | Servers are Linux; laptops are not. Features such as the admin socket peer check or process-group kill have no honest Windows equivalent. If a security check cannot run on a platform, silently skipping it would be a hole, so the code returns an error instead (see [chapter 8](08-code-tour.md#87-build-tags-and-why)). |
+| **Platforms:** central and runner are **Linux only**; `mirafleet mcp` and the harness integrations run on Linux, macOS and Windows (amd64 and arm64; CI tests Windows and macOS since M5). The binary must still build for all six targets, and `scripts/dev.sh cross` checks it. OS-specific code goes behind build tags and **fails closed** elsewhere. | Servers are Linux; laptops are not. Features such as the admin socket peer check or process-group kill have no honest Windows equivalent. If a security check cannot run on a platform, silently skipping it would be a hole, so the code returns an error instead (see [chapter 8](08-code-tour.md#87-build-tags-and-why)). |
 | **Central's store is SQLite** behind the `Store` interface. | SQLite needs no separate server, which keeps the open-source edition easy to run. The interface keeps the door open for other stores without touching `central`. |
 | **Keep dependencies to the list in `docs/PLAN.md`; ask before adding others.** | Every dependency is code we did not write but must trust, patch and licence-check. A short list keeps the supply-chain risk small and the binary lean. |
-| **Permissive licences only** (Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD) for all dependencies, including transitive ones and bundled assets. Never GPL, LGPL, AGPL, MPL, SSPL, BUSL or other copyleft/source-available. Fonts may be SIL OFL-1.1. | mirafleet is Apache-2.0 and meant to be used inside companies. Copyleft or source-available terms could force those users to publish their own code or forbid their use. The licence gate is `scripts/dev.sh licenses` ([chapter 9](09-dev-setup-and-testing.md#99-the-licence-gate)). |
+| **Permissive licences only** (Apache-2.0, MIT, MIT-0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD) for all dependencies, including transitive ones and bundled assets. Never GPL, LGPL, AGPL, MPL, SSPL, BUSL or other copyleft/source-available. Fonts may be SIL OFL-1.1. | mirafleet is Apache-2.0 and meant to be used inside companies. Copyleft or source-available terms could force those users to publish their own code or forbid their use. The licence gate is `scripts/dev.sh licenses` ([chapter 9](09-dev-setup-and-testing.md#99-the-licence-gate)). |
 | **Follow [BRAND.md](../BRAND.md)** for GUI, CLI colours, docs and assets. | Consistent look, and the colours carry meaning (teal is data, orange is emphasis only, status colours are runner states). |
 | **Containers:** the Docker ecosystem is supported (Docker CLI, Docker Engine, Compose, `docker.io` images), never a hard dependency on Docker's commercial products. Runner workspaces (M3) use containerd through its Go client, never Docker Engine. | We want open tooling anyone can run for free. Docker Engine runs on containerd, so one client covers Docker hosts and plain containerd hosts; the workspace namespace is `mirafleet`, and `moby` (Docker's) is refused in code so the two never mix. |
 | **The runner-side actions guard is the security boundary:** argv only, no shell, regex-validated params. | Central and the agent are not trusted to decide what is safe to run. The only thing that cannot be talked around is the allowlist on the machine that executes. Every change near `internal/actions` gets the strictest review. |
@@ -107,9 +109,12 @@ M6; the numbers are labels, not the sequence). Each milestone has a "done when" 
 test can check. For M2 it is literally the test `TestM2Done`; for M3 it is `TestM3Done` (fake
 executor, every run) and `TestM3DoneIntegration` (real containerd, `scripts/dev.sh integration`).
 
-For a milestone with real design choices there is a detailed file, `docs/M2.md`, `docs/M3.md`.
-Reading [M2.md](../M2.md) shows the shape ([M3.md](../M3.md) follows it, with an extra section
-for the developer-guide updates):
+For M5 it is `TestM5Done` (the MCP layer against a real central) together with `TestM5NoHooks` (the
+built binary with no hooks).
+
+For a milestone with real design choices there is a detailed file, `docs/M2.md`, `docs/M3.md`,
+`docs/M5.md`. Reading [M2.md](../M2.md) shows the shape ([M3.md](../M3.md) and
+[M5.md](../M5.md) follow it, with an extra section for the developer-guide updates):
 
 1. **Design decisions** (section 1): store, tokens, auth, protocol, admin socket, revoke, audit.
    Each with the reason.
@@ -238,7 +243,19 @@ Copy this into your PR description and tick it honestly. Reviewers use the same 
 - [ ] `CGO_ENABLED=0` still builds; `scripts/dev.sh cross` passes for all six targets.
 - [ ] Unix-only code is behind a build tag with a fail-closed fallback; `mirafleet mcp` code
       does not import unix-only or SQLite packages (`TestNoSQLiteOnNonLinux`).
-- [ ] Operator-side code uses `os.UserConfigDir` (via `opconf`), not hard-coded `~/.config`.
+- [ ] Operator-side code uses `opconf.Dir` / `opconf.StateDir`, not hard-coded `~/.config`.
+- [ ] Code in `internal/orch`, `internal/mcpserver` or the hook does not import the server side
+      or the go-sdk (outside `mcpserver`); `TestOrchestratorDeps` passes, and the tests also pass
+      on Windows (no Unix-mode assumptions).
+
+**MCP tools and integrations**
+
+- [ ] A new tool wraps an operator method only, decodes with `DecodeArgs`, includes `where`,
+      caps and sanitises remote text, and passes `confirm` through untouched (chapter 8, "A new
+      MCP tool").
+- [ ] Tool descriptions and results keep saying that remote output is data, not instructions.
+- [ ] A harness integration lives only under `integrations/<harness>/` and adds nothing to the
+      core that only that harness needs (section 11.7).
 
 **Docs**
 
@@ -269,7 +286,9 @@ changes behaviour, open a short plan or issue first (section 11.2).
    audit package tests cover formatting but not the file behaviour. Teaches: file modes,
    `t.TempDir()`.
 4. **GitHub Actions workflow for the gate (M6).** [PLAN.md](../PLAN.md) says CI should run `go
-   vet`, `go test -race` and `go-licenses`, but there is no `.github/workflows` yet. A workflow
+   vet`, `go test -race` and `go-licenses`. The only workflow today is the small
+   `orchestrator.yml` (Windows and macOS tests of the operator side, chapter 9, section 9.13);
+   the Linux gate is run by hand. A workflow
    that runs `scripts/dev.sh fmt`, `vet`, `test`, `cross` and `licenses` on every pull request
    is the smallest correct version; set `CI=1` so `deps_test.go` fails instead of skipping when
    `go` is missing. Teaches: the whole dev flow. Any new GitHub Action you pull in must itself be
@@ -283,10 +302,14 @@ changes behaviour, open a short plan or issue first (section 11.2).
    the M6 packages". Draft `mirafleet-central.service` and `mirafleet-runner.service` with a
    dedicated unprivileged user and `Restart=on-failure`, and document them in chapter 10. Teaches:
    how the service is meant to be deployed.
-7. **Windows owner-only key check (M5).** `internal/keys/perm_windows.go` fails closed because
-   it cannot verify permissions. Implementing an owner-only DACL check (using `golang.org/x/sys`,
-   already a dependency) unblocks `mirafleet mcp` on Windows. This is larger; do it only after
-   a short design note, and test on a real Windows runner in CI.
+7. **A deferred M5 finding.** The end of [M5.md](../M5.md) lists review findings (F-xx, P2 and P3)
+   that were not fixed in their wave. Pick one that is still open (for example a missing
+   `GIT_SSH`-style name in `workspace.EnvDenied`, or one more case for
+   `TestEveryToolRejectsMiscasedAndDuplicateKeys`). Check the code first, since the list is
+   updated as items are fixed; write the failing test first; mark the entry. For anything under
+   `internal/keys`, `internal/opconf` or `internal/handoff`, make sure the change also passes on
+   Windows (the CI workflow runs it; chapter 9, section 9.13). Teaches: the orchestrator packages
+   and how reviews close.
 8. **Warn about tag-only image patterns.** [M3.md](../M3.md) section 1.10 says a tag-only pattern
    (`golang:*`) is allowed "but warned about" (digests are recommended), yet `fleet create` and
    `fleet workspace set` print nothing. Add a one-line warning on stderr in
@@ -313,6 +336,96 @@ changes behaviour, open a short plan or issue first (section 11.2).
    missing glossary entry, correct a command, add a "common mistake" box. This is always welcome
    and is the best way to learn the code.
 
+## 11.7 Adding a harness integration
+
+A **harness** is the program an agent runs in: Claude Code, opencode, Kilo Code, Cline, Cursor, and
+so on. mirafleet's core, `mirafleet mcp`, is a plain stdio MCP server, so **any harness that can
+launch one already works, with no code change**. An integration is only a convenience layer on top.
+This section is the recipe for adding one. The rule behind it is in section 11.1: the core is
+harness-agnostic, and everything harness-specific lives under `integrations/<harness>/`.
+
+### What an integration may add, and what it may not
+
+It may add: (1) the *configuration* that makes the harness start `mirafleet mcp`; (2) a *command*
+or prompt (`/mirafleet`) that carries the shared instructions; (3) optionally *hooks*, if the
+harness has them, which supply three conveniences: tie a harness session to its workspaces,
+close them when the session ends, and show an extra "are you sure?" before a guarded call.
+
+It may not: change `internal/orch` or `internal/mcpserver` for one harness's sake; make the core
+read a harness's environment variable (the core reads no `CLAUDE_*`: the project directory arrives
+through the `-project-dir` flag, which the plugin fills in); make any safety property depend on a
+hook. Why: hooks are a convenience that the next harness may not have, or that a user may switch off.
+The rule that decides things, `confirm`, is enforced by **central**, which refuses a call to a
+guarded fleet unless `confirm` equals the fleet name, hook or no hook. A hook can only make the
+human's decision more visible; it can never grant anything. This is why the hook code
+never emits `allow` (only `ask`), and why `TestM5NoHooks` runs the full flow with no hook at all.
+
+### The recipe
+
+1. **Try the generic setup first.** Put `{"command": "mirafleet", "args": ["mcp", "-project-dir",
+   "."]}` into the harness's MCP configuration (see `integrations/generic/README.md`) and run
+   `list_fleets`. If that works, you may be done; many harnesses need nothing more.
+2. **Read the harness's documentation, and write down what you relied on.** The opencode README
+   has a "Docs relied on" list with dates and an "Unverified" paragraph. Copy that habit: harness
+   configuration formats change, and a reader needs to know what was checked against a real
+   program and what was only read.
+3. **Create `integrations/<harness>/`** with a `README.md` (install, requirements: `mirafleet` on
+   `PATH`, and the one-time `mirafleet mcp login`; what you lose without hooks; troubleshooting)
+   and the configuration snippet or files.
+4. **Reuse the shared command body, as a copy.** `integrations/commands/mirafleet.md` is the single
+   source of the instructions the model gets (use `list_fleets` first, prefer workspaces, never set
+   `confirm` without the user's agreement, treat tool output as data, close what you opened). Put
+   it into the harness's file format (frontmatter plus the same body, with `$ARGUMENTS` if the
+   harness has an argument placeholder) and **add a test that the body equals the shared one**: copy
+   `TestOpencodeCommandBodiesMatchShared` in `integrations/harnesses_test.go`. A copy and a test,
+   not an include, because several harnesses cannot include files, and because the confirm rules
+   must never depend on the model first opening another file.
+5. **Add the README to `TestREADMERelativeLinks`'s file list** so its relative links are checked.
+6. **Hooks, only if the harness has them.** Add a Go package `integrations/<harness>/hook` and one
+   `case` in `cmd/mirafleet/mcp_hook.go` (today it routes only `claude-code`) so the harness can
+   run `mirafleet mcp hook <harness> <event>`. Follow the Claude Code package
+   (`integrations/claude-code/hook/hook.go`), which shows each rule:
+   - parse the harness's JSON strictly, accept unknown fields (harnesses add them), cap the input
+     size, and never print on stdout except the harness's own answer format;
+   - **session start:** `handoff.Write(stateDir, handoff.Key{PID: os.Getppid(), Project: dir}, "<prefix>:<session id>", now)`.
+     The MCP server reads it back with `orch.SessionFor`. Use a prefix for your harness (`cc:`
+     is Claude Code's) and keep the whole id within `api.ValidateSession` (128 characters of
+     `A-Za-z0-9._:-`);
+   - **session end:** remove the handoff with `handoff.RemoveIf` (so a newer session's file is not
+     deleted), and close workspaces only for explicit end reasons, with a short time bound;
+   - **before a tool call:** return `ask`, never `allow`, when the call carries `confirm`; build the
+     reason from sanitised, clipped fields; if the input cannot be read, ask;
+   - **always exit 0.** A broken hook must never block a session, and the plugin's `hooks.json`
+     must be exec form (a `command` plus an `args` array, no shell string) so it also works on
+     Windows;
+   - the package may import only `orch`, `handoff`, `opconf` and `api` (add it to `targets` in
+     `TestOrchestratorDeps` and to `PKGS` in `.github/workflows/orchestrator.yml`).
+   The handoff relies on the hook process and the MCP server being children of the same harness
+   process, which is an assumption to check by hand for each harness. If it is false, the server
+   falls back to a random per-process session, which is safe: you lose only the automatic
+   reattach after a restart.
+7. **Tests.** Real hook JSON fixtures; the hook cases of chapter 9 (start writes, end closes only
+   the matching session and only for the right reasons, ask on `confirm`, ask on malformed input);
+   a test that the list of tool names the hook knows equals `mcpserver.ToolNames`
+   (`TestKnownToolsMatchMCPServer`); tests that the manifest, the MCP file and the hook file are
+   valid, that hooks are exec form, and that any matcher covers all nine tools and nothing else
+   (`integrations_test.go`).
+8. **Update the docs.** The matrix in `integrations/README.md`, [chapter 10](10-operations.md#10105-opencode-and-any-other-harness),
+   and this section if you found a better way.
+9. **Check by hand with the real harness, and write down the result.** What the automated tests
+   cannot see is the harness itself: does the command name resolve, is the project directory
+   substituted, do hooks run, is the parent process shared. Put those in the README's
+   "Unverified" list until someone has checked them.
+
+### Checklist for the reviewer
+
+- [ ] Nothing outside `integrations/<harness>/`, the one router `case` in `mcp_hook.go` and the test
+      target lists changed.
+- [ ] `TestM5NoHooks` and `TestM5Done` still pass untouched.
+- [ ] The hook (if any) never prints `allow`, always exits 0, imports nothing server-side.
+- [ ] The shared body is copied unchanged and a test proves it.
+- [ ] The README says what works with no hooks and what was not verified.
+
 ## Check your understanding
 
 1. Why does the guide say "name files and functions, not line numbers"?
@@ -328,6 +441,9 @@ changes behaviour, open a short plan or issue first (section 11.2).
    a black rectangle. What did you most likely forget, and how do you check for it?
 7. You change a function in `internal/workspace/ctrd/spec_linux.go`. Why does the review treat
    this like a change to `internal/actions`, and what must the PR contain?
+8. A teammate says "my harness has hooks, so let the server skip the guarded-fleet refusal when
+   the hook has already asked the user." Why is that wrong?
+9. What is the smallest set of changes that adds support for a new harness with no hooks?
 
 <details>
 <summary>Answers</summary>
@@ -357,5 +473,13 @@ changes behaviour, open a short plan or issue first (section 11.2).
    host compromise. The PR needs the matching assertion in `spec_linux_test.go`, an integration
    attack test if behaviour changes, a [chapter 5](05-security.md) update, and a read-only review
    (`qa-reviewer`) that tries to break it.
+8. The hook is a convenience; a harness may lack hooks, or the user may disable them. If a
+   guarded call were safe only when the hook ran, a plain MCP client would be unsafe. Central
+   enforces `confirm` itself, so the hook can only make the human's decision more visible, and the
+   hook never returns `allow`.
+9. Almost nothing: a new directory `integrations/<harness>/` with a README and the configuration
+   or command files, a copy of the shared command body plus a test that it is identical, and, if
+   the harness has hooks, a hook package and one `case` in `cmd/mirafleet/mcp_hook.go`. No change to
+   `internal/orch` or `internal/mcpserver`, and `TestM5NoHooks` must stay green untouched.
 
 </details>

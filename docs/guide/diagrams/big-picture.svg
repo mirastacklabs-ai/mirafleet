@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 592" width="840" height="592" role="img" aria-labelledby="t d">
 <title id="t">Big picture: every connection points at central</title>
-<desc id="d">Operator laptops and runners each dial out to central on SSH port 2222. Nothing listens on a runner. Keys are kept on the laptop, on central and on each runner.</desc>
+<desc id="d">Operator laptops (Claude Code with the mirafleet plugin and hooks, running mirafleet mcp) and runners each dial out to central on SSH port 2222. Nothing listens on a runner. Keys are kept on the laptop, on central and on each runner.</desc>
 <style>
 :root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
 @media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
@@ -37,8 +37,9 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <!-- laptop -->
 <rect class="pn" x="10" y="56" width="220" height="200" rx="4"/>
 <text class="h" x="22" y="78">Operator laptop</text>
-<text x="22" y="104">Claude Code</text>
-<text class="m" x="22" y="122">spawns mirafleet mcp</text>
+<text x="22" y="94">Claude Code + plugin</text>
+<text class="m" x="22" y="110">spawns mirafleet mcp</text>
+<text class="m" x="22" y="126">hooks: ask, handoff</text>
 <rect class="key" x="20" y="138" width="200" height="74" rx="2"/>
 <text class="ac b" x="30" y="156">KEYS STAY HERE</text>
 <text x="30" y="175">LLM API key</text>
@@ -116,7 +117,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- steps -->
 <text class="h" x="10" y="448">Steps</text>
-<g class="st" style="--i:1"><text x="10" y="472"><tspan class="b">1</tspan> Claude Code starts mirafleet mcp. The LLM API key and the SSH key stay on the laptop.</text></g>
+<g class="st" style="--i:1"><text x="10" y="472"><tspan class="b">1</tspan> Claude Code starts mirafleet mcp; plugin hooks run beside it. API and SSH keys stay on the laptop.</text></g>
 <g class="st" style="--i:2"><text x="10" y="492"><tspan class="b">2</tspan> mcp dials central :2222 as SSH user operator; each request is one api@ channel.</text></g>
 <g class="st" style="--i:3"><text x="10" y="512"><tspan class="b">3</tspan> Central checks the key and the policy against SQLite, then acts.</text></g>
 <g class="st" style="--i:4"><text x="10" y="532"><tspan class="b">4</tspan> Runners dial OUT to central (user runner). Nothing listens on a runner.</text></g>

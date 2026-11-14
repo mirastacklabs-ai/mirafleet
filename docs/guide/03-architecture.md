@@ -8,7 +8,10 @@
   connections.
 - Where the trust boundaries are, and which key or secret lives on which machine.
 - How the code inside central is layered, so you know where a new feature belongs.
-- Which platforms are supported, and why mirafleet ships as one static binary.
+- The orchestrator on the operator's machine (`orch`, `mcpserver`, integrations) and why the
+  model on the other side of MCP is treated as untrusted input.
+- Which platforms are supported (including where the keys live on each), and why mirafleet ships
+  as one static binary.
 
 This chapter is the map. It shows which programs exist, what each part of them is responsible for,
 who is allowed to talk to whom, and where every secret lives. The next chapter,
@@ -49,7 +52,7 @@ Everything in this guide uses the same fictional company, **Acme**:
 *Look at the direction of the arrows: every connection points at central. Nothing points at a
 runner or an operator's laptop.*
 
-1. Claude Code starts `mirafleet mcp`. The LLM API key and the SSH key stay on the laptop.
+1. Claude Code starts `mirafleet mcp`; the plugin's hooks run beside it. The LLM API key and the SSH key stay on the laptop.
 2. `mcp` dials central `:2222` as SSH user `operator`; each request is one `api@` channel.
 3. Central checks the key and the policy against SQLite, then acts.
 4. Runners dial OUT to central (user `runner`). Nothing listens on a runner.
@@ -82,13 +85,14 @@ role:
 | `mirafleet central fleet ...`, `token ...`, `runner ...`, `operator ...`, `exec`, `audit` | **Admin CLI**: talks to the *running* central over a local socket | the central host | a running central |
 | `mirafleet runner join`, `runner run` | **Runner**: sits on a fleet server | each Linux server in a fleet | its data directory (default `/var/lib/mirafleet/runner`) and either an `actions.yaml` or (workspace mode) a `workspace.yaml` |
 | `mirafleet runner tls-init`, `tls-front`, `workspace list`, `workspace prune` | **Runner helpers** for workspace mode | the workspace runner's host | the runner's `workspace.yaml` (list, prune) or a new directory (tls-init) |
-| `mirafleet mcp login`, `mcp api` | **Operator tools**: what an operator's machine runs | laptop (Linux, macOS; builds on Windows) | a config directory with the operator key |
+| `mirafleet mcp` (or `mcp serve`), `mcp login`, `mcp context`, `mcp api`, `mcp hook` | **Orchestrator**: what an operator's machine runs | laptop (Linux, macOS, Windows) | a config directory with the operator key |
 
-`mirafleet mcp` will also become the MCP stdio server that Claude Code launches. That server is
-**planned** for milestone M5 (see [PLAN.md](../PLAN.md)); today `mcp api METHOD [JSON]` makes one
-raw call, which is how the flows in this guide are exercised. (`mcp api` also takes `-in FILE`
-and `-out FILE`, to send a file body to `workspace.write_file` or `workspace.exec` and to save
-the body of `workspace.read_file`.) There is also a hidden command, `mirafleet workspace-init`,
+`mirafleet mcp` with no subcommand is the MCP stdio server that a harness such as Claude Code
+launches (built in M5). `mcp login` registers the machine, `mcp context` switches between
+centrals, `mcp hook claude-code EVENT` is what the plugin's hooks run, and `mcp api METHOD [JSON]`
+still makes one raw call, which is how the older flows in this guide can be exercised by hand.
+(`mcp api` also takes `-in FILE` and `-out FILE`, to send a file body to `workspace.write_file`
+or `workspace.exec` and to save the body of `workspace.read_file`.) There is also a hidden command, `mirafleet workspace-init`,
 that is not for people: it is the first process (PID 1) inside every workspace container.
 
 ### Why one static binary?
@@ -122,11 +126,13 @@ down names the functions.
 
 ```mermaid
 flowchart LR
-  MCP["cmd/mirafleet/mcp.go<br/>mcp login, mcp api"]
+  MCP["cmd/mirafleet/mcp*.go<br/>mcp (stdio server), mcp login, mcp api"]
+  ORC["internal/mcpserver + internal/orch<br/>the orchestrator (detail below)"]
   AC["internal/apiclient<br/>SSH client"]
   OC["internal/opconf<br/>key, known_hosts, contexts.yaml"]
   CEN(["central :2222"])
-  MCP -- "makes calls with" --> AC
+  MCP -- "serves tools with" --> ORC
+  ORC -- "makes calls with" --> AC
   MCP -- "reads config from" --> OC
   AC -- "outbound SSH, user operator or enroll" --> CEN
 ```
@@ -294,15 +300,78 @@ Facts to remember about a workspace runner:
 
 ### Operator side
 
-On an operator's machine, three packages work together:
+On an operator's machine, a stack of packages turns the model's tool calls into calls to central.
+The **orchestrator** is the name for the layers between the harness and the SSH client.
+
+```mermaid
+flowchart TB
+  H["harness<br/>(Claude Code, opencode, ...)"]
+  MS["internal/mcpserver<br/>MCP stdio server, tool schemas"]
+  OR["internal/orch<br/>context, fleet, session, guard, output cap"]
+  HO["internal/handoff<br/>session handoff files"]
+  AC["internal/apiclient<br/>SSH client"]
+  OC["internal/opconf + internal/keys<br/>key, known_hosts, contexts.yaml"]
+  IN["integrations/claude-code<br/>plugin, hooks"]
+  CEN(["central :2222"])
+  H -- "JSON-RPC over stdio" --> MS
+  MS -- "typed calls" --> OR
+  OR -- "operator methods only" --> AC
+  OR -- "reads config from" --> OC
+  OR -- "reads session id from" --> HO
+  IN -- "hook writes" --> HO
+  H -- "runs hooks of" --> IN
+  AC -- "outbound SSH, user operator" --> CEN
+```
+
+*Look at the only arrow that leaves the laptop: it starts in `apiclient`, and `orch` is the only
+code that may call `apiclient`.*
 
 | Package | Responsibility |
 |---|---|
-| `cmd/mirafleet/mcp.go` | `mcp login ADDR -name NAME -code -` (register this machine with central) and `mcp api METHOD [JSON]` (make one call to central and print the JSON). |
+| `cmd/mirafleet/mcp*.go` | Routing only. `mcp login ADDR -name NAME -code -` registers this machine; `mcp api METHOD [JSON]` makes one raw call (a debugging tool); `mcp` or `mcp serve` is the stdio server (`mcp_serve.go`: flags `-context`, `-fleet`, `-session`, `-project-dir`); `mcp context list\|use\|remove`; `mcp hook claude-code EVENT`. |
+| `internal/mcpserver` | The only package that imports the MCP SDK. Defines the nine tools (`tools_list.go`, `tools_ws.go`): name, JSON Schema, annotations, handler. Decodes arguments strictly, maps errors to `{"error":{"code","message"}}`, sends progress, caps list sizes. It knows nothing about SSH. |
+| `internal/orch` | No MCP code. **Resolves** the context, fleet and session of a call (`Resolve`, `SessionFor`); keeps **one SSH connection per context** (`pool.go`: lazy dial, pinned host key, keepalive, redial); makes typed calls (`FleetsList`, `WorkspaceExec`, ...) through one private `call` that refuses anything but operator methods; applies the client-side time limits (`CallLimit`); sanitises and caps output (`Sanitize`, `CapOutput`). |
+| `internal/handoff` | A small file that carries the harness's session id from a hook to the server (see [flow 20](04-flows.md#20-session-resolution-and---resume-reattach)). |
 | `internal/apiclient` | The SSH client: `Dial`, `Call` (one request per `api@mirafleet` channel), `Join` and `Register` (the enroll channels), and the host-key checks (`PinnedHash`, `KnownHosts`). Pure Go, so it builds on Windows and macOS. |
-| `internal/opconf` | Finds and reads the operator's local configuration directory: `operator_ed25519` (private key), `known_hosts` (pinned central keys) and `contexts.yaml` (which central to talk to). The directory is `$MIRAFLEET_CONFIG_DIR` if set, otherwise `os.UserConfigDir()/mirafleet`. |
+| `internal/opconf` | Finds and reads the operator's local configuration: `contexts.yaml` (which centrals, default fleets, output cap), the per-project `.mirafleet.yaml`, and the config and state directories for each OS. |
+| `internal/keys` | Generates and loads the Ed25519 key and refuses a private key others can read (file modes on Linux and macOS, a DACL on Windows). |
+| `integrations/<harness>/` | The only place harness-specific code lives. `claude-code/` has the plugin files and the hook handlers (`hook/hook.go`). `opencode/` and `generic/` are documentation and commands. |
 
 Operators never connect to a runner. They send a request to central, and central decides.
+
+**Import rules.** `internal/orch`, `internal/mcpserver` and the Claude Code hook package must
+never link the server side (`internal/service`, `store`, `central`, `runner`, containerd or
+SQLite). A test in `cmd/mirafleet/deps_test.go` (`TestOrchestratorDeps`) enforces it, so the
+laptop binary stays small and the macOS and Windows builds never contain server code.
+
+**The model is untrusted input.** The model on the other side of MCP is not a trusted
+caller. It reads web pages, READMEs and command output written by strangers, and any of them can
+steer it. So the boundary between the harness and `mcpserver` is a trust boundary, drawn below.
+Two gates sit behind it: the fixed tool table plus `orch.call` refuse anything that is not an
+operator method, and central refuses admin methods on `api@` channels whatever the key. Chapter 5
+([section 5.11](05-security.md#511-prompt-injection-through-tool-output)) shows what this stops.
+
+```mermaid
+flowchart LR
+  subgraph MODEL["Untrusted: the model and what it read"]
+    LLM["model<br/>(READMEs, web pages, command output)"]
+  end
+  subgraph LAPTOP["Operator's laptop: trusted code"]
+    HAR["harness + hooks<br/>(asks the human)"]
+    SRV["mcpserver + orch<br/>9 fixed tools, strict arguments,<br/>operator methods only, output cap"]
+    KEY["operator key<br/>(never leaves)"]
+  end
+  CEN2["central<br/>(checks everything again)"]
+  LLM -- "tool call: untrusted arguments" --> HAR
+  HAR -- "tools/call" --> SRV
+  SRV -- "signs with" --> KEY
+  SRV -- "api@ channel" --> CEN2
+  CEN2 -- "result" --> SRV
+  SRV -- "capped, sanitised result: still untrusted DATA" --> LLM
+```
+
+*Look at the last arrow: what comes back to the model is marked as data, because it may carry
+text written by an attacker on a remote machine.*
 
 ### Shared building blocks
 
@@ -424,8 +493,7 @@ The boundaries, one by one:
    `fleets.list`, `runners.list`, `action.run` and the six `workspace.*` methods) and nothing
    else. Admin and enroll methods are refused on the operator channel even if the key is valid.
    Even for its own workspace, an operator may only touch workspaces it owns; anybody else's id
-   gets `not_found`.
-3. **Central to runner.** The runner trusts exactly one thing: central's host key, pinned in its
+   gets `not_found`.3. **Central to runner.** The runner trusts exactly one thing: central's host key, pinned in its
    `known_hosts` at join time. But it does **not** trust central's *requests*: every `exec`
    request still goes through the actions guard. A stolen central cannot run `rm -rf /` unless
    `actions.yaml` on that runner defines such an action. A workspace runner likewise re-checks
@@ -451,6 +519,15 @@ The boundaries, one by one:
    containerd namespace, and never on a host that holds other secrets. This is why a runner
    takes exactly one of `-actions` or `-workspace`: the actions guard is never run as root just
    because containerd needs it.
+8. **Model to MCP server (the operator's laptop).** The harness passes the model's tool calls
+   to `mirafleet mcp`. Treat every argument as untrusted input, exactly as central treats a
+   network request: the server decodes arguments strictly (unknown or mis-cased names are
+   refused), offers only nine fixed tools, never reads local files, never forwards its own
+   environment, and can reach only operator methods. Results flowing back are capped and
+   sanitised, and the server's instructions label them as data. Hooks and the harness's approval
+   prompt add convenience on top, but nothing relies on them: central enforces `confirm` itself.
+   Chapter 5, [section 5.11](05-security.md#511-prompt-injection-through-tool-output), works
+   through an attack.
 
 Known limit, stated honestly in [ARCHITECTURE.md](../ARCHITECTURE.md): central is a single trust
 point. If an attacker owns central, they can ask every runner to run any action that runner's
@@ -467,8 +544,10 @@ allowlist permits. The runner-side guard bounds the damage but cannot remove it.
 | Runner `runner.yaml` | `runner join` (written last) | The runner host | `<runner data>/runner.yaml` | Central address, runner name, fleet. Its existence marks the directory as "joined". |
 | Runner `actions.yaml` | The runner's admin | The runner host | `/etc/mirafleet/actions.yaml` (default for `-actions`) | Nobody else. This is the allowlist. |
 | Runner local audit | `runner run` | The runner host | `<runner data>/audit.jsonl`, mode `0600` | Local copy only. |
-| **Operator private key** | `mcp login` | The operator's machine | `operator_ed25519` in the opconf directory (`$MIRAFLEET_CONFIG_DIR` or `os.UserConfigDir()/mirafleet`), mode `0600` | Nobody. Central stores only the public key (`operators.pubkey`). |
-| Operator `known_hosts`, `contexts.yaml` | `mcp login` | The operator's machine | same directory | Pins central; names the current central. |
+| **Operator private key** | `mcp login` | The operator's machine | `operator_ed25519` in the config directory (per OS, table below), owner-only | Nobody. Central stores only the public key (`operators.pubkey`). The MCP server uses it to sign in but never puts it in a tool result. |
+| Operator `known_hosts`, `contexts.yaml` | `mcp login` | The operator's machine | same directory | Pins central; names the centrals (contexts), default fleets and the output cap. No secrets. |
+| `.mirafleet.yaml` (project default) | The project's authors | Inside a project (often committed) | the project root | Only `fleet` and `context` names. Never an address, key or cap, so a cloned repo cannot add a central. |
+| Session handoff file | A Claude Code hook (SessionStart) | The operator's machine | `sessions/<hash>.json` in the state directory, owner-only | A session id such as `cc:<uuid>`. Not a secret: central still checks that the workspace belongs to the operator. |
 | **Join token secret** | `token create` (`tokens.NewJoinToken`) | Printed **once** to Dana, then carried by hand to the runner | Not stored in clear anywhere | Central stores only `SHA-256(secret)` in `join_tokens.secret_hash`. The runner uses the token once and never writes it to disk. |
 | **Registration secret** (32 bytes) | `central init` (`InitRegistrationSecret`) | Central | `settings` table, key `registration_secret`, inside `<data>/mirafleet.db` (mode `0600`) | Nobody. Registration *codes* are derived from it every 60 seconds. Never logged, never audited. |
 | Registration code (60 s) | `central operator code` | Shown to Dana, passed to an operator | Not stored | Valid only in its own 60-second step. |
@@ -479,6 +558,21 @@ allowlist permits. The runner-side guard bounds the damage but cannot remove it.
 | **Node CA and certificates** (OpenSandbox executor) | `mirafleet runner tls-init -dir DIR` | The OpenSandbox host (the same machine as the runner) | `ca.pem`, `front.pem`, `front-key.pem`, `client.pem`, `client-key.pem`, all mode `0600` in a `0700` directory | The CA's private key is discarded right after signing. The front holds its server key; the runner holds the client key (mTLS). The runner may also pin the front's public key (`pin_sha256`). |
 | Workspace directories | `workspace.Create` | The workspace runner | `<containerd.root>/<ws_id>`, default `/var/lib/mirafleet/ws`; root-owned `0700` | The files an agent wrote. Not secret by design: **never put credentials in a workspace**. |
 | **The agent's AI API key** | The operator | The operator's laptop only | Environment of Claude Code | Never sent to central, never to a runner, never into a workspace. The env denylist (`*_API_KEY`, `ANTHROPIC_*`, ...) refuses to forward such names. |
+
+**Where the operator's files live, per operating system** (`internal/opconf`; setting
+`MIRAFLEET_CONFIG_DIR` or `MIRAFLEET_STATE_DIR` to an absolute path overrides it):
+
+| OS | Config directory (key, `known_hosts`, `contexts.yaml`) | State directory (handoff files) | How it is protected |
+|---|---|---|---|
+| Linux | `$XDG_CONFIG_HOME/mirafleet`, else `~/.config/mirafleet` | the user cache directory, `.../mirafleet` | directory `0700`, key `0600`, checked on load (`internal/keys/perm_unix.go`) |
+| macOS | `~/Library/Application Support/mirafleet` | `~/Library/Caches/mirafleet` | the same |
+| Windows | `%LocalAppData%\mirafleet` (not `Roaming`, which would copy the key to a profile server) | `%LocalAppData%\mirafleet\state` | a protected [DACL](glossary.md#d): owner is the current user; only that user, SYSTEM and Administrators are allowed; checked on load; anything else fails closed (`internal/keys/acl_windows.go`) |
+
+There is no OS keychain, passphrase or ssh-agent support in M5. The MCP server never registers a
+key: `mcp login` is a human step (the code comes in on standard input). Tool results go to the
+AI provider, so they never contain key material, key fingerprints, local paths, environment
+values, registration codes or `known_hosts` lines. If the operator has not logged in, the error
+just says "run `mirafleet mcp login …`".
 
 A good habit when reading the code: ask "which of these could this function see?". A function in
 `internal/service` can reach the registration secret through the store but never logs it; the CLI
@@ -551,7 +645,7 @@ Two design rules fall out of this layering, and you will see them again in
 |---|---|---|---|
 | `central` (including the admin CLI and `central init`) | yes | refuses to start | refuses to start |
 | `runner` | yes | refuses to start | refuses to start |
-| `mcp` (operator tools) | yes | yes | builds on Windows; runs there from M5 (until then the key loader fails closed, because owner-only file permissions cannot yet be verified) |
+| `mcp` (the orchestrator: MCP server, login, hooks) | yes | yes | yes (since M5: the key directory and file get a protected owner-only DACL, checked on load, and the loader fails closed if it is wrong) |
 
 "Fails closed" means that when a safety check cannot be done, the program refuses instead of
 carrying on unchecked.
@@ -571,10 +665,13 @@ does not report reliably. On other systems the request still ends at its own tim
 
 ## Planned parts (not in the code yet)
 
-M1, M2 and M3 are done (13 Nov 2026). Next: M5 (MCP server), then M4 (GUI) and M6 (release).
-So you do not look for them: the MCP stdio server and `integrations/` (M5), the admin GUI (M4),
-and release packaging and systemd units (M6). Workspace mode, the containerd executor and the
-OpenSandbox executor are **built** (M3, [M3.md](../M3.md)).
+M1, M2 and M3 are done (13 Nov 2026) and M5 (the orchestrator) is built. Next: M4 (GUI) and M6
+(release). So you do not look for them: the admin GUI (M4), and release packaging, systemd units,
+the package-manager and plugin-marketplace listings (M6). Workspace mode, the containerd executor
+and the OpenSandbox executor are **built** (M3, [M3.md](../M3.md)). The MCP stdio server, the
+Claude Code plugin and hooks, and the opencode and generic notes are **built** (M5,
+[M5.md](../M5.md)). Also deferred: MCP elicitation (a prompt from the server to the human) and SSH
+jump hosts per context.
 
 ## Check your understanding
 
@@ -588,6 +685,8 @@ OpenSandbox executor are **built** (M3, [M3.md](../M3.md)).
 6. Why can a compromised central not make `build-1` start a privileged container with the host's
    `/etc` mounted? And why must the `build-1` host still be treated as sensitive?
 7. A runner is started with both `-actions` and `-workspace`. What happens, and why?
+8. Which package is the only one allowed to call `internal/apiclient`, and what does it refuse
+   to send? Why is the model on the MCP side treated as untrusted input?
 
 <details>
 <summary>Answers</summary>
@@ -615,6 +714,10 @@ OpenSandbox executor are **built** (M3, [M3.md](../M3.md)).
    root-equivalent on that host, so the host must be dedicated and trusted.
 7. The runner refuses to start. One runner is one fleet and one mode, and the actions guard must
    never be run as root just because containerd needs root.
+8. `internal/orch`, through its one private `call`. It refuses every method that is not an
+   operator method, so admin and enrol methods cannot be sent whatever the model asks. The model
+   reads text written by strangers (READMEs, web pages, command output), so its tool arguments
+   can be attacker-influenced; they are checked like network input.
 
 </details>
 

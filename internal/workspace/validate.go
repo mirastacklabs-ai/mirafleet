@@ -81,7 +81,9 @@ var envName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
 // BASH_ENV, ENV, NODE_OPTIONS, PYTHONSTARTUP, *_PASSWORD, *_KEY, PYTHONPATH, PERL5OPT,
 // PERL5LIB, RUBYOPT, JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, NODE_PATH, GIT_CONFIG_* (COUNT,
 // KEY_n, VALUE_n, GLOBAL, SYSTEM), GIT_EXEC_PATH, PROMPT_COMMAND, GCONV_PATH, *_PAT,
-// *_CREDENTIALS, DATABASE_URL, *_DSN. It applies to every workspace regardless of any
+// *_CREDENTIALS, *DATABASE_URL (suffix: DATABASE_URL, APP_DATABASE_URL, ...), *_DSN, and the
+// programs git or a tool will exec: GIT_SSH, GIT_EXTERNAL_DIFF, GIT_PAGER, PAGER, GIT_EDITOR,
+// EDITOR, VISUAL, GIT_SEQUENCE_EDITOR, MANPAGER, LESSOPEN, LESSCLOSE, RUBYLIB, PYTHONHOME. It applies to every workspace regardless of any
 // allowlist, on central and on the runner.
 func EnvDenied(name string) bool {
 	n := strings.ToUpper(name)
@@ -103,7 +105,13 @@ func EnvDenied(name string) bool {
 		strings.HasPrefix(n, "GIT_CONFIG_"), n == "GIT_EXEC_PATH", n == "PROMPT_COMMAND", n == "GCONV_PATH",
 		// More credential-looking names.
 		strings.HasSuffix(n, "_PAT"), strings.HasSuffix(n, "_CREDENTIALS"),
-		n == "DATABASE_URL", strings.HasSuffix(n, "_DSN"):
+		strings.HasSuffix(n, "DATABASE_URL"), strings.HasSuffix(n, "_DSN"),
+		// Names of programs git and other tools exec.
+		n == "GIT_SSH", n == "GIT_EXTERNAL_DIFF", n == "GIT_PAGER", n == "PAGER",
+		n == "GIT_EDITOR", n == "EDITOR", n == "VISUAL", n == "GIT_SEQUENCE_EDITOR", n == "MANPAGER",
+		n == "LESSOPEN", n == "LESSCLOSE",
+		// More interpreter search paths and homes.
+		n == "RUBYLIB", n == "PYTHONHOME":
 		return true
 	}
 	return false

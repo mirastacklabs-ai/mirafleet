@@ -1511,3 +1511,141 @@ func TestWorkspaceDestroyAbsentRacesNewCreate(t *testing.T) {
 	recv(t, f.dEntered, "deferred destroy")
 	waitFor(t, "entry released after deferred destroy", func() bool { _, _, ok := h.entry(id); return !ok })
 }
+
+// panicEx panics in Destroy while armed.
+type panicEx struct {
+	*fake.Executor
+	armed atomic.Bool
+}
+
+func (p *panicEx) Destroy(ctx context.Context, id workspace.ID) error {
+	if p.armed.Load() {
+		panic("destroy boom")
+	}
+	return p.Executor.Destroy(ctx, id)
+}
+
+// A panic in the executor's Destroy fails the destroy, keeps the slot, leaves no stuck
+// destroying mark, and a later destroy works.
+func TestWorkspaceDestroyPanicSettles(t *testing.T) {
+	p := &panicEx{Executor: fake.New()}
+	h := newHarness(t, wsYAML, p.Executor, func(cfg *Config) { cfg.Workspace = p })
+	id := h.create()
+	p.armed.Store(true)
+	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeInternal)
+	h.runnr.ws.mu.Lock()
+	e := h.runnr.ws.live[id]
+	stuck := e == nil || e.destroying
+	h.runnr.ws.mu.Unlock()
+	if stuck {
+		t.Fatalf("entry missing or still destroying after panic (entry=%v)", e)
+	}
+	if n := h.slots(); n != 1 {
+		t.Fatalf("slots = %d after panicking destroy, want 1", n)
+	}
+	p.armed.Store(false)
+	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeOK)
+	if n := h.slots(); n != 0 {
+		t.Fatalf("slots = %d after later destroy, want 0", n)
+	}
+}
+
+// F-26: a second normal-path destroy of a confirmed entry waits for the first and answers its
+// result: one executor call, the slot held until the executor returns and freed exactly once,
+// new ops on the entry refused meanwhile.
+func TestWorkspaceDestroyingConcurrentDestroy(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		name := "ok"
+		if fail {
+			name = "failure"
+		}
+		t.Run(name, func(t *testing.T) {
+			c := newCtlEx()
+			h := newHarness(t, wsYAML, c.Executor, func(cfg *Config) { cfg.Workspace = c })
+			c.openGate()()
+			id := h.create() // concurrent: 2
+			dGate := make(chan struct{})
+			var once sync.Once
+			openD := func() { once.Do(func() { close(dGate) }) }
+			t.Cleanup(openD)
+			var wantErr error
+			if fail {
+				wantErr = errors.New("boom")
+			}
+			c.set(wantErr, dGate)
+
+			code := make(chan string, 2)
+			destroy := func() {
+				go func() {
+					res, _, err := h.try(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil)
+					if err != nil {
+						code <- err.Error()
+						return
+					}
+					code <- res.Code
+				}()
+			}
+			destroy()
+			recv(t, c.dEntered, "first destroy in the executor")
+			waitFor(t, "destroying mark", func() bool {
+				h.runnr.ws.mu.Lock()
+				defer h.runnr.ws.mu.Unlock()
+				e := h.runnr.ws.live[id]
+				return e != nil && e.destroying
+			})
+			destroy() // concurrent destroy of the same entry
+			select {
+			case c := <-code:
+				t.Fatalf("second destroy answered %q before the first finished", c)
+			case <-time.After(150 * time.Millisecond):
+			}
+			if n := h.slots(); n != 1 {
+				t.Fatalf("slots = %d while destroying, want 1", n)
+			}
+			// New ops on the entry are refused.
+			h.want(transport.WorkspaceRequest{Op: transport.OpExec, ID: string(id), Argv: []string{"x"}}, nil, transport.CodeNotFound)
+			h.want(transport.WorkspaceRequest{Op: transport.OpRead, ID: string(id), Path: "x"}, nil, transport.CodeNotFound)
+			if _, _, err := h.try(createReq(id), nil); !busy(err) {
+				t.Fatalf("create of the destroying id: %v, want busy", err)
+			}
+			if n := c.destroys(); n != 1 {
+				t.Fatalf("executor destroys = %d, want 1", n)
+			}
+			openD()
+			want := transport.CodeOK
+			if fail {
+				want = transport.CodeInternal
+			}
+			for i := 0; i < 2; i++ {
+				select {
+				case got := <-code:
+					if got != want {
+						t.Fatalf("destroy answered %q, want %q", got, want)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("destroy did not answer")
+				}
+			}
+			if n := c.destroys(); n != 1 {
+				t.Fatalf("executor destroys = %d after both answered, want 1", n)
+			}
+			wantSlots := 0
+			if fail {
+				wantSlots = 1 // container may still exist: slot kept, mark released
+			}
+			if n := h.slots(); n != wantSlots {
+				t.Fatalf("slots = %d, want %d", n, wantSlots)
+			}
+			if fail {
+				if d, _, ok := h.entry(id); !ok || d {
+					t.Fatalf("entry ok=%v doomed=%v after failed destroy", ok, d)
+				}
+				c.set(nil, nil)
+				h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeOK)
+				if n := h.slots(); n != 0 {
+					t.Fatalf("slots = %d after retry, want 0", n)
+				}
+			}
+		})
+	}
+}

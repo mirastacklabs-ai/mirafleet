@@ -139,7 +139,7 @@ func (s *Service) ReapOnce(ctx context.Context) {
 	}
 
 	s.freeDeadRunnerRows(ctx)
-	s.failStaleOpening(ctx)
+	stale := s.failStaleOpening(ctx)
 
 	// C-13: one goroutine per online runner, at most reapParallel at once, each with its own
 	// time budget, so one hung runner cannot stall the others. ReapOnce still returns only after
@@ -159,7 +159,7 @@ func (s *Service) ReapOnce(ctx context.Context) {
 			defer func() { <-sem; wg.Done() }()
 			rctx, cancel := context.WithTimeout(ctx, reapRunnerBudget)
 			defer cancel()
-			s.reapRunner(rctx, runnerID)
+			s.reapRunner(rctx, runnerID, stale[runnerID])
 		}(si.ID)
 	}
 	wg.Wait()
@@ -172,8 +172,20 @@ const (
 	reapRunnerBudget = 3 * workspaceCloseTimeout
 )
 
-// reapRunner destroys the closing rows of one runner and marks them closed.
-func (s *Service) reapRunner(ctx context.Context, runnerID int64) {
+// reapRunner destroys the closing rows of one runner and marks them closed. staleFailed are rows
+// of this runner just failed by failStaleOpening (F-28): their containers get a best-effort
+// destroy here, with the result audited.
+func (s *Service) reapRunner(ctx context.Context, runnerID int64, staleFailed []store.Workspace) {
+	for _, w := range staleFailed {
+		if ctx.Err() != nil {
+			return
+		}
+		ev := s.sysEvent(actionDestroy, w, "stale opening: destroyed")
+		if !s.destroyOn(ctx, w.RunnerID, w.WsID) {
+			ev.Outcome, ev.Message = OutcomeError, "stale opening: destroy failed; reconcile will retry"
+		}
+		s.recordBestEffort(ctx, ev)
+	}
 	rows, err := s.st.ListWorkspaces(ctx, store.WorkspaceFilter{RunnerID: runnerID,
 		States: []store.WorkspaceState{store.WorkspaceClosing}, Limit: sweepLimit})
 	if err != nil {
@@ -233,18 +245,22 @@ func (s *Service) freeDeadRunnerRows(ctx context.Context) {
 // the runner lists the container, but only on a runner's first heartbeat and not when the create
 // never produced a container; this sweep covers the rest. A best-effort destroy follows when the
 // runner is online (the row is already failed, so reconcile also reaps any leftover container).
-func (s *Service) failStaleOpening(ctx context.Context) {
+//
+// F-28: the destroys are not done here. The rows just failed are returned per runner and
+// destroyed (and audited) inside the budgeted, parallel reapRunner phase.
+func (s *Service) failStaleOpening(ctx context.Context) map[int64][]store.Workspace {
 	rows, err := s.st.ListWorkspaces(ctx, store.WorkspaceFilter{States: []store.WorkspaceState{store.WorkspaceOpening}, Limit: sweepLimit})
 	if err != nil {
 		if ctx.Err() == nil {
 			s.logf("service: reaper list opening: %v", err)
 		}
-		return
+		return nil
 	}
 	limit := s.openTimeout + s.openMargin
+	failed := map[int64][]store.Workspace{}
 	for _, w := range rows {
 		if ctx.Err() != nil {
-			return
+			return failed
 		}
 		if s.now().Sub(w.CreatedAt) <= limit {
 			continue
@@ -252,10 +268,9 @@ func (s *Service) failStaleOpening(ctx context.Context) {
 		if !s.setState(ctx, w, store.WorkspaceOpening, store.WorkspaceFailed, "open timed out", actionRecover) {
 			continue
 		}
-		if s.runnerOnline(w.RunnerID) {
-			s.destroyOn(ctx, w.RunnerID, w.WsID)
-		}
+		failed[w.RunnerID] = append(failed[w.RunnerID], w)
 	}
+	return failed
 }
 
 func (s *Service) operatorRevoked(ctx context.Context, id int64, cache map[int64]bool) bool {

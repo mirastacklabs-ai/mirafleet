@@ -113,7 +113,9 @@ type Config struct {
 	Now  func() time.Time
 	Logf func(format string, args ...any) // diagnostics for the operator (stderr); never shown to the model
 
-	// Test hooks.
+	// Test hooks. Dial replaces the pinned dial; it stays exported because tests in other
+	// packages (internal/central's M5 tests) drive a real orch over a fake central, so it cannot
+	// be unexported without changing those tests (docs/M5.md F-33).
 	Dial              DialFunc
 	KeepaliveInterval time.Duration
 }
@@ -130,8 +132,10 @@ type Orch struct {
 	mu      sync.Mutex
 	closed  bool
 	pools   map[string]*pool
-	guarded map[string]guardEntry
-	wg      sync.WaitGroup
+	guarded map[string]guardEntry // key: context name + address (see guardKey)
+
+	guardFlights map[string]*guardFlight // in-flight fleets.list refreshes, one per key
+	wg           sync.WaitGroup
 }
 
 // New builds an Orch. It reads nothing from disk, so it succeeds with no contexts or keys; the
@@ -142,7 +146,7 @@ func New(cfg Config) (*Orch, error) {
 			return nil, errors.New("invalid -session value")
 		}
 	}
-	o := &Orch{cfg: cfg, pools: map[string]*pool{}, guarded: map[string]guardEntry{}}
+	o := &Orch{cfg: cfg, pools: map[string]*pool{}, guarded: map[string]guardEntry{}, guardFlights: map[string]*guardFlight{}}
 	if o.cfg.Now == nil {
 		o.cfg.Now = time.Now
 	}

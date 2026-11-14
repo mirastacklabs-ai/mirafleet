@@ -66,6 +66,14 @@ type wsEntry struct {
 	confirmed bool          // the executor has it
 	doomed    bool          // destroyed while a create was in flight; createDone destroys once it settles
 	confGen   uint64        // wsState.gen when confirmed was last set (0: seeded from the executor)
+
+	// destroying is set while a normal-path destroy runs the executor call (F-26). New ops on the
+	// entry are refused like on a doomed one, a concurrent destroy waits on destroyDone and
+	// answers the same result (no second executor call), prune keeps the entry, and the slot is
+	// freed exactly once, by the destroy that set the mark, after the executor returns.
+	destroying  bool
+	destroyDone chan struct{} // closed when that destroy settles
+	destroyOut  outcome       // its answer, valid once destroyDone is closed
 }
 
 type wsState struct {
@@ -183,7 +191,7 @@ func (s *wsState) admit(ctx context.Context, op *wsOp) (release func(), a admiss
 	switch op.req.Op {
 	case transport.OpCreate:
 		e := s.live[op.id]
-		if e != nil && e.doomed {
+		if e != nil && (e.doomed || e.destroying) {
 			relInflight()
 			return nil, admitBusy
 		}
@@ -204,7 +212,7 @@ func (s *wsState) admit(ctx context.Context, op *wsOp) (release func(), a admiss
 		return func() { relInflight() }, admitOK
 	case transport.OpExec:
 		e := s.live[op.id]
-		if e == nil || e.doomed {
+		if e == nil || e.doomed || e.destroying {
 			relInflight()
 			return nil, admitNotFound
 		}
@@ -216,7 +224,7 @@ func (s *wsState) admit(ctx context.Context, op *wsOp) (release func(), a admiss
 			return nil, admitBusy
 		}
 	case transport.OpRead, transport.OpWrite:
-		if e := s.live[op.id]; e == nil || e.doomed {
+		if e := s.live[op.id]; e == nil || e.doomed || e.destroying {
 			relInflight()
 			return nil, admitNotFound
 		}
@@ -281,7 +289,7 @@ func (s *wsState) prune(startGen uint64, listed map[workspace.ID]bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, e := range s.live {
-		if e.confirmed && e.refs == 0 && !e.doomed && e.confGen <= startGen && !listed[id] {
+		if e.confirmed && e.refs == 0 && !e.doomed && !e.destroying && e.confGen <= startGen && !listed[id] {
 			delete(s.live, id)
 		}
 	}
@@ -813,6 +821,21 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 	case transport.OpDestroy:
 		s.mu.Lock()
 		e := s.live[op.id]
+		if e != nil && e.destroying {
+			// A destroy of this entry is already running the executor call: wait for it and give
+			// the same answer, so there is no second executor call and no early slot release.
+			done := e.destroyDone
+			s.mu.Unlock()
+			select {
+			case <-done:
+				s.mu.Lock()
+				out := e.destroyOut
+				s.mu.Unlock()
+				return out
+			case <-ctx.Done():
+				return failFor(ctx, ctx.Err())
+			}
+		}
 		if e != nil && (e.doomed || (e.refs > 0 && !e.confirmed)) {
 			// A create is still in flight, so the container may not exist yet: createDone owns
 			// the destroy and runs it once the create settles. Nothing is lost or left untracked.
@@ -823,16 +846,36 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 			return outcome{res: transport.WorkspaceResult{Code: transport.CodeOK}}
 		}
 		absent := e == nil
-		notFound := false
-		s.mu.Unlock()
-		dctx, cancel := context.WithTimeout(ctx, wsDestroyTimeout)
-		defer cancel()
-		if err := s.ex.Destroy(dctx, op.id); err != nil {
-			if !errors.Is(err, workspace.ErrNotFound) {
-				return failFor(dctx, err)
-			}
-			notFound = true
+		// The mark is settled in a defer that defaults to failure, so a panic can never leave the
+		// entry stuck destroying: waiters get a failure and the slot is kept.
+		settled := outcome{res: transport.WorkspaceResult{Code: transport.CodeInternal, Message: "destroy did not complete"}}
+		if e != nil {
+			e.destroying, e.destroyDone = true, make(chan struct{})
+			defer func() {
+				s.mu.Lock()
+				e.destroying, e.destroyOut = false, settled
+				close(e.destroyDone)
+				s.mu.Unlock()
+			}()
 		}
+		s.mu.Unlock()
+		// Detached from the first caller's cancellation: every waiter shares this destroy.
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wsDestroyTimeout)
+		defer cancel()
+		derr := func() (err error) {
+			defer func() {
+				if p := recover(); p != nil {
+					err = fmt.Errorf("executor destroy panicked: %v", p)
+				}
+			}()
+			return s.ex.Destroy(dctx, op.id)
+		}()
+		if derr != nil && !errors.Is(derr, workspace.ErrNotFound) {
+			out := failFor(dctx, derr)
+			settled = out // the container may still exist: keep the slot, release the mark
+			return out
+		}
+		notFound := derr != nil
 		// The lock was dropped around the executor call, so a create may have been admitted since.
 		// Only the entry this destroy saw is deleted; a newer create's entry is doomed instead (its
 		// container may now be about to exist), and createDone destroys it once it settles.
@@ -844,12 +887,14 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 				s.tomb.add(op.id, s.now())
 			}
 		case cur == e && e.refs <= 0:
-			delete(s.live, op.id)
+			delete(s.live, op.id) // the one place a normally destroyed slot is freed
 		case cur.refs > 0:
 			cur.doomed = true
 		}
+		ok := outcome{res: transport.WorkspaceResult{Code: transport.CodeOK}}
+		settled = ok
 		s.mu.Unlock()
-		return outcome{res: transport.WorkspaceResult{Code: transport.CodeOK}}
+		return ok
 	case transport.OpList:
 		lctx, cancel := context.WithTimeout(ctx, wsListTimeout)
 		defer cancel()

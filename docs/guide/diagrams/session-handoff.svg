@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 562" width="840" height="562" role="img" aria-labelledby="t d">
+<title id="t">Session handoff and resume reattach</title>
+<desc id="d">First run: Claude Code starts session abc and runs the SessionStart hook, which makes no network call and writes a small handoff file named cc:abc in the state directory, keyed by the parent process id and the project directory. mirafleet mcp, another child of the same Claude Code process, reads the file and sends workspace.open with session cc:abc to central. When Claude Code exits the workspace stays open and the idle TTL is the safety net. After claude --resume the process ids are new, the hook rewrites the file, mirafleet mcp reads cc:abc again and central answers reused true: the same container and files. After /clear the id changes, and with no hook the server uses a random per-process session.</desc>
+<style>
+:root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
+@media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
+svg{--T:12s;--slot:1.5s}
+.bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
+.pn{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.bx{fill:#F6F5F1;fill:var(--band,#F6F5F1);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.okb{fill:#E0F0EE;fill:var(--okbg,#E0F0EE);stroke:#00695F;stroke:var(--ok,#00695F);stroke-width:1}
+text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
+.sm{font-size:11px}
+.ttl{font:600 21px Oswald,"Arial Narrow",Arial,sans-serif;text-transform:uppercase;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.h{font-weight:600;letter-spacing:.08em;text-transform:uppercase;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.m{fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.b{font-weight:700;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.to{fill:#00695F;fill:var(--ok,#00695F);font-weight:700}
+.ln{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none}
+.ahp{fill:#00695F;fill:var(--accent,#00695F)}
+.dot{fill:#FF671F;fill:var(--signal,#FF671F)}
+.bdg{fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.bt{font-weight:700;fill:#FFFFFF;fill:var(--bg,#FFFFFF);text-anchor:middle}
+.rule{stroke:#FF671F;stroke:var(--signal,#FF671F);stroke-width:2}
+.dash{stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1;stroke-dasharray:4 4}
+.pk{display:none}
+@media (prefers-reduced-motion:no-preference){
+.st{animation:lit var(--T) linear infinite both;animation-delay:calc((var(--i) - 1) * var(--slot))}
+.pk{display:inline;animation:mv var(--T) linear infinite}
+}
+@keyframes lit{0%{opacity:.25}1%{opacity:1}11.5%{opacity:1}12.5%{opacity:.25}100%{opacity:.25}}
+@keyframes mv{0%,9%{transform:translate(158px,110px)}12.5%,21.5%{transform:translate(328px,110px)}25%,34%{transform:translate(498px,110px)}37.5%,46.5%{transform:translate(668px,110px)}50%,59%{transform:translate(753px,176px)}62.5%,71.5%{transform:translate(328px,260px)}75%,84%{transform:translate(668px,260px)}87.5%,100%{transform:translate(420px,350px)}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0,0L10,5L0,10z"/></marker></defs>
+<rect class="bg" width="840" height="562"/>
+<text class="ttl" x="10" y="32">Session handoff and resume</text>
+<line class="rule" x1="10" y1="42" x2="70" y2="42"/>
+
+<!-- row A: first run -->
+<text class="h" x="10" y="62">First run</text>
+<rect class="pn" x="10" y="70" width="126" height="84" rx="4"/>
+<text class="b" x="18" y="90">Claude Code</text>
+<text x="18" y="108">session abc</text>
+<text class="m" x="18" y="126">pid 4242</text>
+<rect class="pn" x="180" y="70" width="126" height="84" rx="4"/>
+<text class="b" x="188" y="90">hook</text>
+<text x="188" y="108">SessionStart</text>
+<text class="m" x="188" y="126">no network</text>
+<rect class="okb" x="350" y="70" width="126" height="84" rx="4"/>
+<text class="b" x="358" y="90">state dir</text>
+<text class="to" x="358" y="108">cc:abc</text>
+<text class="m" x="358" y="126">mode 0600</text>
+<rect class="pn" x="520" y="70" width="126" height="84" rx="4"/>
+<text class="b" x="528" y="90">mirafleet mcp</text>
+<text x="528" y="108">reads file</text>
+<text class="m" x="528" y="126">ppid 4242</text>
+<rect class="pn" x="690" y="70" width="126" height="84" rx="4"/>
+<text class="b" x="698" y="90">central</text>
+<text x="698" y="108">workspace</text>
+<text class="m" x="698" y="126">cc:abc</text>
+
+<g class="st" style="--i:1">
+<line class="ln" x1="138" y1="110" x2="178" y2="110" marker-end="url(#ah)"/>
+<circle class="bdg" cx="158" cy="136" r="11"/><text class="bt" x="158" y="140.5">1</text>
+</g>
+<g class="st" style="--i:2">
+<line class="ln" x1="308" y1="110" x2="348" y2="110" marker-end="url(#ah)"/>
+<circle class="bdg" cx="328" cy="136" r="11"/><text class="bt" x="328" y="140.5">2</text>
+</g>
+<g class="st" style="--i:3">
+<line class="ln" x1="478" y1="110" x2="518" y2="110" marker-end="url(#ah)"/>
+<circle class="bdg" cx="498" cy="136" r="11"/><text class="bt" x="498" y="140.5">3</text>
+</g>
+<g class="st" style="--i:4">
+<line class="ln" x1="648" y1="110" x2="688" y2="110" marker-end="url(#ah)"/>
+<circle class="bdg" cx="668" cy="136" r="11"/><text class="bt" x="668" y="140.5">4</text>
+</g>
+
+<!-- divider: exit -->
+<line class="dash" x1="10" y1="176" x2="830" y2="176"/>
+<g class="st" style="--i:5">
+<circle class="bdg" cx="22" cy="198" r="11"/><text class="bt" x="22" y="202.5">5</text>
+<text x="42" y="203">Claude Code exits. The workspace stays open (idle); the 24 h idle TTL is the net.</text>
+</g>
+<line class="dash" x1="10" y1="220" x2="830" y2="220"/>
+
+<!-- row B: after resume -->
+<text class="h" x="10" y="240">After claude --resume</text>
+<rect class="pn" x="10" y="248" width="126" height="84" rx="4"/>
+<text class="b" x="18" y="268">Claude Code</text>
+<text x="18" y="286">session abc</text>
+<text class="m" x="18" y="304">pid 5151</text>
+<rect class="pn" x="180" y="248" width="126" height="84" rx="4"/>
+<text class="b" x="188" y="268">hook</text>
+<text x="188" y="286">SessionStart</text>
+<text class="m" x="188" y="304">runs again</text>
+<rect class="okb" x="350" y="248" width="126" height="84" rx="4"/>
+<text class="b" x="358" y="268">state dir</text>
+<text class="to" x="358" y="286">cc:abc</text>
+<text class="m" x="358" y="304">new pid key</text>
+<rect class="pn" x="520" y="248" width="126" height="84" rx="4"/>
+<text class="b" x="528" y="268">mirafleet mcp</text>
+<text x="528" y="286">reads file</text>
+<text class="m" x="528" y="304">ppid 5151</text>
+<rect class="pn" x="690" y="248" width="126" height="84" rx="4"/>
+<text class="b" x="698" y="268">central</text>
+<text class="to" x="698" y="286">reused: true</text>
+<text class="m" x="698" y="304">same files</text>
+
+<g class="st" style="--i:6">
+<line class="ln" x1="138" y1="290" x2="178" y2="290" marker-end="url(#ah)"/>
+<line class="ln" x1="308" y1="290" x2="348" y2="290" marker-end="url(#ah)"/>
+<circle class="bdg" cx="328" cy="316" r="11"/><text class="bt" x="328" y="320.5">6</text>
+</g>
+<g class="st" style="--i:7">
+<line class="ln" x1="478" y1="290" x2="518" y2="290" marker-end="url(#ah)"/>
+<line class="ln" x1="648" y1="290" x2="688" y2="290" marker-end="url(#ah)"/>
+<circle class="bdg" cx="668" cy="316" r="11"/><text class="bt" x="668" y="320.5">7</text>
+</g>
+
+<!-- note -->
+<g class="st" style="--i:8">
+<rect class="bx" x="10" y="344" width="806" height="28" rx="2"/>
+<circle class="bdg" cx="26" cy="358" r="11"/><text class="bt" x="26" y="362.5">8</text>
+<text x="46" y="363">/clear: new id def, new workspace. No hook: no file, random p:... session.</text>
+</g>
+<circle class="dot pk" cx="0" cy="0" r="7"/>
+
+<!-- steps -->
+<text class="h" x="10" y="400">Steps</text>
+<g class="st" style="--i:1"><text x="10" y="424"><tspan class="b">1</tspan> Claude Code starts session abc and runs the SessionStart hook (reads session_id, no network).</text></g>
+<g class="st" style="--i:2"><text x="10" y="442"><tspan class="b">2</tspan> The hook writes cc:abc to the state dir, keyed by parent pid + project dir (file 0600).</text></g>
+<g class="st" style="--i:3"><text x="10" y="460"><tspan class="b">3</tspan> mirafleet mcp, a child of the same Claude Code, re-reads the file at every open.</text></g>
+<g class="st" style="--i:4"><text x="10" y="478"><tspan class="b">4</tspan> workspace.open carries session cc:abc; central opens or returns alice's workspace.</text></g>
+<g class="st" style="--i:5"><text x="10" y="496"><tspan class="b">5</tspan> Claude Code exits. Nothing is closed: the workspace is idle and the 24 h TTL reaps it later.</text></g>
+<g class="st" style="--i:6"><text x="10" y="514"><tspan class="b">6</tspan> claude --resume: same session id, new pids. The hook runs again and rewrites the file.</text></g>
+<g class="st" style="--i:7"><text x="10" y="532"><tspan class="b">7</tspan> The server reads cc:abc again; central answers reused: true (same container and files).</text></g>
+<g class="st" style="--i:8"><text x="10" y="550"><tspan class="b">8</tspan> After /clear the id is new, so a new workspace. With no hook: no file, a random p:... session.</text></g>
+</svg>

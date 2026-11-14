@@ -5,7 +5,9 @@
 - Why an AI coding agent working on many servers is a hard safety problem.
 - What mirafleet is, and the three roles in it: central, runners, operators.
 - The two fleet modes (actions and workspace, both built) and what mirafleet is **not**.
-- Which parts are built today, which platforms are supported, and the milestone plan.
+- Which parts are built today (M1, M2, M3 and M5), which platforms are supported (the
+  orchestrator works on Windows too), and the milestone plan.
+- How an agent actually drives a fleet: by calling MCP tools such as `exec` and `run_action`.
 
 New words are explained the first time they appear and collected in the [glossary](glossary.md).
 
@@ -69,7 +71,7 @@ All of it ships as **one static Go binary** (one executable file with no librari
 |---|---|---|---|---|
 | **Central** | `mirafleet central` | one Linux host per network | only *listens* (default port 2222) | knows every fleet, runner and operator; authenticates; applies policy; audits; relays work |
 | **Runner** | `mirafleet runner` | each fleet server (Linux) | dials *out* to central | holds the allowlist; runs approved actions; reports heartbeats |
-| **Operator** | `mirafleet mcp` | the person's own machine (Linux, macOS; Windows from M5) | dials *out* to central | the client an agent uses: lists fleets and runners, asks for an action |
+| **Operator** | `mirafleet mcp` | the person's own machine (Linux, macOS, Windows) | dials *out* to central | the MCP server an agent uses: lists fleets and runners, runs actions, and drives a workspace |
 
 An **operator**, concretely, is one registered key on one machine: alice's key pair on alice's
 laptop is the operator `alice`. Central does not know "people"; it knows keys it has registered.
@@ -102,7 +104,7 @@ Here is the picture. Watch the arrows: every connection points *toward* central.
 *Caption: look at the direction of the arrows. Nothing connects in to a runner, and no operator
 ever reaches a runner directly.*
 
-1. Claude Code starts `mirafleet mcp`. The LLM API key and the SSH key stay on the laptop.
+1. Claude Code starts `mirafleet mcp`; the plugin's hooks run beside it. The LLM API key and the SSH key stay on the laptop.
 2. `mcp` dials central `:2222` as SSH user `operator`; each request is one `api@` channel.
 3. Central checks the key and the policy against SQLite, then acts.
 4. Runners dial OUT to central (user `runner`). Nothing listens on a runner.
@@ -186,9 +188,12 @@ simply does not exist (`not_found`). [Chapter 4](04-flows.md#12-open-a-workspace
 through each step and [chapter 5](05-security.md#59-the-workspace-container-boundary) shows
 what keeps a prompt-injected agent inside the box.
 
-The agent sends a command as an *argv list* (`["go","test","./..."]`), not as a shell string.
-Claude Code's MCP tool (M5) wraps a shell string as `["/bin/sh","-c",cmd]` for you; a shell
-*inside* the container is fine, because the container is the boundary.
+At the protocol level the command is an *argv list* (`["go","test","./..."]`), not a shell
+string. The MCP tool `exec` takes either an `argv` list or a `command` string; a string becomes
+`["/bin/sh","-c",command]` for you. A shell *inside* the container is fine, because the
+container is the boundary. In the MCP tools the same story reads: `workspace_open` (or just
+`exec`, which opens one on an unguarded default fleet), `exec` with `go test ./...`,
+`write_file` and `read_file`, then `workspace_close`.
 
 ## 1.5 What mirafleet is not
 
@@ -258,7 +263,7 @@ In words:
 |---|---|---|---|
 | `mirafleet central` | yes | refuses to start | refuses to start |
 | `mirafleet runner` | yes | refuses to start | refuses to start |
-| `mirafleet mcp` | yes | yes | builds on Windows; runs there from M5 (until then the key loader fails closed: it refuses to start rather than run without key protection) |
+| `mirafleet mcp` | yes | yes | yes (since M5). Windows has no Unix file modes, so the key directory and key file get a protected owner-only access-control list (a DACL), checked on every load; if it is wrong the program refuses to start |
 
 Why Linux only for the servers? Fleet nodes and central are Linux machines, and the planned
 container workspaces (built in M3) use Linux features anyway (containerd, namespaces, cgroups).
@@ -285,7 +290,7 @@ the admin CLI already covers the GUI's functions. Full details are in [../PLAN.m
 | **M1** Transport and actions | embedded SSH server, runner dials out, heartbeats, actions guard, JSON-lines audit on the runner | done (13 Nov 2026) |
 | **M2** Central core | SQLite store, fleets, join tokens, runner lifecycle, rotating registration codes, `api@mirafleet`, admin socket, admin CLI, `runner join`, `mcp login` / `mcp api` | done (13 Nov 2026); see [../M2.md](../M2.md) |
 | **M3** Workspaces | `workspace.Executor`, containerd executor, optional OpenSandbox executor, scheduling and sticky sessions, TTL reaper, reconcile, `workspace.*` API, egress proxy | done (13 Nov 2026); see [../M3.md](../M3.md) |
-| **M5** Orchestrator | the real `mirafleet mcp` stdio MCP server, Claude Code plugin, hooks | **planned** |
+| **M5** Orchestrator | the real `mirafleet mcp` stdio MCP server (nine tools), contexts and project defaults, session handoff, Claude Code plugin and hooks, opencode and generic notes, Windows support, action discovery; see [../M5.md](../M5.md) | **built** (smoke test with real Claude Code pending) |
 | **M4** Admin GUI | web screens on central (built with htmx, a small library that updates page parts from the server) | **planned** |
 | **M6** Release | CI, packages (`.deb` and `.rpm` are the install files for Debian/Ubuntu and Red Hat systems; plus a container image), signing, install script, plugin stores | **planned** |
 
@@ -293,16 +298,26 @@ What this means for you today:
 
 - You can create fleets, join runners, approve them, register operators, run actions through the
   full path, revoke, and read the audit log, all from the command line.
-- `mirafleet mcp login` and `mirafleet mcp api METHOD [JSON]` work. They are a plain command
-  line client. The **MCP stdio server** that Claude Code will launch does not exist yet; it
-  arrives in M5. When you read "Claude runs an action" in this guide, today that means
-  `mirafleet mcp api action.run '{"fleet":"prod","runner":"db-1","action":"tail-logs","params":{"lines":"200"},"confirm":"prod"}'`
-  (`prod` is a guarded fleet, so the request must repeat the fleet name in `confirm`), and after
-  M5 it means Claude calling the MCP tool for `action.run`.
-- Workspace mode works end to end too: `mirafleet mcp api workspace.open '{"fleet":"dev","session":"s1"}'`
-  opens a workspace, and `workspace.exec`, `workspace.read_file`, `workspace.write_file`,
-  `workspace.close` and `workspace.list` do the rest. (`mcp api -in FILE` and `-out FILE`
-  carry file bodies.) The runner needs a Linux host with containerd, or an OpenSandbox server.
+- `mirafleet mcp` is a real MCP stdio server, so Claude Code (or another harness) calls
+  tools instead of a command line. When you read "Claude runs an action" in this guide, it means
+  Claude calls the tool `run_action` with `fleet: "prod"`, `runner: "db-1"`, `action: "tail-logs"`,
+  `params: {"lines": "200"}` and, because `prod` is a guarded fleet, `confirm: "prod"` after the
+  human agreed. The tool turns that into the API method `action.run`. "Claude runs `go test`"
+  means the tool `exec` with `command: "go test ./..."`. The nine tools are `list_fleets`,
+  `list_runners`, `run_action`, `workspace_open`, `exec`, `read_file`, `write_file`,
+  `workspace_close` and `workspace_list`
+  ([section 2.10](02-background.md#210-mcp-and-harnesses) explains MCP;
+  [flow 19](04-flows.md#19-one-exec-tool-call-end-to-end) follows one call).
+- `mirafleet mcp login` registers the machine, and `mirafleet mcp context` switches between
+  centrals. `mirafleet mcp api METHOD [JSON]` still exists as a plain command-line client for
+  debugging and for the older flows (`-in FILE` and `-out FILE` carry file bodies).
+- Workspace mode works end to end through `workspace_open`, `exec`, `read_file`, `write_file`,
+  `workspace_close` and `workspace_list`. The runner needs a Linux host with containerd, or an
+  OpenSandbox server.
+- The Claude Code plugin (`integrations/claude-code/`) adds the slash commands, the session
+  handoff and an extra confirm prompt. It is built but still to be smoke-tested with a real
+  Claude Code. Installing it from a plugin store arrives with M6, so for now `mirafleet` must be
+  on your `PATH`.
 - There is no GUI yet. Everything the GUI will do is done with `mirafleet central ...`.
 
 ## 1.9 Where to go next
@@ -321,6 +336,8 @@ keys, SSH, HMAC, SQLite and Go contexts, skim its headings and move to
    what stops it?
 6. In workspace mode, the agent runs `go test` on `dev`. Where does the command actually run,
    and what happens if Alice opens the same session twice?
+7. Claude Code wants to run `go test ./...`. Which MCP tool does it call, and what does the
+   tool send to central?
 
 <details>
 <summary>Answers</summary>
@@ -330,13 +347,17 @@ keys, SSH, HMAC, SQLite and Go contexts, skim its headings and move to
 2. The runner. `actions.yaml` sits on the machine being protected, so even a compromised or
    confused central can only request actions that the box owner has allowed.
 3. `actions` and `workspace`. Both are built (workspace since M3).
-4. Central: Linux only (it refuses to start elsewhere). `mirafleet mcp`: Linux and macOS; it builds on Windows
-   but runs there only from M5.
+4. Central: Linux only (it refuses to start elsewhere). `mirafleet mcp`: Linux, macOS and Windows (Windows
+   since M5, where an owner-only DACL protects the key).
 5. There is no shell and no action that runs arbitrary commands. Actions are fixed argv arrays
    with regex-validated parameters; `curl ... | sh` is not an action, so the runner refuses it.
    Every attempt is also audited.
 6. Inside a container on the runner (`build-1`), never on the host itself. The second `open`
    with the same session returns the same workspace with `reused: true` (sticky sessions); if
    its runner were offline, the answer is `unavailable`, never a fresh empty workspace.
+7. The tool `exec` with `command: "go test ./..."` (or `argv: ["go","test","./..."]`). The MCP
+   server wraps a `command` as `["/bin/sh","-c",command]`, opens a workspace first if none is
+   bound (on an unguarded default fleet), and sends one `workspace.exec` request to central over
+   its SSH connection.
 
 </details>

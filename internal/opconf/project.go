@@ -1,15 +1,12 @@
 package opconf
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // ProjectName is the per-project default file. It holds only a fleet and a context name: a cloned
@@ -38,6 +35,11 @@ func LoadProject(start, home string) (Project, string, error) {
 	home = strings.TrimSpace(home)
 	if home != "" {
 		home = filepath.Clean(home)
+		// F-08: HOME=/ (or C:\) would make the walk-up reach the filesystem root, where any
+		// user's file could be planted. A root home counts as no home: only start is checked.
+		if filepath.Dir(home) == home {
+			home = ""
+		}
 	}
 	underHome := home != "" && within(home, dir)
 	for {
@@ -80,11 +82,23 @@ func loadProjectAt(dir string) (Project, string, bool, error) {
 	if st.Size() > maxProjectBytes {
 		return Project{}, "", false, fmt.Errorf("%s: larger than %d bytes", path, maxProjectBytes)
 	}
-	f, err := os.Open(path)
+	// F-06: open without following a symlink or blocking on a FIFO swapped in after the Lstat,
+	// then check the opened file is the regular file that was Lstat-ed.
+	f, err := openNoFollow(path)
+	if err != nil {
+		return Project{}, "", false, fmt.Errorf("%s: %w (must be a regular file, not a symlink or special file)", path, err)
+	}
+	defer f.Close()
+	fst, err := f.Stat()
 	if err != nil {
 		return Project{}, "", false, err
 	}
-	defer f.Close()
+	if !fst.Mode().IsRegular() || !os.SameFile(st, fst) {
+		return Project{}, "", false, fmt.Errorf("%s: changed while opening; must be a regular file, not a symlink or special file", path)
+	}
+	if fst.Size() > maxProjectBytes {
+		return Project{}, "", false, fmt.Errorf("%s: larger than %d bytes", path, maxProjectBytes)
+	}
 	b, err := io.ReadAll(io.LimitReader(f, maxProjectBytes+1))
 	if err != nil {
 		return Project{}, "", false, err
@@ -93,9 +107,7 @@ func loadProjectAt(dir string) (Project, string, bool, error) {
 		return Project{}, "", false, fmt.Errorf("%s: larger than %d bytes", path, maxProjectBytes)
 	}
 	var p Project
-	dec := yaml.NewDecoder(bytes.NewReader(b))
-	dec.KnownFields(true)
-	if err := dec.Decode(&p); err != nil && !errors.Is(err, io.EOF) {
+	if err := decodeSingle(b, &p); err != nil {
 		return Project{}, "", false, fmt.Errorf("parse %s (only fleet and context are allowed): %w", path, err)
 	}
 	if p.Fleet != "" && !nameRE.MatchString(p.Fleet) {

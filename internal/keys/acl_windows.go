@@ -29,7 +29,20 @@ func currentUserSID() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("current user: %w", err)
 	}
-	return u.User.Sid.String(), nil
+	return sidString(u.User.Sid)
+}
+
+// sidString renders a SID. (*SID).String() returns "" on failure; an empty SID is an error, never
+// a value (an empty owner/ACE SID must not compare equal to anything, F-14).
+func sidString(s *windows.SID) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("nil SID")
+	}
+	str := s.String()
+	if str == "" {
+		return "", fmt.Errorf("cannot convert SID to string")
+	}
+	return str, nil
 }
 
 // privateSDDL is the protected owner-only descriptor. container adds object/container inherit
@@ -57,7 +70,7 @@ func privateSA(container bool) (*windows.SecurityAttributes, error) {
 }
 
 // winMkdirPrivate is MkdirAll with the protected DACL applied at creation to every missing
-// component, then re-applied to dir itself (the equivalent of the Unix chmod 0700 tighten).
+// component. Unlike Unix it cannot tighten a pre-existing dir; it verifies it instead.
 func winMkdirPrivate(dir string) error {
 	dir = filepath.Clean(dir)
 	var missing []string
@@ -79,6 +92,16 @@ func winMkdirPrivate(dir string) error {
 	if err != nil {
 		return err
 	}
+	// Every directory this call touches is verified (owner, protected DACL, only our ACEs) and
+	// only components created by this call are rewritten (they already carry the protected DACL
+	// from CreateDirectory). One that lost a create race (ALREADY_EXISTS, F-12) or that pre-existed
+	// is only checked, owner included. A pre-existing dir that fails the check is repaired only
+	// when it is empty (F-13: SetNamedSecurityInfo with OICI re-ACLs the whole tree under it);
+	// otherwise it is refused. The owner is never changed, so a foreign-owned dir stays refused.
+	verify := missing
+	if len(missing) == 0 {
+		verify = []string{dir}
+	}
 	for i := len(missing) - 1; i >= 0; i-- {
 		p, err := windows.UTF16PtrFromString(missing[i])
 		if err != nil {
@@ -88,13 +111,33 @@ func winMkdirPrivate(dir string) error {
 			return &os.PathError{Op: "mkdir", Path: missing[i], Err: err}
 		}
 	}
-	dacl, _, err := sa.SecurityDescriptor.DACL()
-	if err != nil {
-		return err
+	for _, d := range verify {
+		err := checkPathACL(d)
+		if err != nil && len(missing) == 0 {
+			if ents, rerr := os.ReadDir(d); rerr == nil && len(ents) == 0 {
+				dacl, _, derr := sa.SecurityDescriptor.DACL()
+				if derr != nil {
+					return derr
+				}
+				if serr := windows.SetNamedSecurityInfo(d, windows.SE_FILE_OBJECT,
+					windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+					nil, nil, dacl, nil); serr != nil {
+					return &os.PathError{Op: "protect", Path: d, Err: serr}
+				}
+				err = checkPathACL(d)
+				// A file dropped in during the repair would have been re-ACLed by it: refuse.
+				if err == nil {
+					if ents, rerr := os.ReadDir(d); rerr != nil || len(ents) != 0 {
+						err = fmt.Errorf("directory changed during repair")
+					}
+				}
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("directory %s is not private: %w (fix its permissions or remove it)", d, err)
+		}
 	}
-	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil)
+	return nil
 }
 
 // winCreateExcl creates path exclusively (CREATE_NEW). Files without group/other bits in mode
@@ -142,8 +185,12 @@ func checkPathACL(path string) error {
 	if err != nil {
 		return fmt.Errorf("private key %s: cannot read DACL: %w", path, err)
 	}
+	ownerStr, err := sidString(owner)
+	if err != nil {
+		return fmt.Errorf("%s: owner: %w", path, err)
+	}
 	info := aclInfo{
-		Owner:     owner.String(),
+		Owner:     ownerStr,
 		Protected: ctl&windows.SE_DACL_PROTECTED != 0,
 		HasDACL:   dacl != nil,
 	}
@@ -157,7 +204,9 @@ func checkPathACL(path string) error {
 			// Only ACCESS_ALLOWED_ACE_TYPE has the SID layout read here; for other types the SID
 			// stays empty and aclPolicy rejects the entry by type.
 			if e.Type == aceTypeAllow {
-				e.SID = (*windows.SID)(unsafe.Pointer(&ace.SidStart)).String()
+				if e.SID, err = sidString((*windows.SID)(unsafe.Pointer(&ace.SidStart))); err != nil {
+					return fmt.Errorf("%s: ACE %d: %w", path, i, err)
+				}
 			}
 			info.ACEs = append(info.ACEs, e)
 		}

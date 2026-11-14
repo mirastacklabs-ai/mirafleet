@@ -17,14 +17,15 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/opconf"
 )
 
-// setup writes a config dir with a generated key, an empty known_hosts and contexts.yaml.
+// setup writes a config dir with a generated key, a known_hosts with one placeholder entry (the
+// fake dialer never checks it, but an empty file would be refused before dialling) and contexts.yaml.
 func setup(t *testing.T, ctxs ...opconf.Context) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "cfg")
 	if _, err := keys.Generate(dir, opconf.KeyName, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(opconf.KnownHostsPath(dir), nil, 0o600); err != nil {
+	if err := os.WriteFile(opconf.KnownHostsPath(dir), []byte("* ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlaceholderPlaceholderPlaceholder00\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := opconf.SaveContexts(dir, &opconf.Contexts{Contexts: ctxs}); err != nil {

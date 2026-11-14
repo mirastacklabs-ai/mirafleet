@@ -13,13 +13,18 @@
   the appendix at the end).
 - The workspace tables `fleet_workspace` and `workspaces`, the workspace state machine, migration
   0002, and the new `audit.workspace` column (section 6.15).
+- That M5 changed **no schema**, and which local files it added on the operator's machine
+  (`contexts.yaml`, `.mirafleet.yaml`, the session handoff file) plus the heartbeat `actions`
+  field (section 6.16).
 
 Each new database word is explained where it first appears, and the main ones are also in the
 [glossary](glossary.md). Quick versions: a **transaction** is a group of changes that all
 happen or none do; a **foreign key** is a column that must point at a row in another table; a
 **tombstone** (here) is an in-memory "this id is dead" marker. M1, M2 and M3 are done (13 Nov
-2026); sections 6.1 to 6.14 describe the M2 schema and [section 6.15](#615-the-workspace-tables-migration-0002)
-adds what M3 brought (two tables, one audit column, one state machine). The code lives in `internal/store` (the interface, pure Go with no SQL)
+2026) and M5 is built; sections 6.1 to 6.14 describe the M2 schema and [section 6.15](#615-the-workspace-tables-migration-0002)
+adds what M3 brought (two tables, one audit column, one state machine). M5 changed no schema:
+[section 6.16](#616-local-files-on-the-operators-machine-and-heartbeat-actions-m5-no-schema-change)
+lists the local files and the heartbeat field it added. The code lives in `internal/store` (the interface, pure Go with no SQL)
 and `internal/store/sqlite` (the implementation). Central is the only component with a
 database; runners keep a small local JSON-lines audit file and a `runner.yaml`, nothing more.
 
@@ -796,6 +801,91 @@ cap reached" (the service maps it to "try the next runner", and finally `unavail
 
 The shared test suite in `internal/store/storetest` runs all of this against any `Store`.
 
+## 6.16 Local files on the operator's machine, and heartbeat `actions` (M5, no schema change)
+
+**M5 adds no table, column or migration.** Central's database is exactly as in section 6.15. What
+M5 adds is a handful of small files on the operator's machine, and one extra field in the runner's
+heartbeat. Both are described here so you can tell "data" from "database".
+
+### The files (all under `internal/opconf` and `internal/handoff`)
+
+| File | Where | Written by | Holds |
+|---|---|---|---|
+| `operator_ed25519` | the config directory | `mcp login` | the operator's private key (owner-only; Windows DACL, see [chapter 5](05-security.md#511-prompt-injection-through-tool-output)) |
+| `known_hosts` | the config directory | `mcp login` | the pinned host key of each central |
+| `contexts.yaml` | the config directory | `mcp login`, `mcp context use\|remove` | the list of contexts |
+| `.mirafleet.yaml` | a project directory (often committed) | the project's authors | a default `fleet` and `context` for that project |
+| `sessions/<hash>.json` | the state directory | the Claude Code SessionStart hook | one session id (the *session handoff* of [flow 20](04-flows.md#20-session-resolution-and---resume-reattach)) |
+
+Where the config and state directories are on each OS is in the table in
+[chapter 3](03-architecture.md#where-does-each-secret-and-key-live).
+
+**`contexts.yaml`.** A **context** is a named central the operator can talk to (not the Go
+`context` of chapter 2). Acme's version:
+
+```yaml
+current: acme
+contexts:
+  - name: acme
+    addr: central.example.com:2222
+    default_fleet: dev        # optional
+  - name: lab
+    addr: lab.example.com:2222
+output_cap_bytes: 30720       # optional: 4096 to 262144, default 30720
+```
+
+`opconf.LoadContexts` is strict: an unknown field is an error, every context needs a `name` and
+an `addr`, `default_fleet` must be a valid name, `current` must name a defined context, and
+`output_cap_bytes` must stay in bounds. A `jump` key (SSH jump hosts) is rejected on purpose:
+jump hosts are deferred, and failing loudly beats silently ignoring a security-relevant setting.
+`mcp login` writes the file; `mcp context list`, `use NAME` and `remove NAME` edit it. It holds no
+secret: only names, addresses and one number.
+
+**`.mirafleet.yaml`.** A **project default** is what a team commits so that Claude Code in that
+repository targets the right fleet without being told:
+
+```yaml
+fleet: dev
+context: acme
+```
+
+Only those two keys exist, and `opconf.LoadProject` is strict about them (unknown keys, a symlink,
+a non-regular file or a file over 4 KiB is an error). It deliberately has **no addresses, keys or
+caps**: a hostile repository must not be able to point alice's key at a central of its choosing.
+The file is looked up from the project directory upward, stopping at the first directory that
+contains `.git` (or at the home directory), and never above home. Precedence for a call is: the
+tool argument, then the `-context` and `-fleet` flags, then `.mirafleet.yaml`, then the context's
+`default_fleet`, then nothing. A guarded fleet taken from the project file or `default_fleet` is
+refused: it must be named explicitly ([flow 23](04-flows.md#23-a-guarded-call-and-the-confirm-prompt)).
+
+**The handoff file.** `handoff.Write` stores `{"v":1,"session":"cc:<id>","project":...,"pid":...,
+"written":...}` under a name made from `sha256(pid|project)`. It is owner-only, written atomically,
+at most 4 KiB, pruned after 7 days, and read back only if its `pid` and `project` match the
+reader's key. It holds an identifier, not a secret.
+
+### Heartbeat `actions` (action discovery)
+
+The MCP tool `list_runners` can tell the model which actions a runner offers and what parameters
+they take, so it need not guess names. For that, an actions-mode runner now adds an optional
+`actions` list to its [heartbeat](07-protocols.md):
+
+```json
+{"name":"tail-logs","params":[{"name":"lines","pattern":"^[0-9]{1,4}$","default":"200"}]}
+```
+
+- It is built from `actions.yaml` by `actions.Set.Describe`, and sent only by actions-mode runners
+  (older runners omit it, and everything still works).
+- It is **bounded** before central stores it, in `Heartbeat.Validate`: at most 128 actions, a name
+  up to 64 bytes, at most 32 parameters per action, patterns and defaults up to 256 bytes, and
+  16 KiB of JSON for the whole list. (A runner sending more would otherwise overflow the SSH packet
+  limit or bloat `runners.list`.)
+- It is **not in SQLite.** Like the rest of the heartbeat it lives in the registry's memory, next
+  to the live session, and appears in `runners.list` as `RunnerInfo.Actions` (central also caps the
+  total encoded action bytes in one response and marks later runners `actions_omitted`).
+- It is **informational only.** It is never used to authorise anything: the runner's
+  `actions.yaml` is still the security boundary (chapter 5, 5.2), and a runner that lied about its
+  list would only mislead the model, whose call the guard would still refuse.
+
 ## Check your understanding
 
 1. Why does `runners` have a *partial* unique index on `(fleet_id, name)` but a plain `UNIQUE`
@@ -812,6 +902,10 @@ The shared test suite in `internal/store/storetest` runs all of this against any
 7. A workspace row is `closing` and its runner is offline. Does it still count against the
    runner's slots? Why is that the right choice?
 8. Why does the audit table need a `workspace` column when `subject` already holds the session?
+9. M5 added an MCP server, a handoff file and an `actions` list in the heartbeat. Which of them
+   needed a database migration, and where does each live?
+10. A cloned repository contains a `.mirafleet.yaml` with `fleet: prod`. Why can it neither add a
+    new central nor silently run commands on `prod`?
 
 <details>
 <summary>Answers</summary>
@@ -838,6 +932,14 @@ The shared test suite in `internal/store/storetest` runs all of this against any
    the database no longer counts.
 8. A session name can be reused over time, so it does not identify one workspace. The `ws_id` does,
    and the index on it makes "everything that happened to this workspace" a quick lookup.
+9. None needed a migration: central's schema is unchanged. The handoff file lives in the
+   operator's state directory (`sessions/<hash>.json`); `contexts.yaml` and `.mirafleet.yaml` are
+   plain YAML files; the heartbeat `actions` list is held in the registry's memory and returned
+   by `runners.list`, never written to SQLite.
+10. `.mirafleet.yaml` can only hold a `fleet` and a `context` name, so there is nowhere to put an
+    address or key, and an unknown context is `not_found`. A guarded fleet taken from a project
+    default is refused: it must be named explicitly and confirmed, and central refuses without the
+    exact `confirm`.
 
 </details>
 

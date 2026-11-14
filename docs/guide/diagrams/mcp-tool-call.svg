@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 512" width="840" height="512" role="img" aria-labelledby="t d">
+<title id="t">One exec tool call, harness to runner and back</title>
+<desc id="d">Claude Code sends a tools/call exec request on the stdin of mirafleet mcp. The mcpserver package decodes the arguments strictly. The orch package resolves the context, fleet and session, finds or opens the workspace, and only lets operator methods through. One api@ frame goes to central over the pinned SSH connection. Central checks, writes the start audit row and sends a workspace@ channel to the runner. The runner runs the command in the container and returns exit code, stdout and stderr, at most 1 MiB. On the way back orch strips control and invisible characters and caps the output at 30 KiB. mcpserver returns structured content and a text copy, which the model treats as data.</desc>
+<style>
+:root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
+@media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
+svg{--T:12s;--slot:1.5s}
+.bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
+.pn{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.bx{fill:#F6F5F1;fill:var(--band,#F6F5F1);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
+.sm{font-size:10px}
+.ttl{font:600 21px Oswald,"Arial Narrow",Arial,sans-serif;text-transform:uppercase;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.h{font-weight:600;letter-spacing:.08em;text-transform:uppercase;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.m{fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.b{font-weight:700;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.ln{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none}
+.ahp{fill:#00695F;fill:var(--accent,#00695F)}
+.dot{fill:#FF671F;fill:var(--signal,#FF671F)}
+.bdg{fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.bt{font-weight:700;fill:#FFFFFF;fill:var(--bg,#FFFFFF);text-anchor:middle}
+.cap{fill:none;stroke:#FF671F;stroke:var(--signal,#FF671F);stroke-width:2}
+.rule{stroke:#FF671F;stroke:var(--signal,#FF671F);stroke-width:2}
+.pk{display:none}
+@media (prefers-reduced-motion:no-preference){
+.st{animation:lit var(--T) linear infinite both;animation-delay:calc((var(--i) - 1) * var(--slot))}
+.pk{display:inline;animation:mv var(--T) linear infinite}
+}
+@keyframes lit{0%{opacity:.25}1%{opacity:1}11.5%{opacity:1}12.5%{opacity:.25}100%{opacity:.25}}
+@keyframes mv{0%,9%{transform:translate(85px,105px)}12.5%,21.5%{transform:translate(330px,118px)}25%,34%{transform:translate(330px,200px)}37.5%,46.5%{transform:translate(465px,105px)}50%,59%{transform:translate(565px,130px)}62.5%,71.5%{transform:translate(765px,150px)}75%,84%{transform:translate(330px,262px)}87.5%,100%{transform:translate(85px,240px)}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0,0L10,5L0,10z"/></marker></defs>
+<rect class="bg" width="840" height="512"/>
+<text class="ttl" x="10" y="32">One exec call, there and back</text>
+<line class="rule" x1="10" y1="42" x2="70" y2="42"/>
+
+<!-- harness -->
+<rect class="pn" x="10" y="60" width="150" height="230" rx="4"/>
+<text class="h" x="20" y="80">Harness</text>
+<text x="20" y="102">Claude Code</text>
+<text class="m" x="20" y="120">+ plugin hooks</text>
+<text class="b" x="20" y="148">tools/call</text>
+<text x="20" y="166">exec</text>
+<text class="m" x="20" y="184">go test ./...</text>
+<text class="m" x="20" y="214">result: data,</text>
+<text class="m" x="20" y="230">not instructions</text>
+
+<!-- mirafleet mcp -->
+<rect class="pn" x="230" y="60" width="200" height="230" rx="4"/>
+<text class="h" x="242" y="80">mirafleet mcp</text>
+<rect class="bx" x="242" y="88" width="176" height="56" rx="2"/>
+<text class="b" x="252" y="106">mcpserver</text>
+<text x="252" y="122">strict args</text>
+<text class="m" x="252" y="138">9 fixed tools</text>
+<rect class="bx" x="242" y="154" width="176" height="124" rx="2"/>
+<text class="b" x="252" y="172">orch</text>
+<text x="252" y="190">resolve context,</text>
+<text x="252" y="206">fleet, session</text>
+<text x="252" y="222">guard: operator</text>
+<text x="252" y="238">methods only</text>
+<rect class="cap" x="250" y="248" width="160" height="22" rx="2"/>
+<text class="b" x="258" y="263">cap 30 KiB</text>
+
+<!-- central -->
+<rect class="pn" x="500" y="60" width="130" height="230" rx="4"/>
+<text class="h" x="510" y="80">Central</text>
+<text x="510" y="106">auth, policy</text>
+<text x="510" y="124">ownership</text>
+<text class="b" x="510" y="152">audit: start</text>
+<text class="m" x="510" y="170">then runner</text>
+<text class="b" x="510" y="200">audit: outcome</text>
+<text class="m" x="510" y="218">after the reply</text>
+
+<!-- runner -->
+<rect class="pn" x="700" y="60" width="130" height="230" rx="4"/>
+<text class="h" x="710" y="80">Runner</text>
+<text x="710" y="102">build-1</text>
+<text class="m" x="710" y="120">re-checks all</text>
+<text class="b" x="710" y="150">container</text>
+<text x="710" y="168">go test ./...</text>
+<text class="m" x="710" y="198">exit code,</text>
+<text class="m" x="710" y="214">stdout, stderr</text>
+
+<!-- requests (left to right) -->
+<g class="st" style="--i:1">
+<line class="ln" x1="162" y1="105" x2="228" y2="105" marker-end="url(#ah)"/>
+<text class="m sm" x="176" y="97">stdio</text>
+<circle class="bdg" cx="195" cy="125" r="11"/><text class="bt" x="195" y="129.5">1</text>
+</g>
+<g class="st" style="--i:2"><circle class="bdg" cx="402" cy="106" r="11"/><text class="bt" x="402" y="110.5">2</text></g>
+<g class="st" style="--i:3"><circle class="bdg" cx="402" cy="172" r="11"/><text class="bt" x="402" y="176.5">3</text></g>
+<g class="st" style="--i:4">
+<line class="ln" x1="432" y1="105" x2="498" y2="105" marker-end="url(#ah)"/>
+<text class="m sm" x="438" y="97">ssh api@</text>
+<circle class="bdg" cx="465" cy="125" r="11"/><text class="bt" x="465" y="129.5">4</text>
+</g>
+<g class="st" style="--i:5">
+<line class="ln" x1="632" y1="105" x2="698" y2="105" marker-end="url(#ah)"/>
+<text class="m sm" x="633" y="97">workspace@</text>
+<circle class="bdg" cx="665" cy="125" r="11"/><text class="bt" x="665" y="129.5">5</text>
+</g>
+<g class="st" style="--i:6"><circle class="bdg" cx="812" cy="98" r="11"/><text class="bt" x="812" y="102.5">6</text></g>
+
+<!-- results (right to left) -->
+<g class="st" style="--i:6">
+<line class="ln" x1="698" y1="240" x2="632" y2="240" marker-end="url(#ah)"/>
+<line class="ln" x1="498" y1="240" x2="432" y2="240" marker-end="url(#ah)"/>
+<text class="m sm" x="640" y="258">1 MiB max</text>
+<text class="m sm" x="440" y="258">result</text>
+</g>
+<g class="st" style="--i:7"><circle class="bdg" cx="402" cy="259" r="11"/><text class="bt" x="402" y="263.5">7</text></g>
+<g class="st" style="--i:8">
+<line class="ln" x1="228" y1="240" x2="162" y2="240" marker-end="url(#ah)"/>
+<text class="b sm" x="170" y="258">30 KiB</text>
+<circle class="bdg" cx="195" cy="222" r="11"/><text class="bt" x="195" y="226.5">8</text>
+</g>
+<circle class="dot pk" cx="0" cy="0" r="7"/>
+
+<!-- steps -->
+<text class="h" x="10" y="326">Steps</text>
+<g class="st" style="--i:1"><text x="10" y="350"><tspan class="b">1</tspan> The harness sends tools/call exec on stdin: command "go test ./..." (one JSON line).</text></g>
+<g class="st" style="--i:2"><text x="10" y="370"><tspan class="b">2</tspan> mcpserver decodes the arguments strictly: unknown, duplicate or mis-cased names are refused.</text></g>
+<g class="st" style="--i:3"><text x="10" y="390"><tspan class="b">3</tspan> orch resolves context, fleet, session; finds or opens the workspace; operator methods only.</text></g>
+<g class="st" style="--i:4"><text x="10" y="410"><tspan class="b">4</tspan> One api@ frame, workspace.exec, goes to central over the pinned SSH connection.</text></g>
+<g class="st" style="--i:5"><text x="10" y="430"><tspan class="b">5</tspan> Central checks, writes the start audit row, then sends workspace@ to the runner (flow 13).</text></g>
+<g class="st" style="--i:6"><text x="10" y="450"><tspan class="b">6</tspan> The runner runs it in the container; exit code, stdout and stderr return (1 MiB at most).</text></g>
+<g class="st" style="--i:7"><text x="10" y="470"><tspan class="b">7</tspan> orch strips ANSI and invisible characters, then caps stdout + stderr at 30 KiB (1/3 head, 2/3 tail).</text></g>
+<g class="st" style="--i:8"><text x="10" y="490"><tspan class="b">8</tspan> mcpserver returns structuredContent plus a text copy; the model gets data, not instructions.</text></g>
+</svg>

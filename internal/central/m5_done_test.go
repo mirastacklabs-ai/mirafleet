@@ -146,6 +146,12 @@ func TestM5Done(t *testing.T) {
 			if err == nil && len(r.Argv) == 3 && r.Argv[2] == "echo hi" && r.Stdout != nil {
 				r.Stdout.Write([]byte("hi\n"))
 			}
+			if err == nil && len(r.Argv) == 3 && r.Argv[2] == "m5-noisy" && r.Stdout != nil {
+				line := []byte(strings.Repeat("n", 99) + "\n") // F-42: 400 KiB of output
+				for i := 0; i < 4096; i++ {
+					r.Stdout.Write(line)
+				}
+			}
 			return res, err
 		}
 	}
@@ -497,6 +503,14 @@ func m5ImplicitOpen(t *testing.T, f *m5Fixture) {
 	}
 	f.assertNoDecoyAtExecutors(t)
 
+	// F-42: a noisy exec is capped: truncated is set and the result is within the output cap.
+	r = al.call("exec", map[string]any{"command": "m5-noisy"})
+	if r.IsErr || !r.boolean("truncated") || r.num("omitted_bytes") <= 0 ||
+		len(r.str("stdout"))+len(r.str("stderr")) > opconf.DefaultOutputCap {
+		t.Fatalf("noisy exec: err %v truncated %v omitted %v stdout %d stderr %d (cap %d)", r.IsErr, r.get("truncated"),
+			r.get("omitted_bytes"), len(r.str("stdout")), len(r.str("stderr")), opconf.DefaultOutputCap)
+	}
+
 	// A denied variable is refused, with the server's value never involved.
 	r = al.call("exec", map[string]any{"command": "echo hi", "env": map[string]any{"ANTHROPIC_API_KEY": "x"}})
 	if !r.IsErr || r.code() != api.CodeBadRequest {
@@ -650,16 +664,26 @@ func m5Ownership(t *testing.T, f *m5Fixture) {
 		if got := f.rec.count(p.method) - n; got != 1 {
 			t.Errorf("%s: %d requests reached central, want exactly 1", p.method, got)
 		}
-		f.ownershipRefused[p.method]++ // central refuses these before any work: no audit row (step 12)
+		f.ownershipRefused[p.method]++ // refused before any work: one denied row each (F-43, step 12)
 	}
 	after, err := f.e.db.GetWorkspace(ctx, f.aliceWS)
 	must(t, err)
 	if after.State != store.WorkspaceOpen || !reflect.DeepEqual(after, before) {
 		t.Fatalf("alice's workspace after bob's calls: %+v, before %+v", after, before)
 	}
+	// F-43: each refusal left exactly one denied row (bob as actor, alice's workspace id), nothing else.
+	deniedBy := map[string]int{}
 	for _, row := range f.e.auditRows() {
 		if row.Actor == "bob" && row.Workspace == f.aliceWS {
-			t.Errorf("bob's refused call left an audit row on alice's workspace: %+v", row)
+			if row.Outcome != service.OutcomeDenied || row.Source != "api" {
+				t.Errorf("bob's refused call left a non-denied row on alice's workspace: %+v", row)
+			}
+			deniedBy[row.Action]++
+		}
+	}
+	for _, p := range probes {
+		if deniedBy[p.method] != 1 {
+			t.Errorf("%s: %d denied rows for bob on alice's workspace, want 1", p.method, deniedBy[p.method])
 		}
 	}
 }
@@ -905,19 +929,10 @@ func m5Hygiene(t *testing.T, f *m5Fixture) {
 			t.Errorf("request %s: %d start rows, %d outcome rows", id, p.start, p.end)
 		}
 	}
-	// Reads and writes that reached central all executed (each has a start row).
-	for _, m := range []string{api.MethodWorkspaceReadFile, api.MethodWorkspaceWriteFile} {
-		// Step 7's direct ownership probes were refused before any work: no start row.
-		if started[m]+f.ownershipRefused[m] != sent[m] {
-			t.Errorf("%s: %d calls sent, %d start rows + %d ownership refusals", m, sent[m], started[m], f.ownershipRefused[m])
-		}
-	}
-	// exec and action.run: each call sent has a start row or a single denied row.
-	// Exceptions: step 7's ownership refusals (exec) and step 8's run_action on the workspace fleet,
-	// which central refuses before any work, leaving no audit row (as in M3).
-	// A mode-mismatch refusal writes no audit row; this is current M3 behaviour. The calls are the
-	// action.run requests aimed at fleet dev (the workspace fleet), counted from the recorder.
-	refusedNoRow := map[string]int{api.MethodWorkspaceExec: f.ownershipRefused[api.MethodWorkspaceExec]}
+	// Every call sent has a start row or a single denied row, and the denied rows are exactly the
+	// known refusals: step 7's ownership probes (F-43) per method, step 8's mode-mismatch
+	// run_action on the workspace fleet (F-41) plus the one guarded refusal for action.run.
+	modeRefused := 0 // action.run requests aimed at fleet dev (the workspace fleet), from the recorder
 	for _, q := range f.rec.snapshot() {
 		if q.method != api.MethodActionRun {
 			continue
@@ -925,16 +940,26 @@ func m5Hygiene(t *testing.T, f *m5Fixture) {
 		var p api.ActionRunParams
 		must(t, json.Unmarshal([]byte(q.params), &p))
 		if p.Fleet == "dev" {
-			refusedNoRow[q.method]++
+			modeRefused++
 		}
 	}
-	for _, m := range []string{api.MethodWorkspaceExec, api.MethodActionRun} {
-		if started[m]+denied[m]+refusedNoRow[m] != sent[m] {
-			t.Errorf("%s: %d calls sent, %d start rows + %d denied rows + %d refused without a row", m, sent[m], started[m], denied[m], refusedNoRow[m])
+	wantDenied := map[string]int{
+		api.MethodWorkspaceExec:      f.ownershipRefused[api.MethodWorkspaceExec],
+		api.MethodWorkspaceReadFile:  f.ownershipRefused[api.MethodWorkspaceReadFile],
+		api.MethodWorkspaceWriteFile: f.ownershipRefused[api.MethodWorkspaceWriteFile],
+		api.MethodWorkspaceClose:     f.ownershipRefused[api.MethodWorkspaceClose],
+		api.MethodActionRun:          1 + modeRefused,
+		api.MethodWorkspaceOpen:      1, // step 8: workspace_open on the actions fleet (F-41)
+	}
+	for _, m := range []string{api.MethodWorkspaceExec, api.MethodWorkspaceReadFile, api.MethodWorkspaceWriteFile, api.MethodActionRun} {
+		if started[m]+denied[m] != sent[m] {
+			t.Errorf("%s: %d calls sent, %d start rows + %d denied rows", m, sent[m], started[m], denied[m])
 		}
 	}
-	if denied[api.MethodActionRun] != 1 {
-		t.Errorf("denied action.run rows: %d, want the one guarded refusal", denied[api.MethodActionRun])
+	for m, want := range wantDenied {
+		if denied[m] != want {
+			t.Errorf("%s: %d denied rows, want %d", m, denied[m], want)
+		}
 	}
 
 	// No admin method in alice's (or bob's) audit; operators act through api only.

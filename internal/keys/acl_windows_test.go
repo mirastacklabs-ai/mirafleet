@@ -58,7 +58,8 @@ func TestCreatedDirAndKeyPassCheck(t *testing.T) {
 	}
 }
 
-func TestEnsureDirTightensExistingDir(t *testing.T) {
+// An empty loose pre-existing dir has no tree to re-ACL, so it is repaired.
+func TestEnsureDirRepairsEmptyLooseDir(t *testing.T) {
 	d := filepath.Join(t.TempDir(), "loose")
 	if err := os.Mkdir(d, 0o755); err != nil {
 		t.Fatal(err)
@@ -66,9 +67,56 @@ func TestEnsureDirTightensExistingDir(t *testing.T) {
 	if err := EnsureDir(d); err != nil {
 		t.Fatal(err)
 	}
-	// Owner is the current user (we created it) so the full check applies.
 	if err := checkPathACL(d); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// F-13: a non-empty pre-existing dir is verified, never rewritten. A loose one (inherited ACEs) is
+// refused and its DACL, and its children's, are left alone.
+func TestEnsureDirRefusesLooseExistingDirWithoutRewriting(t *testing.T) {
+	d := filepath.Join(t.TempDir(), "loose")
+	if err := os.Mkdir(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(d, "child.txt")
+	if err := os.WriteFile(child, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDir(d); err == nil {
+		t.Fatal("loose pre-existing dir accepted")
+	}
+	if err := checkPathACL(d); err == nil {
+		t.Fatal("loose dir was rewritten")
+	}
+	if err := checkPathACL(child); err == nil {
+		t.Fatal("child was rewritten")
+	}
+}
+
+// A pre-existing dir that already carries the private DACL passes, and so does a nested create.
+func TestEnsureDirAcceptsPrivateExistingDir(t *testing.T) {
+	d := filepath.Join(t.TempDir(), "priv")
+	if err := EnsureDir(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDir(d); err != nil {
+		t.Fatalf("second EnsureDir: %v", err)
+	}
+	if err := EnsureDir(filepath.Join(d, "a", "b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPathACL(filepath.Join(d, "a", "b")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSIDStringRejectsNil(t *testing.T) {
+	if _, err := sidString(nil); err == nil {
+		t.Fatal("nil SID accepted")
+	}
+	if s, err := currentUserSID(); err != nil || s == "" {
+		t.Fatalf("current user SID %q %v", s, err)
 	}
 }
 
@@ -100,3 +148,18 @@ func TestDenyACERefused(t *testing.T) {
 // A wrong owner cannot be simulated reliably: taking or assigning ownership needs
 // SeTakeOwnership/SeRestore (admin) and a second account. The owner rule is covered by
 // TestACLPolicy ("wrong owner") on every OS.
+
+// F-18: the atomic writer's temp (and so the final file) carries the explicit private DACL, not
+// the one inherited from its directory.
+func TestWriteAtomic0600HasPrivateDACL(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cfg")
+	if err := EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAtomic0600(dir, "known_hosts", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPathACL(filepath.Join(dir, "known_hosts")); err != nil {
+		t.Fatal(err)
+	}
+}

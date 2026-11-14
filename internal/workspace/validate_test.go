@@ -111,6 +111,24 @@ func TestEnvDenied(t *testing.T) {
 	}
 }
 
+// F-24: exec-hook names and the DATABASE_URL suffix match.
+func TestEnvDeniedF24(t *testing.T) {
+	cases := map[string]bool{
+		"GIT_SSH": true, "GIT_EXTERNAL_DIFF": true, "GIT_PAGER": true, "PAGER": true,
+		"GIT_EDITOR": true, "EDITOR": true, "VISUAL": true, "editor": true, "git_ssh": true,
+		"DATABASE_URL": true, "APP_DATABASE_URL": true, "POSTGRES_DATABASE_URL": true, "database_url": true,
+		"LESSOPEN": true, "LESSCLOSE": true, "MANPAGER": true, "GIT_SEQUENCE_EDITOR": true, "RUBYLIB": true,
+		"PYTHONHOME": true, "lessopen": true, "pythonhome": true,
+		"LESSOPEN_X": false, "RUBYLIB_X": false, "PYTHONHOMEX": false, "MANPAGER_X": false,
+		"DATABASE_URL_X": false, "EDITORCONFIG": false, "PAGER_X": false, "GIT_SSH_X": false, "VISUALS": false,
+	}
+	for n, want := range cases {
+		if got := EnvDenied(n); got != want {
+			t.Errorf("EnvDenied(%q) = %v, want %v", n, got, want)
+		}
+	}
+}
+
 func TestFilterEnv(t *testing.T) {
 	allow := []string{"FOO", "LANG", "ANTHROPIC_API_KEY", "HTTP_PROXY", "GH_TOKEN"}
 	got, err := FilterEnv(map[string]string{"FOO": "1", "LANG": "C"}, allow)

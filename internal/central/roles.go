@@ -104,6 +104,7 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			tc.finish(lastHB)
 		}
 	}()
+	warnedActions := false // log the dropped invalid actions list once per connection
 	for r := range reqs {
 		if r.Type != transport.ReqHeartbeat {
 			r.Reply(false, nil)
@@ -113,6 +114,19 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 		if err := json.Unmarshal(r.Payload, &hb); err != nil {
 			r.Reply(false, nil)
 			continue
+		}
+		if err := hb.Validate(); err != nil && len(hb.Actions) > 0 {
+			// F-16: an invalid Actions list is informational and may be version skew; drop it and
+			// keep the connection if everything else is valid.
+			stripped := hb
+			stripped.Actions = nil
+			if stripped.Validate() == nil {
+				if !warnedActions {
+					warnedActions = true
+					s.cfg.Logf("runner %q (id %d) sent an invalid actions list, ignoring it: %v", p.Name, p.ID, err)
+				}
+				hb = stripped
+			}
 		}
 		if err := hb.Validate(); err != nil {
 			// Out-of-range workspace fields: a misbehaving or hostile runner. Refuse and drop it.

@@ -41,7 +41,7 @@ func (s *Service) wsTarget(ctx context.Context, p auth.Principal, src Source, me
 	if err := s.requireOperator(ctx, p, src, method); err != nil {
 		return store.Workspace{}, store.Fleet{}, store.WorkspaceConfig{}, err
 	}
-	w, err := s.ownedWorkspace(ctx, p, wsID)
+	w, err := s.ownedWorkspace(ctx, p, src, method, wsID)
 	if err != nil {
 		return store.Workspace{}, store.Fleet{}, store.WorkspaceConfig{}, err
 	}
@@ -66,7 +66,7 @@ func (s *Service) denyConfirm(ctx context.Context, p auth.Principal, src Source,
 	den := s.wsEvent(p, src, method, w.Fleet, w.Runner, w.WsID, "")
 	den.Subject, den.Outcome, den.Message = w.Session, OutcomeDenied, "confirm missing or wrong"
 	s.recordBestEffort(ctx, den)
-	return badRequest("fleet requires confirm to equal the fleet name")
+	return badRequest(api.MsgConfirmRequired)
 }
 
 // refuseInput audits a refused request (message only, never values) and returns bad_request.

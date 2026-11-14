@@ -349,7 +349,7 @@ func TestOpenWorkspaceValidation(t *testing.T) {
 			den++
 		}
 	}
-	if den != 2 {
+	if den != 3 { // admin, revoked operator, and the actions-fleet mode mismatch (F-41)
 		t.Errorf("denied rows = %d", den)
 	}
 	if n := len(e.wsCalls("create")); n != 0 {

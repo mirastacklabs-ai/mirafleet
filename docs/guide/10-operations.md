@@ -16,13 +16,15 @@ to write `actions.yaml`, and a table of error messages with fixes.
 - **Workspace mode (M3):** the `workspace.yaml` reference, containerd on a Docker host, the
   OpenSandbox option with its TLS front, every new command and flag, the on-disk layout, pruning
   and troubleshooting ([section 10.9](#109-workspace-mode-m3)).
+- **The orchestrator side (M5):** setting up a laptop on Linux, macOS or Windows, `mcp login`,
+  contexts, the Claude Code plugin, opencode and other harnesses, and a troubleshooting table
+  for the MCP server ([section 10.10](#1010-the-orchestrator-m5-set-up-and-troubleshooting)).
 
-> **Status:** M1, M2 and M3 are done (13 Nov 2026). Next: M5 (MCP server), M4 (GUI), M6
-> (release). There are no packages or systemd units yet (planned for M6, see
-> [PLAN.md](../PLAN.md)); you run the binary yourself. The MCP server that Claude Code talks to
-> (`mirafleet mcp` with no arguments) arrives in M5; today `mirafleet mcp login` and
-> `mirafleet mcp api` are the operator tools. Where the guide shows something planned, it says
-> so.
+> **Status:** M1, M2, M3 and M5 are done. Next: M4 (GUI), M6 (release). There are no packages or
+> systemd units yet (planned for M6, see [PLAN.md](../PLAN.md)); you run the binary yourself.
+> `mirafleet mcp` (no arguments) is the MCP server that Claude Code and other agents talk to;
+> `mirafleet mcp login`, `context` and `api` are the human operator tools. Where the guide shows
+> something planned, it says so.
 >
 > Want to see it all work before reading on? [Section 9.11](09-dev-setup-and-testing.md#911-try-it-locally-central-runner-and-operator-in-one-container)
 > runs central, a runner and an operator in one throwaway container.
@@ -45,7 +47,7 @@ Who runs what:
 |---|---|---|---|
 | `central.example.com` | Linux | `mirafleet central` | accepts TCP 2222 from runners and operators |
 | `build-1`, `db-1` | Linux | `mirafleet runner` | **outbound only**: connect to central:2222; no open port |
-| alice's and bob's laptops | Linux, macOS (builds on Windows; runs there from M5) | `mirafleet mcp` | outbound to central:2222 |
+| alice's and bob's laptops | Linux, macOS, Windows (amd64 and arm64) | `mirafleet mcp` | outbound to central:2222 |
 
 Central and runner refuse to start on other operating systems:
 `mirafleet: mirafleet central is supported on linux only (current: darwin)`.
@@ -335,10 +337,11 @@ $ mirafleet mcp api action.run '{"fleet":"prod","runner":"db-1","action":"tail-l
 ```
 
 Without the `confirm` field the call fails with `bad_request` before anything runs (section
-10.6). Methods available to operators today: `hello`, `fleets.list`, `runners.list`,
-`action.run`. Nothing else is possible from a laptop, by design: approving runners, making
-tokens and revoking things only work on central. When M5 lands, Claude Code will call the same
-methods as MCP tools.
+10.6). Methods available to operators: `hello`, `fleets.list`, `runners.list`, `action.run` and
+the `workspace.*` methods. Nothing else is possible from a laptop, by design: approving runners,
+making tokens and revoking things only work on central. `mcp api` is the hand-driven way to call
+them. Claude Code (and other agents) call the same methods through **MCP tools**, which is what
+[section 10.10](#1010-the-orchestrator-m5-set-up-and-troubleshooting) sets up.
 
 ### Step 12: look at the audit log
 
@@ -443,10 +446,17 @@ Durations are whole seconds or more (`90s`, `2m`, `24h`). Sizes use `MiB`, `GiB`
 |---|---|---|
 | `mcp login ADDR` | `-name NAME` (required), `-code -` (required, reads stdin) | Generate a key (first time), register with central, pin its host key, save a context. |
 | `mcp api METHOD [JSON]` | `-in FILE\|-` (body for `workspace.write_file`, or stdin of `workspace.exec`; `-` reads stdin), `-out FILE` (where the body of `workspace.read_file` goes) | Call one operator method on the current context and print the JSON result. `JSON` is the params object. With `-in`, `length` and `sha256` are filled in for `write_file` when absent, and `stdin: true` is set for `exec`. With `-out`, the file is written 0600 and atomically. Bodies are at most 1 MiB; bigger files go in chunks with `offset`. |
-| `mcp` (no arguments) | | Prints a note that the MCP stdio server arrives in M5. |
+| `mcp` or `mcp serve` | `-context NAME` (use this context), `-fleet NAME` (default fleet), `-session ID` (fixed session id), `-project-dir DIR` (where `.mirafleet.yaml` is looked up; default the working directory) | **Run the MCP server on stdin and stdout.** Normally started by a harness, not by you. On a terminal it prints a hint to stderr and waits. Exits 0 on stdin EOF, `SIGTERM` or `SIGHUP` within 5 s; exits 1 on a malformed protocol line. |
+| `mcp context list` | | List contexts: `* NAME  ADDR  default_fleet=...` (the `*` marks the current one). Prints names and addresses only. |
+| `mcp context use NAME` | | Make NAME the current context. |
+| `mcp context remove NAME` | | Forget a context (it does not unpin its `known_hosts` line or revoke anything on central). |
+| `mcp hook claude-code EVENT` | `EVENT` is `session-start`, `session-end` or `pre-tool-use` | Run a Claude Code hook handler. Started by Claude Code from the plugin's `hooks.json`; reads the hook JSON on stdin; always exits 0. |
 
-Environment variable: `MIRAFLEET_CONFIG_DIR` overrides the operator config directory (must be
-an absolute path).
+Environment variables: `MIRAFLEET_CONFIG_DIR` overrides the operator config directory (must be
+an absolute path). `MIRAFLEET_STATE_DIR` overrides the state directory, where session handoff
+files live (also absolute). The MCP server reads only these two (plus the platform's standard
+home, cache and config locations to find the defaults, and its parent process id); it **forwards
+nothing** from its environment into workspaces ([section 10.10.7](#10107-what-the-server-reads-and-forwards)).
 
 **Operator API methods** (for `mcp api`):
 
@@ -454,13 +464,13 @@ an absolute path).
 |---|---|---|
 | `hello` | `{"client":"..."}` (optional hint) | operator name, supported protocol versions |
 | `fleets.list` | none | fleets with mode, confirm, runner count |
-| `runners.list` | `{"fleet":"dev"}` | runners with status, online, labels, last_seen |
+| `runners.list` | `{"fleet":"dev"}` | runners with status, online, labels, last_seen; workspace runners add `slots`, `free_slots`, `executor`; actions runners add `actions` (names, parameter patterns and defaults), or `actions_omitted: true` when the reply was too big ([chapter 7](07-protocols.md)) |
 | `action.run` | `{"fleet","runner","action","params":{},"timeout_s":N,"confirm":"FLEET"}` | exit_code, stdout, stderr, truncated, duration_ms, request_id |
 | `workspace.open` | `{"fleet","session","image"?,"labels"?,"confirm"?}` | workspace (id, runner, state, expires...), reused |
 | `workspace.exec` | `{"workspace","argv":[...],"cwd"?,"env"?,"timeout_s"?,"stdin"?,"confirm"?}` | exit_code, stdout, stderr, truncated, timed_out, duration_ms, request_id |
 | `workspace.read_file` | `{"workspace","path","offset"?,"limit"?}` with `-out FILE` | size, offset, length, mode, eof (+ the bytes into the file) |
 | `workspace.write_file` | `{"workspace","path","offset"?,"truncate"?,"mode"?,"confirm"?}` with `-in FILE` | size |
-| `workspace.close` | `{"workspace"}` | `{}` |
+| `workspace.close` | `{"workspace"}` | `{}` when closed, `{"state":"closing"}` when the runner could not be reached yet and the reaper will finish |
 | `workspace.list` | `{"fleet"?}` | your own workspaces |
 
 `timeout_s`: 0 or absent means 120 s; it is capped at 600 s. `mirafleet mcp api` waits for an
@@ -503,26 +513,68 @@ section 10.9.2) and the workspace root (default `/var/lib/mirafleet/ws`, section
 workspace mode `audit.jsonl` has the runner's `start` and outcome lines for every `workspace.*`
 operation (argv clipped, env names only, file paths and byte counts, never content).
 
-### On an operator's machine (`~/.config/mirafleet` on Linux, `~/Library/Application Support/mirafleet` on macOS)
+### On an operator's machine (the config directory depends on the OS)
+
+| OS | Config directory | State directory (session handoff files) |
+|---|---|---|
+| Linux | `$XDG_CONFIG_HOME/mirafleet`, else `~/.config/mirafleet` | `$XDG_CACHE_HOME/mirafleet`, else `~/.cache/mirafleet` |
+| macOS | `~/Library/Application Support/mirafleet` | `~/Library/Caches/mirafleet` |
+| Windows | `%LocalAppData%\mirafleet` | `%LocalAppData%\mirafleet\state` |
+
+`MIRAFLEET_CONFIG_DIR` and `MIRAFLEET_STATE_DIR` override these (absolute paths only). On Windows
+the directory is under *Local*AppData on purpose, not Roaming: a roaming profile is copied to a
+profile server, and the private key would go with it. A network-share `%LocalAppData%` (a UNC
+path) is refused for the same reason.
 
 | File | Mode | What it is |
 |---|---|---|
 | `operator_ed25519` | 0600 | the operator's private key. **This is the operator's identity.** Anyone who copies it can act as that operator until it is revoked |
 | `operator_ed25519.pub` | 0644 | the public key |
 | `known_hosts` | 0600 | pinned central host keys, one line per central address |
-| `contexts.yaml` | 0600 | named centrals and the current one |
+| `contexts.yaml` | 0600 | named centrals, the current one, optional defaults (below) |
 
-Example `contexts.yaml`:
+Example `contexts.yaml` (written by `mcp login` and `mcp context`; you may edit it by hand):
 
 ```yaml
-current: alice
+current: work
+output_cap_bytes: 30720        # optional; 4096 to 262144; default 30720 (30 KiB)
 contexts:
-    - name: alice
+    - name: work
       addr: central.example.com:2222
+      default_fleet: dev       # optional
+    - name: cloud
+      addr: cloud.example.net:2222
 ```
 
-`mirafleet mcp` builds on Windows but runs there from M5: the key loader refuses to work today
-(it cannot yet verify owner-only permissions), so it fails closed.
+The file is strict: unknown keys are errors, names must be lowercase (`[a-z0-9][a-z0-9._-]{0,62}`),
+a second YAML document is refused, and a `jump` key (SSH jump hosts) is rejected because jump
+hosts are not supported yet. Writes take a lock file so two commands cannot lose each other's edit.
+
+**Windows protection.** On Unix the key is protected by file mode `0600` in a `0700` directory,
+checked on load. Windows has no such mode bits, so mirafleet sets a **DACL** (discretionary
+access control list, the Windows permission list) on the config directory and every private file
+when it creates them: inheritance off, the owner is the current user, and the only allow-entries
+are the current user, `SYSTEM` and `BUILTIN\Administrators`. On every load it checks all of that
+again and refuses a key whose owner or list differs ("private key ... is not private to the
+current user"). Anything it cannot read or does not recognise is a refusal too (fail closed). See
+[chapter 5](05-security.md#the-windows-key-file-a-dacl-instead-of-mode-0600) for why.
+
+**Per project:** `.mirafleet.yaml`, in the project directory or any parent up to the first
+directory containing `.git` (never above your home directory):
+
+```yaml
+fleet: dev        # default fleet for this project
+context: work     # optional: which context
+```
+
+Only those two keys are allowed. **No addresses, keys or caps**, so cloning a repository can never
+point your agent at someone else's central. A call that would use a *guarded* fleet only because
+the project file (or a context's `default_fleet`) names it is refused with an error: guarded fleets
+must be named explicitly in the call, and confirmed.
+
+**Session handoff files** (in the state directory, `sessions/*.json`, directory 0700, files 0600):
+a few lines naming the harness's session id, written by a hook so a restarted server can reattach
+to its workspace. They hold no secret and are pruned after 7 days.
 
 ## 10.5 Writing `actions.yaml`
 
@@ -1267,6 +1319,206 @@ your proxy must provide:
 - You know how to `prune`, and where to look: `central audit`, `central workspace list`, the runner's
   `audit.jsonl`.
 
+## 10.10 The orchestrator (M5): set-up and troubleshooting
+
+This section is for the person who sits at a laptop and wants an agent (Claude Code, opencode, or
+any other MCP-capable tool) to work on the fleets. Terms: [glossary](glossary.md) (harness, MCP
+tool, context, project default, session handoff). The design is in
+[chapter 3](03-architecture.md) and [chapter 5](05-security.md#511-prompt-injection-through-tool-output);
+the protocol is [section 7.13](07-protocols.md#713-the-mcp-layer-m5).
+
+### 10.10.1 What you are setting up
+
+Three pieces, all on the laptop:
+
+1. The **`mirafleet` binary** on your `PATH` (Linux, macOS or Windows; build it as in Step 0).
+2. A **login**: a key pair, central's pinned host key and a named context, made once by
+   `mirafleet mcp login`. A *human* does this step. The MCP server never registers a key by itself,
+   so an agent cannot create an identity.
+3. A **harness integration**: the few lines that tell your agent to start `mirafleet mcp` (a plugin
+   for Claude Code, a config snippet for opencode or others).
+
+Nothing is installed on central or the runners for M5: a laptop is just another operator
+([chapter 4](04-flows.md)).
+
+### 10.10.2 Log in, per OS
+
+Get a fresh code from Dana (Step 9: `mirafleet central operator code`; it lives 60 seconds and
+any number of operators can use one), then, on alice's laptop:
+
+```console
+$ echo "$CODE" | mirafleet mcp login central.example.com:2222 -name alice -code -
+registered operator "alice" (active); context "alice" -> central.example.com:2222 is now current
+config: /Users/alice/Library/Application Support/mirafleet
+```
+
+On Windows, pipe the code in the same way (for example `$code | mirafleet mcp login
+central.example.com:2222 -name alice -code -` in PowerShell). The code is **never** a command-line
+argument: it would be visible in the process list and the shell history. The output's last line
+names the config directory; the table in section 10.4 lists the default for each OS. Check:
+
+```console
+$ mirafleet mcp context list
+* alice	central.example.com:2222	default_fleet=-
+```
+
+On Windows the first login creates `%LocalAppData%\mirafleet` with the protected permission list
+described in section 10.4. If the key's permissions are wrong later (someone copied the folder,
+a backup tool reset the permissions), the server will say it cannot use the key. Do not loosen
+anything; run `mirafleet mcp login` again after deleting the config directory if you need a new
+identity (the old one stays registered until Dana revokes it).
+
+### 10.10.3 Contexts and project defaults
+
+A **context** is a name plus a central address. One laptop can hold several: `mcp login` with a
+different `-name` adds one and makes it current.
+
+```console
+$ mirafleet mcp context list
+* work	central.example.com:2222	default_fleet=dev
+  cloud	cloud.example.net:2222	default_fleet=-
+$ mirafleet mcp context use cloud
+current context: cloud
+$ mirafleet mcp context remove cloud
+removed context cloud
+```
+
+Which context and fleet a tool call uses, in order: the tool's own `context` / `fleet` argument,
+then the server's `-context` / `-fleet` flags, then the project's `.mirafleet.yaml`, then (for the
+context) the *current* one or the only one, and (for the fleet) the context's `default_fleet`.
+The result of every tool call says what it picked and why (`where`, [chapter 7](07-protocols.md)).
+A guarded fleet is never taken from the last two sources: it must be named in the call and
+confirmed by the user.
+
+To give a repository a default, commit a `.mirafleet.yaml` with `fleet: dev` (section 10.4). It is
+safe to commit: it holds only names.
+
+### 10.10.4 Claude Code: the plugin
+
+The plugin is in the repository at `integrations/claude-code/`. Until M6 ships a marketplace entry,
+load it from a checkout:
+
+```bash
+claude --plugin-dir /path/to/mirafleet/integrations/claude-code
+```
+
+What it gives Claude Code:
+
+- the MCP server: `.mcp.json` runs `mirafleet mcp -project-dir ${CLAUDE_PROJECT_DIR}`, so the project
+  file is found from your project, not from wherever Claude Code was started. In `/mcp` the server
+  is called `plugin:mirafleet:mirafleet`, and its tools are `mcp__plugin_mirafleet_mirafleet__<tool>`;
+- the commands `/mirafleet <task>`, `/openfleet <task>` and `/claudefleet <task>`: one skill text
+  (the aliases are copies) that tells the model how to use the tools. If another plugin already owns
+  the bare name, Claude Code needs the prefix: `/mirafleet:mirafleet`;
+- three **hooks** (small programs Claude Code runs at fixed moments), all of them
+  `mirafleet mcp hook claude-code <event>`: `session-start` writes the session id so a resumed
+  conversation reattaches to its workspace; `session-end` closes that session's workspaces when you
+  `/clear` or log out (other exits leave them to the idle timer); `pre-tool-use` adds a visible
+  "ask" prompt whenever a call carries `confirm`.
+
+The hooks are conveniences. Without them the tools still work and central still enforces
+`confirm`; see [chapter 11](11-contributing.md#117-adding-a-harness-integration). The plugin ships no
+binary: `mirafleet` must be on the `PATH` of the process that starts Claude Code.
+
+### 10.10.5 opencode and any other harness
+
+Any harness that can start a stdio MCP server works with no hooks. The command is always
+`mirafleet mcp -project-dir DIR`; only the file it goes into differs.
+
+For **opencode** (`integrations/opencode/`): copy `commands/*.md` to `.opencode/commands/` (or
+`~/.config/opencode/commands/`) for `/mirafleet` and `/openfleet`, and add the entry from
+`opencode.example.json` to `opencode.json`:
+
+```json
+{
+  "mcp": { "servers": { "mirafleet": { "type": "local",
+      "command": ["mirafleet", "mcp", "-project-dir", "."] } } }
+}
+```
+
+The shape of this entry follows opencode's documentation as read on 13 Nov 2026; it has not been
+tried against a real opencode, and an older release may expect another shape (the opencode README
+lists what to try).
+
+For **any other** harness (`integrations/generic/`): a JSON like
+`{"mcpServers":{"mirafleet":{"command":"mirafleet","args":["mcp","-project-dir","."]}}}`, with an
+absolute `-project-dir` if the harness does not start the server in your project. For Claude Code
+without the plugin: `claude mcp add mirafleet -- mirafleet mcp`.
+
+What you give up without the Claude Code hooks (the table is `integrations/README.md`):
+
+| | Without hooks | Claude Code plugin |
+|---|---|---|
+| Reattach to the workspace after a restart | only with `-session NAME` in the command | automatic (`cc:<session id>`) |
+| Close workspaces at the end | no: the idle timer reaps them (default 24 h per fleet) | on `/clear` and logout |
+| Extra "are you sure" on a guarded call | the harness's own tool-approval prompt | plus the hook's `ask` |
+| Guarded calls without the user's agreement | refused by central | refused by central |
+
+### 10.10.6 Sessions and workspaces
+
+Each harness session gets its own workspace on a workspace fleet (the first `exec`, `read_file` or
+`write_file` opens one on an unguarded default fleet; a guarded fleet needs an explicit
+`workspace_open`). The session id comes from, in order: `-session NAME`; the handoff file a hook
+wrote for this harness process and project; a random per-process id. `workspace_open` reports which
+one it used (`session_source`: `flag`, `handoff` or `process`). The server never closes a workspace
+when it exits, because a restart is exactly when you want it back. The idle timer closes forgotten
+ones (fleet `idle_ttl_s`, section 10.9); `workspace_list` and `workspace_close` clean up by hand; an
+admin can see everything with `central workspace list`.
+
+### 10.10.7 What the server reads and forwards
+
+The MCP server reads: its flags; `MIRAFLEET_CONFIG_DIR`; `MIRAFLEET_STATE_DIR`; your home
+directory and the OS's standard config and cache locations (to find the defaults and to stop the
+`.mirafleet.yaml` search at home); and its parent process id (the handoff key). It **forwards
+nothing** from its environment. The `env` of a workspace command comes only from the `env` argument
+of the tool call, which must pass the hard denylist and the runner's `env_allow`
+([chapter 7](07-protocols.md): `workspace.EnvDenied` is the source of truth). So an
+`ANTHROPIC_API_KEY` in your shell never reaches a workspace, and the tests set decoys to prove it.
+Tool results never contain key material, local file paths, environment values or registration
+codes, because they go to the model provider.
+
+### 10.10.8 Troubleshooting the orchestrator
+
+First, see the server's own messages. They go to **stderr** with the prefix `mirafleet mcp:`. Run
+`mirafleet mcp` by hand in a terminal (it prints a hint and waits; Ctrl-C ends it) to check it starts,
+and use your harness's MCP log view (in Claude Code, `/mcp`, and `claude --debug`) for the rest. The
+text the *model* sees is deliberately short and has no paths; the detail is on stderr. Tool errors
+are written below as `code: message`; on the wire they are `{"error":{"code":"...","message":"..."}}`
+([chapter 7](07-protocols.md#713-the-mcp-layer-m5)).
+
+| Symptom or message | What it means | What to do |
+|---|---|---|
+| The harness shows the server as failed, or the tools are missing; Claude Code `/mcp` shows `plugin:mirafleet:mirafleet` failed | **`PATH`.** The harness started `mirafleet` and the system could not find it. A harness started from a desktop icon, an IDE or a service does not inherit your shell's `PATH`. On Windows it must be a real `mirafleet.exe`, not a `.cmd`/`.bat` wrapper. | `which mirafleet` (`where mirafleet` on Windows) in the same kind of environment; put the binary in a system-wide directory, or start the harness from a shell where it resolves. |
+| Tool error `unavailable: not set up: run `mirafleet mcp login ...`` | **Not set up.** No context, no key, an empty `known_hosts`, or the config directory cannot be found (no `%LocalAppData%`, no home). The server still starts and lists its tools. | `mirafleet mcp context list`. If empty, log in (10.10.2). If it lists contexts, the harness may run with another user or `MIRAFLEET_CONFIG_DIR` than your shell: compare. |
+| `unauthenticated: the operator key cannot be used: run `mirafleet mcp login ...`` | The key file is unreadable or its permissions are wrong (mode wider than 0600, or on Windows an owner or permission list that is not private). Detail is on stderr. | Fix who can read the file (`chmod 600`); on Windows, do not edit the list by hand, re-create the config directory. |
+| `unauthenticated: central rejected the operator key: run `mirafleet mcp login ...`` | Central does not know this key: your operator was revoked, you never registered, or Dana replaced central's database. | Ask Dana to check `central operator list`. A revoked operator needs a new key (delete the config directory and log in again). |
+| `unavailable: central's host key does not match the pinned key; the server may have been rebuilt or intercepted` | **Host-key pinning.** The key central presented is not the one saved in `known_hosts` at login. Either central was rebuilt (a new `central init` creates a new key), or someone is in the middle. No request was sent. mirafleet never trusts a new key automatically. | Do not just retry. Ask Dana for central's fingerprint (it is printed by `central operator code`, "host key") and compare. If the rebuild is expected, log in again with a fresh code: it replaces the pinned line for that address. |
+| `unavailable: cannot reach central` (one context) | **A dead context.** Wrong address, central down, firewall, or no network. Other contexts still work: `list_fleets` shows the dead one as an entry in `errors[]` and the rest as normal. | `mirafleet mcp context list` (is the address right?), check central is running and reachable on its port. `mirafleet mcp context remove NAME` drops a context you no longer use; `context use NAME` changes the current one. |
+| `bad_request: no context selected: pass `context` (one of a, b) or run `mirafleet mcp context use NAME`` | Several contexts and none is current, none given by flag or project file. | `mirafleet mcp context use NAME`. |
+| `not_found: unknown context "x" (known: ...)` | A flag, the project file or the model named a context you do not have. | Fix `.mirafleet.yaml` or the `-context` flag. |
+| `bad_request: the project file .mirafleet.yaml is invalid` / `the contexts file is invalid` | Strict parsing: unknown key, bad name, a second YAML document, `output_cap_bytes` out of range, a `jump` key. | Fix the file; `mirafleet mcp context list` prints the real reason. |
+| `bad_request: fleet "prod" is guarded and was taken from the project file: name it explicitly (and ask the user before confirming)` | The project file or `default_fleet` points at a guarded fleet. This is refused on purpose. | Name the fleet in the call, and let the user approve it. Do not default a project to a guarded fleet. |
+| `bad_request: no fleet selected: name one with `fleet` (see list_fleets)` | No fleet from the call, flags, project file or context default. | Add `fleet: dev` to `.mirafleet.yaml` or name it. |
+| `bad_request: fleet ... is guarded. Ask the user. Only after the user explicitly agrees, repeat the call with `confirm` set to the fleet name.` | A guarded fleet. The text is written for the model. | The human decides; the model repeats the call with `confirm` set to the fleet name after a clear yes. |
+| `bad_request: invalid arguments: unknown or mis-cased argument "Confirm"` | A tool call used a key in the wrong case, a repeated key or an unknown one. | Expected from a confused model; keys are exact (`confirm`, `fleet`). |
+| `unavailable: the connection to central was lost; the call may or may not have completed` | The connection died during an `exec`, `write_file`, `action.run` or `workspace_close`. These are never retried, because they may already have run. | Look at what happened (`workspace_list`, the audit log with `central audit`) before running it again. Lists and reads are retried by themselves. |
+| `unavailable: central is busy: too many concurrent calls; try again` | Central's limit of 8 channels per connection was hit. | Retry; ask the agent not to run many calls at once. |
+| `timeout: the call timed out` | The client-side limit passed (`timeout_s` plus 30 s; 2 minutes for other calls; 5 minutes 30 s for `workspace_open`). | Raise `timeout_s` or fix the command. |
+| `canceled: request canceled` | The harness cancelled the call (you pressed Esc, for example). The command on the runner is cancelled too; the audit shows `cancelled`. | Expected. |
+| `mirafleet: mcp server stopped: ...` on stderr, exit code 1 | **A malformed frame.** Something wrote a line that is not valid JSON-RPC to the server's stdin. The server closes the session, exits 1 and does not echo the input. Typical causes: a shell wrapper or an alias around `mirafleet` that prints a banner to stdout, an IDE launcher that mixes output into the pipe, or a test typo. | Run the exact command from your harness config in a terminal and check it prints nothing on stdout by itself. Use the binary directly in `command`, not through a script that writes to stdout. The harness will restart it. |
+| After the plugin loads, **every mirafleet tool call is blocked**, or the hook log shows `mirafleet` printing its usage text | **PreToolUse and exec-form `args`.** The plugin's hooks are written in "exec form": a `command` plus an `args` list, started without a shell (so they work on Windows). A Claude Code release that does not know `args` runs the bare `mirafleet`, which prints its usage and exits with code 2, and for a PreToolUse hook exit code 2 means "block this tool call". The minimum Claude Code version for `args` is not stated in the documentation we read. | Update Claude Code. As a stopgap that loses only the convenience hooks, register the server without the plugin: `claude mcp add mirafleet -- mirafleet mcp`. Central still enforces `confirm`. |
+| Hooks seem silent | They are silent by design except `pre-tool-use` with `confirm`. | Run one by hand: `echo '{"session_id":"x","cwd":"."}' \| mirafleet mcp hook claude-code session-start` should print nothing and exit 0. `claude --debug` shows hook runs. |
+| A resumed conversation did not find its workspace | Reattach needs the hook's handoff to be keyed by the same parent process as the server (assumed for Claude Code, checked by hand in M5 step S17), or `-session NAME`. | `workspace_list` shows your workspaces; use their `workspace` id explicitly, or set `-session`. |
+| Workspaces left over after you quit | Only `/clear` and logout close them; other exits leave them to the idle timer. | `workspace_list`, `workspace_close`, or wait (24 h by default). |
+
+### 10.10.9 Checklist
+
+- `mirafleet version` works in the environment that starts your harness (same `PATH`).
+- `mirafleet mcp context list` shows the contexts you expect; the current one is the one you want.
+- Guarded fleets are *not* anyone's default (`.mirafleet.yaml` or `default_fleet`).
+- You know which hooks you have (Claude Code plugin) and what you give up without them.
+- You can find your workspaces (`workspace_list`) and the audit trail (`central audit` on central).
+
 ## Check your understanding
 
 1. Dana runs `mirafleet central fleet list` from her laptop and gets
@@ -1288,6 +1540,12 @@ your proxy must provide:
    still show containers on the host. Why, and what do you run?
 9. A fleet allows image `golang@sha256:*` but alice gets `refused by runner: image not allowed
    on this runner`. Where do you look?
+10. Claude Code starts, but `/mcp` shows `plugin:mirafleet:mirafleet` failed. What do you check
+    first, and why can the same laptop work from a terminal and fail from a desktop launcher?
+11. alice's agent reports "central's host key does not match the pinned key". Dana rebuilt central
+    yesterday. What do you do, and why is a plain retry the wrong move?
+12. A stray line that is not JSON reaches `mirafleet mcp` on stdin and the server exits with code 1.
+    Why does it exit instead of skipping the line, and who restarts it?
 
 <details>
 <summary>Answers</summary>
@@ -1321,5 +1579,18 @@ your proxy must provide:
    -workspace FILE` (it talks to containerd directly).
 9. The runner's own `images` list in `workspace.yaml`: the effective policy is the intersection of
    the fleet's and the runner's allowlists. Add the pattern there and restart the runner.
+10. The `PATH`. `which mirafleet` (or `where mirafleet`) in the environment that starts Claude
+    Code. A shell has your `PATH` from its profile files; a desktop launcher, an IDE or a service
+    usually does not, so the same command resolves in one and not in the other.
+11. Compare the fingerprint first: central printed it as the "host key" line of `central operator
+    code`. A rebuilt central has a new key, which is the expected cause, but an attacker in the
+    middle looks exactly the same, and mirafleet has no trust-on-first-use, so a retry would
+    fail again by design. When the rebuild is confirmed, `mirafleet mcp login` again with a fresh
+    code replaces the pinned line for that address.
+12. The SDK treats a line that is not valid JSON-RPC as a broken session and closes it; the server
+    returns the decode error and exits 1 without printing the line (a test checks it is never
+    echoed). Skipping bad lines would hide a harness or wrapper that has lost track of the
+    protocol and leave a half-working server behind. The harness that started the server
+    restarts it.
 
 </details>

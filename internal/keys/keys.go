@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -61,6 +63,9 @@ type aclInfo struct {
 // a deny on a foreign SID would be harmless, but accepting some denies means reasoning about
 // ordering and group membership; a key we created never has one, so refusing costs nothing.
 func aclPolicy(a aclInfo, user string) error {
+	if user == "" || a.Owner == "" { // an unconvertible SID must never match another empty one
+		return fmt.Errorf("empty owner or user SID")
+	}
 	if a.Owner != user {
 		return fmt.Errorf("owner %s is not the current user", a.Owner)
 	}
@@ -96,11 +101,45 @@ func WriteNew(path string, data []byte, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(data); err != nil {
+	if err := writeSync(f, data); err != nil {
 		f.Close()
+		os.Remove(path) // created by us (O_EXCL): never leave a partial file
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return err
+	}
+	return nil
+}
+
+func writeSync(f interface {
+	Write([]byte) (int, error)
+	Sync() error
+}, data []byte) error {
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+// WriteAtomic0600 writes dir/name atomically: a fresh private temp file (0600; on Windows a
+// protected owner-only DACL set at creation, not inherited from dir), fsync, rename over name,
+// fsync of dir. The temp file is removed on failure.
+func WriteAtomic0600(dir, name string, data []byte) error {
+	var r [8]byte
+	if _, err := rand.Read(r[:]); err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, ".tmp-"+hex.EncodeToString(r[:]))
+	if err := WriteNew(tmp, data, 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(tmp) // no-op after a successful rename
+	if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
+		return err
+	}
+	return SyncDir(dir)
 }
 
 // Generate creates an Ed25519 key pair at <dir>/<name> (private, 0600, OpenSSH PEM) and
@@ -166,6 +205,9 @@ func LoadSigner(path string) (ssh.Signer, error) {
 // RunnerNameRE is the allowed shape of a runner name (the key comment).
 var RunnerNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
+// ErrHostKeyMismatch is wrapped by the error PinnedHostKeys returns for a key that is not pinned.
+var ErrHostKeyMismatch = errors.New("host key is not pinned")
+
 // PinnedHostKeys returns an ssh.HostKeyCallback that accepts only keys listed in a
 // known-hosts-style file. Each line is "<host>[,<host>...] <keytype> <base64> [comment]"
 // where host is the dialed address (host:port) or "*". Hashed entries are not supported.
@@ -199,6 +241,6 @@ func PinnedHostKeys(path string) ssh.HostKeyCallback {
 				return nil
 			}
 		}
-		return fmt.Errorf("host key for %s (%s) not pinned in %s", hostname, ssh.FingerprintSHA256(key), path)
+		return fmt.Errorf("%w: host key for %s (%s) not pinned in %s", ErrHostKeyMismatch, hostname, ssh.FingerprintSHA256(key), path)
 	}
 }

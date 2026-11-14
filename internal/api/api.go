@@ -144,6 +144,10 @@ func IsAdminMethod(m string) bool {
 	return false
 }
 
+// MsgConfirmRequired is the bad_request message central returns when a guarded fleet's confirm
+// is missing or wrong. Consumers (the MCP server) match on this constant.
+const MsgConfirmRequired = "fleet requires confirm to equal the fleet name"
+
 // Error codes.
 const (
 	CodeBadRequest         = "bad_request"

@@ -16,6 +16,10 @@ inside containers, and teaches you how the tests are built so you can write your
 - The M3 additions: `scripts/dev.sh integration` (real containerd 2.4.2 in a throwaway privileged
   container, with a hermetic test image), `TestM3Done` and its real-containerd twin, and how to try
   a workspace by hand ([9.12](#912-try-it-locally-a-workspace)).
+- The M5 additions: `TestM5Done` (the MCP layer against a real central), `TestM5NoHooks` (the built
+  `mirafleet mcp` as a child process, with no harness), the hook and plugin tests, the CI workflow
+  that tests the orchestrator side on Windows and macOS ([9.13](#913-the-orchestrator-workflow-windows-and-macos)), and how to try the plugin
+  with `claude --plugin-dir integrations/claude-code` ([9.14](#914-try-it-locally-the-mcp-server-and-the-claude-code-plugin)).
 
 ## 9.1 The container-only rule
 
@@ -336,6 +340,16 @@ You do not need to read all of them. Know these and where they are.
 | `TestReconcileTable`, `TestReapIdleAndMaxTTL`, `TestRevokeRunnerCascade`, `TestReapSkipsInFlightOp` (`internal/service`) | The reconcile table, idle and absolute TTL reaping, revoke cascades, and "a workspace with a command in flight is never idle-reaped". |
 | `TestCleanPath`, `TestFilterEnv`, `TestMatchImage`, `TestCaptureBudgetRandom` (`internal/workspace`) | Path confinement, the env denylist, image-pattern matching and the output budget hold (including random input). |
 | `TestCentralInitIsIdempotent` (`central_linux_test.go`) | Running `central init` twice never replaces the host key or secret. |
+| `TestM5Done` (`internal/central/m5_done_test.go`) | The whole M5 scenario: MCP servers over pipes against a real in-process central (below). |
+| `TestM5NoHooks` (`cmd/mirafleet/mcp_stdio_linux_test.go`) | The **built** `mirafleet mcp` as a child process with no hooks and no harness variables (below). |
+| `TestOrchestratorDeps` (`cmd/mirafleet/deps_test.go`) | `orch`, `mcpserver` and the hook link no server-side package, on six targets; only `mcpserver` imports the go-sdk ([chapter 8](08-code-tour.md#87-build-tags-and-why)). |
+| `TestDecodeArgsExactKeys`, `TestEveryToolRejectsMiscasedAndDuplicateKeys` (`internal/mcpserver`) | A key like `Confirm` or a repeated `confirm` is refused by every tool before the backend is touched. |
+| `TestRawInitializeVersions`, `TestRawUnknownMethodAndMalformed` (`raw_test.go`) | A hand-written JSON-RPC client gets the versions and error codes the guide documents. |
+| `TestGuardRefusesNonOperatorMethods` (`internal/orch/calls_test.go`) | `orch.call` refuses every admin and enrol method (it panics in tests, so a slip cannot hide). |
+| `TestNoEnvAccessInSource`, `TestDecoyEnvNeverForwarded` (`internal/orch`) | `orch` never reads the process environment; decoy secrets in the server's environment never reach a request. |
+| `TestNoRetryForNonIdempotent`, `TestRetryIdempotentRedials` | After a dead connection `exec`, `write_file` and `action.run` are not repeated; lists and reads are. |
+| `TestSanitize`, `FuzzSanitize`, `FuzzCapOutput`, `TestCapOutputWorstCaseEncoding` (`internal/orch/output_test.go`) | ANSI and invisible characters are removed, and the capped result still fits after JSON escaping. |
+| `TestServeMalformedFrameExitsNonZero`, `TestServeSignalCancel` (`cmd/mirafleet/mcp_serve_test.go`) | A garbage line ends the server with an error (so exit 1) and is never echoed to stdout; a cancelled context (what a signal does) stops it cleanly. |
 
 ### `TestM2Done`: the acceptance test
 
@@ -406,6 +420,101 @@ The clock trick is the same as in `TestM2Done`: the service takes `Now`, and the
 atomic offset instead of sleeping. The `after` hook of the fake variant also asserts what the
 isolation depends on at the executor boundary: every create carried network `none`, the fleet's
 limits and the allowed image, and no exec ever carried a denied variable.
+
+### `TestM5Done`, `TestM5NoHooks` and the plugin tests: the M5 acceptance tests
+
+M5 added the part of mirafleet that a model talks to, so its tests check three different things:
+that the **tools** behave against a real central, that the **built binary** works with nothing
+around it, and that the **plugin files** are what Claude Code expects.
+
+**`TestM5Done`** (`internal/central/m5_done_test.go`) is the M5 "done when". It starts a real
+central in process (SQLite, registry, service, an SSH listener on an ephemeral port) and real
+runners, with a **fake executor** for the workspace side, so it needs no containerd and runs in
+every `scripts/dev.sh test`. The MCP servers are real: `mcpserver.Serve` over `io.Pipe`, with an
+`orch.Orch` each, driven by the go-sdk's own *client*. (That is why the SDK is allowed in test
+files, [chapter 8](08-code-tour.md#87-build-tags-and-why).) Time is an injected clock, as in
+`TestM2Done`, so the idle reaper is tested without sleeping. The set-up is: fleet `dev` (workspace
+mode, runners `build-1` and `build-2`) and a guarded actions fleet `prod` (runner `db-1` with
+`tail-logs` and a `noisy` action that prints 200 KiB with colour codes); two operators with their
+own config directories (alice and bob); a project directory whose `.mirafleet.yaml` says
+`fleet: dev`; a second live context and a dead one; and *only decoy secrets*
+(`ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY`) in the servers' environment. Then, as subtests:
+
+1. `02_tools`: `tools/list` returns exactly the nine tools with schemas and annotations;
+   `fleet_create` is not a tool; version negotiation is what the SDK answers; a bad argument is a
+   `bad_request`.
+2. `03_lists`: `list_fleets` shows `dev` as default and `prod` as guarded from both live contexts
+   plus one error entry for the dead one; `list_runners prod` shows `db-1` with `tail-logs` and
+   its pattern; `list_runners dev` shows `free_slots`.
+3. `04_guarded_action`: `run_action` on `prod` without `confirm` is an `isError` with the "ask
+   the user" text and a `denied` audit row; with `confirm: "prod"` it returns output; `noisy`
+   comes back at most 30 KiB, `truncated`, with the marker and no escape character.
+4. `05_implicit_open_exec`: `exec "echo hi"` opens a workspace on `dev` by itself under a random
+   `p:...` session; the fake runner receives `["/bin/sh","-c","echo hi"]`; no decoy secret appears
+   in any create spec or exec request; `env: {ANTHROPIC_API_KEY: ...}` is refused.
+5. `06_files`: a 1.5 MiB `write_file` becomes two chunks; paged `read_file` calls reassemble to the
+   same SHA-256; a default `read_file` is capped.
+6. `07_ownership`: bob using alice's workspace id with `exec`, `read_file` and `workspace_close`
+   gets `not_found` (the same answer as for an id that does not exist), and central writes
+   exactly one `denied` audit row for each refusal.
+7. `08_mode_mismatch`: `workspace_open` on the actions fleet and `run_action` on the workspace
+   fleet are `conflict`.
+8. `09_cancel`: `notifications/cancelled` for a long `exec` cancels the exec on the runner, and
+   the audit outcome is `cancelled`.
+9. `10_idle_on_exit`: closing alice's stdin makes `Serve` return within 5 s and leaves her row
+   `open`; a new server gets the other runner; a third gets `unavailable` (both slots used);
+   advancing the injected clock past the idle TTL makes the reaper close the first row.
+10. `11_reattach`: two servers started with the same `-session s1`: the second `workspace_open`
+    says `reused: true` (no hook involved).
+11. `12_hygiene`: every call that reached central has a start row and an outcome row; no admin
+    method appears in alice's audit; no result contains the config directory, a key fingerprint or
+    a decoy value.
+
+Because the servers speak the real protocol and use the real `orch`, a bug in any layer between the
+model and the runner shows up here. What it does *not* cover is a real harness, which is why the
+manual smoke test (below) exists.
+
+**`TestM5NoHooks`** (`cmd/mirafleet/mcp_stdio_linux_test.go`, Linux only) proves the claim "the core
+works with no hooks". It re-runs the test binary as a child process that executes `main`'s `mcp`
+branch, so it is the real entry code: real flag parsing, real signal handling, real stdout. The
+child's environment is only `PATH`, `HOME`, the config-dir variable and decoys: no `CLAUDE_*`, no
+handoff directory, no hook. The test speaks hand-written newline-delimited JSON-RPC to it and
+checks: version negotiation; `tools/list`; `list_fleets`, `workspace_open`, `exec`, `read_file`
+and `workspace_close` against an in-process central; **every stdout line parses as JSON-RPC**;
+closing stdin and `SIGTERM` each end the child with exit code 0 within 5 s; and a workspace left
+open is still `open` afterwards (the server never closes workspaces on exit).
+
+**The hook tests** (`integrations/claude-code/hook/hook_test.go`, `cmd/mirafleet/mcp_hook_test.go`)
+use real Claude Code hook JSON as fixtures and a fake backend, so no network and no Claude Code are
+needed:
+
+- `session-start` writes `cc:<session_id>` into the handoff, prints nothing, and ignores an invalid
+  id (`TestSessionStartWritesHandoff`, `TestSessionStartInvalidIgnored`);
+- `session-end` closes workspaces only for the reasons `clear` and `logout`, only the ones whose
+  session matches, within a time bound, and never removes a *newer* session's handoff
+  (`TestSessionEndClearClosesOnlyMatching`, `TestSessionEndOtherReasonsKeepWorkspaces`,
+  `TestSessionEndBounded`, `TestSessionEndKeepsNewerSessionHandoff`);
+- `pre-tool-use` says `ask` when `confirm` is set and prints nothing otherwise; hostile or huge
+  fields in the reason are sanitised and clipped; malformed input, a non-string `confirm`, an
+  unknown tool carrying `confirm`, or ambiguous keys (`Confirm`) all give a generic `ask`
+  (`TestPreToolUse...`);
+- `TestKnownToolsMatchMCPServer` keeps the hook's hard-coded tool names equal to the server's;
+- `TestMCPHookEndToEnd` runs the lifecycle through `mcpHook` with an injected parent PID: the
+  handoff is written, `orch.SessionFor` reads `cc:abc-123` from it, `pre-tool-use` asks only with
+  `confirm`, `session-end` with `clear` closes the fake backend's workspace and removes the
+  handoff. It does *not* cover real stdio or the real parent-process topology (see "Try it" below).
+
+**The integration tests** (`integrations/integrations_test.go`, `harnesses_test.go`) check the
+files as data, because a typo in JSON would fail only inside someone else's Claude Code: the plugin
+manifest keys and semver; `.mcp.json` runs the bare `mirafleet` with `-project-dir`; every hook is
+**exec form** (a `command` and an `args` array, no shell string, so it works on Windows too) and
+SessionEnd has `timeout: 15`; the PreToolUse **matcher** matches all nine tool names under
+`mcp__plugin_mirafleet_mirafleet__` and no other tool; the skill body is byte-for-byte
+`integrations/commands/mirafleet.md`, and the aliases are full copies with
+`disable-model-invocation: true`; the opencode command bodies match the shared one, its example
+JSON parses; and every relative link in the integration READMEs resolves.
+`TestPluginVersionLockstep` (in `cmd/mirafleet`) keeps `plugin.json` equal to `pluginVersion` in
+`mcp_hook.go`.
 
 ## 9.7 Writing a new test, step by step
 
@@ -503,7 +612,8 @@ milestone plan (`docs/M2.md` section 4b has the format).
 ## 9.9 The licence gate
 
 CLAUDE.md allows only these licences for everything we link (and anything bundled): Apache-2.0,
-MIT, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD. Never GPL, LGPL, AGPL, MPL, SSPL, BUSL or other
+MIT, MIT-0 (MIT with no attribution clause; added in M5 for one transitive module), BSD-2-Clause,
+BSD-3-Clause, ISC, 0BSD. Never GPL, LGPL, AGPL, MPL, SSPL, BUSL or other
 copyleft or source-available licences. (Font files may be SIL OFL-1.1 with their licence text.)
 
 Why: mirafleet is Apache-2.0 and meant to be embedded by companies. One copyleft dependency
@@ -511,12 +621,12 @@ could force those companies to open their own code, or make them unable to use m
 
 `scripts/dev.sh licenses`:
 
-1. checks that `modernc.org/mathutil` is exactly `v1.7.1`, otherwise prints
-   `re-review modernc.org/mathutil licence` and fails;
+1. checks that `modernc.org/mathutil` is exactly `v1.7.1` and `github.com/segmentio/asm` is
+   exactly `v1.2.1`, otherwise prints `re-review ... licence` and fails;
 2. builds `go-licenses` v1.6.0 inside the container (`/tmp/bin`, never on your host);
 3. for each of the six `GOOS/GOARCH` targets runs
-   `go-licenses check ./... --ignore modernc.org/mathutil
-   --allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,0BSD`.
+   `go-licenses check ./... --ignore modernc.org/mathutil --ignore github.com/segmentio/asm
+   --allowed_licenses=Apache-2.0,MIT,MIT-0,BSD-2-Clause,BSD-3-Clause,ISC,0BSD`.
 
 It checks **linked** code only, i.e. what ends up in the binary, and it needs network access to
 download the tool.
@@ -528,6 +638,13 @@ person read the file and confirmed it is BSD-3-Clause, so the script skips that 
 skip is tied to the exact version: bump the module and the gate fails until someone reviews the
 new licence text again. A related note in the script: `modernc.org/libc` bundles musl-derived MIT
 code that the tool cannot see; that was reviewed by hand (see `docs/M2.md` section 6.3).
+
+**The `segmentio/asm` exception (M5).** The MCP go-sdk pulls in `github.com/segmentio/asm` (through
+`segmentio/encoding`). Its LICENSE is verbatim MIT-0, which is on our allow-list, but go-licenses
+v1.6.0 has no classifier for MIT-0 and reports it as unknown. As for `mathutil`, a person read the
+file, and the skip is pinned to the reviewed version. The go-sdk itself needs no exception: its
+combined Apache-2.0 and MIT file is classified correctly. The full list of what M5 linked is in
+`docs/M5.md` section 10.
 
 When you add a dependency: **ask first** (CLAUDE.md), read its licence and its transitive modules'
 licences, run `scripts/dev.sh licenses`, and note the licence in the PR. A CI job for this
@@ -785,6 +902,112 @@ mf central workspace kill -data /tmp/c "$WS"
 Stop with `kill $(jobs -p)`. If anything is left over, `mf runner workspace prune -all -yes -data
 /tmp/r -workspace /etc/mirafleet/workspace.yaml` removes this runner's containers and directories.
 
+## 9.13 The orchestrator workflow: Windows and macOS
+
+`scripts/dev.sh` runs everything in a **Linux** container. That is right for central and runner,
+which are Linux-only, but the operator side (`mirafleet mcp`, the harness integrations) also runs
+on macOS and Windows laptops. `scripts/dev.sh cross` proves those builds *compile and vet*; it
+cannot run a single Windows test, and the Windows-only code (the owner-only DACL in
+`internal/keys/acl_windows.go`, the `%LocalAppData%` directories) would otherwise never execute
+before a user ran it.
+
+So M5 added one GitHub Actions workflow, `.github/workflows/orchestrator.yml`:
+
+- **When:** every push to `main` and every pull request against it.
+- **Where:** a matrix of two GitHub-hosted runners, `windows-latest` and `macos-latest`. (This is
+  CI, not your machine: the "install nothing on the host" rule is about developer laptops.)
+- **What:** for the orchestrator-side packages listed in the `PKGS` variable at the top of the file
+  (today `internal/keys`, `opconf`, `handoff`, `orch` and `mcpserver`; the file's comment says to
+  append the hook and `integrations` packages as they are added): `go vet`; a build of
+  `./cmd/mirafleet` with `CGO_ENABLED=0` (the shipped configuration); `go test` with
+  `CGO_ENABLED=0` (as shipped); and `go test -race` with `CGO_ENABLED=1` (the race detector needs
+  cgo).
+- **Safety:** the workflow has `permissions: contents: read` only, the third-party actions are pinned
+  to a commit hash, `persist-credentials` is off, and a newer run for the same branch cancels the
+  older one.
+
+What this means when you change code in those packages:
+
+- A test must pass on Windows. Do not assume Unix permission bits (on Windows `os.Stat` reports
+  made-up mode bits; the DACL is what protects a file), a `/tmp` path, or that a symlink can be
+  created. Put Unix-only tests behind `//go:build unix` and give security checks
+  an explicit Windows branch that **fails closed**, never a silent skip. (Wave C of M5 had a P1 of
+  exactly this kind: handoff tests that assumed Unix modes.)
+- Use `t.TempDir()` and `filepath.Join`, never string-built paths.
+- A failing Windows job is real even if `dev.sh test` is green. Reproduce it by reading the log; you
+  cannot run it locally (no Windows in the container), which is why the tests are written to be
+  small and deterministic.
+
+The workflow does not replace `dev.sh`: central, runner, containerd and the SQLite store are still
+tested only in the Linux container.
+
+## 9.14 Try it locally: the MCP server and the Claude Code plugin
+
+Two ways, from cheapest to most complete. Both need a `mirafleet` binary for **your laptop's** OS,
+built with the container toolchain (chapter 10, "Step 0"): for an Apple-silicon Mac,
+`CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/mirafleet ./cmd/mirafleet` inside
+`scripts/dev.sh shell`. Put `dist/` on your `PATH` for the session.
+
+**Way 1: speak MCP by hand.** Without a Claude Code you can still see the server answer. The server
+needs no central to list its tools (with no contexts it starts and reports "not set up" only when a
+tool needs central). Keep stdin open a moment so the answers can come back; closing stdin is
+what stops the server:
+
+```bash
+{ printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"hand","version":"0"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_fleets","arguments":{}}}'
+  sleep 2; } | mirafleet mcp
+```
+
+You should get three JSON lines: the `initialize` result (protocol version, `capabilities.tools`,
+the instructions text), the nine tools with their schemas, and a `list_fleets` result with
+`"isError":true` and the text `not set up: run `mirafleet mcp login ...``. Run `mirafleet mcp
+login central.example.com:2222 -name work -code -` first (against a central from section 9.11) and
+the third line becomes a list of fleets. Try a bad argument (`"arguments":{"Context":"x"}`) to see
+the exact-case rule, and a broken line (`{not json`) to see the server stop with exit code 1.
+
+You can also run a hook by hand. A guarded call makes `pre-tool-use` print an `ask`:
+
+```bash
+echo '{"hook_event_name":"PreToolUse","tool_name":"mcp__plugin_mirafleet_mirafleet__exec","tool_input":{"command":"ls","fleet":"prod","confirm":"prod"}}' \
+  | mirafleet mcp hook claude-code pre-tool-use
+```
+
+Without `confirm` it prints nothing. `session-start`, given
+`{"session_id":"abc","cwd":"/path/to/project"}` on stdin, prints nothing either and writes a handoff
+file under the state directory (chapter 10).
+
+**Way 2: the plugin in a real Claude Code.** From the repository root, in a project directory of
+your choice that has (or does not have) a `.mirafleet.yaml`:
+
+```bash
+claude --plugin-dir integrations/claude-code
+```
+
+`--plugin-dir` loads a plugin straight from a folder, with no install and no marketplace (those come
+in M6). Then:
+
+1. `/mcp` lists the server as `plugin:mirafleet:mirafleet`. If it is failed, `mirafleet` is not on
+   the `PATH` Claude Code was started with (chapter 10, troubleshooting).
+2. `/mirafleet list my fleets` runs the command from `integrations/commands/mirafleet.md`. If
+   another plugin owns the bare name, use `/mirafleet:mirafleet`.
+3. Ask it to run something on an unguarded fleet; check the result's `where` shows the context and
+   fleet you expected.
+4. Ask it to do something on a guarded fleet. You should be asked twice: Claude Code's own tool
+   prompt, and the hook's `ask` with the reason `Guarded fleet "prod": ...`.
+5. `claude --debug` shows the hook commands and their output. `claude plugin validate
+   integrations/claude-code --strict` checks the manifest.
+
+Some behaviours depend on Claude Code itself and are checked by hand rather than by a test
+(M5 step S17): that bare `/mirafleet` resolves, that a hook `ask` still prompts in the
+auto-approve permission modes, that `${CLAUDE_PROJECT_DIR}` is filled in the plugin's `.mcp.json`,
+and that the hook and the MCP server share a parent process (so that `--resume` reattaches to the
+old workspace). If one of them is false for your version, the core still works; you lose the
+convenience, and the docs say which ([chapter 11](11-contributing.md#117-adding-a-harness-integration)).
+
 ## Check your understanding
 
 1. Why does `scripts/dev.sh test` run the test suite twice?
@@ -802,6 +1025,10 @@ Stop with `kill $(jobs -p)`. If anything is left over, `mf runner workspace prun
    each variant prove that the other cannot?
 8. Why does the integration harness build containerd from the version in `go.mod` instead of using
    the daemon bundled in the `dind` image?
+9. `TestM5Done` uses the go-sdk's client, and `TestM5NoHooks` uses none. What does each one prove
+   that the other cannot?
+10. Why is the orchestrator-side CI run on Windows and macOS when `scripts/dev.sh cross` already
+    builds for both?
 
 <details>
 <summary>Answers</summary>
@@ -833,5 +1060,13 @@ Stop with `kill $(jobs -p)`. If anything is left over, `mf runner workspace prun
    id-mapped snapshot features it relies on are 2.x. Building the daemon from the same module
    version as the client makes the test exercise exactly what the code was written against, and a
    `go.mod` bump automatically bumps the test daemon.
+9. `TestM5Done` proves the *behaviour* of the tools against a real central: guarded refusal,
+   ownership, caps, chunking, cancel, idle reaping, audit rows. It runs the server in process over
+   pipes. `TestM5NoHooks` proves the *shipped entry point*: real flags, signals and stdout, with
+   a clean environment and hand-written JSON-RPC, so a stray `Println` or a dependency on a
+   `CLAUDE_*` variable would fail it.
+10. `cross` only compiles and vets. The Windows DACL code, the path handling and the tests of
+    `orch`, `handoff` and `keys` have to *run* on Windows to prove anything, and there is no
+    Windows in the Linux container.
 
 </details>

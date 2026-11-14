@@ -99,8 +99,10 @@ func TestContextsRoundTrip(t *testing.T) {
 			t.Fatalf("mode %v", st.Mode())
 		}
 	}
-	if ents, _ := os.ReadDir(dir); len(ents) != 1 {
-		t.Fatalf("temp files left: %v", ents)
+	for _, e := range mustReadDir(t, dir) { // only contexts.yaml and the lock file may remain
+		if e.Name() != ContextsName && e.Name() != LockName {
+			t.Fatalf("temp files left: %v", e.Name())
+		}
 	}
 }
 
@@ -137,5 +139,22 @@ func TestSaveContextsCreatesDir(t *testing.T) {
 	out, err := LoadContexts(dir)
 	if err != nil || out.Current != "a" || len(out.Contexts) != 1 {
 		t.Fatal(out, err)
+	}
+}
+
+// A contexts.yaml ending in a bare "---" line with nothing after it: yaml.v3 reads the trailer as
+// an empty second document, which decodeSingle refuses as more than one document. Pinned here.
+func TestLoadContextsTrailingBareSeparator(t *testing.T) {
+	dir := t.TempDir()
+	body := "current: a\ncontexts:\n  - name: a\n    addr: 127.0.0.1:1\n---\n"
+	if err := os.WriteFile(ContextsPath(dir), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := LoadContexts(dir)
+	if err == nil {
+		t.Fatalf("accepted a trailing bare ---: %+v", cs)
+	}
+	if !strings.Contains(err.Error(), "more than one YAML document") {
+		t.Fatalf("err = %v, want the multi-document error", err)
 	}
 }

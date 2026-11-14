@@ -33,6 +33,9 @@ func TestGenerateExclusive(t *testing.T) {
 }
 
 func TestEnsureDirTightensExisting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows verifies a pre-existing dir instead of tightening it; see acl_windows_test.go")
+	}
 	d := filepath.Join(t.TempDir(), "data")
 	if err := os.Mkdir(d, 0o755); err != nil {
 		t.Fatal(err)

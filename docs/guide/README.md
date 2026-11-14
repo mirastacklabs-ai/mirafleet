@@ -8,9 +8,10 @@ those as they come up.
 After reading it you should be able to explain the whole design, find any piece of code, run the
 tests, and make your first change without asking the authors.
 
-> **Status:** M1, M2 and M3 (workspaces) are done (13 Nov 2026). Next: M5 (MCP server), then
-> M4 (GUI) and M6 (release). Where a feature is planned, the guide says so and links the
-> milestone in [../PLAN.md](../PLAN.md).
+> **Status:** M1, M2 and M3 (workspaces) are done (13 Nov 2026), and M5 (the orchestrator: MCP
+> server, Claude Code plugin and hooks, Windows support) is built; a smoke test with a real Claude
+> Code is still to run. Next: M4 (GUI) and M6 (release). Where a feature is planned, the guide
+> says so and links the milestone in [../PLAN.md](../PLAN.md).
 
 ## The story in one paragraph
 
@@ -31,11 +32,11 @@ Read in order the first time. Later, jump around with the map below.
 |---|---|---|---|
 | 0 | [Glossary](glossary.md) | Every term, alphabetical. Keep it open in a tab. | skim 10 min, then look things up |
 | 1 | [What is mirafleet?](01-what-is-mirafleet.md) | The problem, the three roles, the big picture | 25 min |
-| 2 | [Background](02-background.md) | Public-key crypto, SSH, HMAC, TOTP, SQLite, context, containers (namespaces, seccomp, cgroups, egress proxy, `os.Root`), MCP, Unix sockets | 70 min |
-| 3 | [Architecture](03-architecture.md) | Components, packages, executors, trust boundaries and how they fit | 55 min |
-| 4 | [Flows](04-flows.md) | Eighteen step-by-step flows: join, register, run an action, revoke, and the workspace flows (open, exec, files, close, reaper, reconcile) | 75 min |
-| 5 | [Security](05-security.md) | Every defence, the workspace container boundary, and what would go wrong without it | 80 min |
-| 6 | [Data model](06-data-model.md) | The SQLite tables (including the workspace tables), migrations and the audit log | 40 min |
+| 2 | [Background](02-background.md) | Public-key crypto, SSH, HMAC, TOTP, SQLite, context, containers (namespaces, seccomp, cgroups, egress proxy, `os.Root`), MCP in depth (JSON-RPC, tools, harness, plugin, skill, hook), Unix sockets, Windows DACLs | 80 min |
+| 3 | [Architecture](03-architecture.md) | Components, packages, the orchestrator, executors, trust boundaries (the model is untrusted input) and how they fit | 65 min |
+| 4 | [Flows](04-flows.md) | Twenty-three step-by-step flows: join, register, run an action, revoke, the workspace flows (open, exec, files, close, reaper, reconcile) and the MCP flows (one `exec` tool call, session handoff, idle on exit, SessionEnd, guarded `confirm`) | 95 min |
+| 5 | [Security](05-security.md) | Every defence, the workspace container boundary, prompt injection through tool output, and what would go wrong without it | 95 min |
+| 6 | [Data model](06-data-model.md) | The SQLite tables (including the workspace tables), migrations, the audit log, and the local files M5 added | 45 min |
 | 7 | [Protocols](07-protocols.md) | SSH users, channels, framing, the JSON API | 40 min |
 | 8 | [Code tour](08-code-tour.md) | Package by package, with function names | 60 min |
 | 9 | [Dev setup and testing](09-dev-setup-and-testing.md) | Build, run, test, debug | 30 min |
@@ -43,9 +44,10 @@ Read in order the first time. Later, jump around with the map below.
 | 11 | [Contributing](11-contributing.md) | Rules, review process, your first change | 20 min |
 | 12 | [Why mirafleet?](12-why-mirafleet.md) | How it compares with CI runners, Salt, Teleport, ssh-mcp and sandboxes; where AI API keys live | 30 min |
 
-Total: about 9.5 hours (the times above add up to about 565 minutes). If you are short on time, read 1, 3, 4
-and skim 5, 2.2, 2.3 and 2.7; that is enough to
-review most changes.
+Total: about 10.5 hours (the times above add up to about 635 minutes). If you are short on time,
+read 1, 3, 4 and skim 5 (start with 5.11 if you work on the MCP side), 2.2, 2.3, 2.7 and 2.10;
+that is enough to review most changes. If you only want the MCP and orchestrator story, read
+2.10, the "Operator side" section of chapter 3, flows 19 to 23 in chapter 4 and section 5.11.
 
 ## Map of the chapters
 
@@ -53,12 +55,17 @@ review most changes.
    three roles do.
 2. **Background.** The ideas from outside mirafleet that you need first, each with "why we need
    this".
-3. **Architecture.** The components, how they connect, and which Go package owns what.
-4. **Flows.** Eighteen flows (join, register, run an action, revoke, and the workspace flows:
-   open, exec, files, close, reaper, reconcile, revoke cascades), told one numbered step at a time.
-5. **Security.** The threat model, every defence layer, and the workspace container boundary.
+3. **Architecture.** The components, how they connect, which Go package owns what, the
+   orchestrator on the operator's machine and where each key lives on each operating system.
+4. **Flows.** Twenty-three flows (join, register, run an action, revoke, the workspace flows:
+   open, exec, files, close, reaper, reconcile, revoke cascades, and the MCP flows: one `exec`
+   tool call, session handoff and `--resume`, idle on exit, SessionEnd, guarded `confirm`), told
+   one numbered step at a time.
+5. **Security.** The threat model, every defence layer, the workspace container boundary, and
+   prompt injection through MCP tool output (with a worked example).
 6. **Data model.** Tables (including `fleet_workspace` and `workspaces`), statuses, the workspace
-   state machine, migrations, append-only audit.
+   state machine, migrations, append-only audit, and (no schema change in M5) the local files
+   `contexts.yaml`, `.mirafleet.yaml` and the session handoff file.
 7. **Protocols.** The wire format: SSH users, channels, length-prefixed JSON frames.
 8. **Code tour.** Where to find things in the repository.
 9. **Dev setup and testing.** How to build and test, and the testing rules.
@@ -116,7 +123,7 @@ instead of a picture, the code itself is readable: `A -->|label| B` means "A sen
 ## Where else to look
 
 - [../ARCHITECTURE.md](../ARCHITECTURE.md): the formal design.
-- [../PLAN.md](../PLAN.md): milestones. [../M2.md](../M2.md), [../M3.md](../M3.md): detailed decisions.
+- [../PLAN.md](../PLAN.md): milestones. [../M2.md](../M2.md), [../M3.md](../M3.md), [../M5.md](../M5.md): detailed decisions.
 - [../BRAND.md](../BRAND.md): colours and fonts.
 - [../../CLAUDE.md](../../CLAUDE.md): ground rules for contributors and AI agents.
 - [STYLE.md](STYLE.md): the rules this guide follows.

@@ -90,7 +90,7 @@ func (o *Orch) Resolve(ctx context.Context, contextArg, fleetArg string) (Target
 		t.FleetSource = SrcNone
 	}
 	if t.FleetSource == SrcProject || t.FleetSource == SrcCtxDefault {
-		g, gerr := o.isGuarded(ctx, t.Context, t.Fleet)
+		g, gerr := o.isGuarded(ctx, t.Context, c.Addr, t.Fleet)
 		if gerr != nil {
 			return Target{}, gerr
 		}
@@ -106,28 +106,77 @@ func (o *Orch) Resolve(ctx context.Context, contextArg, fleetArg string) (Target
 // isGuarded reports whether fleet is guarded on the context. Unknown fleets are not guarded
 // (central reports not_found itself). A failing fleets.list fails the resolution: a guarded
 // fleet must never be used by default because central was unreachable.
-func (o *Orch) isGuarded(ctx context.Context, cname, fleet string) (bool, error) {
+func (o *Orch) isGuarded(ctx context.Context, cname, addr, fleet string) (bool, error) {
+	key := guardKey(cname, addr) // a re-login to another central (new addr) never reuses the entry
 	o.mu.Lock()
-	e, ok := o.guarded[cname]
+	e, ok := o.guarded[key]
 	o.mu.Unlock()
-	if !ok || o.cfg.Now().Sub(e.at) > GuardedTTL {
-		if _, err := o.FleetsList(ctx, cname); err != nil { // refreshes the cache
-			return false, err
-		}
-		o.mu.Lock()
-		e = o.guarded[cname]
-		o.mu.Unlock()
+	if ok && o.cfg.Now().Sub(e.at) <= GuardedTTL {
+		return e.fleets[fleet], nil
+	}
+	e, err := o.refreshGuarded(ctx, cname, key)
+	if err != nil {
+		return false, err
 	}
 	return e.fleets[fleet], nil
 }
 
-func (o *Orch) noteFleets(cname string, r *api.FleetsListResult) {
+func guardKey(cname, addr string) string { return cname + "\x00" + addr }
+
+// guardFlight is one fleets.list refresh shared by every concurrent caller of the same key.
+type guardFlight struct {
+	done chan struct{}
+	e    guardEntry
+	err  error
+}
+
+// refreshGuarded runs one fleets.list per key at a time. The refresh runs detached from any one
+// caller's context (bounded by the call's own time limit), so one caller giving up does not fail
+// the others.
+func (o *Orch) refreshGuarded(ctx context.Context, cname, key string) (guardEntry, error) {
+	o.mu.Lock()
+	f, ok := o.guardFlights[key]
+	if !ok {
+		if o.closed {
+			o.mu.Unlock()
+			return guardEntry{}, errClosed
+		}
+		f = &guardFlight{done: make(chan struct{})}
+		o.guardFlights[key] = f
+		o.wg.Add(1)
+		start := o.cfg.Now()
+		go func() {
+			defer o.wg.Done()
+			_, err := o.FleetsList(context.WithoutCancel(ctx), cname) // refreshes the cache
+			o.mu.Lock()
+			e, have := o.guarded[key]
+			// The context changed under us (re-login: FleetsList wrote under the new address, so an
+			// entry under this key is an older one): never read that as "not guarded".
+			if err == nil && (!have || e.at.Before(start)) {
+				err = errRetired
+			}
+			f.e, f.err = e, err
+			delete(o.guardFlights, key)
+			o.mu.Unlock()
+			close(f.done)
+		}()
+	}
+	o.mu.Unlock()
+	select {
+	case <-f.done:
+		return f.e, f.err
+	case <-ctx.Done():
+		return guardEntry{}, o.mapErr(ctx, ctx.Err())
+	}
+}
+
+func (o *Orch) noteFleets(cname, addr string, r *api.FleetsListResult) {
 	m := make(map[string]bool, len(r.Fleets))
 	for _, f := range r.Fleets {
 		m[f.Name] = f.Confirm
 	}
 	o.mu.Lock()
-	o.guarded[cname] = guardEntry{at: o.cfg.Now(), fleets: m}
+	o.guarded[guardKey(cname, addr)] = guardEntry{at: o.cfg.Now(), fleets: m}
 	o.mu.Unlock()
 }
 

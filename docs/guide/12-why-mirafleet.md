@@ -3,8 +3,11 @@
 > **A snapshot of the landscape on 13 Nov 2026. It is not maintained with the code.** Other
 > projects change licences, get archived and add features; check the sources (section 12.6)
 > before relying on any row. This chapter compares mirafleet as designed, with all planned
-> milestones (M1 to M6) implemented. M1, M2 and M3 (workspaces) are done; see
-> [../PLAN.md](../PLAN.md) for what is built today. Star counts are approximate.
+> milestones (M1 to M6) implemented. M1, M2, M3 (workspaces) and M5 (the MCP server, the Claude
+> Code plugin and the other harness files) are done; the GUI (M4) and release packaging (M6) are
+> not. See [../PLAN.md](../PLAN.md) for what is built today. Star counts are approximate. The rows
+> for other tools were last researched on 13 Nov 2026 and were **not** re-researched for the M5
+> refresh; only the statements about mirafleet were re-checked against the code.
 
 ## What you will learn
 
@@ -109,8 +112,11 @@ Why mirafleet can do this: the model call happens in the harness (Claude Code) o
 What crosses to central is a small JSON request such as "run `tail-logs` on `db-1`", not a model
 request. Nothing on the server side needs the model key, so it is never sent. Workspace mode (M3,
 built) goes further, on **both** executors: a workspace is never handed credentials. The environment
-a command may carry is limited by an allowlist on the runner **and** a hard denylist (`*_API_KEY`,
-`*_TOKEN`, `ANTHROPIC_*`, `AWS_*`, ...) that is enforced on central and again on the runner; the
+a command may carry is limited by an allowlist on the runner **and** a hard denylist (credential-
+looking names, proxy settings and code-injection variables; the source of truth is
+`workspace.EnvDenied`) that is enforced on central and again on the runner. The MCP server (M5)
+adds a third layer: it **forwards nothing** from its own environment, so a key in alice's shell
+never reaches a workspace even by accident; the tests plant decoy keys to prove it. The
 agent's own process is not in the container at all. With the optional OpenSandbox executor,
 OpenSandbox's own API key stays on the runner host in a mode-0600 file, is never logged and never
 enters a sandbox ([chapter 10](10-operations.md#1096-the-opensandbox-option-with-tls-init-and-tls-front)).
@@ -123,7 +129,7 @@ its own losses.
 | Credential | Held by | How a loss is contained |
 |---|---|---|
 | Runner key (Ed25519) | The runner, on its node | Revocable instantly on central. In-flight work is cancelled, the live connection is closed, and the key can never re-enrol |
-| Operator key (Ed25519) | The operator's machine | Same: revoke on central, effective immediately |
+| Operator key (Ed25519) | The operator's machine | Same: revoke on central, effective immediately. On disk it is mode 0600 in a 0700 directory (on Windows an owner-only permission list), checked on every load. The MCP server uses it but never puts key material, fingerprints or local paths into a tool result, because results go to the model provider. No keychain or passphrase support yet |
 | Join token | Admin, then one runner | Single use by default, short lifetime, stored on central only as a SHA-256 hash of its secret |
 | Registration code | Admin shows it, operator types it | Rotates and is valid for only 60 seconds |
 | Central's host key | Central | Pinned by runners and operators at join time (the fingerprint rides inside the token and the code), so an impostor central is detected |
@@ -180,8 +186,8 @@ box around the sandbox with credentials, and every connection to central points 
 ## 12.3 The comparison
 
 Legend: ✅ yes, ⚠️ partly or with caveats, ❌ no. "Unverified" means the research could not
-confirm it. mirafleet's row describes the **full planned feature set** (M1 to M3 are built; the
-MCP server, GUI and release packaging are not), not the code today. The
+confirm it. mirafleet's row describes the **full planned feature set** (M1 to M3 and M5 are built,
+including the MCP server; the GUI and release packaging are not), not the code today. The
 table has five columns of facts on purpose; everything else (extra dependencies, MCP support,
 audit and revoke) is in the prose after it.
 
@@ -264,6 +270,30 @@ socket, so it is root-equivalent and belongs on a dedicated host; the disk quota
 tools that ignore proxy settings simply have no network in egress mode; it is new code with far
 less production time than the platforms above.
 
+### mirafleet's MCP server next to the MCP SSH servers
+
+ssh-mcp, shellguard and mcp-ssh-orchestrator (rows above) are the closest tools to what Claude
+Code sees when it uses mirafleet: an MCP server that lets an agent run commands on servers. They
+are also the fairest comparison, so here is what the mirafleet side actually does, from the code
+(M5; [chapter 7](07-protocols.md#713-the-mcp-layer-m5) has the details). Statements about the other
+tools are unchanged from the table and the sources in section 12.6.
+
+| Question | mirafleet (`mirafleet mcp`) |
+|---|---|
+| What does the MCP server connect to? | **Central only**, over one SSH connection per context, pinned to central's host key (no trust on first use). It never connects to a node. Runners dial out to central. |
+| Where does a command run? | `run_action`: on a runner, from a fixed allowlist (`actions.yaml`), no shell, regex-checked parameters. `exec`: **inside a disposable container** (a workspace), as an unprivileged user, never on the node itself. |
+| What is the tool surface? | A fixed table of nine tools: `list_fleets`, `list_runners`, `run_action`, `workspace_list`, `workspace_open`, `exec`, `read_file`, `write_file`, `workspace_close`. Each wraps one *operator* method. There is no tool, and no code path, for approving, disabling or revoking runners or making tokens; `orch.call` refuses any non-operator method and central refuses them again. |
+| Who decides? | Not the MCP server. The server validates arguments, but the boundaries are central (policy, ownership, `confirm`, audit) and the runner (`actions.yaml`, `workspace.yaml`). Compromising the laptop's MCP process gives an attacker the operator's powers and no more; revoking the operator key ends it. |
+| Approval of risky calls | Tool annotations (read-only, destructive, idempotent, open-world) let the harness choose its prompt. Guarded fleets additionally need `confirm` equal to the fleet name, which **central** enforces. The server never fills `confirm` in by itself, and the Claude Code plugin adds a visible "ask" on any call that carries it. Elicitation (the MCP way to ask the user) is deferred. |
+| What does the model get back? | Command output is **capped** (30 KiB by default) with a head and tail and an "omitted" marker, and **sanitised** (terminal escape codes and invisible characters removed or shown). Every result says `where` it ran and why. Error text holds no paths or key details. |
+| Audit | Central, not the MCP layer, writes the audit: a start row and an outcome row around each action, command and file operation, attributed to the operator key. A refusal by policy or ownership is recorded as `denied`. The audit cannot tell an agent's call from a human's `mcp api` call, and does not need to. |
+| Local files | The server never reads or uploads a local file; `write_file` takes content, not a path on the laptop. |
+| What it does not do | No streaming of output (the result arrives when the command ends; progress pings only), no interactive sessions, no resources or prompts, no SSH jump hosts, no OS keychain or key passphrase, no SSO. Windows, macOS and Linux laptops work. |
+
+Where ssh-mcp-style tools remain better is unchanged: they need nothing installed on the nodes.
+mirafleet's trade is the opposite one: a central and a runner on every node, in return for
+outbound-only reach, the guard on the node, and a central audit and revoke.
+
 ### What the table leaves out
 
 - **Heavy dependencies.** mirafleet needs none: one binary plus SQLite (containerd or
@@ -273,7 +303,8 @@ less production time than the platforms above.
   database; StackStorm needs MongoDB, RabbitMQ and Redis; Teleport needs an auth service and
   proxy; Boundary needs controllers and workers; Tailscale and NetBird need a mesh overlay;
   sandbox platforms need Docker, Kubernetes or Firecracker; Coder needs coderd and a database.
-- **MCP readiness.** mirafleet plans an MCP server and a Claude Code plugin (M5). Teleport offers
+- **MCP readiness.** mirafleet has an MCP server (nine tools, stdio, built in M5), a Claude Code
+  plugin and files for opencode and any other stdio MCP harness (see "mirafleet's MCP server next to the MCP SSH servers" above). Teleport offers
   MCP access in its commercial product. The MCP SSH servers are MCP-native. For Jenkins, Ansible
   and Rundeck it is unverified; the CI runners, Salt, StackStorm, Boundary, the mesh tools and
   Cloudflare have none; sandbox platforms vary.
@@ -331,8 +362,10 @@ This section assumes the full feature set exists.
 
 ### What mirafleet borrows rather than builds
 
-- ssh-mcp-style **read, write and destructive tiers** for the `confirm` argument on guarded
-  fleets.
+- ssh-mcp-style **tiers of risk**, in the form MCP itself offers: every mirafleet tool carries
+  read-only, destructive, idempotent and open-world annotations, so the harness can prompt
+  differently for a `list_fleets` than for an `exec`. A guarded fleet has one level, `confirm`;
+  separate read, write and destructive confirmation tiers are not built.
 - **containerd, runc and the kernel's own isolation features** (user namespaces, seccomp, cgroups)
   for the default workspace executor, instead of inventing a sandbox, and **OpenSandbox** as an
   opt-in executor for fleets that want its runtimes.
@@ -397,6 +430,10 @@ Researched 13 Nov 2026. Star counts are approximate and change daily.
    OpenSandbox does better.
 7. Name two features you give up by choosing the OpenSandbox executor, and say why the runner
    needs a TLS front in front of it.
+8. Both an MCP SSH server and `mirafleet mcp` run on alice's laptop, and a prompt-injected model
+   can drive either. Name two things that limit what a tricked model can do through mirafleet that
+   do not depend on the laptop's MCP process being honest.
+9. Why does mirafleet's `exec` tool not count as "running a shell on the server"?
 
 <details>
 <summary>Answers</summary>
@@ -428,5 +465,14 @@ Researched 13 Nov 2026. Star counts are approximate and change daily.
    per-workspace container hardening (it is server-wide). The front is needed because OpenSandbox
    serves plain HTTP only, and mirafleet's rule is TLS 1.3 with mutual authentication, never plain HTTP,
    not even on loopback.
+8. Any two of: the runner's `actions.yaml` or `workspace.yaml` (the allowlist and the container
+   policy live on the node, which the laptop cannot change); central's checks (policy, ownership of
+   workspaces, `confirm` on guarded fleets, the audit); the fixed operator-only tool table (no
+   tool and no code path reaches approve, disable or revoke); instant revoke of the operator key.
+   The most a tricked model can do is what alice's operator key may do, and Dana can end that.
+9. The command runs inside a disposable container on a runner: an unprivileged user, no
+   capabilities, a read-only root file system, limited resources and (by default) no network, with
+   its own files deleted when the workspace closes. The shell is `sh` in the container image, not
+   the host's. Actions mode (`run_action`) uses no shell at all.
 
 </details>

@@ -188,8 +188,8 @@ clients of the running central. Only `central init` runs offline.
 
 `central` and `runner` are Linux only and refuse to start elsewhere; their wiring lives in
 `server_linux.go`, so darwin and windows binaries never link SQLite. `mirafleet mcp` builds for
-linux, darwin and windows (Windows key protection lands in M5; until then the key loader fails
-closed).
+linux, darwin and windows, amd64 and arm64 (see [Orchestrator](#orchestrator) for per-OS key
+protection).
 
 ## Fleet modes
 
@@ -287,11 +287,12 @@ proxies fail closed. No CNI, no iptables.
 - **Images:** fleet allowlist ∩ runner allowlist (exact refs or `repo@sha256:*` / `repo:*`
   patterns, normalised references). The allowlist is checked on the resolved reference before
   any pull. Pull policy `if-not-present|always|never`; no registry credentials yet.
-- **Env:** must be in the runner's `env_allow` and pass a hard denylist (`*_API_KEY`, `*_TOKEN`,
-  `*_SECRET*`, `*_PASSWORD`, `*_KEY`, `ANTHROPIC_*`, `OPENAI_*`, `AWS_*`, `LD_*`, `*PROXY*`,
-  `SSH_AUTH_SOCK`, `GIT_ASKPASS`, `GIT_SSH_COMMAND`, `BASH_ENV`, `ENV`, `NODE_OPTIONS`,
-  `PYTHONSTARTUP`; source of truth `workspace.EnvDenied`), enforced on central and on the runner. Agent API keys never enter a workspace; the MCP server
-  forwards nothing from its own environment.
+- **Env:** must be in the runner's `env_allow` and pass a hard denylist (credential-looking names such as
+  `*_API_KEY`, `*_TOKEN`, `*_SECRET*`; `ANTHROPIC_*`, `OPENAI_*`, `AWS_*`; proxy variables; and
+  variables that change what code runs: `LD_*`, `BASH_ENV`, interpreter option and path hooks, git
+  config injection; source of truth: `workspace.EnvDenied`), enforced on central and on the
+  runner. Agent API keys never enter a workspace; the MCP server forwards nothing from its own
+  environment.
 - **Exec timeout:** per fleet on central, default 2 min, max 30 min, hard ceiling 24 h in code;
   the runner's `limits.exec_max` also caps it.
 - **Other limits:** `concurrent: N` slots per runner, 8 workspaces per operator, files up to
@@ -386,32 +387,112 @@ as hooks. Hooks only add convenience.
 
 | Concern | Works in every harness (core) | Claude Code extra (`integrations/claude-code/`) |
 |---|---|---|
-| Workspace per session | one MCP process per session mints its workspace | `SessionStart` hook passes the session ID, so `--resume` reattaches |
-| Cleanup | MCP process exit marks the workspace idle; TTL reaper removes it | `SessionEnd` hook closes it immediately |
+| Workspace per session | session ID from `-session`, else a per-process random one; the workspace is sticky per session | `SessionStart` hook writes a handoff file, so `--resume` reattaches |
+| Cleanup | server exit never closes workspaces; the idle-TTL reaper (default 24 h) removes them; `workspace_close` closes one | `SessionEnd` hook closes the workspace on `/clear` and logout only; other reasons keep it for the reaper |
 | Prod guard | fleets with `confirm: true` require a `confirm: "<fleet>"` argument; the harness's own tool-approval prompt applies | `PreToolUse` hook adds an explicit confirmation |
 | Install | `mirafleet mcp` added to the harness's MCP config | plugin with `.mcp.json`, hooks and slash commands |
 | Commands | `/mirafleet`, alias `/openfleet` (harness custom-command files) | `/mirafleet`, aliases `/openfleet` and `/claudefleet` (plugin skills) |
 
-`mirafleet mcp` exposes these tools:
-
-M5 builds these tools on the API methods that already exist from M2/M3:
+`mirafleet mcp` (no subcommand) serves MCP over stdio, tools capability only, built on
+`github.com/modelcontextprotocol/go-sdk`. Stdout carries protocol only; logs go to stderr. It
+exits 0 on stdin EOF, `os.Interrupt` (Ctrl-C), SIGTERM or SIGHUP, cancelling in-flight calls.
+Nine tools, thin wrappers over the API methods from M2/M3:
 
 | Tool | Purpose | Backed by |
 |---|---|---|
-| `list_fleets` | fleets on the configured central(s), with mode | `fleets.list` |
-| `list_runners` | runners in a fleet: status, labels, free slots | `runners.list` |
-| `run_action` | actions mode: run a named action on a runner | `action.run` |
-| `workspace_open` | workspace mode: get a workspace for this session | `workspace.open` (session = harness id or per-process random) |
-| `exec` | run a command in the session's workspace | `workspace.exec` (`["/bin/sh","-c",cmd]`, then a 30 KB head+tail cap) |
-| `read_file` / `write_file` | file access inside the workspace | `workspace.read_file` / `workspace.write_file`, chunked by offset |
+| `list_fleets` | fleets on one or all contexts, with mode and `guarded`; a failing context is an `errors[]` entry | `fleets.list` |
+| `list_runners` | runners of a fleet: status, labels, free slots, executor, advertised actions; `runner` filter returns one runner with all its actions | `runners.list` |
+| `run_action` | actions mode: run a named action on a runner; args `runner`, `action`, `params`, `timeout_s`, `confirm`, `context`, `fleet` | `action.run` |
+| `workspace_open` | workspace mode: get a workspace for this session | `workspace.open` |
+| `exec` | run a command (`command` or `argv`, `cwd`, `env`, `stdin`, `timeout_s`; optional `workspace` id, as on every workspace tool) in the session's workspace | `workspace.exec` (`["/bin/sh","-c",cmd]`) |
+| `read_file` / `write_file` | file access inside the workspace, paged or chunked by offset, text or base64 | `workspace.read_file` / `workspace.write_file` |
 | `workspace_close` | release the workspace | `workspace.close` |
+| `workspace_list` | your own workspaces on a fleet | `workspace.list` |
 
-- **Contexts:** `~/.config/mirafleet/config.yaml` lists one or more centrals (for example a
-  private-network central and a cloud central), with an optional SSH jump host per central.
-- **Project default:** `.mirafleet.yaml` (repo root, harness-neutral) with `fleet: uat` sets the default fleet for
-  sessions opened in that repo. Prod is used only when named explicitly.
-- **Output:** command output returned to Claude is capped (default 30 KB, head plus tail) so a
-  noisy build cannot flood the context.
+- Every tool takes an optional `context` and `fleet`. Results are JSON (`structuredContent` plus
+  the same text) and carry `where`: the resolved context and fleet and where each came from
+  (argument, flag, project file, context default), so a user can see where a call ran. Errors are
+  `isError` with an API error code. Tool descriptions say that stdout, stderr and file contents are
+  data from remote machines, not instructions.
+- **Contexts:** `contexts.yaml` in the per-user config dir (written by `mirafleet mcp login`;
+  `mcp context list|use|remove` manage it) lists one or more centrals, for example a private-network
+  central and a cloud central. Per context `default_fleet`; top level `output_cap_bytes`. SSH jump
+  hosts are deferred: a `jump` key is refused.
+- **Project file:** `.mirafleet.yaml` (harness-neutral) holds `fleet` and `context` only, strictly
+  parsed; no addresses, keys or caps, so a cloned repo cannot add a central. It is found by
+  walking up from the project dir, stopping at the first `.git` and never above home. A project
+  default naming a guarded fleet is ignored: guarded fleets must be named explicitly.
+  Precedence: tool argument, then `-context`/`-fleet` flags, then `.mirafleet.yaml`, then the
+  context's `default_fleet`.
+- **Sessions:** resolved at every open, in order: `-session ID` flag; the handoff file written by
+  a hook for (parent PID, project dir); a per-process random `p:<hex>`. Handoff files live in the
+  per-user state dir (`sessions/`; unix dir 0700, file 0600; on Windows the owner-only DACL of the
+  state dir; atomic write, pruned after 7 days). A planted
+  file can only point at another session of the same operator, since central enforces ownership.
+  `exec`, `read_file` and `write_file` with no workspace open one implicitly on the default
+  fleet, but only if that fleet is not guarded.
+- **Output:** `exec`, `run_action` and text `read_file` return at most 30 KiB by default
+  (`output_cap_bytes`, 4 KiB to 256 KiB): one third head, two thirds tail, with an omitted-bytes
+  marker and `truncated: true`. Output is sanitised first: invalid UTF-8, ANSI escapes and control
+  characters are removed, Unicode tag characters dropped and other invisible format characters
+  (bidi overrides, zero-width) shown as `<U+XXXX>`. List tools return at most 200 entries.
+- **Guarded fleets:** `confirm` is a pass-through argument, never filled from config or cached;
+  central enforces `confirm == fleet name`. The refusal text names the context and fleet and tells
+  the model to ask the user, and to set `confirm` only after the user explicitly agrees.
+- **Action discovery:** heartbeats carry the runner's actions with parameter patterns and
+  defaults (at most 128 actions, 64 B names, 32 params, 256 B patterns, 16 KiB encoded), shown in
+  `runners.list`. Informational only; the runner's `actions.yaml` stays the boundary.
+- **No admin reach:** the only path to central is one operator-method guard that refuses any API
+  method that is not an operator method, and central refuses admin and enrol methods on `api@`
+  anyway. The tool table is fixed; there is no generic call tool. Revoking runners or operators is
+  not reachable from MCP.
+- **Nothing forwarded from the MCP server's environment:** it reads env only to locate its config and
+  state dirs (`MIRAFLEET_CONFIG_DIR`, `MIRAFLEET_STATE_DIR`, and the OS defaults: home, XDG dirs,
+  `%LocalAppData%`), plus its flags, the cwd and the parent PID, all in `cmd/mirafleet/mcp_serve.go`;
+  `internal/orch` reads no env. Workspace `env` comes only from the tool's `env` argument,
+  checked against the denylist and the runner's `env_allow`. It never reads or uploads local files.
+- **Credentials per OS:** the operator key, `known_hosts` and `contexts.yaml` live in the config
+  dir: `$XDG_CONFIG_HOME/mirafleet` or `~/.config/mirafleet` (linux), `~/Library/Application
+  Support/mirafleet` (darwin), `%LocalAppData%\mirafleet` (windows, not Roaming). Unix: the dir is
+  created 0700; the key is checked on load and refused if it has any group/other bits (0600 or
+  0400 pass). Windows: a protected DACL (inheritance off, owner is the current user,
+  allow entries only for that user, SYSTEM and Administrators), set on create and checked on load;
+  anything else fails closed. Handoff state lives in the cache dir (`%LocalAppData%\mirafleet\state`
+  on Windows). No OS keychain or passphrase support yet. The server never registers; `mcp login` is
+  a human step. Results never contain key material, local paths, env values or registration codes.
+- **Connections:** one pinned SSH connection per context, dialled lazily with keepalive; only
+  idempotent calls are retried after a redial (never `exec`, `write_file`, `run_action`, `workspace_close`).
+
+### Claude Code plugin
+
+```
+integrations/claude-code/
+├── .claude-plugin/plugin.json
+├── .mcp.json          mirafleet mcp -project-dir ${CLAUDE_PROJECT_DIR}
+├── hooks/hooks.json   exec-form hooks (no shell, works on Windows)
+├── skills/{mirafleet,openfleet,claudefleet}/SKILL.md   the aliases point at the main skill
+└── hook/              Go handlers behind `mirafleet mcp hook claude-code <event>`
+```
+
+- `SessionStart` writes the handoff (`cc:<session_id>`); offline, no output.
+- `SessionEnd` removes the handoff if it still names this session and, only for reason `clear` or `logout`, closes the session's
+  workspace (best effort, always exits 0). Other reasons leave it for `--resume` and the reaper.
+- `PreToolUse` asks the user whenever a mirafleet tool call carries `confirm`; it never allows,
+  and malformed input also asks. Safety does not depend on it.
+
+What works without hooks, by harness (`integrations/README.md`):
+
+| Capability | Any MCP harness | opencode | Claude Code plugin |
+|---|---|---|---|
+| All nine tools | yes | yes | yes |
+| Session handoff, `--resume` reattach | no (pass `-session`) | no (pass `-session`) | yes |
+| Close workspace at session end | no (reaper) | no (reaper) | yes (`clear`, logout) |
+| Confirm prompt on guarded calls | harness approval | harness approval | yes (`PreToolUse`) |
+| Slash commands | DIY from the shared body | `/mirafleet`, `/openfleet` | all three |
+
+The shared command body is `integrations/commands/mirafleet.md`. Central enforces `confirm` in
+every case. Other harnesses (Kilo Code, Cline, Cursor, ...) are demand-driven. M6 adds the
+marketplace, npm and Homebrew; until then `mirafleet` must be on PATH.
 
 ## Admin GUI
 

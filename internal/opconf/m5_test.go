@@ -15,7 +15,8 @@ func TestWindowsDirs(t *testing.T) {
 	}{
 		{"plain", `C:\Users\a\AppData\Local`, `C:\Users\a\AppData\Local\mirafleet`, `C:\Users\a\AppData\Local\mirafleet\state`, false},
 		{"trailing slash", `C:\L\`, `C:\L\mirafleet`, `C:\L\mirafleet\state`, false},
-		{"unc", `\\srv\share`, `\\srv\share\mirafleet`, `\\srv\share\mirafleet\state`, false},
+		{"unc refused (F-10)", `\\srv\share`, ``, ``, true},
+		{"extended unc refused", `\\?\UNC\srv\share`, ``, ``, true},
 		{"unset", ``, ``, ``, true},
 		{"relative", `Local`, ``, ``, true},
 	} {

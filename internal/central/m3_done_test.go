@@ -558,10 +558,12 @@ func runM3Done(t *testing.T, b m3Backend) {
 	//   - every executed call: exactly one start row and exactly one outcome row (same id);
 	//   - a sticky re-open ("reused") is a single ok row, with no start row (nothing is started);
 	//   - a refused exec (denied env) is a single `denied` row without a request id;
-	//   - refusals decided before any work (image not allowed, unknown label, third open with all
-	//     slots taken, workspace methods on an actions fleet, bob's not_found calls, lexical
-	//     read_file path attacks) leave no workspace.* row at all, which is asserted explicitly
-	//     below; the real symlink read is the exception (it reaches the runner and fails there).
+	//   - bob's not_found calls on s1 (F-43) and workspace.open on an actions fleet (F-41) are one
+	//     denied row each, asserted exactly below;
+	//   - other refusals decided before any work (image not allowed, unknown label, third open with
+	//     all slots taken, lexical read_file path attacks) leave no workspace.* row at all, which is
+	//     asserted explicitly below; the real symlink read is the exception (it reaches the runner
+	//     and fails there).
 	rows := e.auditRows()
 	type pair struct {
 		start, end int
@@ -570,7 +572,7 @@ func runM3Done(t *testing.T, b m3Backend) {
 		actor      string
 	}
 	byReq := map[string]*pair{}
-	var reused, denied []store.AuditEvent
+	var reused, denied, ownerDenied, modeDenied []store.AuditEvent
 	for _, r := range rows {
 		if r.Source != "api" {
 			continue
@@ -580,6 +582,11 @@ func runM3Done(t *testing.T, b m3Backend) {
 		default:
 			continue
 		}
+		// F-41: workspace.open on an actions fleet is one denied row with no workspace.
+		if r.Action == api.MethodWorkspaceOpen && r.Outcome == service.OutcomeDenied && r.Workspace == "" {
+			modeDenied = append(modeDenied, r)
+			continue
+		}
 		if r.Workspace == "" {
 			t.Errorf("audit row without workspace: %+v", r)
 			continue
@@ -587,8 +594,10 @@ func runM3Done(t *testing.T, b m3Backend) {
 		if r.Subject == "evil" || r.Subject == "nolabel" || r.Subject == "s3" {
 			t.Errorf("a refusal left an audit row: %+v", r)
 		}
+		// F-43: bob's not_found calls on s1 each left one denied row (collected, asserted below).
 		if r.Actor == "bob" && r.Workspace == s1 {
-			t.Errorf("bob's not_found call on s1 left an audit row: %+v", r)
+			ownerDenied = append(ownerDenied, r)
+			continue
 		}
 		switch {
 		case r.Outcome == service.OutcomeDenied:
@@ -631,6 +640,28 @@ func runM3Done(t *testing.T, b m3Backend) {
 	// Only the refused env exec is denied (refusals before the workspace is loaded leave no row).
 	if len(denied) != 1 || denied[0].Action != api.MethodWorkspaceExec || denied[0].Workspace != s1 || denied[0].Actor != "alice" {
 		t.Errorf("denied rows: %+v", denied)
+	}
+	// F-43: bob's four refused calls on alice's s1 left exactly one denied row each, bob as actor,
+	// s1's id, no request id; the caller saw plain not_found (asserted where the calls are made).
+	ownerByAction := map[string]int{}
+	for _, r := range ownerDenied {
+		ownerByAction[r.Action]++
+		if r.Outcome != service.OutcomeDenied || r.ActorKind != "operator" || r.Workspace != s1 || r.RequestID != "" || r.Message != "not the workspace owner" {
+			t.Errorf("bob's refusal row: %+v", r)
+		}
+	}
+	for _, m := range []string{api.MethodWorkspaceExec, api.MethodWorkspaceReadFile, api.MethodWorkspaceWriteFile, api.MethodWorkspaceClose} {
+		if ownerByAction[m] != 1 {
+			t.Errorf("%s: %d denied rows for bob on s1, want 1 (%+v)", m, ownerByAction[m], ownerDenied)
+		}
+	}
+	if len(ownerDenied) != 4 {
+		t.Errorf("bob's denied rows: %+v", ownerDenied)
+	}
+	// F-41: alice's workspace.open on the actions fleet: one denied row, no workspace id, no request id.
+	if len(modeDenied) != 1 || modeDenied[0].Actor != "alice" || modeDenied[0].Fleet != testFleet || modeDenied[0].Subject != "s1" ||
+		modeDenied[0].RequestID != "" || modeDenied[0].Message != "fleet is not in workspace mode" {
+		t.Errorf("mode-mismatch rows: %+v", modeDenied)
 	}
 	// Two sticky re-opens of s1 (point 2 and after the central restart).
 	if len(reused) != 2 {

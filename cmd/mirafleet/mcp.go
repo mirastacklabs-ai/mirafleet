@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
@@ -72,23 +70,8 @@ func loadOperatorKey(dir string) (ssh.Signer, error) {
 	return keys.LoadSigner(opconf.KeyPath(dir))
 }
 
+// writeAtomic0600 writes dir/name atomically with a private temp file (explicit owner-only DACL on
+// Windows, F-18), fsync, rename and a directory fsync. See keys.WriteAtomic0600.
 func writeAtomic0600(dir, name string, data []byte) error {
-	f, err := os.CreateTemp(dir, ".tmp-*") // 0600
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(dir, name))
+	return keys.WriteAtomic0600(dir, name, data)
 }

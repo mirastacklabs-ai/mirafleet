@@ -564,3 +564,60 @@ func TestWorkspaceCLIEndToEnd(t *testing.T) {
 type keepOpen struct{ *fake.Executor }
 
 func (keepOpen) Close() error { return nil }
+
+// F-21: a trailing slash must not defeat O_NOFOLLOW on a symlinked leaf.
+func TestRunnerTLSInitTrailingSlashSymlink(t *testing.T) {
+	parent := t.TempDir()
+	target := filepath.Join(parent, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(parent, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runnerTLSInit([]string{"-dir", link + "/"}, &out); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("trailing-slash symlink: %v", err)
+	}
+	if ents, _ := os.ReadDir(target); len(ents) != 0 {
+		t.Errorf("wrote through the symlink: %v", ents)
+	}
+	if _, err := openPrivateDir(link + "///"); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("openPrivateDir trailing slashes: %v", err)
+	}
+}
+
+// F-22: a leaf created under a setgid parent inherits 02700; since tls-init created it, it is
+// normalised to 0700. A pre-existing setgid leaf is refused with a message naming the bit.
+func TestRunnerTLSInitSetgidParent(t *testing.T) {
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o2755); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Stat(parent); err != nil || st.Mode()&os.ModeSetgid == 0 {
+		t.Skip("setgid not honoured on this filesystem")
+	}
+	var out bytes.Buffer
+	fresh := filepath.Join(parent, "fresh")
+	if err := runnerTLSInit([]string{"-dir", fresh}, &out); err != nil {
+		t.Fatalf("fresh leaf under setgid parent: %v", err)
+	}
+	if st, _ := os.Stat(fresh); st.Mode()&os.ModeSetgid != 0 || st.Mode().Perm() != 0o700 {
+		t.Errorf("leaf mode %v, want plain 0700", st.Mode())
+	}
+	pre := filepath.Join(parent, "pre")
+	if err := os.Mkdir(pre, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(pre, 0o2700); err != nil {
+		t.Fatal(err)
+	}
+	err := runnerTLSInit([]string{"-dir", pre}, &out)
+	if err == nil || !strings.Contains(err.Error(), "setgid") {
+		t.Errorf("pre-existing setgid leaf: %v", err)
+	}
+	if st, _ := os.Stat(pre); st.Mode()&os.ModeSetgid == 0 {
+		t.Error("refused leaf was chmodded")
+	}
+}

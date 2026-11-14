@@ -13,6 +13,10 @@
 - The M3 additions: the six workspace operator methods and the admin workspace methods with real
   JSON, the **body frame** (a second length-prefixed frame carrying file or stdin bytes), the new
   heartbeat fields, limits and errors.
+- The M5 additions: the **MCP layer** on top (JSON-RPC over stdin and stdout: the nine tools,
+  their arguments, the result and error shapes, the caps and the chunking), plus the three small
+  wire changes underneath: `runners.list` gains `actions` and `actions_omitted`, `workspace.close`
+  gains `state`, and the heartbeat gains `actions` (section 7.13).
 
 Unfamiliar terms (SSH channel, global request, framing, envelope) are in the
 [glossary](glossary.md). The code is `internal/api` (framing, envelope, DTOs, limits),
@@ -23,7 +27,7 @@ All examples use the running example: central at `central.example.com:2222`, fle
 `prod`, runners `build-1` (in `dev`) and `db-1` (in `prod`), operators `alice` and `bob`, and
 Dana, the admin who uses the local admin socket. Tokens and codes are obviously fake (the secret
 and host-key-hash placeholders are exactly 43 characters long, like the real ones). Timestamps
-are made up. M1, M2 and M3 are done (13 Nov 2026); everything here is implemented, except where
+are made up. M1, M2, M3 and M5 are done (M4, the GUI, and M6, release, are not); everything here is implemented, except where
 a paragraph says "planned". Workspace ids are 32 lowercase hex characters; the examples use
 `3f9a6c1e5b7d4820a1c3e5f708192a4b`.
 
@@ -308,6 +312,28 @@ of the stored time and the live heartbeat. `labels` come from the join token.
 ```
 `last_seen` is an RFC 3339 UTC timestamp and is omitted if the runner was never seen.
 
+**Action discovery (M5).** An actions-mode runner now tells central which actions it offers, and
+`runners.list` passes that on, so an agent can see that `db-1` has `tail-logs` and which values its
+parameters accept instead of guessing names:
+```json
+{"v":1,"id":"c1d3","result":{"runners":[
+  {"name":"db-1","status":"active","online":true,"labels":{"role":"db"},
+   "last_seen":"2026-11-13T09:41:07.512Z",
+   "actions":[{"name":"tail-logs","params":[{"name":"lines","pattern":"^[0-9]{1,4}$","default":"200"}]}]}]}}
+```
+Each action has a `name` and `params`; each param has `name`, `pattern` (the regular expression the
+runner's guard will apply) and `default` (absent when the parameter is required). This is
+**informational only**: the runner's `actions.yaml` stays the security boundary, and the guard
+still checks every value ([chapter 5](05-security.md)). A made-up list on the wire would change
+what the agent *tries*, never what the runner *runs*.
+
+Size is bounded twice. A runner may advertise at most 128 actions (`transport.MaxHeartbeatActions`)
+and at most 16 KiB of encoded actions (`transport.MaxActionsBytes`). Central adds the actions of
+the runners in one reply only until 512 KiB (`maxListActionsBytes` in `internal/central/dispatch.go`)
+are used; every later runner is listed **without** `actions` and with `"actions_omitted":true`, so
+a fleet with many busy runners can never push `runners.list` over `api.MaxResponseBytes`. M2 and M3
+runners send no actions, and then both fields are absent.
+
 ### `action.run`
 
 Run a named action on one runner.
@@ -410,7 +436,7 @@ errors, "refused by runner: ..." when the runner's own `workspace.yaml` says no)
 | `workspace` | string | An id you own, in state `open` (else `conflict`, "workspace is closing"). |
 | `argv` | array of strings | 1 to 256 elements, 32 KiB in total, no NUL, `argv[0]` set. **No shell string**: to use a shell, send `["/bin/sh","-c","..."]`. |
 | `cwd` | string | Optional. Relative to `/workspace` or absolute under it. Cleaned; a `..` that escapes is refused. |
-| `env` | object | Optional. At most 32 variables, names `^[A-Z_][A-Z0-9_]{0,63}$`, values up to 4 KiB. Must pass the runner's `env_allow` and never match the hard denylist (`*_API_KEY`, `*_TOKEN`, `*_SECRET*`, `*_PASSWORD`, `*_KEY`, `ANTHROPIC_*`, `OPENAI_*`, `AWS_*`, `SSH_AUTH_SOCK`, `GIT_ASKPASS`, `GIT_SSH_COMMAND`, `*PROXY*`, `LD_*`, `BASH_ENV`, `NODE_OPTIONS`; see `workspace.EnvDenied`). |
+| `env` | object | Optional. At most 32 variables, names `^[A-Z_][A-Z0-9_]{0,63}$`, values up to 4 KiB. Must pass the runner's `env_allow` and never match the hard denylist: names that look like credentials (`ANTHROPIC_API_KEY`, `*_TOKEN`, `*_PASSWORD`, `AWS_*`, ...), proxy settings, and variables that change what code a process loads (`LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `GIT_CONFIG_*`, ...). The list grows over time, so this guide does not copy it; the source of truth is `workspace.EnvDenied` in `internal/workspace/validate.go`. |
 | `timeout_s` | integer | `0` = the fleet's `exec_default_s` (120); capped at the fleet's `exec_max_s` (default 1800, ceiling 86400) and again by the runner's `limits.exec_max`. |
 | `stdin` | boolean | `true` means a body frame (at most 1 MiB) follows the request. |
 | `confirm` | string | Guarded fleets: the fleet name. |
@@ -488,8 +514,15 @@ over its disk quota (`too_large`/`quota` surfaces as `bad_request`, "refused by 
 {"v":1,"id":"w6","result":{}}
 ```
 The row goes `open` to `closing`, the runner destroys the container and its directory, the row
-becomes `closed`. If the runner is offline, the reply is still `{}` but the row stays `closing`
-(it keeps its slot) until the reaper or the reconcile pass finishes the job. Closing an already
+becomes `closed`. If the runner is offline (or the destroy fails), the call still succeeds, but
+the row stays `closing` (it keeps its slot) until the reaper or the reconcile pass finishes the
+job, and the result **says so** with a `state` field (M5):
+```json
+{"v":1,"id":"w6","result":{"state":"closing"}}
+```
+`state` is absent (`{}`) when the workspace is closed, and `"closing"` when it is not yet. Before
+M5 both cases looked the same, so a caller could believe a slot was free when it was not. The code
+is `api.WorkspaceCloseResult` and `internal/central/workspace_handlers.go`. Closing an already
 finished workspace is a no-op.
 
 #### `workspace.list`
@@ -776,6 +809,11 @@ input has a bound that is checked before its cost is paid.
 | workspace exec output | 1 MiB JSON-encoded | Head and tail kept; stdout and stderr share the budget (`wsOutputBudget`, a little under 1 MiB). |
 | concurrent execs | 4 per workspace | `maxExecPerWorkspace` on the runner; the 5th is `ResourceShortage`. |
 | `service.DefaultMaxWorkspacesPerOperator` | 8 | Live workspaces per operator. |
+| `transport.MaxHeartbeatActions` / `MaxActionNameBytes` / `MaxActionPatternBytes` / `MaxActionsBytes` | 128 / 64 B / 256 B / 16 KiB | Bounds on the M5 heartbeat `actions` (action discovery). |
+| `maxListActionsBytes` (`internal/central/dispatch.go`) | 512 KiB | Encoded action bytes in one `runners.list` reply; later runners get `actions_omitted`. |
+| `opconf.DefaultOutputCap` (`MinOutputCap`, `MaxOutputCap`) | 30 KiB (settable 4 KiB to 256 KiB) | The MCP layer's cap on command output and file text, section 7.13. |
+| `mcpserver.MaxWriteBytes` | 8 MiB | Largest `write_file` content once decoded (sent to central in 1 MiB chunks). |
+| `maxListEntries` (`internal/mcpserver`) | 200 | Entries in any MCP list result; then `truncated: true`. |
 
 ### Connection and concurrency limits
 
@@ -814,6 +852,9 @@ input has a bound that is checked before its cost is paid.
 | `Config.HandshakeTimeout` (`DefaultHandshakeTimeout`) | 10 s | Time to finish the SSH handshake. |
 | `Config.TouchInterval` (`DefaultTouchInterval`) | 5 min | Minimum gap between `last_seen_at` writes per runner (connect writes are further throttled to one per `TouchInterval / 10`, 30 s). |
 | `apiclient.HandshakeTimeout` | 30 s | Client: connect plus SSH handshake. |
+| `orch.CallTimeout` / `orch.RunMargin` | 2 min / 30 s | MCP layer: client-side limit for any call not listed next. `action.run` and `workspace.exec` get their own `timeout_s` plus `RunMargin`; `workspace.open` gets 5 min + `RunMargin`; file calls 100 s (`orch.CallLimit`). |
+| `orch.DefaultKeepalive` / `orch.GuardedTTL` | 30 s / 30 s | MCP layer: how often an idle connection is pinged, and how long the "which fleets are guarded" answer is cached. |
+| `mcpserver.DefaultProgressInterval` | 15 s | Spacing of `notifications/progress` while a tool call runs. |
 | runner dial / backoff | dial 10 s; reconnect backoff 1 s to 60 s, doubling, jittered +-20% | `BackoffMin`/`BackoffMax`; backoff resets only after a connection stayed up and acked heartbeats for `HealthyAfter` (30 s). |
 | `auth` lookup timeout | 5 s | One store lookup during the handshake. |
 | `storeTimeout` | 5 s | Best-effort `last_seen` writes. |
@@ -856,7 +897,19 @@ mean "no workspace executor":
 | `secure_runtime` | `gvisor`, `kata` or empty: whether the runner can serve guarded fleets | at most 64 chars, `[A-Za-z0-9._-/:]` |
 | `images` | The runner's image allowlist patterns, for placement only | at most 32 entries of at most 256 bytes |
 
-Central does **not** trust them to be enforced: `slots` and `images` are hints for placement and
+An **actions** runner (M5) adds one more optional field, `actions`: the list of actions it offers,
+each with its parameter names, patterns and defaults, built by `actions.Set.Describe()` from
+`actions.yaml`. It is the source of the `actions` in `runners.list` (section 7.5). Central bounds
+it in `Heartbeat.Validate`: at most 128 actions (`transport.MaxHeartbeatActions`), names up to 64
+bytes, patterns up to 256 bytes, at most 16 KiB encoded (`transport.MaxActionsBytes`). It is
+**informational only**; the guard on the runner never reads it.
+
+```json
+{"hostname":"db-1.example.com","os":"linux","arch":"amd64","version":"0.5.0","labels":{"role":"db"},
+ "actions":[{"name":"tail-logs","params":[{"name":"lines","pattern":"^[0-9]{1,4}$","default":"200"}]}]}
+```
+
+Central does **not** trust any of these heartbeat fields to be enforced: `slots` and `images` are hints for placement and
 the runner re-checks everything. A runner that inflates `slots` only overloads itself, because
 central counts live workspaces from its own database and the runner has its own semaphore. An
 out-of-range value is a hostile or broken runner: central refuses to register it and drops the
@@ -1071,6 +1124,11 @@ What the code enforces:
   makes sense behind an M3 central. The one place the framing grew is the **body frame**, and it
   is opt-in per method (`stdin: true`, `write_file`, `read_file`), so every M2 method still
   sees exactly one request frame and one response frame.
+- **M5 changed no existing request either.** It added only result and heartbeat fields
+  (`runners.list` gained `actions` and `actions_omitted`, `workspace.close` gained `state`,
+  `Heartbeat` gained `actions`) and no new method and no new channel type. The MCP layer
+  (section 7.13) speaks a different protocol on a different pipe (stdin and stdout of a local
+  process), so it has its own versioning, negotiated by MCP itself.
 - **The database has a new migration**, `0002_workspaces.sql` (chapter 6): upgrading central
   runs it automatically; a downgraded binary refuses the newer database.
 
@@ -1088,6 +1146,263 @@ Guidance for changing the protocol (derived from the rules above; not enforced b
    the policy table deliberately; `TestMethodSetsDisjoint` and `TestEnrollMethodsDisjoint` in `internal/api` assert that the
    operator, admin and enrol sets are disjoint.
 
+## 7.13 The MCP layer (M5)
+
+Everything above is how mirafleet programs talk to each other over SSH. The agent (Claude Code,
+opencode, ...) does not speak any of it. It speaks **MCP**, the Model Context Protocol, to a local
+process, `mirafleet mcp`, which translates each **tool call** into the operator methods of section
+7.5. Terms: [glossary](glossary.md) (MCP tool, stdio server, JSON-RPC, harness). The code is
+`internal/mcpserver` (the protocol and the tool definitions) over `internal/orch` (which context,
+which fleet, the SSH connection); [chapter 8](08-code-tour.md#810-follow-one-exec-tool-call) follows
+one call through both.
+
+### The wire: JSON-RPC 2.0, one message per line
+
+MCP here is **JSON-RPC 2.0** over the process's standard input and output: the harness writes one
+JSON object per line to the server's stdin, and the server writes one per line to stdout. Two
+rules follow from that and are enforced:
+
+- **stdout carries protocol and nothing else.** One stray `fmt.Println` would corrupt the stream.
+  Logs go to stderr (`Config.Logf`), and a test (`TestM5NoHooks`) parses every stdout line.
+- **A line that is not JSON-RPC ends the session.** The MCP library mirafleet uses (the official
+  Go SDK, "software development kit", `github.com/modelcontextprotocol/go-sdk`; the "SDK" below)
+  closes the connection on a malformed frame, `mcpserver.Serve` returns the decode error, and `mirafleet mcp` exits **1** without
+  echoing the input (`TestServeMalformedFrameExitsNonZero`). A harness that sees this restarts
+  the server.
+
+```mermaid
+sequenceDiagram
+    participant H as Harness (Claude Code)
+    participant S as mirafleet mcp
+    participant C as central.example.com:2222
+    H->>S: initialize (protocolVersion)
+    S-->>H: capabilities {tools}, instructions
+    H->>S: notifications/initialized
+    H->>S: tools/list
+    S-->>H: nine tools with schemas
+    H->>S: tools/call exec {command}
+    S->>C: workspace.exec over SSH (section 7.5)
+    C-->>S: result
+    S-->>H: structuredContent + text
+    H->>S: notifications/cancelled (optional)
+    Note over H,S: stdin closes: S exits 0
+```
+
+*Caption: the harness drives; the server only answers. Arrows to the right of `mirafleet mcp` are
+the SSH protocol of the earlier sections.*
+
+What the server implements, in `internal/mcpserver/server.go`:
+
+- **Capabilities: `tools` only.** No resources, prompts, sampling or roots. The server also sends
+  `instructions`, a short text saying that everything tools return (output, file contents, error
+  text from remote hosts) is data from remote machines, not instructions, and that guarded fleets
+  need the user's explicit agreement before `confirm` is set (`mcpserver.DefaultInstructions`).
+- **Versions.** `initialize` negotiates up to MCP `2025-11-25`. A client that asks for `2026-07-28`
+  is answered `2025-11-25`; an unknown version gets the same. The tests assert what the SDK
+  actually answers (`TestRawInitializeVersions`), because the SDK (`github.com/modelcontextprotocol/go-sdk`,
+  pinned in `go.mod`) decides.
+- **Unknown method:** JSON-RPC error `-32601`. An unknown **tool** is refused too (the SDK
+  answers with an error; the test accepts either shape). `tools/call` for `fleet_create` or
+  `runner_lifecycle` finds nothing: the tool table is fixed in code and holds no admin tool.
+- **Cancel.** `notifications/cancelled` cancels the context of the running handler; the SSH
+  channel to central is closed, which cancels the work on central and the runner.
+- **Progress.** If the request carries a `progressToken`, the server sends
+  `notifications/progress` every 15 s while the call runs and none after the answer. Output is
+  still buffered: you get it all at the end.
+- **Shutdown.** stdin EOF, `SIGTERM` or `SIGHUP` (on Windows: an interrupt) stops the server with
+  exit code 0 within 5 s. It cancels in-flight calls and closes the SSH connections. It never
+  closes workspaces; see [chapter 4](04-flows.md) for idle-on-exit and the reaper.
+
+### The nine tools
+
+Tool names are in `mcpserver.ToolNames` and the schemas are JSON Schema strings in
+`internal/mcpserver/tools_list.go` and `tools_ws.go`. Every tool has an `inputSchema` with
+`additionalProperties: false`, an `outputSchema`, and all four behaviour hints
+(`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) sent explicitly, because a
+harness may choose its approval prompt from them. `?` marks an optional argument.
+
+| Tool | Arguments | Calls on central | Hints | Guarded `confirm` |
+|---|---|---|---|---|
+| `list_fleets` | `context?` | `fleets.list` per context | read-only, idempotent | no |
+| `list_runners` | `fleet?`, `context?`, `runner?` | `runners.list` | read-only, idempotent | no |
+| `run_action` | `fleet?`, `context?`, `runner`, `action`, `params?` (strings), `timeout_s?` (0 to 600), `confirm?` | `action.run` | destructive | yes |
+| `workspace_list` | `fleet?`, `context?` | `workspace.list` (your own only) | read-only, idempotent | no |
+| `workspace_open` | `fleet?`, `context?`, `image?`, `labels?`, `confirm?` | `workspace.open` | idempotent | yes |
+| `exec` | exactly one of `command` or `argv`; `cwd?`, `env?`, `timeout_s?` (0 to 86400), `stdin?` (at most 1 MiB), `workspace?`, `fleet?`, `context?`, `confirm?` | `workspace.exec` | destructive | yes |
+| `read_file` | `path`, `offset?`, `limit?` (1 to 1 MiB), `encoding?` (`text` or `base64`), `workspace?`, `fleet?`, `context?` | `workspace.read_file` | read-only, idempotent | no |
+| `write_file` | `path`, `content`, `encoding?`, `offset?`, `mode?` (0 to 511), `workspace?`, `fleet?`, `context?`, `confirm?` | `workspace.write_file`, in chunks | destructive | yes |
+| `workspace_close` | `workspace?`, `fleet?`, `context?` | `workspace.close` | destructive, idempotent | no |
+
+All nine carry `openWorldHint: true` (they reach other machines). Things worth knowing:
+
+- **`exec` takes `command` or `argv`, never both.** `command: "echo hi"` becomes
+  `["/bin/sh","-c","echo hi"]` (the shell is inside the workspace, which is the point of
+  workspaces); `argv` runs the program directly, with no shell. Neither or both is `bad_request`.
+- **`workspace` defaults to this session's workspace** on the resolved (context, fleet). `exec`,
+  `read_file` and `write_file` with no workspace open one on the default fleet, **only if that fleet
+  is not guarded**. On a guarded fleet the error says to call `workspace_open` first. An unknown
+  fleet fails closed (`not_found`), because it might be guarded.
+- **`confirm` is a pass-through string.** The server never fills it from a config file, never
+  remembers it and never defaults it; central checks that it equals the fleet name
+  ([chapter 5](05-security.md#537-guarded-fleets-confirm-must-equal-the-fleet-name)). When central
+  refuses a guarded call, the server rewrites the message to: ``fleet `prod` in context `work` (argument) is guarded. Ask the user. Only after the user explicitly agrees, repeat the call with `confirm` set to the fleet name.``
+  so the model is told, in words, to stop and ask. It names the context and where it came from
+  (`guardedRewrite` in `tools_list.go`).
+- **`list_runners` with `runner`** returns just that runner and tries to keep all of its actions;
+  see "List results and size budgets" below. Runner labels are set by an admin but are shown to
+  the model, so they are sanitised like command output (`cleanLabels`).
+- **`run_action` checks names before it calls.** `runner` must match the name grammar
+  (lowercase letters, digits, `.`, `_`, `-`) and `action` must be printable ASCII without spaces,
+  at most 64 bytes, so odd text never gets as far as central or into an error message.
+- **`workspace_close` with no `workspace` argument** closes this session's workspace. After a
+  server restart there is no in-memory binding, so the server asks `workspace.list` for your live
+  workspace with this session id and closes that one (the model does not have to open one just to
+  close it).
+- **No local files.** `write_file.content` is the content itself, never a local path, and
+  nothing reads or uploads a file from the operator's machine. A prompt-injected model asked to
+  "upload `~/.ssh`" has no tool that can do it ([chapter 5](05-security.md#511-prompt-injection-through-tool-output)).
+
+### Arguments: strict, exact-case
+
+go-sdk's raw tool registration does **no** argument validation, so every handler starts with
+`mcpserver.DecodeArgs`. It refuses:
+
+- unknown fields and trailing data (`invalid arguments: unknown field "x"`);
+- **keys that differ in case.** Go's `encoding/json` matches `Confirm` to a field tagged
+  `confirm` by default, but the Claude Code hook looks for the exact key `confirm`. Without this
+  rule, `{"Confirm": "prod"}` would slip past the hook's "ask the user" prompt yet still set
+  `confirm` on the server. `DecodeArgs` walks the raw JSON and rejects any struct key that is not
+  an exact-case match (`unknown or mis-cased argument "Confirm"`) and any duplicate key
+  (`TestDecodeArgsExactKeys`, `TestEveryToolRejectsMiscasedAndDuplicateKeys`; the attack is walked
+  through in [chapter 5](05-security.md#exact-case-argument-decoding-the-mis-cased-confirm-attack));
+- a body that is not a JSON object.
+
+Keys of a **map** argument (`env`, `params`, `labels`) are data and are not case-checked
+(`TestMapKeysStayData`: `env` names are upper case on purpose). Every failure is a `bad_request`
+with a short message; a key that is echoed back is clipped to 24 characters.
+
+### Results and errors
+
+A successful call returns the same JSON object twice:
+
+```json
+{"jsonrpc":"2.0","id":4,"result":{
+ "structuredContent":{"exit_code":0,"stdout":"ok  \texample.com/app\t0.412s\n","stderr":"",
+   "truncated":false,"omitted_bytes":0,"duration":"1.873s","workspace":"3f9a6c1e5b7d4820a1c3e5f708192a4b",
+   "where":{"context":"work","context_source":"current context","fleet":"dev","fleet_source":"project file"}},
+ "content":[{"type":"text","text":"{\"exit_code\":0,\"stdout\":\"ok  \\texample.com/app\\t0.412s\\n\", ...}"}]}}
+```
+
+`structuredContent` is the typed result (validated against the tool's `outputSchema` by a client
+that cares); the text copy is for harnesses that only show text to the model. A failure is
+different on purpose:
+
+```json
+{"jsonrpc":"2.0","id":5,"result":{"isError":true,
+ "content":[{"type":"text","text":"{\"error\":{\"code\":\"not_found\",\"message\":\"no such workspace\"}}"}]}}
+```
+
+- **`isError: true`, text only, no `structuredContent`.** Otherwise a client that checks results
+  against `outputSchema` would reject the error for lacking `exit_code`. (Tool errors are results,
+  not JSON-RPC errors, so the model sees them and can react.)
+- **`code` is an api error code** (section 7.8: `bad_request`, `not_found`, `conflict`,
+  `unavailable`, ...), plus one MCP-layer code, `canceled`, and `internal`. A cancelled context is
+  `canceled`; a client-side deadline is `timeout`.
+- **Only safe text gets out.** An error type that implements `PublicError` (`*mcpserver.Error`,
+  `*orch.Error`) is shown as its code and message, wherever it sits in the error chain; wrapping
+  text is dropped. Anything else, and any panic in a handler, becomes `internal: internal error`,
+  and the real error goes to stderr. So a local path, a key fingerprint or an SSH library message
+  never reaches the model provider. Setup errors say what to do instead:
+  `not set up: run `mirafleet mcp login ...``.
+
+### `where`: which central, which fleet, and why
+
+Every result that resolved a target has a `where` object:
+`{"context","context_source","fleet","fleet_source"}`. The sources are `argument`, `flag`,
+`project file`, `current context`, `only context`, `context default` or `workspace id` (an
+explicit `workspace` argument names its own fleet). It exists because a repository's
+`.mirafleet.yaml` can steer a call that names no fleet: if you cloned a repository that says
+`fleet: prod`, the model's `exec` would go there. Showing `where` lets the human see which of the
+user's centrals and fleets a call really used. The same precedence and the guarded-default rule
+are in `orch.Resolve`: tool argument, then flags, then `.mirafleet.yaml`, then the context's
+`default_fleet`; and a guarded fleet that came from the project file or a context default is
+**refused** (it must be named explicitly).
+
+### Output cap and sanitising (`internal/orch/output.go`)
+
+Command output, action output and text files are untrusted text that goes straight into the
+model's context ([chapter 5](05-security.md#the-output-cap-and-sanitising) explains the threat).
+`orch.CapOutput` and `orch.Sanitize` shape it before it leaves the server:
+
+- **Cap.** 30 KiB by default for stdout and stderr *together* (`output_cap_bytes` in
+  `contexts.yaml`, 4 KiB to 256 KiB). It is counted as the *JSON-encoded* size, so escaping a
+  quote or `<` (which `encoding/json` writes as `\u003c`) cannot push the result over the cap. When
+  a stream does not fit, the server keeps the first third and the last two thirds, puts
+  `\n[mirafleet: N bytes omitted]\n` between, cuts on a character boundary, sets
+  `truncated: true` and `omitted_bytes`. A non-empty stderr always keeps at least a third. This
+  sits on top of the runner's own 1 MiB cap.
+- **Sanitising.** Invalid bytes become U+FFFD. ANSI escape sequences (colours, OSC titles,
+  hyperlinks) and control characters other than newline and tab are removed, `\r\n` becomes `\n`.
+  Unicode tag characters are dropped and other invisible format characters (bidi overrides,
+  zero-width characters, BOM) are written as visible `<U+XXXX>`. The point is that nothing can be
+  hidden in the text the model reads: an escape sequence that paints over a line in a terminal, or
+  a right-to-left override that reverses what a command looks like, has no effect.
+  `Sanitize(Sanitize(x)) == Sanitize(x)` and it runs in linear time (`FuzzSanitize` and
+  `FuzzCapOutput` in `internal/orch/output_test.go`).
+
+### `read_file`: pages and sanitised text
+
+A file can be bigger than the cap, so `read_file` returns a **page**: `offset`, `length`, `size`
+(of the whole file), `eof`, and `next_offset` when there is more. Pass `next_offset` back as
+`offset` to continue. With no `limit`, the page is sized so the **encoded** result fits the output
+cap (base64 text is a third longer than the bytes, and `"`, `\`, newlines and `<` take two to six
+bytes in JSON, so a raw 30 KiB page could overflow); an explicit `limit` can go up to 1 MiB (one
+body frame, `api.MaxFileChunk`). `sha256` is the hash of the raw bytes of that page.
+
+Two encodings:
+
+- `text` (default): UTF-8 only. A file that is not valid UTF-8 is **refused** with the size and
+  SHA-256 of the page and the advice to use base64, so the model never reads binary garbage. A page
+  that ends in the middle of a character is trimmed back so the next page starts on a character
+  boundary. The content is **sanitised** as above; `sanitized: true` says the returned text differs
+  from the file (use `base64` for the exact bytes).
+- `base64`: the exact bytes, encoded.
+
+### `write_file`: chunking and the length and hash
+
+`content` is text, or base64 with `encoding: base64`, up to **8 MiB** once decoded
+(`mcpserver.MaxWriteBytes`; larger is `too_large`). The wire limit is 1 MiB per body frame
+([body frames in section 7.3](#body-frames-m3-bytes-behind-a-request)), so the server splits the content into
+chunks of at most `api.MaxFileChunk` and sends one `workspace.write_file` per chunk, computing
+`length` and `sha256` for each chunk itself (the model never has to). With `offset` 0 the first
+chunk has `truncate: true`, which **replaces** the file; any later offset writes in place. A 1.5
+MiB write is two calls, at offsets 0 and 1 MiB. If chunk two fails, the error says how much was
+written (`... (1048576 of 1572864 bytes were written)`), because the file is now half-new. The
+reply carries `bytes_written`, `size` (file size now) and `sha256` of the full content.
+
+### List results and size budgets
+
+Every list result is capped at 200 entries (`maxListEntries`) with `truncated: true`. `list_fleets`
+with no `context` asks every configured context (four at a time); a context that is down becomes an
+entry in `errors[]` (`{"context","code","message"}`) rather than failing the whole call. (Naming
+a context that fails *is* a tool error.)
+
+`list_runners` has the `actions` from section 7.5. Because those can be long, the encoded result
+is kept within the output cap: runners are listed with their actions while the budget lasts, later
+ones **without** actions and with `actions_omitted: true`, and if even the bare entries do not fit,
+`truncated: true`. Central applies a second, larger budget of its own (512 KiB) and sets the same
+`actions_omitted` flag. Either way the answer is the same: call `list_runners` again with
+`runner: "db-1"` to get that one runner with its actions.
+
+### `workspace_open` and `workspace_close`
+
+`workspace_open` returns `{workspace, reused, session_source, where}`. `reused: true` means a live
+workspace for the same session already existed. `session_source` is `flag`, `handoff` or `process`:
+where the session id came from ([chapter 4](04-flows.md)). `workspace_close` returns
+`{state, workspace, where}`: `state` is `"closed"`, or `"closing"` when central could not reach the
+runner yet and the reaper will finish (the `workspace.close` `state` field of section 7.5). After
+a close, the server forgets the binding, so the next `exec` opens a fresh workspace.
+
 ## Check your understanding
 
 1. Alice's client sends a frame whose 4-byte prefix is `00 10 00 00`. What happens, and what has
@@ -1103,6 +1418,11 @@ Guidance for changing the protocol (derived from the rules above; not enforced b
    already queued behind the request. What does he get back, and how much did central buffer?
 7. A client writes a 3 MiB file with `workspace.write_file`. How, and what does each call carry?
 8. Why does a workspace runner reject a `workspace@` channel before accepting it when it is full?
+9. A model calls `exec` with `{"Confirm":"prod","command":"ls"}`. What happens and why does the
+   server care about the capital C?
+10. A tool call fails. Which two things are different about the result compared with a success?
+11. A 40 MiB log file sits in the workspace. How does the model read all of it, and what does each
+    reply carry?
 
 <details>
 <summary>Answers</summary>
@@ -1131,5 +1451,17 @@ Guidance for changing the protocol (derived from the rules above; not enforced b
 8. Once it has accepted, the only way to say "busy" is inside the channel, after the caller has
    already streamed up to 1 MiB of body. Rejecting first (`ResourceShortage`) costs nothing, and
    it lets central see `runner busy` and try another runner for an `open`.
+9. `DecodeArgs` refuses it: `bad_request`, `unknown or mis-cased argument "Confirm"`, and nothing
+   reaches central. `encoding/json` would have accepted the capital letter, but the Claude Code
+   hook looks for the exact key `confirm` to show its "ask the user" prompt. A mis-cased key would
+   set `confirm` on the server while the hook saw nothing.
+10. `isError` is `true`, and there is no `structuredContent`: only one text item,
+    `{"error":{"code","message"}}`. Without the second part, a client that validates results
+    against `outputSchema` would reject the error for lacking the success fields.
+11. In pages: call `read_file` with `path`, read `content` and `next_offset`, then call again with
+    `offset` set to `next_offset` until `eof` is true. A page is at most the output cap by default
+    (30 KiB) and at most 1 MiB with `limit`. Each reply has `offset`, `length`, `size`, `eof`,
+    `sha256` of the page, and `sanitized` if the text was cleaned. (Forty MiB in 1 MiB pages is
+    forty calls; in practice the model should `exec` something like `grep` or `tail` instead.)
 
 </details>

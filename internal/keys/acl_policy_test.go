@@ -13,6 +13,10 @@ func TestACLPolicy(t *testing.T) {
 	if err := aclPolicy(ok(), me); err != nil {
 		t.Fatalf("good ACL refused: %v", err)
 	}
+	// F-14: an empty (unconvertible) SID is never equal to anything, even another empty one.
+	if err := aclPolicy(aclInfo{Owner: "", Protected: true, HasDACL: true}, ""); err == nil {
+		t.Error("empty owner and empty user accepted")
+	}
 	cases := map[string]func(*aclInfo){
 		"wrong owner":     func(a *aclInfo) { a.Owner = sidAdmins },
 		"null dacl":       func(a *aclInfo) { a.HasDACL = false },
