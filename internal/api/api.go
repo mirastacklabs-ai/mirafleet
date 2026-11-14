@@ -795,7 +795,11 @@ type WorkspaceWriteFileResult struct {
 type WorkspaceCloseParams struct {
 	Workspace string `json:"workspace"`
 }
-type WorkspaceCloseResult struct{}
+type WorkspaceCloseResult struct {
+	// State is "closing" when the runner could not be told to destroy the workspace now and the
+	// reaper will finish; empty when it is closed.
+	State string `json:"state,omitempty"`
+}
 
 type WorkspaceListParams struct {
 	Fleet string `json:"fleet,omitempty"`

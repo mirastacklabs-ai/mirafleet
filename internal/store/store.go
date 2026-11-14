@@ -414,6 +414,10 @@ var ErrFull = errors.New("store: no free workspace slot")
 // exec_max_s can be set up to it, never past it.
 const MaxExecCeiling = 24 * time.Hour
 
+// MaxWorkspaceTTL bounds a fleet's max_ttl. It mirrors transport.MaxWorkspaceAgeMs (the runner
+// refuses a larger max_age_ms; a test asserts they are equal).
+const MaxWorkspaceTTL = 365 * 24 * time.Hour
+
 // Bounds on the list fields of a WorkspaceConfig.
 const (
 	maxConfigImages = 64
@@ -565,6 +569,9 @@ func (c WorkspaceConfig) Validate() error {
 	}
 	if c.IdleTTL < time.Second || c.MaxTTL < c.IdleTTL {
 		return bad("need 0 < idle ttl <= max ttl (whole seconds)")
+	}
+	if c.MaxTTL > MaxWorkspaceTTL {
+		return bad("max ttl must be at most %s", MaxWorkspaceTTL)
 	}
 	if c.ExecDefault < time.Second || c.ExecMax < c.ExecDefault || c.ExecMax > MaxExecCeiling {
 		return bad("need 0 < exec default <= exec max <= %s", MaxExecCeiling)

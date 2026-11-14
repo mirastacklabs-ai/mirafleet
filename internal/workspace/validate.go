@@ -78,8 +78,11 @@ var envName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
 
 // EnvDenied reports whether name is on the hard env denylist: *_API_KEY, *_TOKEN, *_SECRET*,
 // ANTHROPIC_*, OPENAI_*, AWS_*, SSH_AUTH_SOCK, GIT_ASKPASS, GIT_SSH_COMMAND, *PROXY*, LD_*,
-// BASH_ENV, ENV, NODE_OPTIONS, PYTHONSTARTUP, *_PASSWORD, *_KEY. It applies to every
-// workspace regardless of any allowlist, on central and on the runner.
+// BASH_ENV, ENV, NODE_OPTIONS, PYTHONSTARTUP, *_PASSWORD, *_KEY, PYTHONPATH, PERL5OPT,
+// PERL5LIB, RUBYOPT, JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, NODE_PATH, GIT_CONFIG_* (COUNT,
+// KEY_n, VALUE_n, GLOBAL, SYSTEM), GIT_EXEC_PATH, PROMPT_COMMAND, GCONV_PATH, *_PAT,
+// *_CREDENTIALS, DATABASE_URL, *_DSN. It applies to every workspace regardless of any
+// allowlist, on central and on the runner.
 func EnvDenied(name string) bool {
 	n := strings.ToUpper(name)
 	switch {
@@ -92,7 +95,15 @@ func EnvDenied(name string) bool {
 		// Variables that change what code runs or what is injected into a process.
 		strings.HasPrefix(n, "LD_"), n == "BASH_ENV", n == "ENV", n == "NODE_OPTIONS", n == "PYTHONSTARTUP",
 		// Credential-looking names.
-		strings.HasSuffix(n, "_PASSWORD"), strings.HasSuffix(n, "_KEY"), n == "PASSWORD", n == "KEY":
+		strings.HasSuffix(n, "_PASSWORD"), strings.HasSuffix(n, "_KEY"), n == "PASSWORD", n == "KEY",
+		// More code-injection vectors (interpreter search paths and option hooks, git config
+		// injection, shell and libc hooks).
+		n == "PYTHONPATH", n == "PERL5OPT", n == "PERL5LIB", n == "RUBYOPT",
+		n == "JAVA_TOOL_OPTIONS", n == "_JAVA_OPTIONS", n == "NODE_PATH",
+		strings.HasPrefix(n, "GIT_CONFIG_"), n == "GIT_EXEC_PATH", n == "PROMPT_COMMAND", n == "GCONV_PATH",
+		// More credential-looking names.
+		strings.HasSuffix(n, "_PAT"), strings.HasSuffix(n, "_CREDENTIALS"),
+		n == "DATABASE_URL", strings.HasSuffix(n, "_DSN"):
 		return true
 	}
 	return false

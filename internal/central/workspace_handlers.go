@@ -189,8 +189,12 @@ func handleWorkspaceClose(ctx context.Context, c *callCtx, req *api.Request) (an
 	if e := api.DecodeParams(req.Params, &p); e != nil {
 		return nil, e
 	}
-	if _, err := c.svc.CloseWorkspace(ctx, c.p, c.src, p.Workspace); err != nil {
+	w, err := c.svc.CloseWorkspace(ctx, c.p, c.src, p.Workspace)
+	if err != nil {
 		return nil, err
+	}
+	if w.State == store.WorkspaceClosing {
+		return api.WorkspaceCloseResult{State: string(w.State)}, nil
 	}
 	return api.WorkspaceCloseResult{}, nil
 }

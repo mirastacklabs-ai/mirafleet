@@ -16,6 +16,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/apiclient"
 	"github.com/mirastacklabs-ai/mirafleet/internal/opconf"
+	"github.com/mirastacklabs-ai/mirafleet/internal/orch"
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
@@ -193,7 +194,7 @@ func mcpAPI(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("load operator key: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), mcpCallLimit(args[0], params))
+	ctx, cancel := context.WithTimeout(context.Background(), orch.CallLimit(args[0], params))
 	defer cancel()
 	cl, err := apiclient.Dial(ctx, addr, transport.UserOperator, signer, apiclient.KnownHosts(opconf.KnownHostsPath(dir)))
 	if err != nil {

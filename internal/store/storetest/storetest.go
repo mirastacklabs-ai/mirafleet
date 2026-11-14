@@ -22,7 +22,10 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("Audit", func(t *testing.T) { audit(t, newStore(t)) })
 	t.Run("FleetWorkspace", func(t *testing.T) { fleetWorkspace(t, newStore(t)) })
 	t.Run("Workspaces", func(t *testing.T) { workspaces(t, newStore(t)) })
-	t.Run("Workspaces", func(t *testing.T) { workspaces(t, newStore(t)) })
+	t.Run("WorkspaceConfigBounds", func(t *testing.T) { workspaceConfigBounds(t, newStore(t)) })
+	t.Run("WorkspaceCapAndTerminal", func(t *testing.T) { workspaceCapAndTerminal(t, newStore(t)) })
+	t.Run("WorkspaceCloseAudit", func(t *testing.T) { workspaceCloseAudit(t, newStore(t)) })
+	t.Run("WorkspaceListLimit", func(t *testing.T) { workspaceListLimit(t, newStore(t)) })
 	t.Run("WorkspaceFilters", func(t *testing.T) { workspaceFilters(t, newStore(t)) })
 	t.Run("WorkspaceClose", func(t *testing.T) { workspaceClose(t, newStore(t)) })
 	t.Run("WorkspaceSticky", func(t *testing.T) { workspaceSticky(t, newStore(t)) })
@@ -890,6 +893,7 @@ func fleetWorkspace(t *testing.T, s store.Store) {
 		"zero idle ttl":          func(c *store.WorkspaceConfig) { c.IdleTTL = 0 },
 		"sub-second idle ttl":    func(c *store.WorkspaceConfig) { c.IdleTTL = time.Millisecond },
 		"max ttl < idle ttl":     func(c *store.WorkspaceConfig) { c.MaxTTL = c.IdleTTL - time.Second },
+		"max ttl over 365d":      func(c *store.WorkspaceConfig) { c.MaxTTL = store.MaxWorkspaceTTL + time.Second },
 		"zero exec default":      func(c *store.WorkspaceConfig) { c.ExecDefault = 0 },
 		"exec default > max":     func(c *store.WorkspaceConfig) { c.ExecDefault = c.ExecMax + time.Second },
 		"exec max > 24h":         func(c *store.WorkspaceConfig) { c.ExecMax = 24*time.Hour + time.Second },
@@ -909,6 +913,12 @@ func fleetWorkspace(t *testing.T, s store.Store) {
 	edge.ExecMax, edge.ExecDefault, edge.MaxTTL, edge.IdleTTL = 24*time.Hour, 24*time.Hour, time.Hour, time.Hour
 	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "edge", Mode: store.ModeWorkspace, Workspace: &edge}, t0, ev("fleet.create")); err != nil {
 		t.Fatalf("edge config: %v", err)
+	}
+	// max_ttl exactly at the 365 day bound is accepted (one second over is rejected above).
+	top := *wsCfg()
+	top.MaxTTL = store.MaxWorkspaceTTL
+	if err := top.Validate(); err != nil {
+		t.Fatalf("max ttl at bound: %v", err)
 	}
 
 	// Create, then read back through every accessor.
@@ -1509,5 +1519,233 @@ func workspaceRace(t *testing.T, s store.Store) {
 	}
 	if c, _ := s.CountLiveWorkspaces(ctx, []int64{rs[0].ID}); c[rs[0].ID] != 2 {
 		t.Fatalf("live = %v", c)
+	}
+}
+
+// workspaceConfigBounds pins the upper bounds of WorkspaceConfig.Validate through CreateFleet:
+// exactly at the limit is accepted, one over is ErrInvalid (E-03).
+func workspaceConfigBounds(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	n := 0
+	try := func(mut func(c *store.WorkspaceConfig)) error {
+		n++
+		c := wsCfg()
+		mut(c)
+		_, err := s.CreateFleet(ctx, store.Fleet{Name: fmt.Sprintf("lim%d", n), Mode: store.ModeWorkspace, Workspace: c}, t0, ev("fleet.create"))
+		return err
+	}
+	check := func(what string, atLimit, over func(c *store.WorkspaceConfig)) {
+		t.Helper()
+		if err := try(atLimit); err != nil {
+			t.Errorf("%s at the limit must be accepted: %v", what, err)
+		}
+		if err := try(over); !errors.Is(err, store.ErrInvalid) {
+			t.Errorf("%s one over the limit must be ErrInvalid: %v", what, err)
+		}
+	}
+	check("cpu_milli", func(c *store.WorkspaceConfig) { c.CPUMilli = store.MaxCPUMilli }, func(c *store.WorkspaceConfig) { c.CPUMilli = store.MaxCPUMilli + 1 })
+	check("memory_mb", func(c *store.WorkspaceConfig) { c.MemoryMB = store.MaxMemoryMB }, func(c *store.WorkspaceConfig) { c.MemoryMB = store.MaxMemoryMB + 1 })
+	check("pids", func(c *store.WorkspaceConfig) { c.Pids = store.MaxPids }, func(c *store.WorkspaceConfig) { c.Pids = store.MaxPids + 1 })
+	check("tmpfs_mb", func(c *store.WorkspaceConfig) { c.TmpfsMB = store.MaxTmpfsMB }, func(c *store.WorkspaceConfig) { c.TmpfsMB = store.MaxTmpfsMB + 1 })
+	check("disk_mb", func(c *store.WorkspaceConfig) { c.DiskMB = store.MaxDiskMB }, func(c *store.WorkspaceConfig) { c.DiskMB = store.MaxDiskMB + 1 })
+	check("exec max", func(c *store.WorkspaceConfig) { c.ExecMax = store.MaxExecCeiling },
+		func(c *store.WorkspaceConfig) { c.ExecMax = store.MaxExecCeiling + time.Second })
+
+	images := func(k int) func(c *store.WorkspaceConfig) {
+		return func(c *store.WorkspaceConfig) {
+			c.Images = []string{c.DefaultImage}
+			for i := 1; i < k; i++ {
+				c.Images = append(c.Images, fmt.Sprintf("docker.io/library/img%d:1", i))
+			}
+		}
+	}
+	check("images", images(64), images(65))
+	egressRules := func(k int) func(c *store.WorkspaceConfig) {
+		return func(c *store.WorkspaceConfig) {
+			c.Egress = nil
+			for i := 0; i < k; i++ {
+				c.Egress = append(c.Egress, fmt.Sprintf("h%d.example.com:443", i))
+			}
+		}
+	}
+	check("egress rules", egressRules(256), egressRules(257))
+
+	// Entry length (512 bytes): a 513-byte entry is rejected. No entry kind can be valid at
+	// exactly 512 (image refs cap at 255, host names at 253), so the bound is only testable from above.
+	long := strings.Repeat("a", 513-len(".example.com:443")) + ".example.com:443"
+	if err := try(func(c *store.WorkspaceConfig) { c.Egress = []string{long} }); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("513-byte egress entry: %v", err)
+	}
+	if err := try(func(c *store.WorkspaceConfig) {
+		c.Images = append(c.Images, "docker.io/library/"+strings.Repeat("a", 500)+":1")
+	}); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("oversize image entry: %v", err)
+	}
+}
+
+// workspaceCapAndTerminal covers closing rows against maxPerOp and CloseWorkspacesOf leaving
+// terminal rows alone (E-03).
+func workspaceCapAndTerminal(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	f, rs, ops := wsFixture(t, s, 1, 2)
+	now := t0.Add(time.Minute)
+	reserve := func(n int, o store.Operator) {
+		t.Helper()
+		if _, _, err := s.ReserveWorkspace(ctx, wsRow(n, f, rs[0], o, fmt.Sprintf("s%d", n)), 100, 0, now, ev("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set := func(n int, from, to store.WorkspaceState) {
+		t.Helper()
+		if _, err := s.SetWorkspaceState(ctx, wsID(n), []store.WorkspaceState{from}, to, "why", now, ev("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A closing row still holds the operator's cap slot.
+	reserve(1, ops[0])
+	set(1, store.WorkspaceOpening, store.WorkspaceOpen)
+	set(1, store.WorkspaceOpen, store.WorkspaceClosing)
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(2, f, rs[0], ops[0], "s2"), 100, 1, now, ev("x")); !errors.Is(err, store.ErrFull) {
+		t.Fatalf("closing row must count against maxPerOp: %v", err)
+	}
+	set(1, store.WorkspaceClosing, store.WorkspaceClosed)
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(2, f, rs[0], ops[0], "s2"), 100, 1, now, ev("x")); err != nil {
+		t.Fatalf("closed row must free the cap: %v", err)
+	}
+
+	// Terminal rows (closed, failed, lost) survive CloseWorkspacesOf untouched.
+	reserve(3, ops[1]) // -> failed
+	set(3, store.WorkspaceOpening, store.WorkspaceFailed)
+	reserve(4, ops[1]) // -> lost
+	set(4, store.WorkspaceOpening, store.WorkspaceOpen)
+	set(4, store.WorkspaceOpen, store.WorkspaceLost)
+	reserve(5, ops[1]) // -> closed
+	set(5, store.WorkspaceOpening, store.WorkspaceOpen)
+	set(5, store.WorkspaceOpen, store.WorkspaceClosing)
+	set(5, store.WorkspaceClosing, store.WorkspaceClosed)
+	before := map[int]store.Workspace{}
+	for _, n := range []int{3, 4, 5} {
+		w, err := s.GetWorkspace(ctx, wsID(n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[n] = w
+	}
+	ids, err := s.CloseWorkspacesOf(ctx, store.WorkspaceOwner{OperatorID: ops[1].ID}, "sweep", now.Add(time.Minute), ev("operator.revoke"))
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("terminal rows must not be selected: %v %v", ids, err)
+	}
+	for n, b := range before {
+		a, err := s.GetWorkspace(ctx, wsID(n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a != b {
+			t.Fatalf("terminal ws %d changed:\n before %+v\n after  %+v", n, b, a)
+		}
+	}
+	if w, _ := s.GetWorkspace(ctx, wsID(3)); w.State != store.WorkspaceFailed {
+		t.Fatalf("ws3: %+v", w)
+	}
+}
+
+// workspaceCloseAudit pins CloseWorkspacesOf's audit row: written even for a no-op (the caller's
+// event, e.g. runner.revoke, must not be lost), with count 0; ws_ids is cut at a comma and flagged
+// when long (E-05, E-12); TouchWorkspace ignores closing and terminal rows (E-12).
+func workspaceCloseAudit(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	f, rs, ops := wsFixture(t, s, 2, 1)
+	now := t0.Add(time.Minute)
+	lastAudit := func() store.AuditEvent {
+		t.Helper()
+		evs, err := s.ListAudit(ctx, 0, 1000)
+		if err != nil || len(evs) == 0 {
+			t.Fatal(err)
+		}
+		return evs[len(evs)-1]
+	}
+
+	// No-op: nothing affected, yet ev is written once with count 0 and no id list.
+	base := auditCount(t, s)
+	ids, err := s.CloseWorkspacesOf(ctx, store.WorkspaceOwner{RunnerID: rs[1].ID}, "r", now, ev("runner.revoke"))
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("no-op: %v %v", ids, err)
+	}
+	if auditCount(t, s) != base+1 {
+		t.Fatalf("no-op CloseWorkspacesOf must still write ev once: %d/%d", auditCount(t, s), base)
+	}
+	if e := lastAudit(); e.Action != "runner.revoke" || e.Params["count"] != "0" || e.Params["ws_ids"] != "" || e.Params["ws_ids_truncated"] != "" {
+		t.Fatalf("no-op audit: %+v", e)
+	}
+
+	// Many ids: 200 x 32 hex + commas = 6599 bytes > 4096.
+	const total = 200
+	for i := 0; i < total; i++ {
+		if _, _, err := s.ReserveWorkspace(ctx, wsRow(i, f, rs[0], ops[0], fmt.Sprintf("s%d", i)), total+10, 0, now, ev("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Touch on a closing row (and later a terminal one) changes nothing and is not an error.
+	one := wsID(0)
+	if _, err := s.SetWorkspaceState(ctx, one, []store.WorkspaceState{store.WorkspaceOpening}, store.WorkspaceOpen, "", now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	ids, err = s.CloseWorkspacesOf(ctx, store.WorkspaceOwner{RunnerID: rs[0].ID}, "revoked", now, ev("runner.revoke"))
+	if err != nil || len(ids) != total {
+		t.Fatalf("many: %d %v", len(ids), err)
+	}
+	e := lastAudit()
+	list := e.Params["ws_ids"]
+	if e.Params["count"] != "200" || e.Params["ws_ids_truncated"] != "true" || len(list) == 0 || len(list) > 4096 {
+		t.Fatalf("truncated audit: count=%q trunc=%q len=%d", e.Params["count"], e.Params["ws_ids_truncated"], len(list))
+	}
+	parts := strings.Split(list, ",")
+	for i, p := range parts {
+		if p != ids[i] {
+			t.Fatalf("id %d is not whole or out of order: %q", i, p)
+		}
+	}
+	if len(parts) != 124 { // floor((4096+1)/33)
+		t.Fatalf("kept %d ids", len(parts))
+	}
+
+	w, err := s.GetWorkspace(ctx, one)
+	if err != nil || w.State != store.WorkspaceClosing {
+		t.Fatalf("setup: %+v %v", w, err)
+	}
+	if err := s.TouchWorkspace(ctx, one, now.Add(time.Hour)); err != nil {
+		t.Fatalf("touch closing: %v", err)
+	}
+	if g, _ := s.GetWorkspace(ctx, one); g != w {
+		t.Fatalf("touch changed a closing row:\n %+v\n %+v", w, g)
+	}
+	if _, err := s.SetWorkspaceState(ctx, one, []store.WorkspaceState{store.WorkspaceClosing}, store.WorkspaceClosed, "", now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	w, _ = s.GetWorkspace(ctx, one)
+	if err := s.TouchWorkspace(ctx, one, now.Add(2*time.Hour)); err != nil {
+		t.Fatalf("touch terminal: %v", err)
+	}
+	if g, _ := s.GetWorkspace(ctx, one); g != w {
+		t.Fatalf("touch changed a terminal row:\n %+v\n %+v", w, g)
+	}
+}
+
+// workspaceListLimit pins ListWorkspaces' limit: <=0 means 100, anything above 1000 is capped (E-12).
+func workspaceListLimit(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	f, rs, ops := wsFixture(t, s, 1, 1)
+	now := t0.Add(time.Minute)
+	for i := 0; i < 1001; i++ {
+		if _, _, err := s.ReserveWorkspace(ctx, wsRow(i, f, rs[0], ops[0], fmt.Sprintf("s%d", i)), 2000, 0, now, ev("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct{ limit, want int }{{0, 100}, {-5, 100}, {7, 7}, {1000, 1000}, {1001, 1000}, {1 << 30, 1000}} {
+		l, err := s.ListWorkspaces(ctx, store.WorkspaceFilter{Limit: c.limit})
+		if err != nil || len(l) != c.want {
+			t.Errorf("limit %d: got %d rows, want %d (%v)", c.limit, len(l), c.want, err)
+		}
 	}
 }

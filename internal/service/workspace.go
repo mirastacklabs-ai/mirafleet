@@ -286,10 +286,13 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 			end.Outcome = OutcomeOK
 			ow, serr := s.finishWorkspace(ctx, id, store.WorkspaceOpening, store.WorkspaceOpen, "", end)
 			if serr != nil {
-				if errors.Is(serr, store.ErrConflict) {
-					// Killed or revoked while the create ran: the container now exists with no live row.
-					s.destroyStray(ctx, c.info.ID, id, "row closed while create ran")
+				// Conflict: killed or revoked while the create ran. Any other error (E-16): the row is
+				// stuck opening. Either way the container exists and must not outlive the failure.
+				why := "row closed while create ran"
+				if !errors.Is(serr, store.ErrConflict) {
+					why = "recording the open failed"
 				}
+				s.destroyStray(ctx, c.info.ID, id, why)
 				return store.Workspace{}, false, s.fail("open workspace", serr)
 			}
 			ow.Fleet, ow.Runner, ow.Operator = fleet, c.runner.Name, p.Name
@@ -470,6 +473,6 @@ func (s *Service) CloseWorkspace(ctx context.Context, p auth.Principal, src Sour
 		}
 		end.Outcome, end.Message = OutcomeError, "destroy refused: "+code+"; workspace stays closing"
 		s.recordBestEffort(ctx, end)
-		return store.Workspace{}, api.Errorf(api.CodeUnavailable, "runner could not destroy the workspace")
+		return w, nil // E-04: the closing row, as for an offline runner; the reaper finishes it
 	}
 }

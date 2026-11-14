@@ -65,6 +65,7 @@ type wsEntry struct {
 	refs      int           // creates in flight
 	confirmed bool          // the executor has it
 	doomed    bool          // destroyed while a create was in flight; createDone destroys once it settles
+	confGen   uint64        // wsState.gen when confirmed was last set (0: seeded from the executor)
 }
 
 type wsState struct {
@@ -76,10 +77,62 @@ type wsState struct {
 	mu     sync.Mutex
 	live   map[workspace.ID]*wsEntry
 	seeded bool
+	gen    uint64 // bumped on every confirm; lets a List prune only entries confirmed before it began
+	tomb   tombstones
+	now    func() time.Time // injectable clock (tombstone expiry)
+}
+
+const (
+	tombMax = 256
+	tombTTL = 10 * time.Minute
+)
+
+// tombstones remembers ids that were destroyed while absent (a destroy found no entry and the
+// executor said not found). A create for such an id is refused, which closes the race where
+// central's stray destroy reaches the runner before the create is admitted. Bounded by count
+// (oldest dropped first) and by age. The caller holds wsState.mu.
+type tombstones struct {
+	at    map[workspace.ID]time.Time
+	order []workspace.ID // oldest first
+}
+
+func (t *tombstones) expire(now time.Time) {
+	n := 0
+	for n < len(t.order) && now.Sub(t.at[t.order[n]]) >= tombTTL {
+		delete(t.at, t.order[n])
+		n++
+	}
+	t.order = t.order[n:]
+}
+
+func (t *tombstones) add(id workspace.ID, now time.Time) {
+	t.expire(now)
+	if t.at == nil {
+		t.at = map[workspace.ID]time.Time{}
+	}
+	if _, ok := t.at[id]; ok {
+		for i, o := range t.order {
+			if o == id {
+				t.order = append(t.order[:i], t.order[i+1:]...)
+				break
+			}
+		}
+	} else if len(t.order) >= tombMax {
+		delete(t.at, t.order[0])
+		t.order = t.order[1:]
+	}
+	t.at[id] = now
+	t.order = append(t.order, id)
+}
+
+func (t *tombstones) has(id workspace.ID, now time.Time) bool {
+	t.expire(now)
+	_, ok := t.at[id]
+	return ok
 }
 
 func newWSState(ex workspace.Executor, cfg *wsconfig.Config) *wsState {
-	return &wsState{ex: ex, cfg: cfg, live: map[workspace.ID]*wsEntry{},
+	return &wsState{ex: ex, cfg: cfg, now: time.Now, live: map[workspace.ID]*wsEntry{},
 		inflight: make(chan struct{}, cfg.Concurrent*(maxExecPerWorkspace+1)+8),
 		refusing: make(chan struct{}, wsRefuseMax)}
 }
@@ -134,6 +187,11 @@ func (s *wsState) admit(ctx context.Context, op *wsOp) (release func(), a admiss
 			relInflight()
 			return nil, admitBusy
 		}
+		if e == nil && s.tomb.has(op.id, s.now()) {
+			// A destroy for this id already ran: answered not_found, nothing was created.
+			relInflight()
+			return nil, admitNotFound
+		}
 		if e == nil {
 			if len(s.live) >= s.cfg.Concurrent {
 				relInflight()
@@ -182,21 +240,50 @@ func (s *wsState) createDone(id workspace.ID, ok bool, logf func(string, ...any)
 		dctx, cancel := context.WithTimeout(context.Background(), wsDestroyTimeout)
 		err := s.ex.Destroy(dctx, id)
 		cancel()
-		if err != nil && !errors.Is(err, workspace.ErrNotFound) {
+		failed := err != nil && !errors.Is(err, workspace.ErrNotFound)
+		if failed {
 			logf("workspace %s: deferred destroy after in-flight create failed: %v", id, err)
 		}
 		s.mu.Lock()
 		if cur := s.live[id]; cur == e {
-			delete(s.live, id)
+			if failed {
+				// The container may still exist: keep the slot held and let a later destroy
+				// (reconcile orphan path) take the normal path. If the create had failed and nothing
+				// exists, the next OpList prunes the entry (the executor won't list it).
+				e.doomed = false
+				s.confirm(e)
+			} else {
+				delete(s.live, id)
+			}
 		}
 		s.mu.Unlock()
 		return
 	}
 	defer s.mu.Unlock()
 	if ok {
-		e.confirmed = true
+		s.confirm(e)
 	} else if e.refs <= 0 && !e.confirmed {
 		delete(s.live, id)
+	}
+}
+
+// confirm marks e as held by the executor. s.mu is held.
+func (s *wsState) confirm(e *wsEntry) {
+	s.gen++
+	e.confirmed, e.confGen = true, s.gen
+}
+
+// prune forgets entries that were confirmed before a List began (gen <= startGen), have no create
+// in flight and no pending destroy, yet are absent from the executor's listing: the container is
+// gone (a failed create whose deferred destroy also failed, or removed out of band). A create
+// that finished during the List has a newer generation and is kept.
+func (s *wsState) prune(startGen uint64, listed map[workspace.ID]bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, e := range s.live {
+		if e.confirmed && e.refs == 0 && !e.doomed && e.confGen <= startGen && !listed[id] {
+			delete(s.live, id)
+		}
 	}
 }
 
@@ -302,14 +389,14 @@ func (s *wsState) prepare(req *transport.WorkspaceRequest) (*wsOp, *opErr) {
 		if sp.RequireSecureRuntime && !cfg.AcceptsGuarded() {
 			return nil, refuse("this runner has no secure runtime")
 		}
+		// Compare in milliseconds before converting: the Duration multiply would wrap.
+		if sp.MaxAgeMs < 0 || sp.MaxAgeMs > transport.MaxWorkspaceAgeMs ||
+			(cfg.MaxAge > 0 && sp.MaxAgeMs > cfg.MaxAge.Milliseconds()) {
+			return nil, refuse("max age above this runner's cap")
+		}
 		maxAge := time.Duration(sp.MaxAgeMs) * time.Millisecond
-		if cfg.MaxAge > 0 {
-			if maxAge > cfg.MaxAge {
-				return nil, refuse("max age above this runner's cap")
-			}
-			if maxAge == 0 {
-				maxAge = cfg.MaxAge
-			}
+		if cfg.MaxAge > 0 && maxAge == 0 {
+			maxAge = cfg.MaxAge
 		}
 		labels := make(map[string]string, len(sp.Labels))
 		for k, v := range sp.Labels {
@@ -725,28 +812,59 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 		return outcome{res: transport.WorkspaceResult{Code: transport.CodeOK}}
 	case transport.OpDestroy:
 		s.mu.Lock()
-		if e := s.live[op.id]; e != nil && e.refs > 0 && !e.confirmed {
+		e := s.live[op.id]
+		if e != nil && (e.doomed || (e.refs > 0 && !e.confirmed)) {
 			// A create is still in flight, so the container may not exist yet: createDone owns
 			// the destroy and runs it once the create settles. Nothing is lost or left untracked.
+			// An already doomed entry (deferred destroy possibly running) answers ok too, so the
+			// slot is never freed while a destroy is still running.
 			e.doomed = true
 			s.mu.Unlock()
 			return outcome{res: transport.WorkspaceResult{Code: transport.CodeOK}}
 		}
+		absent := e == nil
+		notFound := false
 		s.mu.Unlock()
 		dctx, cancel := context.WithTimeout(ctx, wsDestroyTimeout)
 		defer cancel()
-		if err := s.ex.Destroy(dctx, op.id); err != nil && !errors.Is(err, workspace.ErrNotFound) {
-			return failFor(dctx, err)
+		if err := s.ex.Destroy(dctx, op.id); err != nil {
+			if !errors.Is(err, workspace.ErrNotFound) {
+				return failFor(dctx, err)
+			}
+			notFound = true
 		}
-		s.forget(op.id)
+		// The lock was dropped around the executor call, so a create may have been admitted since.
+		// Only the entry this destroy saw is deleted; a newer create's entry is doomed instead (its
+		// container may now be about to exist), and createDone destroys it once it settles.
+		s.mu.Lock()
+		cur := s.live[op.id]
+		switch {
+		case cur == nil:
+			if absent && notFound {
+				s.tomb.add(op.id, s.now())
+			}
+		case cur == e && e.refs <= 0:
+			delete(s.live, op.id)
+		case cur.refs > 0:
+			cur.doomed = true
+		}
+		s.mu.Unlock()
 		return outcome{res: transport.WorkspaceResult{Code: transport.CodeOK}}
 	case transport.OpList:
 		lctx, cancel := context.WithTimeout(ctx, wsListTimeout)
 		defer cancel()
+		s.mu.Lock()
+		startGen := s.gen
+		s.mu.Unlock()
 		infos, err := s.ex.List(lctx)
 		if err != nil {
 			return failFor(lctx, err)
 		}
+		listed := make(map[workspace.ID]bool, len(infos))
+		for _, in := range infos {
+			listed[in.ID] = true
+		}
+		s.prune(startGen, listed)
 		if len(infos) > transport.MaxListEntries {
 			infos = infos[:transport.MaxListEntries]
 		}

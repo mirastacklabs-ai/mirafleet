@@ -133,7 +133,10 @@ func runnerRun(args []string) error {
 		logf("runner %q (fleet %s) -> %s, actions: %s", cfg.Name, cfg.Fleet, cfg.Central, strings.Join(acts.Names(), ","))
 		// Central does not report the fleet mode back (the heartbeat ack has no such field), so
 		// this can only be a hint (docs/M3.md D-11).
-		logf("note: started without -workspace, so this runner serves actions only; if fleet %q is a workspace-mode fleet it will receive no workspace work: restart with `runner run -workspace FILE`", cfg.Fleet)
+		// Only when neither flag was given: an explicit -actions means the operator chose this mode.
+		if !given["actions"] {
+			logf("note: started without -workspace, so this runner serves actions only; if fleet %q is a workspace-mode fleet it will receive no workspace work: restart with `runner run -workspace FILE`", cfg.Fleet)
+		}
 	}
 	if err := rcfg.Validate(); err != nil {
 		return err

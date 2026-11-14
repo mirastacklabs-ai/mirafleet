@@ -139,6 +139,7 @@ func (s *Service) ReapOnce(ctx context.Context) {
 	}
 
 	s.freeDeadRunnerRows(ctx)
+	s.failStaleOpening(ctx)
 
 	// C-13: one goroutine per online runner, at most reapParallel at once, each with its own
 	// time budget, so one hung runner cannot stall the others. ReapOnce still returns only after
@@ -222,6 +223,37 @@ func (s *Service) freeDeadRunnerRows(ctx context.Context) {
 		}
 		if gone {
 			s.setState(ctx, w, store.WorkspaceClosing, store.WorkspaceLost, "runner revoked or gone; container left on its host", actionLost)
+		}
+	}
+}
+
+// failStaleOpening moves opening rows older than the open timeout plus margin to failed (E-16).
+// A live create is bounded by the open timeout, so such a row is stuck: its OpenWorkspace call
+// died after the create, or never recorded the result. ReconcileRunner already fails these when
+// the runner lists the container, but only on a runner's first heartbeat and not when the create
+// never produced a container; this sweep covers the rest. A best-effort destroy follows when the
+// runner is online (the row is already failed, so reconcile also reaps any leftover container).
+func (s *Service) failStaleOpening(ctx context.Context) {
+	rows, err := s.st.ListWorkspaces(ctx, store.WorkspaceFilter{States: []store.WorkspaceState{store.WorkspaceOpening}, Limit: sweepLimit})
+	if err != nil {
+		if ctx.Err() == nil {
+			s.logf("service: reaper list opening: %v", err)
+		}
+		return
+	}
+	limit := s.openTimeout + s.openMargin
+	for _, w := range rows {
+		if ctx.Err() != nil {
+			return
+		}
+		if s.now().Sub(w.CreatedAt) <= limit {
+			continue
+		}
+		if !s.setState(ctx, w, store.WorkspaceOpening, store.WorkspaceFailed, "open timed out", actionRecover) {
+			continue
+		}
+		if s.runnerOnline(w.RunnerID) {
+			s.destroyOn(ctx, w.RunnerID, w.WsID)
 		}
 	}
 }

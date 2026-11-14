@@ -1,28 +1,26 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/keys"
 	"github.com/mirastacklabs-ai/mirafleet/internal/opconf"
+	"github.com/mirastacklabs-ai/mirafleet/internal/orch"
 )
 
 // Cross-platform (linux, darwin, windows): no central or runner dependencies.
 
 const (
 	maxSecretBytes = 4096
-	mcpCallTimeout = 2 * time.Minute
+	mcpCallTimeout = orch.CallTimeout
 	// mcpRunMargin is added to an action.run timeout for dial, queueing and reply latency.
-	mcpRunMargin = 30 * time.Second
+	mcpRunMargin = orch.RunMargin
 )
 
 // readSecret reads a token or code from r (stdin), trimmed. It is never echoed or logged.
@@ -90,43 +88,3 @@ func writeAtomic0600(dir, name string, data []byte) error {
 	}
 	return os.Rename(tmp, filepath.Join(dir, name))
 }
-
-// mcpCallLimit is the client-side limit for one `mcp api` call: action.run gets its requested
-// timeout_s (server default when omitted, server max at most) plus mcpRunMargin; every other
-// method keeps mcpCallTimeout.
-//
-// Workspace methods (docs/M3.md §1.9, decision 5): workspace.exec gets its requested timeout_s
-// plus the margin, capped at the server's 24 h ceiling; without timeout_s the fleet default
-// applies, which this client cannot see, so the cap is the ceiling (the server enforces the real
-// deadline). workspace.open gets the 5 min open timeout plus the margin; file calls 100 s.
-func mcpCallLimit(method string, params json.RawMessage) time.Duration {
-	switch method {
-	case api.MethodActionRun:
-		var p struct {
-			TimeoutS int `json:"timeout_s"`
-		}
-		_ = json.Unmarshal(params, &p) // unparsable: the server rejects it; use the default
-		return api.ActionTimeout(p.TimeoutS) + mcpRunMargin
-	case api.MethodWorkspaceExec:
-		var p struct {
-			TimeoutS int `json:"timeout_s"`
-		}
-		_ = json.Unmarshal(params, &p)
-		ceil := api.HardWorkspaceExecCeiling
-		if p.TimeoutS > 0 && time.Duration(p.TimeoutS) < ceil/time.Second {
-			ceil = time.Duration(p.TimeoutS) * time.Second
-		}
-		return ceil + mcpRunMargin
-	case api.MethodWorkspaceOpen:
-		return mcpWorkspaceOpenLimit
-	case api.MethodWorkspaceReadFile, api.MethodWorkspaceWriteFile:
-		return mcpWorkspaceFileLimit
-	}
-	return mcpCallTimeout
-}
-
-// Client-side limits for workspace calls (server timeouts plus mcpRunMargin).
-const (
-	mcpWorkspaceOpenLimit = 5*time.Minute + mcpRunMargin
-	mcpWorkspaceFileLimit = 100 * time.Second
-)

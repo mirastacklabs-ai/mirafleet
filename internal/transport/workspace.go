@@ -29,6 +29,7 @@ const (
 	MaxWorkspaceRequestBytes = 64 << 10 // channel-open extra data
 	MaxBodyBytes             = 1 << 20  // raw body (stdin, file chunk) per request
 	MaxWorkspaceTimeoutMs    = 24 * 60 * 60 * 1000
+	MaxWorkspaceAgeMs        = 365 * 24 * 60 * 60 * 1000 // spec max_age_ms upper bound (365 days)
 	MaxArgvItems             = 256
 	MaxArgvBytes             = 32 << 10
 	MaxPathBytes             = 4 << 10
@@ -301,6 +302,9 @@ func (s *WorkspaceSpec) validate() error {
 		if v < 0 {
 			return errors.New("negative spec limit")
 		}
+	}
+	if s.MaxAgeMs > MaxWorkspaceAgeMs {
+		return errors.New("max_age_ms above 365 days")
 	}
 	if len(s.Allow) > MaxEgressRules {
 		return errors.New("too many egress rules")

@@ -534,6 +534,36 @@ func TestReconcileOpeningBoundary(t *testing.T) {
 	}
 }
 
+// E-16: the sweep fails opening rows older than open timeout + margin (even when the runner
+// lists no container) with a system audit row and a best-effort destroy; younger rows and rows
+// of an offline runner are handled without a runner call.
+func TestReapFailsStaleOpening(t *testing.T) {
+	e := newEnv(t)
+	clk := e.clock()
+	e.wsFleet("dev", false, nil)
+	r := e.wsRunner("dev", rspec{slots: 100})
+	off := e.wsRunner("dev", rspec{slots: 100, off: true})
+	ann := e.operator("ann")
+	limit := e.svc.openTimeout + e.svc.openMargin
+	atLimit := e.rowAt(1, "dev", r, ann, store.WorkspaceOpening, t0)
+	stale := e.rowAt(2, "dev", r, ann, store.WorkspaceOpening, t0.Add(-time.Second))
+	staleOff := e.rowAt(3, "dev", off, ann, store.WorkspaceOpening, t0.Add(-time.Second))
+	clk.set(t0.Add(limit)) // atLimit: age == limit (kept); the others: limit+1s
+	e.svc.ReapOnce(e.ctx)
+	for id, want := range map[string]store.WorkspaceState{atLimit.WsID: store.WorkspaceOpening,
+		stale.WsID: store.WorkspaceFailed, staleOff.WsID: store.WorkspaceFailed} {
+		if got := e.state(id).State; got != want {
+			t.Errorf("%s: %s, want %s", id, got, want)
+		}
+	}
+	if d := e.wsCalls("destroy"); len(d) != 1 || d[0] != fmt.Sprintf("workspace %d destroy", r.ID) {
+		t.Fatalf("destroys %v, want one on the online runner", d)
+	}
+	if evs := e.wsAudit(actionRecover); len(evs) != 2 || evs[0].Source != string(SourceSystem) {
+		t.Fatalf("recover audit: %+v", evs)
+	}
+}
+
 func TestReapIdleNotBeforeCentralStart(t *testing.T) {
 	e := newEnv(t)
 	clk := e.clock()

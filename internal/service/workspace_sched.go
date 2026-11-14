@@ -119,6 +119,8 @@ func (s *Service) runnerOnline(id int64) bool {
 // buildSpec turns the fleet config into the runner-side spec.
 func buildSpec(cfg store.WorkspaceConfig, image string, labels map[string]string, guarded bool) transport.WorkspaceSpec {
 	const mib = 1 << 20
+	// Backstop for rows written before the store bounded max_ttl: the runner refuses more.
+	maxAge := min(cfg.MaxTTL.Milliseconds(), transport.MaxWorkspaceAgeMs)
 	sp := transport.WorkspaceSpec{
 		Image:                image,
 		Pull:                 string(cfg.Pull),
@@ -129,7 +131,7 @@ func buildSpec(cfg store.WorkspaceConfig, image string, labels map[string]string
 		DiskBytes:            int64(cfg.DiskMB) * mib,
 		NetworkMode:          string(cfg.Network),
 		RequireSecureRuntime: guarded,
-		MaxAgeMs:             cfg.MaxTTL.Milliseconds(),
+		MaxAgeMs:             maxAge,
 	}
 	if len(labels) > 0 {
 		sp.Labels = labels

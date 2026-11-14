@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"path/filepath"
 	"strings"
@@ -1016,6 +1017,11 @@ func (g *gateEx) destroyed(id workspace.ID) bool {
 func TestWorkspaceDestroyDuringCreate(t *testing.T) {
 	g := &gateEx{Executor: fake.New(), entered: make(chan struct{}, 4), release: make(chan struct{})}
 	h := newHarness(t, wsYAML, g.Executor, func(c *Config) { c.Workspace = g })
+	// E-17a: never leave Create blocked on an early Fatal (registered after the harness so it
+	// runs before the harness shuts the runner down).
+	var gateOnce sync.Once
+	closeGate := func() { gateOnce.Do(func() { close(g.release) }) }
+	t.Cleanup(closeGate)
 	id := workspace.NewID()
 	created := make(chan error, 1)
 	go func() {
@@ -1031,7 +1037,7 @@ func TestWorkspaceDestroyDuringCreate(t *testing.T) {
 	if _, _, err := h.try(createReq(id), nil); !busy(err) {
 		t.Fatalf("create of a doomed id: %v, want busy", err)
 	}
-	close(g.release)
+	closeGate()
 	if err := <-created; err != nil {
 		t.Fatal(err)
 	}
@@ -1057,4 +1063,451 @@ func TestWorkspaceDestroyDuringCreate(t *testing.T) {
 	}
 	h.create() // slots are free again (concurrent: 2)
 	h.create()
+}
+
+// ctlEx gates Create and Destroy and scripts Destroy errors, counting executor calls.
+type ctlEx struct {
+	*fake.Executor
+	entered   chan struct{} // Create entered (buffered)
+	release   chan struct{} // closes to let Create through; nil means no gate
+	dEntered  chan struct{} // Destroy entered (buffered)
+	dRelease  chan struct{} // closes to let Destroy through; nil means no gate
+	once      sync.Once
+	mu        sync.Mutex
+	destroyed int
+	destroyEr error
+}
+
+func newCtlEx() *ctlEx {
+	return &ctlEx{Executor: fake.New(), entered: make(chan struct{}, 8), release: make(chan struct{}),
+		dEntered: make(chan struct{}, 8)}
+}
+
+func (c *ctlEx) Create(ctx context.Context, s workspace.Spec) error {
+	c.entered <- struct{}{}
+	<-c.release
+	return c.Executor.Create(ctx, s)
+}
+
+func (c *ctlEx) Destroy(ctx context.Context, id workspace.ID) error {
+	c.mu.Lock()
+	c.destroyed++
+	err, gate := c.destroyEr, c.dRelease
+	c.mu.Unlock()
+	c.dEntered <- struct{}{}
+	if gate != nil {
+		<-gate
+	}
+	if err != nil {
+		return err
+	}
+	return c.Executor.Destroy(ctx, id)
+}
+
+func (c *ctlEx) set(err error, gate chan struct{}) {
+	c.mu.Lock()
+	c.destroyEr, c.dRelease = err, gate
+	c.mu.Unlock()
+}
+
+func (c *ctlEx) destroys() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.destroyed
+}
+
+func (c *ctlEx) openGate() func() {
+	return func() { c.once.Do(func() { close(c.release) }) }
+}
+
+func (h *wsHarness) slots() int {
+	h.runnr.ws.mu.Lock()
+	defer h.runnr.ws.mu.Unlock()
+	return len(h.runnr.ws.live)
+}
+
+func (h *wsHarness) entry(id workspace.ID) (doomed, confirmed, ok bool) {
+	h.runnr.ws.mu.Lock()
+	defer h.runnr.ws.mu.Unlock()
+	e := h.runnr.ws.live[id]
+	if e == nil {
+		return false, false, false
+	}
+	return e.doomed, e.confirmed, true
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out: " + what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func recv(t *testing.T, ch chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out: " + what)
+	}
+}
+
+func startGatedCreate(h *wsHarness, c *ctlEx, id workspace.ID) chan error {
+	created := make(chan error, 1)
+	go func() {
+		res, _, err := h.try(createReq(id), nil)
+		if err == nil && res.Code != transport.CodeOK {
+			err = errors.New("create: " + res.Code)
+		}
+		created <- err
+	}()
+	return created
+}
+
+// E-13: a failed deferred destroy keeps the entry (slot held, confirmed); a later destroy takes
+// the normal path and frees the slot exactly once.
+func TestWorkspaceDoomedDestroyFailureKeepsEntry(t *testing.T) {
+	c := newCtlEx()
+	h := newHarness(t, wsYAML, c.Executor, func(cfg *Config) { cfg.Workspace = c })
+	t.Cleanup(c.openGate())
+	id := workspace.NewID()
+	c.set(errors.New("boom"), nil)
+	created := startGatedCreate(h, c, id)
+	recv(t, c.entered, "create entered")
+	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeOK)
+	if d, _, ok := h.entry(id); !ok || !d {
+		t.Fatalf("entry doomed=%v ok=%v, want doomed", d, ok)
+	}
+	c.openGate()()
+	if err := <-created; err != nil {
+		t.Fatal(err)
+	}
+	recv(t, c.dEntered, "deferred destroy")
+	waitFor(t, "entry kept as confirmed", func() bool {
+		d, cf, ok := h.entry(id)
+		return ok && !d && cf
+	})
+	if n := h.slots(); n != 1 {
+		t.Fatalf("slots = %d after failed deferred destroy, want 1", n)
+	}
+	// A later destroy that fails is still retryable and still holds the slot.
+	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeInternal)
+	if n := h.slots(); n != 1 {
+		t.Fatalf("slots = %d after failed retry, want 1", n)
+	}
+	c.set(nil, nil)
+	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeOK)
+	if n := h.slots(); n != 0 {
+		t.Fatalf("slots = %d after successful destroy, want 0", n)
+	}
+	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeOK)
+	if n := h.slots(); n != 0 {
+		t.Fatalf("slots = %d after repeat destroy, want 0", n)
+	}
+}
+
+// E-14: a second destroy arriving while the deferred destroy runs answers ok without freeing
+// the slot or calling the executor; the slot count never exceeds concurrent (2).
+func TestWorkspaceDoomedDoubleDestroyHoldsSlot(t *testing.T) {
+	c := newCtlEx()
+	h := newHarness(t, wsYAML, c.Executor, func(cfg *Config) { cfg.Workspace = c })
+	t.Cleanup(c.openGate())
+	dGate := make(chan struct{})
+	var dOnce sync.Once
+	openD := func() { dOnce.Do(func() { close(dGate) }) }
+	t.Cleanup(openD)
+	c.set(nil, dGate)
+	atMost := func(step string, want int) {
+		t.Helper()
+		if n := h.slots(); n != want || n > 2 {
+			t.Fatalf("%s: slots = %d, want %d (concurrent 2)", step, n, want)
+		}
+	}
+	id := workspace.NewID()
+	created := startGatedCreate(h, c, id)
+	recv(t, c.entered, "create entered")
+	atMost("create in flight", 1)
+	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeOK)
+	atMost("first destroy", 1)
+	c.openGate()()
+	// The create's own answer waits for createDone, which runs the deferred destroy.
+	recv(t, c.dEntered, "deferred destroy running")
+	atMost("deferred destroy running", 1)
+	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeOK)
+	atMost("second destroy", 1)
+	if n := c.destroys(); n != 1 {
+		t.Fatalf("executor destroys = %d, want 1", n)
+	}
+	// The other slot is usable, a third create is busy.
+	other := workspace.NewID()
+	h.want(createReq(other), nil, transport.CodeOK)
+	atMost("other create", 2)
+	if _, _, err := h.try(createReq(workspace.NewID()), nil); !busy(err) {
+		t.Fatalf("third create: %v, want busy", err)
+	}
+	atMost("third create refused", 2)
+	openD()
+	if err := <-created; err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "slot freed", func() bool { return h.slots() == 1 })
+	atMost("deferred destroy done", 1)
+	h.want(createReq(workspace.NewID()), nil, transport.CodeOK)
+	atMost("slot reused", 2)
+}
+
+// notFoundEx answers every Destroy with ErrNotFound (nothing there).
+type notFoundEx struct{ *fake.Executor }
+
+func (notFoundEx) Destroy(context.Context, workspace.ID) error { return workspace.ErrNotFound }
+
+// E-15: a destroy of an unknown id leaves a tombstone, so a create arriving later is refused
+// (not_found); the tombstone expires.
+func TestWorkspaceTombstoneRefusesLateCreate(t *testing.T) {
+	ex := fake.New()
+	h := newHarness(t, wsYAML, ex, func(cfg *Config) { cfg.Workspace = notFoundEx{ex} })
+	now := time.Unix(1000, 0)
+	var cm sync.Mutex
+	h.runnr.ws.mu.Lock()
+	h.runnr.ws.now = func() time.Time { cm.Lock(); defer cm.Unlock(); return now }
+	h.runnr.ws.mu.Unlock()
+	id := workspace.NewID()
+	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeOK)
+	h.want(createReq(id), nil, transport.CodeNotFound)
+	if n := h.slots(); n != 0 {
+		t.Fatalf("slots = %d after refused create, want 0", n)
+	}
+	// Other ids are unaffected.
+	h.create()
+	cm.Lock()
+	now = now.Add(tombTTL + time.Second)
+	cm.Unlock()
+	h.want(createReq(id), nil, transport.CodeOK)
+}
+
+func TestTombstoneBoundedAndExpiring(t *testing.T) {
+	var tb tombstones
+	t0 := time.Unix(5000, 0)
+	ids := make([]workspace.ID, tombMax+50)
+	for i := range ids {
+		ids[i] = workspace.NewID()
+		tb.add(ids[i], t0.Add(time.Duration(i)*time.Second))
+	}
+	now := t0.Add(time.Duration(len(ids)) * time.Second)
+	if len(tb.order) != tombMax || len(tb.at) != tombMax {
+		t.Fatalf("size = %d/%d, want %d", len(tb.order), len(tb.at), tombMax)
+	}
+	if tb.has(ids[0], now) || tb.has(ids[49], now) {
+		t.Error("oldest ids were not evicted")
+	}
+	if !tb.has(ids[50], now) || !tb.has(ids[len(ids)-1], now) {
+		t.Error("recent ids missing")
+	}
+	// Re-adding an id refreshes it without growing the set.
+	tb.add(ids[50], now)
+	if len(tb.order) != tombMax {
+		t.Fatalf("size after refresh = %d", len(tb.order))
+	}
+	// Expiry: id 51 is old enough, the refreshed id 50 is not.
+	later := t0.Add(51*time.Second + tombTTL)
+	if tb.has(ids[51], later) {
+		t.Error("expired id still present")
+	}
+	if !tb.has(ids[50], later) {
+		t.Error("refreshed id expired early")
+	}
+	if tb.has(ids[50], now.Add(tombTTL)) {
+		t.Error("refreshed id never expires")
+	}
+	if len(tb.order) != len(tb.at) {
+		t.Fatalf("order/map out of sync: %d vs %d", len(tb.order), len(tb.at))
+	}
+}
+
+// E-01: max_age_ms is compared in milliseconds before converting to a Duration.
+func TestPrepareMaxAgeNoOverflow(t *testing.T) {
+	s := newWSState(fake.New(), parseWS(t, wsYAML)) // cap 24h
+	prep := func(ms int64) (*wsOp, *opErr) {
+		return s.prepare(&transport.WorkspaceRequest{Op: transport.OpCreate, ID: string(workspace.NewID()),
+			Spec: &transport.WorkspaceSpec{Image: "alpine:3.20", MaxAgeMs: ms}})
+	}
+	day := (24 * time.Hour).Milliseconds()
+	for name, ms := range map[string]int64{
+		"MaxInt64":        math.MaxInt64,
+		"wraps negative":  math.MaxInt64/int64(time.Millisecond) + 1,
+		"just over bound": transport.MaxWorkspaceAgeMs + 1,
+		"cap plus 1ms":    day + 1,
+		"negative":        -1,
+		"min int64":       math.MinInt64,
+	} {
+		if _, e := prep(ms); e == nil || e.code != transport.CodeRefused {
+			t.Errorf("%s: %v, want refused", name, e)
+		}
+	}
+	for ms, want := range map[int64]time.Duration{0: 24 * time.Hour, 1: time.Millisecond, day: 24 * time.Hour} {
+		op, e := prep(ms)
+		if e != nil || op.spec.MaxAge != want {
+			t.Errorf("max_age_ms=%d: %v %v, want %v", ms, op, e, want)
+		}
+	}
+	// No runner cap: the transport bound still applies and the result never wraps.
+	s2 := newWSState(fake.New(), parseWS(t, strings.Replace(wsYAML, "max_age: 24h\n", "", 1)))
+	if s2.cfg.MaxAge != 0 {
+		t.Fatalf("cap = %v, want none", s2.cfg.MaxAge)
+	}
+	op, e := s2.prepare(&transport.WorkspaceRequest{Op: transport.OpCreate, ID: string(workspace.NewID()),
+		Spec: &transport.WorkspaceSpec{Image: "alpine:3.20", MaxAgeMs: transport.MaxWorkspaceAgeMs}})
+	if e != nil || op.spec.MaxAge != 365*24*time.Hour {
+		t.Errorf("at bound: %v %v", op, e)
+	}
+	if _, e := s2.prepare(&transport.WorkspaceRequest{Op: transport.OpCreate, ID: string(workspace.NewID()),
+		Spec: &transport.WorkspaceSpec{Image: "alpine:3.20", MaxAgeMs: math.MaxInt64}}); e == nil {
+		t.Error("MaxInt64 accepted without a cap")
+	}
+}
+
+// failEx has no DiskUsager. Create waits for cRelease then fails with createErr; Destroy waits
+// for dRelease (when set) and then answers destroyErr.
+type failEx struct {
+	*fake.Executor
+	entered    chan struct{}
+	cRelease   chan struct{}
+	dEntered   chan struct{}
+	dRelease   chan struct{}
+	createErr  error
+	destroyErr error
+	mu         sync.Mutex
+	destroys   int
+}
+
+func newFailEx() *failEx {
+	return &failEx{Executor: fake.New(), entered: make(chan struct{}, 8), cRelease: make(chan struct{}),
+		dEntered: make(chan struct{}, 8)}
+}
+
+func (f *failEx) Create(ctx context.Context, s workspace.Spec) error {
+	f.entered <- struct{}{}
+	<-f.cRelease
+	if f.createErr != nil {
+		return f.createErr
+	}
+	return f.Executor.Create(ctx, s)
+}
+
+func (f *failEx) Destroy(ctx context.Context, id workspace.ID) error {
+	f.mu.Lock()
+	f.destroys++
+	g := f.dRelease
+	f.mu.Unlock()
+	f.dEntered <- struct{}{}
+	if g != nil {
+		<-g
+	}
+	if f.destroyErr != nil {
+		return f.destroyErr
+	}
+	return f.Executor.Destroy(ctx, id)
+}
+
+// A create fails while a destroy is deferred behind it, and the deferred destroy fails too (the
+// executor is unavailable): no container exists, yet the entry is confirmed and holds a slot.
+// The next OpList (reconcile) must prune it, on an executor without DiskUsager.
+func TestWorkspaceListPrunesPhantomEntry(t *testing.T) {
+	f := newFailEx()
+	f.createErr, f.destroyErr = workspace.ErrUnavailable, workspace.ErrUnavailable
+	h := newHarness(t, wsYAML, f.Executor, func(cfg *Config) { cfg.Workspace = f })
+	var once sync.Once
+	open := func() { once.Do(func() { close(f.cRelease) }) }
+	t.Cleanup(open)
+	if _, ok := workspace.Executor(f).(workspace.DiskUsager); ok {
+		t.Fatal("failEx must not implement DiskUsager")
+	}
+	id := workspace.NewID()
+	created := make(chan struct{})
+	go func() { h.try(createReq(id), nil); close(created) }()
+	recv(t, f.entered, "create entered")
+	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil, transport.CodeOK)
+	open()
+	<-created
+	waitFor(t, "phantom confirmed entry", func() bool {
+		d, cf, ok := h.entry(id)
+		return ok && !d && cf
+	})
+	// A live container listed by the executor is never pruned.
+	f.createErr, f.destroyErr = nil, nil
+	keep := h.create()
+	h.want(transport.WorkspaceRequest{Op: transport.OpList}, nil, transport.CodeOK)
+	if _, _, ok := h.entry(id); ok {
+		t.Fatal("phantom entry survived OpList")
+	}
+	if _, cf, ok := h.entry(keep); !ok || !cf {
+		t.Fatalf("listed workspace pruned: ok=%v confirmed=%v", ok, cf)
+	}
+	if n := h.slots(); n != 1 {
+		t.Fatalf("slots = %d, want 1", n)
+	}
+}
+
+// prune keeps entries confirmed after the List began, in-flight creates and doomed entries.
+func TestWorkspacePruneSkipsNewerAndBusyEntries(t *testing.T) {
+	s := newWSState(fake.New(), &wsconfig.Config{Concurrent: 8})
+	mk := func() workspace.ID { return workspace.NewID() }
+	old, newer, inflight, doomed := mk(), mk(), mk(), mk()
+	s.mu.Lock()
+	for _, id := range []workspace.ID{old, newer, inflight, doomed} {
+		s.live[id] = &wsEntry{}
+	}
+	s.confirm(s.live[old])
+	start := s.gen
+	s.confirm(s.live[newer]) // finished while the List ran
+	s.live[inflight].refs = 1
+	s.live[doomed].doomed = true
+	s.mu.Unlock()
+	s.prune(start, map[workspace.ID]bool{})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.live[old] != nil {
+		t.Error("unlisted old confirmed entry kept")
+	}
+	for name, id := range map[string]workspace.ID{"newer": newer, "inflight": inflight, "doomed": doomed} {
+		if s.live[id] == nil {
+			t.Errorf("%s entry pruned", name)
+		}
+	}
+}
+
+// A destroy of an absent id drops the lock around the executor call. A create admitted in that
+// window must keep its entry (now doomed, so createDone destroys it), not have it forgotten.
+func TestWorkspaceDestroyAbsentRacesNewCreate(t *testing.T) {
+	f := newFailEx()
+	f.destroyErr = workspace.ErrNotFound
+	dGate := make(chan struct{})
+	f.dRelease = dGate
+	h := newHarness(t, wsYAML, f.Executor, func(cfg *Config) { cfg.Workspace = f })
+	var co, do sync.Once
+	t.Cleanup(func() { co.Do(func() { close(f.cRelease) }); do.Do(func() { close(dGate) }) })
+	id := workspace.NewID()
+	destroyed := make(chan struct{})
+	go func() {
+		h.try(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id)}, nil)
+		close(destroyed)
+	}()
+	recv(t, f.dEntered, "destroy entered")
+	created := make(chan struct{})
+	go func() { h.try(createReq(id), nil); close(created) }()
+	recv(t, f.entered, "create entered")
+	do.Do(func() { close(dGate) })
+	<-destroyed
+	d, cf, ok := h.entry(id)
+	if !ok || !d || cf {
+		t.Fatalf("new create's entry: ok=%v doomed=%v confirmed=%v, want present and doomed", ok, d, cf)
+	}
+	co.Do(func() { close(f.cRelease) })
+	<-created
+	recv(t, f.dEntered, "deferred destroy")
+	waitFor(t, "entry released after deferred destroy", func() bool { _, _, ok := h.entry(id); return !ok })
 }

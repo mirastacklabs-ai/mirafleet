@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/orch"
 )
 
 type fakeCall struct {
@@ -201,7 +202,7 @@ func TestMCPCallLimit(t *testing.T) {
 		{"run malformed", run, `[1]`, api.DefaultActionTimeout + mcpRunMargin},
 	}
 	for _, c := range cases {
-		if got := mcpCallLimit(c.method, json.RawMessage(c.params)); got != c.want {
+		if got := orch.CallLimit(c.method, json.RawMessage(c.params)); got != c.want {
 			t.Errorf("%s: got %v want %v", c.name, got, c.want)
 		}
 	}

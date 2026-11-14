@@ -18,7 +18,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/mirastacklabs-ai/mirafleet/internal/keys"
+	"golang.org/x/sys/unix"
+
 	"github.com/mirastacklabs-ai/mirafleet/internal/runner"
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/ctrd"
@@ -73,31 +74,34 @@ func runnerTLSInit(args []string, out io.Writer) error {
 	if *dir == "" || fs.NArg() > 0 {
 		return errors.New("usage: mirafleet runner tls-init -dir DIR [-days N]")
 	}
-	// Lstat first: EnsureDir chmods 0700 through a symlink, so a planted link must not be followed.
-	if fi, err := os.Lstat(*dir); err == nil {
-		if fi.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%s is a symlink: tls-init refuses to follow it; give the real directory", *dir)
-		}
-		if !fi.IsDir() {
-			return fmt.Errorf("%s exists and is not a directory", *dir)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if ents, err := os.ReadDir(*dir); err == nil {
-		if len(ents) > 0 {
-			return fmt.Errorf("%s is not empty: tls-init never overwrites; use a fresh directory", *dir)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+	if *days < 1 || *days > 3650 {
+		return fmt.Errorf("-days %d out of range (1..3650)", *days)
 	}
 	syscall.Umask(0o077)
-	if err := keys.EnsureDir(*dir); err != nil {
+	dfd, err := openPrivateDir(*dir)
+	if err != nil {
 		return err
+	}
+	defer unix.Close(dfd)
+	dirf := os.NewFile(uintptr(dfd), *dir)
+	if ents, err := dirf.ReadDir(1); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	} else if len(ents) > 0 {
+		return fmt.Errorf("%s is not empty: tls-init never overwrites; use a fresh directory", *dir)
 	}
 	p, err := osb.InitPKI(*dir, *days, time.Now())
 	if err != nil {
 		return err
+	}
+	// osb.InitPKI writes by path (it is outside this file's remit to change). The verified
+	// directory is 0700 and ours, so only a writer of the parent could swap the leaf; detect that
+	// after the fact by comparing the path with the verified fd (see openPrivateDir).
+	var fst, pst unix.Stat_t
+	if err := unix.Fstat(dfd, &fst); err != nil {
+		return err
+	}
+	if err := unix.Lstat(*dir, &pst); err != nil || pst.Dev != fst.Dev || pst.Ino != fst.Ino {
+		return fmt.Errorf("%s was replaced while tls-init ran: do not use the generated files; remove them and retry in a private parent directory", *dir)
 	}
 	fmt.Fprintf(out, "node CA certificate: %s\nfront certificate:   %s (key %s)\nrunner client cert:  %s (key %s)\n"+
 		"valid until:         %s\nThe CA private key was discarded; rotate by running tls-init into a new directory.\n\n"+
@@ -107,6 +111,46 @@ func runnerTLSInit(args []string, out io.Writer) error {
 		p.CAFile, p.FrontCert, p.FrontKey, p.ClientCert, p.ClientKey, p.NotAfter.UTC().Format(time.RFC3339),
 		p.CAFile, p.FrontPinSHA, p.ClientCert, p.ClientKey, p.Dir)
 	return nil
+}
+
+// openPrivateDir creates the leaf of dir (the parent must exist) with mode 0700 and returns an
+// fd for it, opened O_DIRECTORY|O_NOFOLLOW and verified through that fd: a directory, owned by
+// the effective uid, mode exactly 0700. An existing leaf that fails any of this is refused, never
+// chmodded or chowned (an attacker-owned or looser directory in a shared parent is not ours).
+func openPrivateDir(dir string) (int, error) {
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return -1, err
+	}
+	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		if fi, lerr := os.Lstat(dir); lerr == nil {
+			if fi.Mode()&os.ModeSymlink != 0 {
+				return -1, fmt.Errorf("%s is a symlink: tls-init refuses to follow it; give the real directory", dir)
+			}
+			if !fi.IsDir() {
+				return -1, fmt.Errorf("%s exists and is not a directory", dir)
+			}
+		}
+		return -1, fmt.Errorf("open %s: %w", dir, err)
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		unix.Close(fd)
+		return -1, err
+	}
+	switch {
+	case st.Mode&unix.S_IFMT != unix.S_IFDIR:
+		err = fmt.Errorf("%s is not a directory", dir)
+	case int(st.Uid) != os.Geteuid():
+		err = fmt.Errorf("%s is owned by uid %d, not by this user (uid %d): refusing; use a directory you create", dir, st.Uid, os.Geteuid())
+	case st.Mode&0o7777 != 0o700:
+		err = fmt.Errorf("%s has mode %04o, want exactly 0700: refusing (tls-init does not chmod an existing directory)", dir, st.Mode&0o7777)
+	}
+	if err != nil {
+		unix.Close(fd)
+		return -1, err
+	}
+	return fd, nil
 }
 
 // ---- runner tls-front ----

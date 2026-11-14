@@ -66,11 +66,16 @@ func TestDefaultDirUnderUserConfig(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	t.Setenv("HOME", cfg)
 	t.Setenv("AppData", cfg)
+	// Windows deliberately uses %LocalAppData% (docs/M5.md 1.9), not Roaming.
+	t.Setenv("LocalAppData", cfg)
 	d, err := Dir()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if filepath.Base(d) != "mirafleet" || !strings.HasPrefix(d, cfg) {
+		t.Fatal(d)
+	}
+	if runtime.GOOS == "windows" && d != strings.TrimRight(cfg, `\/`)+`\mirafleet` {
 		t.Fatal(d)
 	}
 }

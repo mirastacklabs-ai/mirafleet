@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -39,8 +40,12 @@ func TestEnsureDirTightensExisting(t *testing.T) {
 	if err := EnsureDir(d); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := os.Stat(d); st.Mode().Perm() != 0o700 {
-		t.Fatalf("mode %v", st.Mode())
+	// Windows reports synthetic mode bits; protection there is the DACL,
+	// covered by TestEnsureDirTightensExistingDir in acl_windows_test.go.
+	if runtime.GOOS != "windows" {
+		if st, _ := os.Stat(d); st.Mode().Perm() != 0o700 {
+			t.Fatalf("mode %v", st.Mode())
+		}
 	}
 	n := filepath.Join(d, "new", "sub")
 	if err := EnsureDir(n); err != nil {

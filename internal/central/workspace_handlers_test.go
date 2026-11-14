@@ -44,6 +44,8 @@ type wsLive struct {
 	files map[string]map[string][]byte // ws id -> path -> bytes
 	calls []string
 	stdin []string
+
+	refuseDestroy bool // the runner answers destroy with busy
 }
 
 func (l *wsLive) Snapshot() []registry.SessionInfo { return l.snap }
@@ -106,6 +108,9 @@ func (l *wsLive) Workspace(ctx context.Context, id int64, req transport.Workspac
 		return &transport.WorkspaceResult{Code: transport.CodeOK, File: &transport.WorkspaceFile{Size: int64(len(data)),
 			Mode: 0o644, Length: int64(len(chunk)), EOF: req.Offset+int64(len(chunk)) >= int64(len(data))}}, nil
 	case transport.OpDestroy:
+		if l.refuseDestroy {
+			return &transport.WorkspaceResult{Code: transport.CodeBusy}, nil
+		}
 		delete(l.files, req.ID)
 		return &transport.WorkspaceResult{Code: transport.CodeOK}, nil
 	}
@@ -583,6 +588,32 @@ func TestWorkspaceAdminMethodsRefusedOnAPI(t *testing.T) {
 		if _, ok := adminTable().handlers[m]; !ok {
 			t.Fatalf("%s missing on the admin table", m)
 		}
+	}
+}
+
+// E-04: a runner that refuses the destroy leaves the row closing; close answers ok with
+// state "closing" (not unavailable), and a close that succeeds carries no state.
+func TestWorkspaceCloseRunnerRefusesReportsClosing(t *testing.T) {
+	w := newWSEnv(t)
+	cl := w.opClient("alice")
+	ctx := tctx(t)
+	var open api.WorkspaceOpenResult
+	must(t, cl.Call(ctx, api.MethodWorkspaceOpen, api.WorkspaceOpenParams{Fleet: wsDevFleet, Session: "s"}, &open))
+	w.live.mu.Lock()
+	w.live.refuseDestroy = true
+	w.live.mu.Unlock()
+	var res api.WorkspaceCloseResult
+	must(t, cl.Call(ctx, api.MethodWorkspaceClose, api.WorkspaceCloseParams{Workspace: open.Workspace.ID}, &res))
+	if res.State != "closing" {
+		t.Fatalf("state %q, want closing", res.State)
+	}
+	w.live.mu.Lock()
+	w.live.refuseDestroy = false
+	w.live.mu.Unlock()
+	var done api.WorkspaceCloseResult
+	must(t, cl.Call(ctx, api.MethodWorkspaceClose, api.WorkspaceCloseParams{Workspace: open.Workspace.ID}, &done))
+	if done.State != "" {
+		t.Fatalf("closed: state %q, want empty", done.State)
 	}
 }
 

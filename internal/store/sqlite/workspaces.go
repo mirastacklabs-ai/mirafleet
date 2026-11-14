@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	maxAuditWsIDs         = 4096 // byte cap of the ws_ids audit param
 	defaultWorkspaceLimit = 100
 	maxWorkspaceLimit     = 1000
 )
@@ -419,8 +420,10 @@ func closeParams(p map[string]string, ids []string) map[string]string {
 	}
 	out["count"] = strconv.Itoa(len(ids))
 	list := strings.Join(ids, ",")
-	if len(list) > 4096 {
-		list = list[:4096]
+	if len(list) > maxAuditWsIDs {
+		// Cut at a comma so no id is split (E-05); count still holds the full total.
+		list = list[:max(strings.LastIndexByte(list[:maxAuditWsIDs+1], ','), 0)]
+		out["ws_ids_truncated"] = "true"
 	}
 	out["ws_ids"] = list
 	return out

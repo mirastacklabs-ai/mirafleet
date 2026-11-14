@@ -194,6 +194,13 @@ func TestOpenSandboxRules(t *testing.T) {
 		{"no client cert", rep(osBase, "  client_cert: /etc/mirafleet/c.pem\n", ""), "client_cert"},
 		{"no client key", rep(osBase, "  client_key: /etc/mirafleet/c.key\n", ""), "client_key"},
 		{"no api key file", rep(osBase, "  api_key_file: /etc/mirafleet/opensandbox.key\n", ""), "api_key_file"},
+		{"port 0", rep(osBase, "127.0.0.1:8443", "127.0.0.1:0"), "port"},
+		{"port 65536", rep(osBase, "127.0.0.1:8443", "127.0.0.1:65536"), "port"},
+		{"port negative", rep(osBase, "127.0.0.1:8443", "127.0.0.1:-1"), "opensandbox.server"},
+		{"port non-numeric", rep(osBase, "127.0.0.1:8443", "127.0.0.1:https"), "opensandbox.server"},
+		{"port missing", rep(osBase, "127.0.0.1:8443", "127.0.0.1"), "port"},
+		{"port missing trailing colon", rep(osBase, "127.0.0.1:8443", "127.0.0.1:"), "port"},
+		{"ipv6 port missing", rep(osBase, "127.0.0.1:8443", "[::1]"), "port"},
 		{"server path", rep(osBase, "127.0.0.1:8443", "127.0.0.1:8443/v1"), "no path"},
 		{"secure_runtime too long", rep(osBase, "secure_runtime: gvisor", "secure_runtime: "+strings.Repeat("a", 65)), "secure_runtime"},
 		{"relative ca", rep(osBase, "/etc/mirafleet/ca.pem", "ca.pem"), "ca_file"},
@@ -216,7 +223,8 @@ func TestOpenSandboxRules(t *testing.T) {
 		"external":      rep(osBase, "  secure_runtime: gvisor", "  front: external\n  secure_runtime: gvisor"),
 		"ipv6 loopback": rep(osBase, "127.0.0.1:8443", "[::1]:8443"),
 		"localhost":     rep(osBase, "127.0.0.1:8443", "localhost:8443"),
-		"no port":       rep(osBase, "127.0.0.1:8443", "127.0.0.1"),
+		"port 1":        rep(osBase, "127.0.0.1:8443", "127.0.0.1:1"),
+		"port 65535":    rep(osBase, "127.0.0.1:8443", "127.0.0.1:65535"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse([]byte(y)); err != nil {
@@ -289,6 +297,7 @@ func TestCheckFilesOpenSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, ck := c.OpenSandbox.APIKeyFile, c.OpenSandbox.ClientKey
+	pdir := filepath.Dir(p)
 	cases := []struct {
 		name string
 		st   map[string]FileStat
@@ -308,14 +317,29 @@ func TestCheckFilesOpenSandbox(t *testing.T) {
 		{"client key 0644", map[string]FileStat{p: {Mode: 0o600, UID: 501}, ck: {Mode: 0o644, UID: 501}}, 501, "client_key"},
 		{"client key other owner", map[string]FileStat{p: {Mode: 0o600, UID: 501}, ck: {Mode: 0o600, UID: 0}}, 501, "client_key"},
 		{"client key missing", map[string]FileStat{p: {Mode: 0o600, UID: 501}, ck: {}}, 501, "client_key"},
+		// E-07: the parent directory of both secrets.
+		{"parent root 0755", map[string]FileStat{p: {Mode: 0o600, UID: 501}, pdir: {Mode: os.ModeDir | 0o755, UID: 0, IsDir: true}}, 501, ""},
+		{"parent runner 0700", map[string]FileStat{p: {Mode: 0o600, UID: 501}, pdir: {Mode: os.ModeDir | 0o700, UID: 501, IsDir: true}}, 501, ""},
+		{"parent other owner", map[string]FileStat{p: {Mode: 0o600, UID: 501}, pdir: {Mode: os.ModeDir | 0o755, UID: 1000, IsDir: true}}, 501, "parent directory"},
+		{"parent group writable", map[string]FileStat{p: {Mode: 0o600, UID: 501}, pdir: {Mode: os.ModeDir | 0o775, UID: 0, IsDir: true}}, 501, "group- or world-writable"},
+		{"parent world writable", map[string]FileStat{p: {Mode: 0o600, UID: 501}, pdir: {Mode: os.ModeDir | 0o757, UID: 501, IsDir: true}}, 501, "group- or world-writable"},
+		{"parent sticky world writable", map[string]FileStat{p: {Mode: 0o600, UID: 501}, pdir: {Mode: os.ModeDir | os.ModeSticky | 0o777, UID: 0, IsDir: true}}, 501, "group- or world-writable"},
+		{"parent not a dir", map[string]FileStat{p: {Mode: 0o600, UID: 501}, pdir: {Mode: 0o755, UID: 0}}, 501, "not a directory"},
+		{"parent undeterminable", map[string]FileStat{p: {Mode: 0o600, UID: 501}, pdir: {}}, 501, "parent directory"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if _, ok := tc.st[pdir]; !ok {
+				tc.st[pdir] = FileStat{Mode: os.ModeDir | 0o755, UID: 0, IsDir: true} // a good parent unless the case says otherwise
+			}
 			if _, ok := tc.st[ck]; !ok {
 				tc.st[ck] = FileStat{Mode: 0o600, UID: uint32(tc.uid)} // a good client key unless the case says otherwise
 			}
 			if tc.st[ck] == (FileStat{}) {
 				delete(tc.st, ck)
+			}
+			if tc.st[pdir] == (FileStat{}) {
+				delete(tc.st, pdir) // stat fails: ownership undeterminable, must fail closed
 			}
 			stub(t, tc.st, tc.uid)
 			err := c.CheckFiles()

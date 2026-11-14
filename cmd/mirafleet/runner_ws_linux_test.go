@@ -46,6 +46,92 @@ containerd:
   root: /var/lib/mirafleet/ws
 `
 
+func TestRunnerTLSInitDirChecks(t *testing.T) {
+	var out bytes.Buffer
+	parent := t.TempDir()
+
+	// Happy path: a missing leaf is created 0700; a pre-created empty 0700 dir of ours is fine.
+	fresh := filepath.Join(parent, "fresh")
+	if err := runnerTLSInit([]string{"-dir", fresh}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if mode(t, fresh) != 0o700 {
+		t.Errorf("fresh dir mode %v", mode(t, fresh))
+	}
+	pre := filepath.Join(parent, "pre")
+	if err := os.Mkdir(pre, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := runnerTLSInit([]string{"-dir", pre}, &out); err != nil {
+		t.Fatalf("pre-created 0700 dir: %v", err)
+	}
+
+	// The parent must exist: nothing is created recursively.
+	if err := runnerTLSInit([]string{"-dir", filepath.Join(parent, "no", "leaf")}, &out); err == nil {
+		t.Error("missing parent accepted")
+	}
+
+	// A symlinked leaf is refused and nothing is written through it.
+	target := filepath.Join(parent, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(parent, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := runnerTLSInit([]string{"-dir", link}, &out); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("symlinked leaf: %v", err)
+	}
+	if ents, _ := os.ReadDir(target); len(ents) != 0 {
+		t.Errorf("wrote through the symlink: %v", ents)
+	}
+
+	// A pre-created dir with a looser mode is refused and left as it was (no chmod).
+	loose := filepath.Join(parent, "loose")
+	if err := os.Mkdir(loose, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(loose, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := runnerTLSInit([]string{"-dir", loose}, &out); err == nil || !strings.Contains(err.Error(), "0700") {
+		t.Errorf("0755 dir: %v", err)
+	}
+	if mode(t, loose) != 0o755 {
+		t.Errorf("refused dir was chmodded to %v", mode(t, loose))
+	}
+	if ents, _ := os.ReadDir(loose); len(ents) != 0 {
+		t.Errorf("wrote into the refused dir: %v", ents)
+	}
+
+	// A regular file at the leaf is refused.
+	file := filepath.Join(parent, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runnerTLSInit([]string{"-dir", file}, &out); err == nil {
+		t.Error("regular file accepted")
+	}
+
+	// A dir owned by another uid: only root can chown in a test; otherwise skip the case.
+	t.Run("other owner", func(t *testing.T) {
+		if os.Geteuid() != 0 {
+			t.Skip("needs root to chown a directory to another uid")
+		}
+		d := filepath.Join(parent, "foreign")
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chown(d, 12345, 12345); err != nil {
+			t.Skipf("chown unavailable: %v", err)
+		}
+		if err := runnerTLSInit([]string{"-dir", d}, &out); err == nil || !strings.Contains(err.Error(), "owned by uid") {
+			t.Errorf("foreign-owned dir: %v", err)
+		}
+	})
+}
+
 func TestRunnerTLSInitAndFront(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "tls")
 	var out bytes.Buffer

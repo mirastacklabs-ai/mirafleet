@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
 
 const wsSock = defaultCentralData + "/admin.sock"
@@ -56,6 +57,10 @@ func TestFleetCreateWorkspaceFlagErrors(t *testing.T) {
 		"zero memory":                     {"fleet", "create", "x", "-mode", "workspace", "-memory", "0"},
 		"zero cpus":                       {"fleet", "create", "x", "-mode", "workspace", "-cpus", "0"},
 		"huge cpus":                       {"fleet", "create", "x", "-mode", "workspace", "-cpus", "1e9"},
+		"tiny cpus":                       {"fleet", "create", "x", "-mode", "workspace", "-cpus", "0.0004"},
+		"just below 0.001":                {"fleet", "create", "x", "-mode", "workspace", "-cpus", "0.00099"},
+		"negative cpus":                   {"fleet", "create", "x", "-mode", "workspace", "-cpus", "-1"},
+		"above store cap":                 {"fleet", "create", "x", "-mode", "workspace", "-cpus", "1024.001"},
 		"nan cpus":                        {"fleet", "create", "x", "-mode", "workspace", "-cpus", "NaN"},
 		"inf cpus":                        {"fleet", "create", "x", "-mode", "workspace", "-cpus", "Inf"},
 		"negative pids":                   {"fleet", "create", "x", "-mode", "workspace", "-pids", "-1"},
@@ -76,6 +81,23 @@ func TestFleetCreateWorkspaceFlagErrors(t *testing.T) {
 	}
 	if _, ok := lastParams(t, f, api.MethodFleetCreate)["workspace"]; ok {
 		t.Error("an empty workspace config was sent")
+	}
+}
+
+func TestFleetCreateCPUBoundaries(t *testing.T) {
+	if maxCLICPUs != store.MaxCPUMilli/1000 {
+		t.Fatalf("CLI cpu cap %d != store cap %d", maxCLICPUs, store.MaxCPUMilli/1000)
+	}
+	for in, want := range map[string]float64{"0.001": 1, "0.0015": 2, "1": 1000, "1024": 1_024_000} {
+		f := &fakeAdmin{}
+		if err := f.cli().run([]string{"fleet", "create", "x", "-mode", "workspace", "-cpus", in}); err != nil {
+			t.Errorf("-cpus %s refused: %v", in, err)
+			continue
+		}
+		ws, _ := lastParams(t, f, api.MethodFleetCreate)["workspace"].(map[string]any)
+		if ws["cpu_milli"] != want {
+			t.Errorf("-cpus %s: cpu_milli=%v want %v", in, ws["cpu_milli"], want)
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/orch"
 )
 
 func TestMCPCallLimitWorkspace(t *testing.T) {
@@ -36,7 +37,7 @@ func TestMCPCallLimitWorkspace(t *testing.T) {
 		{api.MethodRunnersList, `{}`, mcpCallTimeout},
 		{api.MethodActionRun, `{"timeout_s":10}`, 10*time.Second + m},
 	} {
-		if got := mcpCallLimit(tc.method, json.RawMessage(tc.params)); got != tc.want {
+		if got := orch.CallLimit(tc.method, json.RawMessage(tc.params)); got != tc.want {
 			t.Errorf("%s %s = %s, want %s", tc.method, tc.params, got, tc.want)
 		}
 	}

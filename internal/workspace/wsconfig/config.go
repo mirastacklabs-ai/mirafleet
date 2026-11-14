@@ -437,6 +437,12 @@ func (o *OpenSandbox) validate() error {
 	if u.Path != "" && u.Path != "/" || u.RawPath != "" {
 		return fmt.Errorf("opensandbox.server %q: no path allowed (use scheme://host:port)", o.Server)
 	}
+	// The port is explicit (no implied 443): the server is a local loopback service on a
+	// site-chosen port, so a missing port is almost certainly a typo for the front's port.
+	port := u.Port()
+	if n, err := strconv.Atoi(port); port == "" || err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("opensandbox.server %q: an explicit port in 1..65535 is required (use scheme://host:port)", o.Server)
+	}
 	switch u.Hostname() {
 	case "127.0.0.1", "::1", "localhost":
 	default:
@@ -548,11 +554,35 @@ func checkSecretFile(name, p string) error {
 	if st.IsDir || !st.Mode.IsRegular() {
 		return fmt.Errorf("opensandbox.%s %q: not a regular file", name, p)
 	}
+	if err := checkParentDir(name, p); err != nil {
+		return err
+	}
 	if m := st.Mode.Perm(); m != 0o600 && m != 0o400 {
 		return fmt.Errorf("opensandbox.%s %q: mode must be 0600 or 0400, is %04o", name, p, m)
 	}
 	if uid := getuid(); uid < 0 || st.UID != uint32(uid) {
 		return fmt.Errorf("opensandbox.%s %q: must be owned by the runner user (uid %d), is uid %d", name, p, uid, st.UID)
+	}
+	return nil
+}
+
+// checkParentDir requires the directory holding a secret file to be owned by root or the
+// runner's uid and not group- or world-writable: otherwise another local user could swap the
+// file between Load and the later read. It fails closed when ownership cannot be determined.
+func checkParentDir(name, p string) error {
+	dir := filepath.Dir(p)
+	st, err := statFn(dir)
+	if err != nil {
+		return fmt.Errorf("opensandbox.%s %q: parent directory %q: %w", name, p, dir, err)
+	}
+	if !st.IsDir {
+		return fmt.Errorf("opensandbox.%s %q: parent %q is not a directory", name, p, dir)
+	}
+	if uid := getuid(); st.UID != 0 && (uid < 0 || st.UID != uint32(uid)) {
+		return fmt.Errorf("opensandbox.%s %q: parent directory %q must be owned by root or the runner user (uid %d), is uid %d", name, p, dir, uid, st.UID)
+	}
+	if st.Mode.Perm()&0o022 != 0 {
+		return fmt.Errorf("opensandbox.%s %q: parent directory %q must not be group- or world-writable (mode %04o)", name, p, dir, st.Mode.Perm())
 	}
 	return nil
 }

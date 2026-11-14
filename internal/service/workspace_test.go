@@ -726,11 +726,47 @@ func TestCloseWorkspaceRunnerOffline(t *testing.T) {
 	}
 }
 
+// E-04: the runner online but refusing the destroy leaves the row closing and returns it, for
+// both close and kill; the reaper then finishes it.
+func TestCloseKillRunnerRefusesReturnsClosing(t *testing.T) {
+	for _, kill := range []bool{false, true} {
+		e := newEnv(t)
+		e.wsFleet("dev", false, nil)
+		e.wsRunner("dev", rspec{slots: 2})
+		ann := e.operator("ann")
+		w, _, err := e.svc.OpenWorkspace(e.ctx, ann, SourceAPI, "dev", "s", "", nil, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.live.wsFn = func(context.Context, int64, transport.WorkspaceRequest, io.Reader, io.Writer) (*transport.WorkspaceResult, error) {
+			return &transport.WorkspaceResult{Code: transport.CodeBusy}, nil
+		}
+		var got store.Workspace
+		if kill {
+			got, err = e.svc.KillWorkspace(e.ctx, e.admin, SourceCLI, w.WsID)
+		} else {
+			got, err = e.svc.CloseWorkspace(e.ctx, ann, SourceAPI, w.WsID)
+		}
+		if err != nil || got.State != store.WorkspaceClosing {
+			t.Fatalf("kill=%v: %+v %v", kill, got, err)
+		}
+		if st := e.state(w.WsID); st.State != store.WorkspaceClosing {
+			t.Fatalf("kill=%v: stored %s", kill, st.State)
+		}
+		e.live.wsFn = nil
+		e.svc.ReapOnce(e.ctx)
+		if st := e.state(w.WsID); st.State != store.WorkspaceClosed {
+			t.Fatalf("kill=%v: reaper left %s", kill, st.State)
+		}
+	}
+}
+
 // failStore fails chosen mutations to prove the service fails closed.
 type failStore struct {
 	store.Store
 	failReserve bool
 	failClosing bool
+	failOpen    bool // fail opening -> open with a non-conflict error (E-16)
 }
 
 func (f failStore) ReserveWorkspace(ctx context.Context, w store.Workspace, slots, maxPerOp int, now time.Time, ev store.AuditEvent) (store.Workspace, bool, error) {
@@ -741,7 +777,7 @@ func (f failStore) ReserveWorkspace(ctx context.Context, w store.Workspace, slot
 }
 
 func (f failStore) SetWorkspaceState(ctx context.Context, id string, from []store.WorkspaceState, to store.WorkspaceState, reason string, now time.Time, ev store.AuditEvent) (store.Workspace, error) {
-	if f.failClosing && to == store.WorkspaceClosing {
+	if (f.failClosing && to == store.WorkspaceClosing) || (f.failOpen && to == store.WorkspaceOpen) {
 		return store.Workspace{}, errors.New("audit disk full")
 	}
 	return f.Store.SetWorkspaceState(ctx, id, from, to, reason, now, ev)
@@ -784,10 +820,39 @@ func errOf3[A, B any](_ A, _ B, err error) error { return err }
 func TestOpenWorkspaceDestroysStrayContainer(t *testing.T) {
 	type wsFn = func(context.Context, int64, transport.WorkspaceRequest, io.Reader, io.Writer) (*transport.WorkspaceResult, error)
 	for name, tc := range map[string]struct {
-		setup       func(e *env) wsFn
+		setup       func(e *env, cancel context.CancelFunc) wsFn
 		wantDestroy int
 	}{
-		"ok but row already closed": {func(e *env) wsFn {
+		"ok but recording open fails (E-16)": {func(e *env, _ context.CancelFunc) wsFn {
+			e.svc.st = failStore{Store: e.svc.st, failOpen: true}
+			return func(context.Context, int64, transport.WorkspaceRequest, io.Reader, io.Writer) (*transport.WorkspaceResult, error) {
+				return &transport.WorkspaceResult{Code: transport.CodeOK}, nil
+			}
+		}, 1},
+		"runner busy": {func(e *env, _ context.CancelFunc) wsFn {
+			return func(context.Context, int64, transport.WorkspaceRequest, io.Reader, io.Writer) (*transport.WorkspaceResult, error) {
+				return &transport.WorkspaceResult{Code: transport.CodeBusy}, nil
+			}
+		}, 0},
+		"request cancelled": {func(e *env, cancel context.CancelFunc) wsFn {
+			return func(ctx context.Context, _ int64, r transport.WorkspaceRequest, _ io.Reader, _ io.Writer) (*transport.WorkspaceResult, error) {
+				if r.Op == transport.OpCreate {
+					cancel()
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+				return &transport.WorkspaceResult{Code: transport.CodeOK}, nil
+			}
+		}, 1},
+		"transport error": {func(e *env, _ context.CancelFunc) wsFn {
+			return func(_ context.Context, _ int64, r transport.WorkspaceRequest, _ io.Reader, _ io.Writer) (*transport.WorkspaceResult, error) {
+				if r.Op == transport.OpCreate {
+					return nil, errors.New("connection reset")
+				}
+				return &transport.WorkspaceResult{Code: transport.CodeOK}, nil
+			}
+		}, 1},
+		"ok but row already closed": {func(e *env, _ context.CancelFunc) wsFn {
 			return func(ctx context.Context, _ int64, r transport.WorkspaceRequest, _ io.Reader, _ io.Writer) (*transport.WorkspaceResult, error) {
 				if r.Op == transport.OpCreate { // killed while the create ran
 					ev := store.AuditEvent{Time: t0, Source: "system", ActorKind: "system", Action: "workspace.kill", Outcome: "ok"}
@@ -800,7 +865,7 @@ func TestOpenWorkspaceDestroysStrayContainer(t *testing.T) {
 				return &transport.WorkspaceResult{Code: transport.CodeOK}, nil
 			}
 		}, 1},
-		"timeout": {func(e *env) wsFn {
+		"timeout": {func(e *env, _ context.CancelFunc) wsFn {
 			e.svc.openTimeout = 20 * time.Millisecond
 			return func(ctx context.Context, _ int64, r transport.WorkspaceRequest, _ io.Reader, _ io.Writer) (*transport.WorkspaceResult, error) {
 				if r.Op == transport.OpCreate {
@@ -810,7 +875,7 @@ func TestOpenWorkspaceDestroysStrayContainer(t *testing.T) {
 				return &transport.WorkspaceResult{Code: transport.CodeOK}, nil
 			}
 		}, 1},
-		"runner refusal": {func(e *env) wsFn {
+		"runner refusal": {func(e *env, _ context.CancelFunc) wsFn {
 			return func(ctx context.Context, _ int64, r transport.WorkspaceRequest, _ io.Reader, _ io.Writer) (*transport.WorkspaceResult, error) {
 				return &transport.WorkspaceResult{Code: transport.CodeRefused, Message: "no"}, nil
 			}
@@ -819,15 +884,40 @@ func TestOpenWorkspaceDestroysStrayContainer(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t)
 			e.wsFleet("dev", false, nil)
-			e.wsRunner("dev", rspec{slots: 2})
-			e.live.wsFn = tc.setup(e)
+			r := e.wsRunner("dev", rspec{slots: 2})
+			ctx, cancel := context.WithCancel(e.ctx)
+			defer cancel()
+			e.live.wsFn = tc.setup(e, cancel)
 			op := e.operator("ann")
-			if err := errOf3(e.svc.OpenWorkspace(e.ctx, op, SourceAPI, "dev", "s", "", nil, "")); err == nil {
+			if err := errOf3(e.svc.OpenWorkspace(ctx, op, SourceAPI, "dev", "s", "", nil, "")); err == nil {
 				t.Fatal("open succeeded")
 			}
-			if n := len(e.wsCalls("destroy")); n != tc.wantDestroy {
-				t.Fatalf("%d destroy calls, want %d (%v)", n, tc.wantDestroy, e.log.get())
+			destroys := e.wsCalls("destroy")
+			if len(destroys) != tc.wantDestroy {
+				t.Fatalf("%d destroy calls, want %d (%v)", len(destroys), tc.wantDestroy, e.log.get())
+			}
+			// The destroy goes to the runner the create went to.
+			creates := e.wsCalls("create")
+			for _, d := range destroys {
+				want := fmt.Sprintf("workspace %d destroy", r.ID)
+				if d != want {
+					t.Fatalf("destroy %q, want %q (creates %v)", d, want, creates)
+				}
 			}
 		})
+	}
+}
+
+func TestBuildSpecClampsMaxAge(t *testing.T) {
+	if store.MaxWorkspaceTTL.Milliseconds() != transport.MaxWorkspaceAgeMs {
+		t.Fatalf("store.MaxWorkspaceTTL %d ms != transport.MaxWorkspaceAgeMs %d", store.MaxWorkspaceTTL.Milliseconds(), int64(transport.MaxWorkspaceAgeMs))
+	}
+	cfg := store.WorkspaceConfig{MaxTTL: 2 * store.MaxWorkspaceTTL}
+	if got := buildSpec(cfg, imgGo, nil, false).MaxAgeMs; got != transport.MaxWorkspaceAgeMs {
+		t.Fatalf("over-bound max ttl sent %d, want clamp to %d", got, int64(transport.MaxWorkspaceAgeMs))
+	}
+	cfg.MaxTTL = time.Hour
+	if got := buildSpec(cfg, imgGo, nil, false).MaxAgeMs; got != time.Hour.Milliseconds() {
+		t.Fatalf("in-bound max ttl sent %d", got)
 	}
 }

@@ -105,6 +105,6 @@ func (s *Service) KillWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		}
 		end.Outcome, end.Message = OutcomeError, "destroy refused: "+code+"; workspace stays closing"
 		s.recordBestEffort(ctx, end)
-		return store.Workspace{}, api.Errorf(api.CodeUnavailable, "runner could not destroy the workspace")
+		return w, nil // E-04: the closing row, as for an offline runner; the reaper finishes it
 	}
 }

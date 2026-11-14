@@ -14,7 +14,12 @@ import (
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
+
+// maxCLICPUs is the CLI's upper bound on -cpus: the store's cap, so the CLI never accepts a
+// value the server would reject.
+const maxCLICPUs = store.MaxCPUMilli / 1000
 
 // wsFlags are the workspace flags of `fleet create` and `fleet workspace set`.
 type wsFlags struct {
@@ -134,8 +139,10 @@ func (w *wsFlags) apply(base api.WorkspaceConfig) (api.WorkspaceConfig, error) {
 		c.Egress = splitList(*w.egress)
 	}
 	if g["cpus"] {
-		if !(*w.cpus > 0 && *w.cpus <= 4096) { // also rejects NaN (every NaN comparison is false)
-			return c, fmt.Errorf("%w: -cpus must be between 0 and 4096", errAdminUsage)
+		// Below 0.001 the millicpu value would round to 0, which the server reads as "default".
+		// The negated form also rejects NaN (every NaN comparison is false).
+		if !(*w.cpus >= 0.001 && *w.cpus <= maxCLICPUs) {
+			return c, fmt.Errorf("%w: -cpus must be between 0.001 and %d", errAdminUsage, maxCLICPUs)
 		}
 		c.CPUMilli = int(math.Round(*w.cpus * 1000))
 	}

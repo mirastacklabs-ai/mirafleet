@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -113,6 +114,10 @@ func TestValidate(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+	atBound := &WorkspaceRequest{Op: OpCreate, ID: testID, Spec: &WorkspaceSpec{Image: "x", MaxAgeMs: MaxWorkspaceAgeMs}}
+	if err := atBound.Validate(); err != nil {
+		t.Errorf("max_age_ms at the bound refused: %v", err)
+	}
 	files := map[string]*WorkspaceRequest{
 		"read no path":     {Op: OpRead, ID: testID},
 		"read neg off":     {Op: OpRead, ID: testID, Path: "a", Offset: -1},
@@ -127,6 +132,8 @@ func TestValidate(t *testing.T) {
 		"create no image":  {Op: OpCreate, ID: testID, Spec: &WorkspaceSpec{}},
 		"create neg lim":   {Op: OpCreate, ID: testID, Spec: &WorkspaceSpec{Image: "x", Pids: -1}},
 		"create net":       {Op: OpCreate, ID: testID, Spec: &WorkspaceSpec{Image: "x", NetworkMode: "host"}},
+		"create age over":  {Op: OpCreate, ID: testID, Spec: &WorkspaceSpec{Image: "x", MaxAgeMs: MaxWorkspaceAgeMs + 1}},
+		"create age max64": {Op: OpCreate, ID: testID, Spec: &WorkspaceSpec{Image: "x", MaxAgeMs: math.MaxInt64}},
 		"create port":      {Op: OpCreate, ID: testID, Spec: &WorkspaceSpec{Image: "x", Allow: []EgressRule{{Host: "h", Port: 0}}}},
 		"destroy no id":    {Op: OpDestroy},
 		"list with id bad": {Op: OpList, ID: "zz"},
