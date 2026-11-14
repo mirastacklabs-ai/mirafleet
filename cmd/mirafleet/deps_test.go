@@ -93,13 +93,13 @@ func TestLinuxLinksContainerd(t *testing.T) {
 const mcpSDK = "github.com/modelcontextprotocol/go-sdk"
 
 // goListPkgs runs `go list` with args for the whole module and returns the output lines.
-func goListPkgs(t *testing.T, goos string, args ...string) []string {
+func goListPkgs(t *testing.T, goos, goarch string, args ...string) []string {
 	t.Helper()
 	cmd := exec.Command("go", append([]string{"list"}, args...)...)
-	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0")
+	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("go list %v for %s: %v\n%s", args, goos, err, out)
+		t.Fatalf("go list %v for %s/%s: %v\n%s", args, goos, goarch, err, out)
 	}
 	return strings.Split(strings.TrimSpace(string(out)), "\n")
 }
@@ -113,30 +113,49 @@ func forbiddenForOrchestrator(pkg string) bool {
 			return true
 		}
 	}
-	return strings.HasPrefix(pkg, "modernc.org/") || strings.HasPrefix(pkg, "github.com/containerd/")
+	return strings.HasPrefix(pkg, "modernc.org/") || strings.HasPrefix(pkg, "github.com/containerd/") ||
+		strings.HasPrefix(pkg, "google.golang.org/grpc") || strings.HasPrefix(pkg, "github.com/golang-jwt/")
 }
 
-// The orchestrator side must stay light and pure Go on all six targets. Packages that do not
-// exist yet are skipped; only the ones present are checked. The go-sdk may be imported only by
-// internal/mcpserver.
+// The orchestrator side must stay light and pure Go on all six targets (linux, darwin, windows
+// x amd64, arm64). Every target package must exist (a missing one fails the test, so a rename
+// cannot disable the check). The go-sdk may be imported only by internal/mcpserver.
 func TestOrchestratorDeps(t *testing.T) {
 	requireGo(t)
 	const mod = "github.com/mirastacklabs-ai/mirafleet/"
 	targets := []string{"internal/orch", "internal/mcpserver", "integrations/claude-code/hook"}
 	for _, goos := range []string{"linux", "darwin", "windows"} {
+		for _, goarch := range []string{"amd64", "arm64"} {
+			checkOrchestratorDeps(t, mod, targets, goos, goarch)
+		}
+	}
+}
+
+func checkOrchestratorDeps(t *testing.T, mod string, targets []string, goos, goarch string) {
+	t.Helper()
+	{
 		for _, rel := range targets {
 			if _, err := os.Stat("../../" + rel); err != nil {
-				continue // not written yet
+				t.Errorf("%s/%s: target %s is missing: %v", goos, goarch, rel, err)
+				continue
 			}
-			for _, dep := range goListPkgs(t, goos, "-deps", "-f", "{{.ImportPath}}", "./../../"+rel) {
+			sawSDK := false
+			for _, dep := range goListPkgs(t, goos, goarch, "-deps", "-f", "{{.ImportPath}}", "./../../"+rel) {
 				if forbiddenForOrchestrator(dep) {
-					t.Errorf("%s: %s links %s", goos, rel, dep)
+					t.Errorf("%s/%s: %s links %s", goos, goarch, rel, dep)
 				}
+				if dep == mcpSDK || strings.HasPrefix(dep, mcpSDK+"/") {
+					sawSDK = true
+				}
+			}
+			// Positive control: without it a broken filter would make the check pass vacuously.
+			if rel == "internal/mcpserver" && !sawSDK {
+				t.Errorf("%s/%s: internal/mcpserver links no go-sdk package: the dependency check proves nothing", goos, goarch)
 			}
 		}
 
 		// go-sdk importers: no package but internal/mcpserver may import it directly.
-		for _, line := range goListPkgs(t, goos, "-test", "-f", "{{.ImportPath}} {{join .Imports \",\"}} {{join .TestImports \",\"}} {{join .XTestImports \",\"}}", "../../...") {
+		for _, line := range goListPkgs(t, goos, goarch, "-test", "-f", "{{.ImportPath}} {{join .Imports \",\"}} {{join .TestImports \",\"}} {{join .XTestImports \",\"}}", "../../...") {
 			f := strings.SplitN(line, " ", 2)
 			if len(f) < 2 {
 				continue

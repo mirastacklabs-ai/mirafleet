@@ -1,0 +1,1 @@
+{"session_id":"abc123-def","transcript_path":"/t.jsonl","cwd":"/home/u/proj","hook_event_name":"PreToolUse","tool_name":"mcp__plugin_mirafleet_mirafleet__run_action","tool_input":{"fleet":"prod","action":"tail-logs","runner":"db-1","confirm":"prod"},"tool_use_id":"toolu_01ABC"}

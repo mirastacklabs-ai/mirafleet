@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -47,6 +48,15 @@ type PublicError interface {
 // DecodeArgs strictly decodes req.Args into v: unknown fields and trailing data are refused.
 // Failures are bad_request *Error values with a short message.
 func DecodeArgs(req Request, v any) error {
+	// encoding/json matches field names case-insensitively; the harness hook looks for exact
+	// keys (confirm, fleet), so a "Confirm" must never reach the server as if it were "confirm".
+	if err := checkKeys(req.Args, v); err != nil {
+		var e *Error
+		if errors.As(err, &e) {
+			return e
+		}
+		return &Error{Code: "bad_request", Message: "invalid arguments"}
+	}
 	dec := json.NewDecoder(bytes.NewReader(req.Args))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -64,6 +74,118 @@ func DecodeArgs(req Request, v any) error {
 		return &Error{Code: "bad_request", Message: "invalid arguments: trailing data"}
 	}
 	return nil
+}
+
+var unmarshalerType = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
+
+// checkKeys walks the raw JSON value with a token stream. For every object decoded into a struct
+// it rejects duplicate keys and keys that are not an exact-case match of a JSON field name.
+// Objects decoded into maps are data: their keys are not checked.
+func checkKeys(raw []byte, v any) error {
+	return scanValue(json.NewDecoder(bytes.NewReader(raw)), reflect.TypeOf(v))
+}
+
+func clipKey(k string) string {
+	if r := []rune(k); len(r) > 24 {
+		k = string(r[:24]) + "..."
+	}
+	return k
+}
+
+func scanValue(dec *json.Decoder, t reflect.Type) error {
+	for t != nil && t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t != nil && (t.Implements(unmarshalerType) || reflect.PointerTo(t).Implements(unmarshalerType)) {
+		t = nil // opaque: decoded by custom code
+	}
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	d, ok := tok.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch d {
+	case '{':
+		var fields map[string]reflect.Type
+		var elem reflect.Type
+		strict := t != nil && t.Kind() == reflect.Struct
+		if strict {
+			fields = map[string]reflect.Type{}
+			jsonFields(t, fields)
+		} else if t != nil && t.Kind() == reflect.Map {
+			elem = t.Elem()
+		}
+		seen := map[string]bool{}
+		for dec.More() {
+			kt, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			key, _ := kt.(string)
+			ft := elem
+			if strict {
+				if seen[key] {
+					return &Error{Code: "bad_request", Message: fmt.Sprintf("duplicate argument %q", clipKey(key))}
+				}
+				seen[key] = true
+				f, ok := fields[key]
+				if !ok {
+					return &Error{Code: "bad_request", Message: fmt.Sprintf("unknown or mis-cased argument %q", clipKey(key))}
+				}
+				ft = f
+			}
+			if err := scanValue(dec, ft); err != nil {
+				return err
+			}
+		}
+		_, err := dec.Token()
+		return err
+	case '[':
+		var elem reflect.Type
+		if t != nil && (t.Kind() == reflect.Slice || t.Kind() == reflect.Array) {
+			elem = t.Elem()
+		}
+		for dec.More() {
+			if err := scanValue(dec, elem); err != nil {
+				return err
+			}
+		}
+		_, err := dec.Token()
+		return err
+	}
+	return nil
+}
+
+// jsonFields maps the JSON names of struct type t (exact case) to their field types.
+func jsonFields(t reflect.Type, out map[string]reflect.Type) {
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		tag := f.Tag.Get("json")
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "-" && !strings.Contains(tag, ",") {
+			continue
+		}
+		if f.Anonymous && name == "" {
+			ft := f.Type
+			for ft.Kind() == reflect.Ptr {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct {
+				jsonFields(ft, out)
+				continue
+			}
+		}
+		if !f.IsExported() {
+			continue
+		}
+		if name == "" {
+			name = f.Name
+		}
+		out[name] = f.Type
+	}
 }
 
 // Annotations are the MCP tool behaviour hints. All four are always sent explicitly.
@@ -248,7 +370,7 @@ func safeCall(ctx context.Context, cfg Config, t Tool, r Request) (out *mcp.Call
 			out = errResult("internal", internalMessage)
 		}
 	}()
-	res, err := t.Handler(ctx, r)
+	res, err := t.Handler(context.WithValue(ctx, logfKey{}, cfg.logf), r)
 	return toResult(cfg, t.Name, res, err)
 }
 
@@ -318,4 +440,14 @@ func startProgress(ctx context.Context, req *mcp.CallToolRequest, interval time.
 		}
 	}()
 	return func() { cancel(); <-done }
+}
+
+type logfKey struct{}
+
+// logfFrom returns the server logger carried by a handler context (a no-op outside Serve).
+func logfFrom(ctx context.Context) func(format string, args ...any) {
+	if f, ok := ctx.Value(logfKey{}).(func(string, ...any)); ok && f != nil {
+		return f
+	}
+	return func(string, ...any) {}
 }

@@ -81,6 +81,8 @@ func usage() {
   mirafleet runner tls-front [-listen 127.0.0.1:8443] [-upstream 127.0.0.1:8080] -dir DIR
   mirafleet runner workspace list [-data DIR] [-workspace FILE]
   mirafleet runner workspace prune [-data DIR] [-workspace FILE] (-all | older than max_age) -yes
+  mirafleet mcp [serve] [-context C] [-fleet F] [-session S] [-project-dir DIR]   (MCP on stdio)
+  mirafleet mcp context list | use NAME | remove NAME
   mirafleet mcp login ADDR -name NAME -code -
   mirafleet mcp api METHOD [JSON] [-in FILE] [-out FILE]
   mirafleet version

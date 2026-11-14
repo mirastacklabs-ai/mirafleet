@@ -105,6 +105,11 @@ type Config struct {
 	Session    string // -session flag
 	PPID       int    // parent (harness) PID, the handoff key
 
+	// ConfigErr / StateErr: the caller already tried to resolve the directory and failed. When set,
+	// orch never falls back to opconf for that directory and treats it as unavailable.
+	ConfigErr error
+	StateErr  error
+
 	Now  func() time.Time
 	Logf func(format string, args ...any) // diagnostics for the operator (stderr); never shown to the model
 
@@ -150,13 +155,21 @@ func New(cfg Config) (*Orch, error) {
 	if o.cfg.Dial == nil {
 		o.cfg.Dial = defaultDial
 	}
-	var err error
-	if o.cfg.ConfigDir == "" {
-		if o.cfg.ConfigDir, err = opconf.Dir(); err != nil {
+	switch {
+	case o.cfg.ConfigErr != nil:
+		o.cfg.ConfigDir = ""
+		o.cfgErr = o.cfg.ConfigErr
+	case o.cfg.ConfigDir == "":
+		d, err := opconf.Dir()
+		if err != nil {
 			o.cfgErr = err
+		} else {
+			o.cfg.ConfigDir = d
 		}
 	}
-	if o.cfg.StateDir == "" {
+	if o.cfg.StateErr != nil {
+		o.cfg.StateDir = "" // no handoff; the per-process session still works
+	} else if o.cfg.StateDir == "" {
 		if d, err := opconf.StateDir(); err == nil {
 			o.cfg.StateDir = d
 		} // else: no handoff; the per-process session still works
@@ -232,8 +245,12 @@ func (o *Orch) OutputCap() int {
 	return cs.OutputCap()
 }
 
+// dirUnavailable is true when no config directory can be used. An empty directory is never
+// joined into a path (that would resolve relative to the working directory).
+func (o *Orch) dirUnavailable() bool { return o.cfgErr != nil || o.cfg.ConfigDir == "" }
+
 func (o *Orch) loadContexts() (*opconf.Contexts, error) {
-	if o.cfgErr != nil {
+	if o.dirUnavailable() {
 		return nil, ErrNotSetUp
 	}
 	cs, err := opconf.LoadContexts(o.cfg.ConfigDir)

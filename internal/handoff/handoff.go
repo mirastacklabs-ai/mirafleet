@@ -171,6 +171,29 @@ func Read(dir string, k Key) (string, bool, error) {
 	return h.Session, true, nil
 }
 
+// RemoveIf deletes the handoff for k only when it stores session, so a SessionEnd for an old
+// session cannot remove a newer session's handoff. A missing or different-session file is left
+// alone (removed=false, nil error). It reads, compares, then removes: a Write by another process
+// in that small window can still be removed. The window is microseconds and the cost is a lost
+// reattach (the MCP server falls back to a per-process session), so no file locking is used.
+func RemoveIf(dir string, k Key, session string) (removed bool, err error) {
+	s, ok, err := Read(dir, k) // same symlink/dir checks as every other entry point
+	if err != nil || !ok || s != session {
+		return false, err
+	}
+	d, err := sessionsDir(dir, false)
+	if err != nil {
+		return false, err
+	}
+	if err := os.Remove(filepath.Join(d, k.name())); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // Remove deletes the handoff for k; a missing file is not an error.
 func Remove(dir string, k Key) error {
 	d, err := sessionsDir(dir, false)

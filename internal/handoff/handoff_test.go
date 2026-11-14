@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -43,8 +44,46 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatalf("remove missing: %v", err)
 	}
 	fi, err := os.Stat(filepath.Join(dir, "sessions"))
-	if err != nil || fi.Mode().Perm() != 0o700 {
-		t.Fatalf("dir mode %v %v", fi, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 { // windows has no unix modes
+		t.Fatalf("dir mode %v", fi.Mode())
+	}
+}
+
+func TestRemoveIf(t *testing.T) {
+	dir := t.TempDir()
+	if removed, err := RemoveIf(dir, k1, "cc:old"); removed || err != nil {
+		t.Fatalf("no dir: %v %v", removed, err)
+	}
+	if err := Write(dir, k1, "cc:new", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := RemoveIf(dir, k1, "cc:old"); removed || err != nil {
+		t.Fatalf("other session: %v %v", removed, err)
+	}
+	if s, ok, _ := Read(dir, k1); !ok || s != "cc:new" {
+		t.Fatal("new session's handoff removed")
+	}
+	if removed, err := RemoveIf(dir, k1, "cc:new"); !removed || err != nil {
+		t.Fatalf("same session: %v %v", removed, err)
+	}
+	if _, ok, _ := Read(dir, k1); ok {
+		t.Fatal("still there")
+	}
+	if removed, err := RemoveIf(dir, k1, "cc:new"); removed || err != nil {
+		t.Fatalf("missing: %v %v", removed, err)
+	}
+}
+
+func TestRemoveIfSymlinkDirRefused(t *testing.T) {
+	dir, other := t.TempDir(), t.TempDir()
+	if err := os.Symlink(other, filepath.Join(dir, "sessions")); err != nil {
+		t.Skip(err)
+	}
+	if _, err := RemoveIf(dir, k1, "s"); err == nil {
+		t.Fatal("remove through symlink")
 	}
 }
 
@@ -60,7 +99,7 @@ func TestAtomicNoTempFilesAndMode(t *testing.T) {
 		t.Fatalf("entries: %v", ents)
 	}
 	fi, _ := ents[0].Info()
-	if fi.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("file mode %v", fi.Mode())
 	}
 }

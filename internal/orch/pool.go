@@ -182,7 +182,7 @@ func (p *pool) dial(d *dialState) {
 
 func (p *pool) connect() (*live, error) {
 	o := p.o
-	if o.cfgErr != nil {
+	if o.dirUnavailable() {
 		return nil, ErrNotSetUp
 	}
 	kp := opconf.KnownHostsPath(o.cfg.ConfigDir)

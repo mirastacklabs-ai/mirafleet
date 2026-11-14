@@ -353,7 +353,9 @@ func TestPublicErrorInterfaceAndEncodePanic(t *testing.T) {
 		}),
 		errTool("enc", func(context.Context, Request) (any, error) { return panicJSON{}, nil }),
 		errTool("echo", func(_ context.Context, r Request) (any, error) {
-			var v struct{ Msg string }
+			var v struct {
+				Msg string `json:"msg"`
+			}
 			if err := DecodeArgs(r, &v); err != nil {
 				return nil, err
 			}

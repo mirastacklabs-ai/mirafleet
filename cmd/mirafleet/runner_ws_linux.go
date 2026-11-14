@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -78,12 +79,11 @@ func runnerTLSInit(args []string, out io.Writer) error {
 		return fmt.Errorf("-days %d out of range (1..3650)", *days)
 	}
 	syscall.Umask(0o077)
-	dfd, err := openPrivateDir(*dir)
+	dirf, err := openPrivateDir(*dir)
 	if err != nil {
 		return err
 	}
-	defer unix.Close(dfd)
-	dirf := os.NewFile(uintptr(dfd), *dir)
+	defer dirf.Close() // the *os.File is the single owner of the fd
 	if ents, err := dirf.ReadDir(1); err != nil && !errors.Is(err, io.EOF) {
 		return err
 	} else if len(ents) > 0 {
@@ -96,11 +96,11 @@ func runnerTLSInit(args []string, out io.Writer) error {
 	// osb.InitPKI writes by path (it is outside this file's remit to change). The verified
 	// directory is 0700 and ours, so only a writer of the parent could swap the leaf; detect that
 	// after the fact by comparing the path with the verified fd (see openPrivateDir).
-	var fst, pst unix.Stat_t
-	if err := unix.Fstat(dfd, &fst); err != nil {
+	fst, err := dirf.Stat()
+	if err != nil {
 		return err
 	}
-	if err := unix.Lstat(*dir, &pst); err != nil || pst.Dev != fst.Dev || pst.Ino != fst.Ino {
+	if pst, err := os.Lstat(*dir); err != nil || !os.SameFile(fst, pst) {
 		return fmt.Errorf("%s was replaced while tls-init ran: do not use the generated files; remove them and retry in a private parent directory", *dir)
 	}
 	fmt.Fprintf(out, "node CA certificate: %s\nfront certificate:   %s (key %s)\nrunner client cert:  %s (key %s)\n"+
@@ -117,27 +117,30 @@ func runnerTLSInit(args []string, out io.Writer) error {
 // fd for it, opened O_DIRECTORY|O_NOFOLLOW and verified through that fd: a directory, owned by
 // the effective uid, mode exactly 0700. An existing leaf that fails any of this is refused, never
 // chmodded or chowned (an attacker-owned or looser directory in a shared parent is not ours).
-func openPrivateDir(dir string) (int, error) {
+func openPrivateDir(dir string) (*os.File, error) {
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return -1, err
+		return nil, err
 	}
 	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		if fi, lerr := os.Lstat(dir); lerr == nil {
 			if fi.Mode()&os.ModeSymlink != 0 {
-				return -1, fmt.Errorf("%s is a symlink: tls-init refuses to follow it; give the real directory", dir)
+				return nil, fmt.Errorf("%s is a symlink: tls-init refuses to follow it; give the real directory", dir)
 			}
 			if !fi.IsDir() {
-				return -1, fmt.Errorf("%s exists and is not a directory", dir)
+				return nil, fmt.Errorf("%s exists and is not a directory", dir)
 			}
 		}
-		return -1, fmt.Errorf("open %s: %w", dir, err)
+		return nil, fmt.Errorf("open %s: %w", dir, err)
 	}
+	// From here the *os.File owns fd (one owner; no raw close elsewhere).
+	f := os.NewFile(uintptr(fd), dir)
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
-		unix.Close(fd)
-		return -1, err
+		f.Close()
+		return nil, err
 	}
+	runtime.KeepAlive(f)
 	switch {
 	case st.Mode&unix.S_IFMT != unix.S_IFDIR:
 		err = fmt.Errorf("%s is not a directory", dir)
@@ -147,10 +150,10 @@ func openPrivateDir(dir string) (int, error) {
 		err = fmt.Errorf("%s has mode %04o, want exactly 0700: refusing (tls-init does not chmod an existing directory)", dir, st.Mode&0o7777)
 	}
 	if err != nil {
-		unix.Close(fd)
-		return -1, err
+		f.Close()
+		return nil, err
 	}
-	return fd, nil
+	return f, nil
 }
 
 // ---- runner tls-front ----

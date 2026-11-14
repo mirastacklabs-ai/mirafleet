@@ -48,18 +48,20 @@ func splitAddr(args []string) (addr string, rest []string) {
 }
 
 func mcpMain(args []string, stdin io.Reader, stdout io.Writer) error {
-	if len(args) == 0 {
-		fmt.Fprintln(stdout, "mirafleet mcp: the MCP stdio server arrives in M5.\n"+
-			"available now: mirafleet mcp login ADDR -name NAME -code -   |   mirafleet mcp api METHOD [JSON]")
-		return nil
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return mcpServe(args, stdin, stdout)
 	}
 	switch args[0] {
+	case "serve":
+		return mcpServe(args[1:], stdin, stdout)
+	case "context":
+		return mcpContext(args[1:], stdout)
 	case "login":
 		return mcpLogin(args[1:], stdin, stdout)
 	case "api":
 		return mcpAPI(args[1:], stdin, stdout)
 	}
-	return fmt.Errorf("unknown mcp command %q (want login or api)", args[0])
+	return fmt.Errorf("unknown mcp command %q (want serve, context, login or api)", args[0])
 }
 
 // loadOperatorKey loads the operator key through internal/keys, whose per-platform permission

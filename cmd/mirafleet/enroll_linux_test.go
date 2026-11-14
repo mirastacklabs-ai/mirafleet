@@ -303,9 +303,6 @@ func TestMCPAPIWrongPinnedKeyRefused(t *testing.T) {
 
 func TestMCPUsage(t *testing.T) {
 	var out bytes.Buffer
-	if err := mcpMain(nil, nil, &out); err != nil || !strings.Contains(out.String(), "M5") {
-		t.Errorf("bare mcp: %v %q", err, out.String())
-	}
 	t.Setenv(opconf.EnvDir, t.TempDir())
 	if err := mcpMain([]string{"login", "127.0.0.1:1", "-name", "a", "-code", "x"}, strings.NewReader(""), &out); err == nil {
 		t.Error("-code other than - accepted")
