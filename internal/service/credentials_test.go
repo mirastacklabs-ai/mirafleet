@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -561,5 +562,186 @@ func TestOpenWithCredentialsLabelAndPlacement(t *testing.T) {
 	}
 	if _, _, err := ce.cs.OpenWorkspaceWith(ce.ctx, ann, SourceAPI, "vm", "s5", "", map[string]string{"mirafleet.credentials": ""}, "", "", nil); code(t, err) != api.CodeBadRequest {
 		t.Fatalf("reserved label: %v", err)
+	}
+}
+
+// ---- M7 review A fixes (Q01, Q02, Q03, Q05b/Q06) ----
+
+func codeOf(err error) string {
+	var ae *api.Error
+	if errors.As(err, &ae) {
+		return ae.Code
+	}
+	return ""
+}
+
+func TestRotationSurvivesCallerCancel(t *testing.T) {
+	ce := newCredEnv(t)
+	ce.rotating(t0.Add(2 * 24 * time.Hour))
+	ctx, cancel := context.WithCancel(ce.ctx)
+	ce.glFn = func(w http.ResponseWriter, req *http.Request) {
+		cancel() // the admin socket closes after GitLab has rotated
+		fmt.Fprintf(w, `{"token":%q,"expires_at":"2026-12-13"}`, decoyNew)
+	}
+	if _, err := ce.cs.RotateCredential(ctx, ce.admin, SourceCLI, "gl"); err != nil {
+		t.Fatalf("rotation lost to caller cancel: %v", err)
+	}
+	infos, _ := ce.cs.ListCredentials(ce.ctx, ce.admin, SourceCLI, "gl")
+	if infos[0].Version != 2 {
+		t.Fatalf("new token not stored: %+v", infos[0])
+	}
+}
+
+func TestConcurrentRotationConflicts(t *testing.T) {
+	ce := newCredEnv(t)
+	ce.rotating(t0.Add(2 * 24 * time.Hour))
+	in, release := make(chan struct{}), make(chan struct{})
+	ce.glFn = func(w http.ResponseWriter, req *http.Request) {
+		close(in)
+		<-release
+		fmt.Fprintf(w, `{"token":%q,"expires_at":"2026-12-13"}`, decoyNew)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := ce.cs.RotateCredential(ce.ctx, ce.admin, SourceCLI, "gl")
+		done <- err
+	}()
+	<-in
+	if _, err := ce.cs.RotateCredential(ce.ctx, ce.admin, SourceCLI, "gl"); codeOf(err) != api.CodeConflict ||
+		!strings.Contains(err.Error(), "rotation in progress") {
+		t.Fatalf("second rotate: %v", err)
+	}
+	if n := ce.cs.RotateDue(ce.ctx); n != 0 {
+		t.Fatalf("RotateDue rotated an in-flight credential: %d", n)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	// the in-flight mark is gone: a later rotation is allowed again
+	ce.glFn = func(w http.ResponseWriter, req *http.Request) {
+		fmt.Fprintf(w, `{"token":%q,"expires_at":"2026-12-13"}`, decoyNew+"2")
+	}
+	if _, err := ce.cs.RotateCredential(ce.ctx, ce.admin, SourceCLI, "gl"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// hangSender blocks delivery to one runner until its context ends.
+type hangSender struct {
+	*fakeSender
+	hang int64
+}
+
+func (h *hangSender) SyncCredentials(ctx context.Context, id int64, b *transport.CredsSyncBody) error {
+	if id == h.hang {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return h.fakeSender.SyncCredentials(ctx, id, b)
+}
+
+func TestHungRunnerDoesNotBlockOthers(t *testing.T) {
+	ce := newCredEnv(t)
+	ce.fleet("f")
+	r1 := ce.enrollRunner("f", "r1", true)
+	r2 := ce.enrollRunner("f", "r2", true)
+	ce.setTok("tok", decoyTok)
+	ce.assign("tok", "f", "")
+	ce.cs.cred.sender = &hangSender{fakeSender: ce.snd, hang: r1.ID}
+	ce.cs.cred.wait = 50 * time.Millisecond
+	start := time.Now()
+	ce.setTok("tok", decoyNew)
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("admin call held up by the hung runner: %v", d)
+	}
+	if got, ok := ce.snd.last(r2.ID); !ok || got.creds["tok"] != decoyNew {
+		t.Fatalf("healthy runner not served: %+v", got)
+	}
+	// the hung runner is marked for a heartbeat retry once its attempt ends; claim is exclusive
+	ce.cs.cred.mu.Lock()
+	ce.cs.cred.stale[r1.ID] = true
+	ce.cs.cred.mu.Unlock()
+	if !ce.cs.ClaimDeliveryRetry(r1.ID) || ce.cs.ClaimDeliveryRetry(r1.ID) {
+		t.Fatal("retry claim not exclusive")
+	}
+}
+
+func TestHeartbeatRetriesUndeliveredSet(t *testing.T) {
+	ce := newCredEnv(t)
+	ce.fleet("f")
+	r := ce.enrollRunner("f", "r1", true)
+	ce.setTok("tok", decoyTok)
+	ce.assign("tok", "f", "r1")
+	ce.snd.mu.Lock()
+	ce.snd.fail = true
+	ce.snd.mu.Unlock()
+	ce.setTok("tok", decoyNew) // delivery fails
+	if !ce.cs.ClaimDeliveryRetry(r.ID) {
+		t.Fatal("failed delivery not marked for retry")
+	}
+	if ce.cs.ClaimDeliveryRetry(r.ID) {
+		t.Fatal("a second retry claimed while one is running")
+	}
+	ce.snd.mu.Lock()
+	ce.snd.fail = false
+	ce.snd.mu.Unlock()
+	if err := ce.cs.RetryDelivery(ce.ctx, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := ce.snd.last(r.ID); got.creds["tok"] != decoyNew {
+		t.Fatalf("retry did not deliver: %+v", got)
+	}
+	if ce.cs.ClaimDeliveryRetry(r.ID) {
+		t.Fatal("still stale after a successful delivery")
+	}
+}
+
+// flakyStore fails the next n SetCredential calls.
+type flakyStore struct {
+	store.Store
+	mu    sync.Mutex
+	n     int
+	calls int
+}
+
+func (f *flakyStore) SetCredential(ctx context.Context, c store.Credential, seal store.CredentialSealer, now time.Time, ev store.AuditEvent) (store.Credential, bool, error) {
+	f.mu.Lock()
+	f.calls++
+	fail := f.n > 0
+	if fail {
+		f.n--
+	}
+	f.mu.Unlock()
+	if fail {
+		return store.Credential{}, false, errors.New("disk full")
+	}
+	return f.Store.SetCredential(ctx, c, seal, now, ev)
+}
+
+func TestRotationStoreWriteRetry(t *testing.T) {
+	ce := newCredEnv(t)
+	ce.rotating(t0.Add(2 * 24 * time.Hour))
+	ce.cs.cred.backoff = time.Millisecond
+	fs := &flakyStore{Store: ce.cs.st}
+	ce.cs.st = fs
+	ce.glFn = func(w http.ResponseWriter, req *http.Request) {
+		fmt.Fprintf(w, `{"token":%q,"expires_at":"2026-12-13"}`, decoyNew)
+	}
+	// two failures then success: stored
+	fs.n = 2
+	if _, err := ce.cs.RotateCredential(ce.ctx, ce.admin, SourceCLI, "gl"); err != nil || fs.calls != 3 {
+		t.Fatalf("err=%v calls=%d", err, fs.calls)
+	}
+	// every attempt fails: the explicit "old token is revoked" error, not "old value keeps working"
+	fs.n, fs.calls = 99, 0
+	_, err := ce.cs.RotateCredential(ce.ctx, ce.admin, SourceCLI, "gl")
+	if err == nil || !strings.Contains(err.Error(), errRotateLost) || fs.calls != 3 {
+		t.Fatalf("err=%v calls=%d", err, fs.calls)
+	}
+	fs.n = 0
+	infos, _ := ce.cs.ListCredentials(ce.ctx, ce.admin, SourceCLI, "gl")
+	if infos[0].RotateError != errRotateLost {
+		t.Fatalf("surfaced: %q", infos[0].RotateError)
 	}
 }

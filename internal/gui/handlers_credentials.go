@@ -24,8 +24,10 @@ import (
 )
 
 func init() {
-	RegisterFlash("credential.saved", "ok", "Credential %s saved. Runners that hold it receive the new value.")
-	RegisterFlash("credential.deleted", "warn", "Credential %s deleted. Runners stop using it at once.")
+	RegisterFlash("credential.saved", "ok", "Credential %s saved. Connected runners that hold it are sent the new value now; the rest get it on their next heartbeat.")
+	RegisterFlash("credential.deleted", "warn", "Credential %s deleted. Connected runners are told now; any that miss it drop it on their next heartbeat.")
+	RegisterFlash("credential.rotate_busy", "warn", "A rotation of %s is already in progress. Reload in a moment.")
+	RegisterFlash("credential.rotate_lost", "bad", "GitLab issued a new token for %s but it could not be stored; the old token is revoked. Create a new token in GitLab and replace the value.")
 	RegisterFlash("credential.assigned", "ok", "Credential %s assigned.")
 	RegisterFlash("credential.unassigned", "warn", "Credential %s unassigned.")
 	RegisterFlash("credential.assign_failed", "warn", "The assignment of %s was not changed: the fleet or runner does not exist, or the assignment is already (or no longer) there.")
@@ -608,8 +610,14 @@ func (s *Server) credentialRotate(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.cfg.Backend.RotateCredential(r.Context(), a.P, service.SourceGUI, ci.Name); err != nil {
 		switch errCode(err) {
+		case api.CodeConflict:
+			s.Redirect(w, r, credURL(ci.Name), "credential.rotate_busy", ci.Name)
 		case api.CodeBadRequest, api.CodeUnavailable:
-			s.Redirect(w, r, credURL(ci.Name), "credential.rotate_failed", ci.Name)
+			id := "credential.rotate_failed"
+			if strings.Contains(errMsg(err), "could not be stored") {
+				id = "credential.rotate_lost"
+			}
+			s.Redirect(w, r, credURL(ci.Name), id, ci.Name)
 		default:
 			s.backendFail(w, r, err)
 		}

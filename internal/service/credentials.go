@@ -39,6 +39,15 @@ const (
 	rotateRetryAfter      = time.Hour
 	rotateRespMax         = 64 << 10
 	deliverTimeout        = 15 * time.Second
+	// rotateTimeout bounds one whole rotation (GitLab call + store write + delivery start); it
+	// runs detached from the caller's context so a client disconnect cannot lose a rotated token.
+	rotateTimeout = 90 * time.Second
+	// deliverWait is how long an admin call waits for delivery before answering; slower runners
+	// finish in the background and are retried on their next heartbeat if they fail.
+	deliverWait = 2 * time.Second
+	// storeRetries/storeBackoff retry the store write after GitLab has already rotated.
+	storeRetries = 3
+	storeBackoff = 200 * time.Millisecond
 )
 
 // ErrCredentialNotHeld means a requested credential is not held by the runner.
@@ -93,6 +102,13 @@ type credState struct {
 	reported  map[int64]map[string]string // runner id -> credential name -> runner-reported status
 	rotErr    map[string]string
 	lastTry   map[string]time.Time
+	rotating  map[string]bool // credential names with a rotation in flight
+	stale     map[int64]bool  // runners whose last delivery failed
+	retrying  map[int64]bool  // runners with a heartbeat-triggered retry in flight
+
+	// test seams
+	wait    time.Duration
+	backoff time.Duration
 }
 
 // initCredentials checks the key against the stored key check: with a key, the first start
@@ -101,7 +117,9 @@ type credState struct {
 func (s *Service) initCredentials(cfg CredentialsConfig) error {
 	c := &credState{key: cfg.Key, sender: cfg.Sender, client: cfg.RotateClient, baseURL: cfg.RotateBaseURL,
 		lifetime: cfg.RotateLifetime, delivered: map[int64]map[string]int64{},
-		reported: map[int64]map[string]string{}, rotErr: map[string]string{}, lastTry: map[string]time.Time{}}
+		reported: map[int64]map[string]string{}, rotErr: map[string]string{}, lastTry: map[string]time.Time{},
+		rotating: map[string]bool{}, stale: map[int64]bool{}, retrying: map[int64]bool{},
+		wait: deliverWait, backoff: storeBackoff}
 	c.hasKey = cfg.Key != nil
 	if c.client == nil {
 		c.client = &http.Client{Timeout: 30 * time.Second}
@@ -569,9 +587,48 @@ func (s *Service) RunnerConnected(ctx context.Context, runnerID int64) error {
 	return s.DeliverRunner(ctx, runnerID)
 }
 
+// ClaimDeliveryRetry reports whether the runner's last delivery failed and no retry is already
+// running; when true the caller owns the retry and must call RetryDelivery. Cheap: called on
+// every heartbeat.
+func (s *Service) ClaimDeliveryRetry(runnerID int64) bool {
+	if s.cred == nil {
+		return false
+	}
+	s.cred.mu.Lock()
+	defer s.cred.mu.Unlock()
+	if !s.cred.stale[runnerID] || s.cred.retrying[runnerID] {
+		return false
+	}
+	s.cred.retrying[runnerID] = true
+	return true
+}
+
+// RetryDelivery re-sends the runner's set after ClaimDeliveryRetry returned true.
+func (s *Service) RetryDelivery(ctx context.Context, runnerID int64) error {
+	defer func() {
+		s.cred.mu.Lock()
+		delete(s.cred.retrying, runnerID)
+		s.cred.mu.Unlock()
+	}()
+	return s.DeliverRunner(ctx, runnerID)
+}
+
 // DeliverRunner builds the runner's effective set (sealed -> plaintext) and hands it to the
-// sender. Nothing is sent when no key or sender is configured, or the runner is not active.
+// sender. Nothing is sent when no key or sender is configured, or the runner is not active. A
+// failure marks the runner stale so its next heartbeat retries.
 func (s *Service) DeliverRunner(ctx context.Context, runnerID int64) error {
+	err := s.deliverRunner(ctx, runnerID)
+	s.cred.mu.Lock()
+	if err != nil {
+		s.cred.stale[runnerID] = true
+	} else {
+		delete(s.cred.stale, runnerID)
+	}
+	s.cred.mu.Unlock()
+	return err
+}
+
+func (s *Service) deliverRunner(ctx context.Context, runnerID int64) error {
 	if !s.cred.hasKey || s.cred.sender == nil {
 		return nil
 	}
@@ -646,16 +703,33 @@ func (s *Service) deliverHolders(ctx context.Context, name string, extra []store
 	s.deliverTo(ctx, append(cur, extra...))
 }
 
+// deliverTo delivers to each runner in its own goroutine, detached from the caller's context
+// (a client disconnect must not abort delivery) and bounded by deliverTimeout. It waits at most
+// cred.wait for all of them, so a hung runner never holds up the admin response or the others.
 func (s *Service) deliverTo(ctx context.Context, rs []store.Runner) {
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliverTimeout)
+	var wg sync.WaitGroup
 	seen := map[int64]bool{}
 	for _, r := range rs {
 		if seen[r.ID] {
 			continue
 		}
 		seen[r.ID] = true
-		if err := s.DeliverRunner(ctx, r.ID); err != nil {
-			s.logf("service: deliver credentials to runner %d: %v", r.ID, err)
-		}
+		wg.Add(1)
+		go func(id int64) {
+			defer wg.Done()
+			if err := s.DeliverRunner(dctx, id); err != nil {
+				s.logf("service: deliver credentials to runner %d: %v", id, err)
+			}
+		}(r.ID)
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); cancel(); close(done) }()
+	t := time.NewTimer(s.cred.wait)
+	defer t.Stop()
+	select {
+	case <-done:
+	case <-t.C:
 	}
 }
 
@@ -695,8 +769,11 @@ func (s *Service) RotateDue(ctx context.Context) int {
 			continue
 		}
 		s.cred.mu.Lock()
-		last := s.cred.lastTry[c.Name]
+		last, busy := s.cred.lastTry[c.Name], s.cred.rotating[c.Name]
 		s.cred.mu.Unlock()
+		if busy {
+			continue
+		}
 		if !last.IsZero() && s.now().Sub(last) < rotateRetryAfter {
 			continue
 		}
@@ -724,7 +801,29 @@ func (s *Service) RunRotation(ctx context.Context, every time.Duration) {
 	}
 }
 
+// errRotateLost is returned when GitLab rotated the token but the new value could not be stored:
+// the old token is revoked and the new one is gone, so the admin must issue a fresh token.
+const errRotateLost = "GitLab issued a new token but it could not be stored; the old token is revoked"
+
 func (s *Service) rotate(ctx context.Context, p auth.Principal, src Source, name string) (api.CredentialInfo, error) {
+	// One rotation per credential at a time: a second one would present the already-rotated
+	// token and make GitLab revoke the whole token family.
+	s.cred.mu.Lock()
+	if s.cred.rotating[name] {
+		s.cred.mu.Unlock()
+		return api.CredentialInfo{}, api.Errorf(api.CodeConflict, "rotation in progress")
+	}
+	s.cred.rotating[name] = true
+	s.cred.mu.Unlock()
+	defer func() {
+		s.cred.mu.Lock()
+		delete(s.cred.rotating, name)
+		s.cred.mu.Unlock()
+	}()
+	// Detached from the caller (admin socket close, browser abort): once GitLab has rotated, the
+	// store write must complete.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rotateTimeout)
+	defer cancel()
 	sc, err := s.st.GetSealedCredential(ctx, name)
 	if err != nil {
 		return api.CredentialInfo{}, s.fail("get credential", err)
@@ -768,9 +867,27 @@ func (s *Service) rotate(ctx context.Context, p auth.Principal, src Source, name
 		}
 		return inner(id, version)
 	}
-	out, _, err := s.st.SetCredential(ctx, next, guard, now, ev)
-	if err != nil {
-		return fail("storing the rotated value failed")
+	var out store.Credential
+	for i := 0; ; i++ {
+		out, _, err = s.st.SetCredential(ctx, next, guard, now, ev)
+		if err == nil {
+			break
+		}
+		if i+1 >= storeRetries {
+			ev := s.event(p, src, api.MethodCredentialRotate)
+			ev.Subject, ev.Outcome, ev.Message = name, "error", errRotateLost
+			if _, aerr := s.st.RecordAudit(ctx, ev); aerr != nil {
+				s.logf("service: audit rotation failure: %v", errors.New("audit failed"))
+			}
+			s.cred.mu.Lock()
+			s.cred.rotErr[name] = errRotateLost
+			s.cred.mu.Unlock()
+			return api.CredentialInfo{}, api.Errorf(api.CodeUnavailable, "%s", errRotateLost)
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(s.cred.backoff * time.Duration(i+1)):
+		}
 	}
 	s.cred.mu.Lock()
 	delete(s.cred.rotErr, name)

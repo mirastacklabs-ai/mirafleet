@@ -169,6 +169,9 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			sess.Heartbeat(hb)
 			if hasFeature(hb, transport.FeatureCreds) {
 				s.cfg.Service.ReportCredentialStatus(p.ID, hb.Credentials)
+				if s.cfg.Service.ClaimDeliveryRetry(p.ID) { // last creds_sync failed: retry
+					s.retryDeliverAsync(p.ID)
+				}
 			}
 			if hb.Busy > 0 { // running background shells keep their workspaces from idling out
 				bctx, bcancel := context.WithTimeout(s.ctx, storeTimeout)
@@ -214,6 +217,18 @@ func (s *Server) deliverAsync(id int64) {
 		defer s.wg.Done()
 		if err := s.cfg.Service.RunnerConnected(s.ctx, id); err != nil {
 			s.cfg.Logf("credential delivery to runner %d: %v", id, err)
+		}
+	}()
+}
+
+// retryDeliverAsync re-sends the credential set of a runner whose last delivery failed. The
+// caller holds the claim from Service.ClaimDeliveryRetry. Tracked like deliverAsync.
+func (s *Server) retryDeliverAsync(id int64) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		if err := s.cfg.Service.RetryDelivery(s.ctx, id); err != nil {
+			s.cfg.Logf("credential delivery retry to runner %d: %v", id, err)
 		}
 	}()
 }
