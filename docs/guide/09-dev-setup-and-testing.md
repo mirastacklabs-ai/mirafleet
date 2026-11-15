@@ -23,6 +23,9 @@ inside containers, and teaches you how the tests are built so you can write your
 - The M4 additions: `TestM4Done` (the admin GUI against a real central, over real TLS), the GUI
   security suite, the built-binary smoke test `TestGUIBinary`, `scripts/dev.sh gui-shots`, and how
   to look at the GUI yourself ([9.15](#915-try-it-locally-the-admin-gui)).
+- The M6 additions: `scripts/release.sh` and `m6check`, what `pkgtest`, `installtest`, `image`,
+  `lab`, `npmtest`, `harnesscheck` and `e2e-systemd` each prove, the CI workflows and their safety
+  rules, and the worktree rules ([9.16](#916-testing-distribution-m6)).
 
 ## 9.1 The container-only rule
 
@@ -1165,6 +1168,85 @@ Things worth trying once you are in:
 
 Stop with `kill $(jobs -p)` and `exit`; the container and `/tmp/c` vanish.
 
+## 9.16 Testing distribution (M6)
+
+M6 adds a second family of checks: not "does the code work" but "does what we ship install and
+run". They follow the same container-only rule as the rest of this chapter, through
+`scripts/release.sh` instead of `scripts/dev.sh` (code tour: [8.12](08-code-tour.md#812-the-release-tooling-m6)).
+Scenario: sid has changed a packaging script and wants to know whether the `.deb` still installs.
+
+### One command: `m6check`
+
+`scripts/release.sh m6check` runs everything in order, stops at the first failure, prints one
+summary line (`m6check: OK (N steps passed)` or `m6check: FAIL at <step>`) and always cleans up:
+
+`fmt vet build test cross licenses vuln lint-sh lint-actions snapshot relgen pkgtest installtest
+image lab npmtest harnesscheck`
+
+The slow privileged `integration` run is not part of it; CI runs that. While iterating, run one
+target at a time (`scripts/release.sh pkgtest`), and skip steps CI already covers with
+`MIRAFLEET_M6CHECK_SKIP="cross licenses"` (skipped steps are listed in the summary). It is
+expensive, so run it once, not after every edit.
+
+### What each target proves
+
+| Target | Script | Proves |
+|---|---|---|
+| `snapshot` | `.goreleaser.yaml` via the tools image | goreleaser builds every asset (archives, packages, checksums, SBOMs) with signing and publishing skipped. Later targets use its output in `dist/`. |
+| `pkgtest` | `scripts/release/pkgtest.sh` | The `.deb`, `.rpm` and `.apk` install in `debian:12`, `ubuntu:24.04`, `rockylinux:9` and `alpine:3` containers: user `mirafleet`, directories, file modes (`central.env` is 0600 root), `mirafleet version`, `systemd-analyze verify` on the units, and that upgrade, remove and purge keep the data and the user. A missing format is reported as SKIP. |
+| `installtest` | `installtest.sh`, `installtest.ps1` | `install.sh` against a fake release served over HTTPS inside a container. A tampered archive, an archive missing from `checksums.txt`, no SHA tool and a wrong architecture are all refused. The cosign cases use a stand-in `cosign` that accepts only the expected identity and issuer, so they prove the script passes and enforces those values; real keyless signing is covered by the release rehearsal. The PowerShell twin runs on Windows in CI. |
+| `image` | `imagetest.sh` | The OCI image builds (no push); `central init` then `run` on random ports; `docker exec ... fleet list` works; there is no shell in the image; the user is 65532; the GUI answers over TLS with the logged fingerprint. |
+| `lab` | `labtest.sh` | `deploy/compose/lab` end to end: join, approve, `mcp login`, an action, the GUI login page, then `compose down -v`. Ports bind to `127.0.0.1` only. |
+| `npmtest` | `npmtest.sh` | `relgen npm` output packs; no lifecycle scripts; `os`/`cpu` fields; `mcpName`; the launcher test (`npm/mirafleet/test/launcher.test.js`, `node --test`); and `npx` of the local tarballs runs `version` and an MCP `initialize`. |
+| `harnesscheck` | `harnesscheck.sh` | The six harness snippets parse, command copies equal the shared body, files are LF. |
+| `e2e-systemd` | `e2e-systemd.sh` | Real systemd as PID 1 in a throwaway privileged container: install the `.deb`, run central and an actions runner as the shipped units, join, approve, `mcp login`, `action.run`, one MCP `tools/call`, the GUI checks, and removal that keeps the data. Run by CI; needs a snapshot first. |
+
+Two details worth knowing. **Real signing cannot be tested locally**: keyless signing needs a
+GitHub OIDC identity, which only a real workflow run has. That is why the first release is
+rehearsed as an `-rc.1` tag ([10.12](10-operations.md#1012-install-upgrade-and-verify-by-channel-m6)).
+**Everything is labelled** `org.mirastacklabs.mirafleet.release=1`, so `scripts/release.sh clean`
+removes the images, containers, volumes and `dist/` that a run left behind.
+
+<!-- verify: pkgtest/e2e-systemd host-mode parts (user unit with `systemd-analyze --user`, dev and qa runners, backup-on-upgrade) are late-lane L3 and not built on m6-now -->
+
+### The CI workflows
+
+| Workflow | When | Jobs |
+|---|---|---|
+| `gate.yml` | push, PR | `fmt-vet`, `build`, `test-race`, `test-nocgo`, `cross`, `licenses`, `integration`, and the roll-up job `gate` (the required check). |
+| `ci.yml` | push to `main`, PR | `vuln`, `lint` (shellcheck, actionlint), `dist` (snapshot, then pkgtest, installtest, image, lab, npmtest, harnesscheck), `e2e-systemd`. |
+| `orchestrator.yml` | push, PR | One job on `windows-latest` and `macos-latest`: the operator-side packages (including `./integrations/...`, so CRLF mistakes show up), `install.ps1`, the npm launcher, `brew style`. |
+| `dco.yml` | PR | Every commit has a `Signed-off-by:` trailer matching its author ([11.9](11-contributing.md#119-releasing-the-dco-and-new-package-formats-m6)). |
+| `release.yml` | tag `v*` | `verify`, `build`, `draft`, `publish-release`, `image`, `npm`, `brew`, `mcp-registry` ([11.9](11-contributing.md#119-releasing-the-dco-and-new-package-formats-m6)). |
+
+Safety rules every workflow follows: `permissions: contents: read` unless a job needs more; no
+secrets on pull requests; never `pull_request_target` (it would run PR code with secrets);
+third-party actions pinned by commit SHA; untrusted text such as a branch name never pasted into
+a `run:` script. The required checks on `main` are `gate`, `licenses`, `lint`, `dco` and both
+`orchestrator` jobs; the slow ones (`integration`, `dist`, `e2e-systemd`) are checked by the
+release `verify` job on the exact commit being tagged.
+
+### The worktree rules
+
+M6 was built in its own git **worktree** (a second checkout of the same repository in another
+directory, here `mirafleet-m6` on branch `m6-now`) so that several people and agents could work
+in parallel without stepping on one another. The rules that kept it safe apply to any parallel
+work:
+
+- Work only in your worktree, on your branch. Stage files **by name**, never `git add .` or
+  `-A`, because another worker may have changed other files in the same tree.
+- Every Go and tool step goes through `scripts/dev.sh` or `scripts/release.sh`, one target per
+  call. Run only the tests of the packages you touched; the full gate runs in CI.
+- Never touch a live app, real hosts or real data. Tests use ephemeral ports, `t.TempDir()` and
+  keys made at test time.
+- At most one background waiter per long run, and its loop must also end on failure or when the
+  job dies, never only on success. Kill containers you started before you finish.
+- Never push, rebase or force-push unless asked; do not add a `Signed-off-by:` trailer for
+  someone else (section 11.9 explains why).
+- **The design is the contract.** If code differs from `docs/M*.md` in any user-visible way
+  (names, flags, layout, limits, errors), change the code or update the plan in the same commit
+  and say so. The docs are written from the plan in parallel, so a silent change makes them lie.
+
 ## Check your understanding
 
 1. Why does `scripts/dev.sh test` run the test suite twice?
@@ -1192,6 +1274,11 @@ Stop with `kill $(jobs -p)` and `exit`; the container and `/tmp/c` vanish.
     same SQLite file. What claim does that prove?
 13. In `TestM4Done` the clock is an offset that the test advances. Why is it injected into the
     service as well as the GUI?
+14. `installtest` uses a stand-in `cosign`. What does that prove, and what does it not?
+15. Name three rules from the worktree list that protect other people's work, and say why `git
+    add -A` breaks one of them.
+16. Which target would catch a `.deb` that leaves `central.env` world-readable, and which one
+    would catch an image that contains a shell?
 
 <details>
 <summary>Answers</summary>
@@ -1242,5 +1329,13 @@ Stop with `kill $(jobs -p)` and `exit`; the container and `/tmp/c` vanish.
 13. Session expiry is decided in the service (`GUIAuthenticate` compares with `s.now()`), so
     advancing only the GUI's clock would change nothing. One offset clock shared by both means
     "31 minutes later" is real for the check that matters, and the test never sleeps.
+14. It proves `install.sh` passes the exact certificate identity and OIDC issuer to cosign and
+    refuses when verification fails. It does not prove that Sigstore signs anything: real keyless
+    signing needs a GitHub OIDC identity, so the `-rc.1` rehearsal covers it.
+15. Any three of: work only in your worktree; stage files by name; do not rebase or force-push;
+    no pushing unasked; one background waiter; do not touch live data. `git add -A` would stage
+    files another worker changed in the same tree and commit them under your message.
+16. `pkgtest` (it checks file modes) and `image` (it checks there is no shell and that the user
+    is 65532).
 
 </details>

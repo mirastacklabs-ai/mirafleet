@@ -15,13 +15,16 @@ with the code, a checklist for reviewing a change, and some real first tasks.
   ([section 11.7](#117-adding-a-harness-integration)).
 - How to add a screen to the admin GUI, and the template rules that keep it safe
   ([section 11.8](#118-adding-a-gui-screen)).
+- The M6 additions: the pull-request flow, the DCO, how a release is cut (and which steps need the
+  maintainer's explicit yes), and how to add a package format or a harness
+  ([section 11.9](#119-releasing-the-dco-and-new-package-formats-m6)).
 
 ## 11.1 The ground rules, with reasons
 
 These come from [CLAUDE.md](../../CLAUDE.md) **as of 13 Nov 2026**. If the two ever disagree,
 CLAUDE.md wins and this table should be fixed. Read the file itself too; it is short and
 binding. Status today: M1, M2, M3 (workspaces), M4 (the admin GUI) and M5 (the MCP server and
-harness integrations) are done; next comes M6 (release). A rule without a reason gets broken the first time it is inconvenient, so here is the reason for
+harness integrations) are done; M6 (release) is in progress. A rule without a reason gets broken the first time it is inconvenient, so here is the reason for
 each.
 
 | Rule | Why |
@@ -505,6 +508,110 @@ If you add an asset (a font, a script), it must be vendored under `internal/gui/
 `static/ASSETS.md` with its licence and hash, and pass the licence rule in
 [section 11.1](#111-the-ground-rules-with-reasons); `CheckVendored` fails otherwise.
 
+## 11.9 Releasing, the DCO and new package formats (M6)
+
+Follow sid, the newest engineer at MIRASTACK LABS, through a first change and then through what
+happens when aarvee cuts a release.
+
+### The pull-request flow
+
+Once the ruleset on `main` is on, nobody pushes to `main`: not maintainers, not agents. Every
+change takes the same short path ([CONTRIBUTING.md](../../CONTRIBUTING.md) is the user-facing
+version):
+
+1. `git switch -c <short-branch-name>`: a short-lived branch.
+2. Commit, **signing off** (below).
+3. `git push -u origin <branch>`, then `gh pr create`.
+4. `gh pr merge --auto --squash --delete-branch`.
+
+The PR merges by itself once the required checks pass (`gate`, `licenses`, `lint`, `dco` and the
+two `orchestrator` jobs) and the branch is deleted. Why squash-only and auto-merge? One commit per
+change keeps history readable, and auto-merge removes the "waiting to click merge" step without
+removing the checks. Tags are never made by this flow.
+
+### The DCO
+
+DCO means **Developer Certificate of Origin**: a one-paragraph promise, in your own name, that you
+wrote the change or have the right to submit it under the project's licence (Apache-2.0). You
+make the promise by adding a `Signed-off-by: Your Name <you@example.com>` line, which
+`git commit -s` writes for you. The `dco` check (`.github/workflows/dco.yml`, a small script over
+`git log`; no third-party action) fails the PR unless **every** commit between `main` and your
+branch has a trailer matching its author, merge commits included. Nobody is exempt, bots too.
+Fix a missing sign-off on the last commit with `git commit --amend -s --no-edit`; on a branch you
+own with `git rebase --signoff main`. Why such a check? Without a recorded promise, the project
+could not later prove that it was allowed to distribute a contributed line.
+
+One rule for helpers: **the sign-off is a personal statement, so a person adds it, not a tool
+acting for them.** An AI assistant, script or teammate must not add `Signed-off-by` (or use `-s`)
+on your behalf unless you have told them to. If sid has an assistant help with a commit, sid reads
+the change and adds the sign-off personally.
+
+### Cutting a release (summary)
+
+The checklist is [RELEASING.md](../RELEASING.md); read it before you do one, because the point is
+the order and the approvals, not the commands.
+
+1. `main` is green, including the slow jobs (`integration`, `dist`, `e2e-systemd`) on the commit
+   to be tagged, and `scripts/release.sh m6check` is green.
+2. `scripts/dev.sh go run ./tools/relgen bump X.Y.Z` in a PR, merged. `relgen check` passes.
+3. A human pushes the tag `vX.Y.Z-rc.1` (rehearsal), then `vX.Y.Z`. `release.yml` runs `verify`,
+   `build`, `draft`, `publish-release`, `image`, `npm`, `brew` and `mcp-registry`
+   (see the picture below).
+4. A human approves each publishing job in the GitHub `release` environment, in order, checking
+   the draft first. Post-publish checks follow: signature, provenance, both image digests,
+   `brew install`, `npx` on three OSes, Compose from the published image.
+
+![The release pipeline: a tag starts verify and build (no credentials), then draft, publish-release, and image, npm and brew side by side, then mcp-registry after npm; each job after build waits for human approval](diagrams/release-pipeline.svg)
+
+*Caption: follow the numbers left to right; the orange "OK?" marks are the places a human must
+approve, and every credential sits in exactly one job.*
+
+1. A human pushes tag `v0.6.0`.
+2. `verify`: the tag is on `main`, `relgen check` passes, every `ci.yml` job is green on that commit.
+3. `build`: goreleaser makes archives and packages, with no credentials in the job.
+4. `draft`: cosign-signs `checksums.txt`, attaches provenance, creates the draft release.
+5. `publish-release`: after the reviewer has looked at the draft, un-drafts it.
+6. `image`, `npm` and `brew` run side by side: one multi-arch image pushed to Docker Hub and ghcr
+   (same digest), seven npm packages with provenance, the Homebrew formula.
+7. `mcp-registry` lists the npm package after `npm` succeeds. Pre-releases skip `brew` and
+   `mcp-registry`.
+
+**Outward-facing steps need the user's explicit yes at that moment.** A tag push, an approval in
+the `release` environment, creating a token, changing a registry and pushing the wiki each affect
+the outside world and mostly cannot be undone (npm versions are burned; the registry listing is
+effectively permanent). So no agent, script or helper performs one on its own, and one earlier
+"yes" does not cover the next step. Never `--force` a tag.
+
+### Adding a package format
+
+Say sid wants an Arch Linux package. The pieces, in order:
+
+1. **Build it.** Add the format to the `nfpms` section of `.goreleaser.yaml` (nFPM supports
+   `deb`, `rpm`, `apk`, `archlinux`, ...). Reuse the files from `packaging/`; if the new format
+   cannot express something (the `.apk` has no systemd units), say so in a comment.
+2. **Test it.** Add a distro container for it to `scripts/release/pkgtest.sh`, so the package
+   is installed and the user, modes, `systemd-analyze verify` and "removal keeps data" checks run
+   against it. A format with no test is a format we cannot promise works.
+3. **Check licences and size.** New tools run as pinned container images (digest in
+   `scripts/release/tools.Dockerfile`), never host installs, and need a permissive licence unless
+   they only run in CI.
+4. **Document it.** The channel table in [10.12.1](10-operations.md#10121-which-channel-for-whom),
+   the quickstart, the README and the glossary; and the files list in `docs/RELEASING.md`.
+5. **Include it in the signing.** goreleaser's checksum, SBOM and signing cover every package
+   artifact automatically; check that `checksums.txt` lists the new file.
+
+If the channel is a different kind (a new registry), it is a new job in `release.yml` with its own
+credential and its own approval, and a section in RELEASING.md for the account setup.
+
+### Adding a harness integration (M6 additions to 11.7)
+
+Section [11.7](#117-adding-a-harness-integration) still applies. M6 adds: put a tested config
+snippet and a README under `integrations/<harness>/` with "docs read on <date>" and the URL; give
+the PATH and `npx` variants (Windows: `.exe` or `cmd /c npx`); mention `-project-dir`; add shape
+tests to `integrations/harnesses_m6_test.go`; if the harness has file-based commands, copy the
+shared body and let `relgen harness` keep the copies equal; add it to `harnesscheck` (it runs the
+harness CLI's own "list MCP servers" command where one works without an account).
+
 ## Check your understanding
 
 1. Why does the guide say "name files and functions, not line numbers"?
@@ -526,6 +633,14 @@ If you add an asset (a font, a script), it must be vendored under `internal/gui/
 10. You add a button with `onclick="copyToken()"` to a GUI template. What happens in the browser,
     and which test fails first?
 11. Why may `internal/gui` not import `internal/store/sqlite` "just to read one column"?
+12. sid's PR fails the `dco` check. Name two causes and the command that fixes the last commit.
+    Why must sid add the sign-off personally rather than have a helper do it?
+13. Why does `release.yml` split building (goreleaser) from publishing (separate jobs behind the
+    `release` environment)?
+14. Name three steps that need an explicit yes from the maintainer each time they happen, and say
+    why one earlier yes does not cover the next.
+15. sid wants to add an Arch Linux package. List the files and scripts that change, and the test that
+    keeps the format honest.
 
 <details>
 <summary>Answers</summary>
@@ -572,5 +687,20 @@ If you add an asset (a font, a script), it must be vendored under `internal/gui/
     every action is authorised, validated and audited the same way as for the CLI; a direct
     database read would skip all three and put SQL next to HTML. `TestGUIDeps` fails the build.
     The right move is a new `service` method, then a line in `gui.Backend`.
+12. Any two of: a commit with no `Signed-off-by`; a trailer whose name or email differs from the
+    author's; a merge commit without one (merge `main` in is the usual culprit; rebase instead).
+    `git commit --amend -s --no-edit`. The sign-off is the contributor's own statement about
+    where the code came from, so a person makes it after reading the change; nobody acts for them.
+13. The builder then never holds a publishing credential, each credential lives in one job, and
+    every outward job waits for a human approval. A compromised build step cannot push to a
+    registry.
+14. Any three of: pushing a tag, approving a job in the `release` environment, creating a token,
+    changing a registry or repository setting, pushing the wiki. Each is a separate outward act
+    with its own risk and mostly no undo (burned npm versions, permanent registry entries), so the
+    approval is tied to the moment and the exact step.
+15. The `nfpms` section of `.goreleaser.yaml`, a distro container in `scripts/release/pkgtest.sh`
+    (the test that installs it and checks user, modes, `systemd-analyze verify`, and that removal
+    keeps data), docs (10.12.1, quickstart, RELEASING.md, glossary) and, if a new tool is needed,
+    a digest-pinned image in `scripts/release/tools.Dockerfile`.
 
 </details>

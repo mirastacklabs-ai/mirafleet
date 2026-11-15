@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 470" width="840" height="470" role="img" aria-labelledby="t d">
+<title id="t">Release pipeline: one tag, every channel</title>
+<desc id="d">Pushing a version tag starts release.yml. The verify and build jobs hold no credentials. The draft job signs checksums.txt and creates a draft GitHub release. After publish-release, the image, npm and brew jobs run side by side, and mcp-registry runs after npm. Every job from draft onward waits for a human approval in the release environment.</desc>
+<style>
+:root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--okbg:#E0F0EE}
+@media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--okbg:#0F2C29}}
+.bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
+text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
+.ttl{font:600 21px Oswald,"Arial Narrow",Arial,sans-serif;text-transform:uppercase;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.m{font-size:11px;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.b{font-weight:700;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.box{fill:#F6F5F1;fill:var(--band,#F6F5F1);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.hl{fill:#E0F0EE;fill:var(--okbg,#E0F0EE);stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;opacity:0}
+.ln{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none}
+.ah{fill:#00695F;fill:var(--accent,#00695F)}
+.bd{fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.bt{font-weight:700;fill:#FFFFFF;fill:var(--bg,#FFFFFF);text-anchor:middle}
+.ap{fill:#FF671F;fill:var(--signal,#FF671F)}
+.at{font-size:10px;font-weight:700;fill:#0A0A0A;text-anchor:middle}
+.c{text-anchor:middle}
+@keyframes k1{0%{opacity:0}3%,94%{opacity:1}100%{opacity:0}}
+@keyframes k2{0%,11%{opacity:0}14%,94%{opacity:1}100%{opacity:0}}
+@keyframes k3{0%,22%{opacity:0}25%,94%{opacity:1}100%{opacity:0}}
+@keyframes k4{0%,33%{opacity:0}36%,94%{opacity:1}100%{opacity:0}}
+@keyframes k5{0%,44%{opacity:0}47%,94%{opacity:1}100%{opacity:0}}
+@keyframes k6{0%,55%{opacity:0}58%,94%{opacity:1}100%{opacity:0}}
+@keyframes k7{0%,70%{opacity:0}73%,94%{opacity:1}100%{opacity:0}}
+.s1{animation:k1 10s infinite}.s2{animation:k2 10s infinite}.s3{animation:k3 10s infinite}.s4{animation:k4 10s infinite}
+.s5{animation:k5 10s infinite}.s6{animation:k6 10s infinite}.s7{animation:k7 10s infinite}
+@media (prefers-reduced-motion:reduce){.hl{animation:none;opacity:1}}
+</style>
+<rect class="bg" width="840" height="470"/>
+<text class="ttl" x="20" y="34">One tag, every channel</text>
+
+<!-- row A -->
+<rect class="box" x="20" y="70" width="130" height="56" rx="4"/><rect class="hl s1" x="20" y="70" width="130" height="56" rx="4"/>
+<text class="b c" x="85" y="94">tag v0.6.0</text><text class="m c" x="85" y="112">pushed by a human</text>
+<rect class="box" x="180" y="70" width="130" height="56" rx="4"/><rect class="hl s2" x="180" y="70" width="130" height="56" rx="4"/>
+<text class="b c" x="245" y="94">verify</text><text class="m c" x="245" y="112">relgen check, CI green</text>
+<rect class="box" x="340" y="70" width="130" height="56" rx="4"/><rect class="hl s3" x="340" y="70" width="130" height="56" rx="4"/>
+<text class="b c" x="405" y="94">build</text><text class="m c" x="405" y="112">goreleaser, no keys</text>
+<rect class="box" x="500" y="70" width="130" height="56" rx="4"/><rect class="hl s4" x="500" y="70" width="130" height="56" rx="4"/>
+<text class="b c" x="565" y="94">draft</text><text class="m c" x="565" y="112">cosign + provenance</text>
+<rect class="box" x="660" y="70" width="150" height="56" rx="4"/><rect class="hl s5" x="660" y="70" width="150" height="56" rx="4"/>
+<text class="b c" x="735" y="94">publish-release</text><text class="m c" x="735" y="112">un-draft after review</text>
+<path class="ln" d="M150 98H172"/><path class="ah" d="M180 98l-8-4v8z"/>
+<path class="ln" d="M310 98H332"/><path class="ah" d="M340 98l-8-4v8z"/>
+<path class="ln" d="M470 98H492"/><path class="ah" d="M500 98l-8-4v8z"/>
+<path class="ln" d="M630 98H652"/><path class="ah" d="M660 98l-8-4v8z"/>
+<text class="m c" x="325" y="148">no credentials in these two</text>
+<text class="m c" x="245" y="166"> </text>
+
+<!-- bus -->
+<path class="ln" d="M735 126V200H85M245 200V240M405 200V240M85 200V240"/>
+<path class="ah" d="M85 250l-4-8h8zM245 250l-4-8h8zM405 250l-4-8h8z"/>
+
+<!-- row B -->
+<rect class="box" x="20" y="250" width="130" height="56" rx="4"/><rect class="hl s6" x="20" y="250" width="130" height="56" rx="4"/>
+<text class="b c" x="85" y="274">image</text><text class="m c" x="85" y="292">Docker Hub + ghcr</text>
+<rect class="box" x="180" y="250" width="130" height="56" rx="4"/><rect class="hl s6" x="180" y="250" width="130" height="56" rx="4"/>
+<text class="b c" x="245" y="274">npm</text><text class="m c" x="245" y="292">7 packages</text>
+<rect class="box" x="340" y="250" width="130" height="56" rx="4"/><rect class="hl s6" x="340" y="250" width="130" height="56" rx="4"/>
+<text class="b c" x="405" y="274">brew</text><text class="m c" x="405" y="292">tap formula</text>
+<path class="ln" d="M245 306V352"/><path class="ah" d="M245 360l-4-8h8z"/>
+<rect class="box" x="180" y="360" width="130" height="56" rx="4"/><rect class="hl s7" x="180" y="360" width="130" height="56" rx="4"/>
+<text class="b c" x="245" y="384">mcp-registry</text><text class="m c" x="245" y="402">needs npm first</text>
+<text class="m" x="500" y="270">image, npm, brew run side by side.</text>
+<text class="m" x="500" y="288">Pre-releases skip brew and mcp-registry.</text>
+
+<!-- approval legend -->
+<rect class="ap" x="500" y="350" width="22" height="14" rx="3"/>
+<text class="m" x="532" y="361">= waits for a human to approve</text>
+<text class="m" x="532" y="379">in the GitHub `release` environment</text>
+<text class="m" x="500" y="402">Each credential lives in one job only.</text>
+<rect class="ap" x="552" y="62" width="26" height="14" rx="3"/><text class="at" x="565" y="73">OK?</text>
+<rect class="ap" x="722" y="62" width="26" height="14" rx="3"/><text class="at" x="735" y="73">OK?</text>
+<rect class="ap" x="72" y="242" width="26" height="14" rx="3"/><text class="at" x="85" y="253">OK?</text>
+<rect class="ap" x="232" y="242" width="26" height="14" rx="3"/><text class="at" x="245" y="253">OK?</text>
+<rect class="ap" x="392" y="242" width="26" height="14" rx="3"/><text class="at" x="405" y="253">OK?</text>
+<rect class="ap" x="232" y="352" width="26" height="14" rx="3"/><text class="at" x="245" y="363">OK?</text>
+
+<!-- step numbers -->
+<g><circle class="bd" cx="20" cy="70" r="10"/><text class="bt" x="20" y="74">1</text>
+<circle class="bd" cx="180" cy="70" r="10"/><text class="bt" x="180" y="74">2</text>
+<circle class="bd" cx="340" cy="70" r="10"/><text class="bt" x="340" y="74">3</text>
+<circle class="bd" cx="500" cy="70" r="10"/><text class="bt" x="500" y="74">4</text>
+<circle class="bd" cx="660" cy="70" r="10"/><text class="bt" x="660" y="74">5</text>
+<circle class="bd" cx="20" cy="250" r="10"/><text class="bt" x="20" y="254">6</text>
+<circle class="bd" cx="180" cy="360" r="10"/><text class="bt" x="180" y="364">7</text></g>
+</svg>

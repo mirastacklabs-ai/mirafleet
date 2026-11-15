@@ -20,6 +20,8 @@
 - The M4 additions: two new admin methods (`gui.reset_admin`, `fleet.set_confirm`), the filters
   of `audit.list` (section 7.6), and the one place where mirafleet speaks HTTP instead of SSH:
   the admin GUI's routes table (section 7.14).
+- The M6 additions: the **protocol level** and the version-skew rule (central accepts N and N-1,
+  upgrade central first), the exact refusal texts, and what is wired and what is not (section 7.15).
 
 Unfamiliar terms (SSH channel, global request, framing, envelope) are in the
 [glossary](glossary.md). The code is `internal/api` (framing, envelope, DTOs, limits),
@@ -30,7 +32,7 @@ All examples use the running example: central at `central.example.com:2222`, fle
 `prod`, runners `build-1` (in `dev`) and `db-1` (in `prod`), operators `alice` and `bob`, and
 Dana, the admin who uses the local admin socket. Tokens and codes are obviously fake (the secret
 and host-key-hash placeholders are exactly 43 characters long, like the real ones). Timestamps
-are made up. M1 to M5 are done (M6, release, is not); everything here is implemented, except where
+are made up. M1 to M5 are done and M6 (release) is in progress and unreleased; everything here is implemented, except where
 a paragraph says "planned". Workspace ids are 32 lowercase hex characters; the examples use
 `3f9a6c1e5b7d4820a1c3e5f708192a4b`.
 
@@ -1529,6 +1531,92 @@ The GUI's own limits (all in `internal/gui` unless noted):
 | `service.GUIMaxSessionsPerAdmin` | 16 | Oldest session evicted when a 17th is created. |
 | `service.GUISetupTTL` | 24 h | Setup token lifetime. |
 
+## 7.15 Protocol levels and version skew (M6)
+
+Until M6 nothing said what happens when a runner is newer or older than central. Real fleets are
+never upgraded in one instant: at MIRASTACK LABS aarvee upgrades central at 09:00, raj upgrades
+`build-1` at 09:10, and `db-1` stays on the old version until Friday because it is busy. M6 therefore defines a **protocol
+level** (see the [glossary](glossary.md)) and one rule about it. The rule lives in a small, pure
+package: `internal/protover`.
+
+### The level
+
+The protocol level is **one integer**. While mirafleet is at version 0.x it is the release's
+minor version: v0.6.0, v0.6.3 and `v0.6.0-rc.1` are all level 6. From 1.0 it is the major
+version (v1.4.2 is level 1). Patch and pre-release parts never matter, because they never change
+the wire format. `protover.Current` is the level of this build (6); `protover.Parse`,
+`Version.Level` and `LevelOf` turn a version string into a level. `relgen bump` and `relgen check`
+(section [8.12](08-code-tour.md#812-the-release-tooling-m6)) keep `Current` equal to the level of
+the release tag, so a release cannot ship with a stale number.
+
+Why one integer and not "any change is compatible"? A number is something a program can compare
+in one line and a human can say in one sentence ("you are on 4, I need 5 or 6"). Why the minor
+version in 0.x? Under semantic versioning (see the [glossary](glossary.md)), 0.x makes no
+compatibility promise, so we treat each minor release as a possible protocol change; after 1.0
+only a major release may break compatibility, so the major version is the level.
+
+### The rule
+
+**Central at level N accepts runners and orchestrators at level N and N-1. Anything else is
+refused.** `protover.Accepts(central, peer)` is `peer >= 1 && (peer == central || peer ==
+central-1)`. Level 0 means "missing": an old development build that never sent a level. It is
+always refused.
+
+| Central | Peer | Result |
+|---|---|---|
+| 6 | 6 | accepted |
+| 6 | 5 | accepted (one behind: upgrade the peer soon) |
+| 6 | 4 | refused: the peer is too old |
+| 6 | 7 | refused: the peer is newer than central |
+| 6 | missing (0) | refused |
+
+The two directions need different advice, so `protover.Check(role, name, central, peer)` returns
+an error whose text names who must upgrade. These are the texts the design pins:
+
+```text
+runner `db-1` is protocol 4, central needs 5 or 6: upgrade mirafleet on that runner
+central is protocol 6, this runner is 7: upgrade central first
+```
+
+(`role` is `runner` or `orchestrator`; with no name the subject reads "this runner". At level 1
+the "needs" part is just `1`.)
+
+**Upgrade order follows from the rule: central first, then runners, then operators.** See what
+goes wrong in the other order: if raj upgrades `db-1` to level 7 first, central (still 6)
+refuses it with "upgrade central first", and `db-1` is offline until central catches up. In the
+documented order a not-yet-upgraded runner is at N-1 and keeps working.
+
+### The 0.x to 1.x break
+
+The level restarts at 1 with v1.0, so a bare comparison could mistake 0.1 for 1.x.
+`protover.CheckVersions(role, name, centralVersion, peerVersion)` first refuses any mix of 0.x and
+1.x with `protover.MixedMajorMessage` ("mixed 0.x and 1.x: upgrade everything to 1.x, central
+first") and only then compares levels. A 1.x central therefore does not accept 0.x peers. This is
+a deliberate one-time break, to be called out in the 1.0 release notes.
+
+### Wiring: what is built and what is not
+
+On this branch `internal/protover` exists with its table tests, but it is **not yet wired** into
+the SSH handshake (its package comment says so). The design (docs/M6.md section 2.2, step L2,
+after M7 lands) is:
+
+- **Runners:** the `heartbeat@mirafleet` payload gains a `proto` field (additive, so old
+  receivers ignore it). Central checks it on the first heartbeat. On a mismatch it sends a
+  `refused@mirafleet` message with the text above, writes an audit row `runner.refused_version`
+  and closes the connection. The runner logs the message and backs off to its **maximum**
+  reconnect interval, because a fast retry loop against a permanent refusal would hammer central.
+- **Operators:** `hello` carries `proto` in its params and its result. `internal/orch` turns a
+  refusal into a tool error with the same message, and `mcp login` prints it.
+
+<!-- verify: L2 wiring (heartbeat proto, refused@mirafleet, audit action runner.refused_version, hello proto) is decided but not built on m6-now; check every name against internal/{api,transport,central,runner,orch} after L2 -->
+
+Until L2 lands, skew between builds is unchecked and the section 7.12 rules are all there is.
+
+Where else does the version show up? The release build stamps the binary (`-X main.version=...`).
+`go install ...@v0.6.0` has no such stamp, so `cmd/mirafleet/version_buildinfo.go` reads the module
+version from `debug.ReadBuildInfo` when the stamp is missing, and `mirafleet version` prints
+`v0.6.0` either way. A plain source build prints `dev`.
+
 ## Check your understanding
 
 1. Alice's client sends a frame whose 4-byte prefix is `00 10 00 00`. What happens, and what has
@@ -1553,6 +1641,10 @@ The GUI's own limits (all in `internal/gui` unless noted):
     itself not offer the same button?
 13. Why does `POST /runners/dev/build-1/revoke` answer `303` instead of showing the result, and
     which two routes break that rule?
+14. Central is at level 6. Which of these peers does it accept: a runner at 7, at 6, at 5, at 4,
+    or a runner that sends no level? What does the refused runner at 7 read, and who upgrades?
+15. Why is the level the *minor* version in 0.x, and what happens when a 0.6 runner meets a 1.x
+    central?
 
 <details>
 <summary>Answers</summary>
@@ -1600,5 +1692,12 @@ The GUI's own limits (all in `internal/gui` unless noted):
 13. After a `303` the browser fetches a page with GET, so pressing reload repeats the harmless
     GET, not the revoke (post-redirect-get). The exceptions are `POST /tokens` and `POST
     /operators/code`, which render the secret they show once, with `no-store`.
+14. It accepts 6 and 5. It refuses 7 ("central is protocol 6, this runner is 7: upgrade central
+    first", so central is upgraded, not the runner), 4 ("... needs 5 or 6: upgrade mirafleet on
+    that runner") and a missing level (level 0, always refused).
+15. In 0.x semantic versioning promises nothing between minors, so each minor may change the
+    wire format; from 1.0 only a major may. The level restarts at 1 at v1.0, so `CheckVersions`
+    refuses any 0.x/1.x mix with `MixedMajorMessage` before comparing numbers. Everything must
+    be upgraded to 1.x, central first.
 
 </details>

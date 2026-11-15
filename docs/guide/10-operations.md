@@ -23,9 +23,14 @@ to write `actions.yaml`, and a table of error messages with fixes.
   restrict it, certificates and fingerprints, `-gui-host`, a reverse proxy, recovery with
   `reset-admin`, sessions, and a troubleshooting table
   ([section 10.11](#1011-the-admin-gui-m4)).
+- The M6 additions: choosing an install channel, what the Linux package sets up, firewalling the
+  GUI, Compose, verifying checksums, signatures and provenance, upgrade order, the automatic
+  backup, rollback, and install troubleshooting ([section 10.12](#1012-install-upgrade-and-verify-by-channel-m6)).
 
-> **Status:** M1 to M5 are done. Next: M6 (release). There are no packages or
-> systemd units yet (planned for M6, see [PLAN.md](../PLAN.md)); you run the binary yourself.
+> **Status:** M1 to M5 are done; M6 (release) is in progress. Sections 10.2 to 10.11 run the
+> binary by hand, which still works; packages, systemd units, the image and Compose are in
+> [section 10.12](#1012-install-upgrade-and-verify-by-channel-m6) and the unreleased M6 plan
+> ([PLAN.md](../PLAN.md)).
 > `mirafleet mcp` (no arguments) is the MCP server that Claude Code and other agents talk to;
 > `mirafleet mcp login`, `context` and `api` are the human operator tools. Where the guide shows
 > something planned, it says so.
@@ -1783,6 +1788,182 @@ leave it out the hints say `CENTRAL:2222` and you replace it by hand.
   hash, so treat it as private.
 - You tried `mirafleet central gui reset-admin` once, on a test central, before you needed it.
 
+## 10.12 Install, upgrade and verify by channel (M6)
+
+Until now this chapter ran the binary by hand. M6 adds real install channels. This section
+explains the choices and the failure modes; the copy-and-paste steps are in
+[QUICKSTART.md](../QUICKSTART.md), which this section does not repeat. The maintainers' side
+(how a release is made) is [RELEASING.md](../RELEASING.md) and [chapter 11.9](11-contributing.md#119-releasing-the-dco-and-new-package-formats-m6).
+
+MIRASTACK LABS has spare servers and VMs. aarvee installs central on one, raj installs runners on
+the spare machines, and durga, kalyan and sid install the operator binary on their laptops. Each
+person uses the channel that fits their machine.
+
+### 10.12.1 Which channel for whom
+
+| Channel | For | You get | Notes |
+|---|---|---|---|
+| `.deb` / `.rpm` / `.apk` | central and runners on Linux | binary, systemd units, `/etc/mirafleet/`, example configs | Starts nothing and enables nothing. `.apk` has no systemd units. |
+| OCI image | central, and actions-mode runners | `docker.io/mirastack/mirafleet`, also `ghcr.io/mirastacklabs-ai/mirafleet`: the same image, same digest | `scratch` base: no shell, runs as UID 65532. No container-workspace or host mode inside the image (they need host containerd or a real OS user). |
+| Docker Compose | central, a runner, or a one-machine lab | `deploy/compose/{central,runner,lab}` | First-class install; image tag pinned to the release. |
+| Homebrew | operator laptops (macOS, Linux) | `brew install mirastacklabs-ai/tap/mirafleet` | Formula rendered from `checksums.txt`. |
+| `install.sh` / `install.ps1` | operators | binary only | Always checks the SHA-256. See 10.12.5. |
+| npm | operators whose harness config runs `npx` | `@mirastacklabs/mirafleet` | Binary comes in a platform package; no scripts run. |
+| Archive | anyone | binary, licences, quickstart | Check it against `checksums.txt` yourself. |
+| Claude Code plugin | operators | skill, commands, hooks | Marketplace `mirastacklabs`; needs the binary too. |
+
+Why packages and not only a binary? A package gives a system user, the directories with the right
+modes, and units that already carry the sandbox settings, so the safe setup is the default one.
+
+### 10.12.2 What the Linux package sets up
+
+- A system user and group `mirafleet` (home `/var/lib/mirafleet`, no login).
+- `/var/lib/mirafleet/central` and `/var/lib/mirafleet/runner`, mode 0700 owned by `mirafleet`;
+  `/var/lib/mirafleet/runner-ws`, 0700 root, for container workspaces.
+- `/etc/mirafleet/central.env`, mode **0600 root** (systemd reads it as root before dropping to
+  `mirafleet`, so it can hold a secret), and `/etc/mirafleet/runner.env`.
+- Three units: `mirafleet-central.service` (strict sandbox), `mirafleet-runner.service` (actions
+  mode, light sandbox, starts only if `runner.yaml` exists, i.e. after `runner join`) and
+  `mirafleet-runner-workspace.service` (root, container workspaces, after `containerd.service`).
+- Example configs in `/usr/share/doc/mirafleet/examples/`. There is **no live `actions.yaml`**: the
+  runner refuses to start without one, so you must write yours on purpose.
+
+The package never enables a unit and never deletes `/var/lib/mirafleet` or the user, not even on
+`purge`. Why? Deleting a database or a user on package removal is exactly the kind of mistake
+nobody can undo; wiping a machine is the admin's deliberate act. The maintainer scripts are
+idempotent (running them twice changes nothing), so a failed upgrade can be re-run.
+
+Admin commands must run as the unit's user, because the admin socket checks the caller's UID:
+`sudo -u mirafleet mirafleet central ...` (container: `docker exec <c> mirafleet central ...`).
+
+**Port 443 (or any port below 1024).** The strict sandbox gives central no capabilities, so it
+cannot bind a low port. Add a drop-in with `systemctl edit mirafleet-central`:
+
+```ini
+[Service]
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+```
+
+and set `MIRAFLEET_LISTEN=0.0.0.0:443` in `central.env`. You grant exactly one capability instead
+of weakening the whole sandbox.
+
+**Host-mode runner users (M7).** Host mode runs the agent as a real OS user on a VM, one runner
+per user. The package creates no such users; raj does it: `useradd -m dev`,
+`loginctl enable-linger dev` (without **linger** the user's systemd instance, and so the runner,
+stops when `dev` logs out), then as `dev` joins the runner and enables the **user unit**
+(`systemctl --user enable --now mirafleet-runner`). A second runner uses a second user such as `qa`.
+The alternative is the system unit `mirafleet-runner@dev`. See
+[QUICKSTART section 4](../QUICKSTART.md#4-remote-development-on-a-vm-host-mode).
+
+<!-- verify: host-mode units (/usr/lib/systemd/user/mirafleet-runner.service, mirafleet-runner@.service), workspace-host.yaml and `central keygen` / MIRAFLEET_SECRETS_KEY are M7 files, absent on m6-now; confirm names and QUICKSTART anchor after L3 -->
+
+### 10.12.3 Firewalling and the GUI
+
+Port 2222 must be reachable by runners and operators. The Admin GUI listens on **all interfaces**
+(`0.0.0.0:8443`, self-signed certificate) by default, so either allow 8443 only from admins'
+networks, or put `-gui-listen 127.0.0.1:8443` in `MIRAFLEET_CENTRAL_ARGS` and reach it with
+`ssh -L 8443:127.0.0.1:8443`. The packages never touch the firewall. Compose publishes 8443 on
+`127.0.0.1` only unless you edit the file. Central needs no outbound access, except HTTPS to
+GitLab when host-mode token self-rotation is used (the image has no CA bundle, so that case needs
+a CA file mounted read-only). At the first visit compare the browser's certificate fingerprint
+with the one in the journal ([10.11](#1011-the-admin-gui-m4)).
+
+### 10.12.4 Compose in practice
+
+`deploy/compose/central/compose.yaml` has two services: a one-shot `central-init` (creates the
+host key, database and registration secret; safe to repeat) and `central`, which waits for it with
+`depends_on: condition: service_completed_successfully`. Data lives in a named volume, so
+`docker compose down` keeps it and **`docker compose down -v` deletes it**. A runner joins with a
+one-shot `docker compose run --rm runner runner join ... -token -` (token on stdin, so it is not
+in `ps`). `deploy/compose/lab` runs central, a runner and an operator on one machine for trying
+things out.
+
+With plain `docker run` the same two steps are two commands: `central init`, then `central run`.
+Without a shell in the image, read the GUI setup token with `docker compose cp` or `docker cp
+<container>:/var/lib/mirafleet/central/gui/setup-token -`.
+
+### 10.12.5 Verifying what you downloaded
+
+There are three different checks, and they prove different things:
+
+| Check | Proves | Does not prove |
+|---|---|---|
+| **Checksum** (`sha256sum -c checksums.txt`) | The file is the one listed: not corrupted, not swapped on a mirror. | Who made `checksums.txt`. An attacker who replaces the file can replace the list too. |
+| **Signature** (cosign on `checksums.txt`) | `checksums.txt` was signed by this repository's `release.yml` workflow for a tag, via GitHub's OIDC identity. Together with the checksum this ties the file to the official pipeline. | That the source code is free of bugs or malice. |
+| **Provenance** (`gh attestation verify FILE --repo mirastacklabs-ai/mirafleet`) | A statement, signed by the workflow, saying which commit and workflow built that exact file. | Same: it says where it came from, not that it is good. |
+
+**Keyless** signing means there is no long-lived private key to steal: the workflow asks Sigstore
+for a short-lived certificate tied to its identity. You verify by checking that identity:
+`cosign verify-blob --bundle checksums.txt.sigstore.json --certificate-identity-regexp
+'^https://github\.com/mirastacklabs-ai/mirafleet/\.github/workflows/release\.yml@refs/tags/v'
+--certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt`. Images are
+verified the same way with `cosign verify` on both registries; the digests must match.
+
+`install.sh` always verifies the SHA-256 and refuses if the archive is not listed, on a mismatch,
+or if the machine has no SHA-256 tool. It verifies the signature when `cosign` is present and
+**requires** it with `--verify-signature`. It uses HTTPS only, extracts only the binary and runs
+`sudo` only if you pass `--sudo`. `install.ps1` does the same on Windows and changes your PATH only
+with `-AddToPath`.
+
+**Quarantine.** mirafleet is not code-signed by Apple or Microsoft (no accounts, no fee, and
+checksums plus cosign give a stronger story for this audience). A zip downloaded in a **browser**
+carries a "from the internet" flag, so macOS or Windows blocks it. After you checked the checksum,
+clear it: macOS `xattr -d com.apple.quarantine mirafleet`; Windows `Unblock-File .\mirafleet.exe`.
+Homebrew, npm and the two scripts download without a browser and are not affected.
+
+### 10.12.6 Upgrade, back up, roll back
+
+**Order: central first, then runners, then operators** ([7.15](07-protocols.md#715-protocol-levels-and-version-skew-m6)).
+Central accepts runners and operators one level behind, so everything keeps working while you
+walk through the fleet. For central:
+
+```bash
+sudo apt install ./mirafleet_0.7.0_linux_amd64.deb     # or dnf; Compose: change the image tag, docker compose up -d
+```
+
+The package `try-restart`s the running system units. When central starts with a database that is
+older than the binary, it makes an **online backup first**: `VACUUM INTO`
+`<data>/backups/mirafleet-schema<N>-<UTC time>.db` (directory 0700, file 0600), then migrates, then
+keeps the **3 newest** backups. Why before, not after? A migration that fails halfway or loses data
+cannot be undone from the damaged database. If the backup itself fails (disk full, wrong
+permissions) central **does not migrate and does not start**, with an error that says why; losing
+availability for a minute beats losing the database. A fresh database makes no backup. A database
+*newer* than the binary is refused (`database schema version N is newer than this binary
+supports ...: install a newer mirafleet, or restore a backup`), so an accidental downgrade cannot
+corrupt it.
+
+**Rollback**, if the new version misbehaves:
+
+1. Stop central.
+2. Reinstall the previous version.
+3. Move `mirafleet.db`, `mirafleet.db-wal` and `mirafleet.db-shm` aside (do not delete them yet).
+4. Copy the newest `backups/mirafleet-schema<N>-<time>.db` back as `mirafleet.db`.
+5. Start central.
+
+**Writes made after the upgrade are lost**: runners enrolled, tokens made, audit rows written.
+The backups hold stored credentials exactly as encrypted as the database, so a restore needs the
+same `MIRAFLEET_SECRETS_KEY` (back that key up apart from the data). The backups directory is
+inside the data directory, so it is not an off-machine backup; copy it somewhere else too.
+
+**Uninstall** keeps the data and the user (10.12.2). Operators: `brew uninstall mirafleet`, delete
+the install-script binary, `npm` needs nothing installed. Compose: see 10.12.4.
+
+### 10.12.7 Troubleshooting installs
+
+| What you see | Likely cause | Fix |
+|---|---|---|
+| `runner ... is protocol 4, central needs 5 or 6: upgrade mirafleet on that runner` | The runner is too old (once the skew wiring is in). | Upgrade that runner. |
+| `central is protocol 6, this runner is 7: upgrade central first` | Wrong upgrade order. | Upgrade central. |
+| Central will not start, error mentions the pre-migration backup | Disk full or `backups/` not writable. | Free space or fix the owner (`mirafleet`), start again. |
+| `database schema version N is newer than this binary supports` | Old binary on a new database. | Install the newer version, or restore a backup. |
+| `install.sh`: checksum mismatch / "not listed" | Corrupt or tampered download, or wrong version string. | Do not use the file; retry; check the version. |
+| Runner unit does not start after install | No `runner.yaml` yet (no `runner join`) or no `actions.yaml`. | Join, write the config, then start. |
+| macOS "cannot be opened because the developer cannot be verified" | Browser-downloaded zip, quarantined. | The `xattr` one-liner above. |
+| Windows "Windows protected your PC" | Same, for `.exe`. | `Unblock-File`, or use `install.ps1`. |
+
+<!-- verify: the exact protocol-refusal wording and the "refused" journal line come from L2 and are not built on m6-now -->
+
 ## Check your understanding
 
 1. Dana runs `mirafleet central fleet list` from her laptop and gets
@@ -1817,6 +1998,14 @@ leave it out the hints say `CENTRAL:2222` and you replace it by hand.
     central care?
 15. Dana forgot the GUI password. What does she run, where, and what happens to her open browser
     sessions and to the audit history?
+16. aarvee upgrades central and the new version cannot start: the log says the pre-migration backup
+    failed. Does the old database survive? What does aarvee check?
+17. After an upgrade, aarvee rolls back with the newest backup. Name two things that are lost or
+    needed, and one thing to back up apart from the data directory.
+18. raj upgrades `db-1` to a newer release before central. What happens, and what is the right
+    order?
+19. A checksum matches, yet a careful engineer still runs the cosign check. What does the signature
+    add that the checksum cannot?
 
 <details>
 <summary>Answers</summary>
@@ -1875,5 +2064,17 @@ leave it out the hints say `CENTRAL:2222` and you replace it by hand.
 15. On the central host, as central's user, `mirafleet central gui reset-admin`. It prints a new
     setup token (valid 24 h). Every GUI session ends at once, the setup page reopens, and Dana
     chooses a username and password again. The audit history stays, with a `gui.reset_admin` row.
+16. Yes: the backup runs before any schema change and a failed backup means no migration, so the
+    database is untouched. aarvee checks free disk space and that `backups/` inside the data
+    directory is owned by `mirafleet` and writable, then restarts central.
+17. Writes since the upgrade are lost (new runners, tokens, audit rows), and the restore needs the
+    same `MIRAFLEET_SECRETS_KEY` because backups hold credentials as encrypted as the database. The
+    key is what to back up apart from the data (and copy `backups/` off the machine too).
+18. Central (still at the old level) sees a runner one level *ahead* and refuses it with "central
+    is protocol N, this runner is N+1: upgrade central first"; `db-1` stays offline until central
+    is upgraded. Order: central, then runners, then operators.
+19. A checksum only says the file matches a list; whoever can replace the file can replace the list.
+    The signature ties `checksums.txt` to this repository's release workflow identity, so the list
+    itself can be trusted.
 
 </details>

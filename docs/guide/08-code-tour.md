@@ -1467,6 +1467,95 @@ session, forged form, mistyped name) leaves the fleet exactly as it was and writ
 a change. And because step 6 is the CLI's function, a bug in the revoke itself would show up in
 both places, not only in the browser.
 
+## 8.12 The release tooling (M6)
+
+Everything in this section is about getting the binary to users, not about what it does. Almost
+none of it is Go code that ends up in `mirafleet`: it is scripts, config files and one separate
+tool. The map of new directories:
+
+| Path | What it is |
+|---|---|
+| `tools/relgen/` | A separate `package main` (stdlib only, never linked into `mirafleet`) that keeps release files in step with the tag and renders generated files. |
+| `scripts/release.sh`, `scripts/release/*` | The release test and build targets. Like `dev.sh`, every step runs in a digest-pinned container. |
+| `.goreleaser.yaml` | The build, archive, package, checksum, SBOM and signing recipe. |
+| `packaging/` | What goes inside the Linux packages: `systemd/` units, `env/` files, `scripts/` (maintainer scripts), `examples/`, `oci/Dockerfile`. |
+| `deploy/compose/` | The Compose files (`central/`, `runner/`, `lab/`). |
+| `npm/` | Templates for the npm wrapper and platform packages. |
+| `scripts/install.sh`, `scripts/install.ps1` | The curl-style installers. |
+| `internal/protover/` | The protocol-level rule ([section 7.15](07-protocols.md#715-protocol-levels-and-version-skew-m6)). |
+| `.github/workflows/` | `gate.yml` and `ci.yml` (checks), `orchestrator.yml` (Windows, macOS), `dco.yml`, `release.yml` (publishing). |
+
+<!-- verify: late-lane host-mode files (user unit, mirafleet-runner@.service, workspace-host.yaml) are M7's and absent on m6-now; add them to packaging/ rows once L3 lands -->
+
+### `tools/relgen`
+
+Why a separate tool and not a shell script? The jobs are text surgery with exact rules (change a
+version in four files, render a formula from a checksum list), and Go lets us write golden-file
+tests for them. Why stdlib only? It runs in CI with release permissions, and the fewer
+dependencies it has, the less there is to trust. It does not shell out and edits JSON by decoding
+into structs and encoding again, so a stray character cannot corrupt a file.
+
+`main.go` holds a registry: each subcommand lives in its own file and calls `register` from
+`init()`. Two people adding commands never edit the same file. Run it with
+`scripts/dev.sh go run ./tools/relgen <command>`.
+
+| Command | File | What it does |
+|---|---|---|
+| `bump X.Y.Z` | `bump.go` | Sets the version in every versioned file at once: the plugin manifest, `pluginVersion` in `cmd/mirafleet/mcp_hook.go`, the marketplace `ref`, `server.json`, the Compose image tags and `protover.Current` (see `compose.go`). |
+| `check vX.Y.Z` | `check.go` | Fails unless every one of those files agrees with the tag. `release.yml`'s `verify` job and `release.sh m6check` both run it. |
+| `licenses` | `licenses.go` | Joins `go-licenses save` output and `licenses/extra/` into `THIRD_PARTY_LICENSES.txt`. |
+| `npm` | `npm.go` | Generates the 7 npm packages from the release archives, checking each archive against `checksums.txt` first. `npmfixture` writes stand-in archives for tests. |
+| `brew` | `brew.go` | Renders `Formula/mirafleet.rb` from `checksums.txt`. |
+| `serverjson` | `serverjson.go` | Sets the version fields of `server.json` from the tag. |
+| `wiki` | `wiki.go` | Turns `docs/guide` and the quickstart into wiki pages: renames files, rewrites relative links, copies diagrams, adds `Home` and `_Sidebar` and a "generated from docs/ at COMMIT" banner. Output only; it never pushes. |
+| `harness` | `harness.go` | Fails when a harness's command copy drifts from `integrations/commands/mirafleet.md`. |
+
+Why does `check` exist when `bump` exists? A person can edit one file by hand and forget the
+others. `check` is the tripwire that stops a release with a plugin saying 0.5.0 and a binary
+saying 0.6.0.
+
+### `scripts/release.sh`
+
+A POSIX shell script with one target per call, like `dev.sh`. It uses the **same pinned Go image**
+as `dev.sh` (a relgen test compares the two) so a "works in release, not in dev" difference cannot
+creep in. The targets, in the order `m6check` runs them after the normal gate:
+
+`vuln` (govulncheck), `lint-sh` (shellcheck), `lint-actions` (actionlint), `snapshot`, `relgen`
+(the check above), `pkgtest`, `installtest`, `image`, `lab`, `npmtest`, `harnesscheck`. Helpers
+are `licenses-report`, `stage` (collects the documents that go into archives) and `clean`
+(removes `dist/` and everything labelled `org.mirastacklabs.mirafleet.release=1`). Chapter 9
+([9.16](09-dev-setup-and-testing.md#916-testing-distribution-m6)) says what each proves.
+
+### `.goreleaser.yaml`
+
+goreleaser is the open-source release builder. One config produces, from one commit:
+- **builds**: `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w -X main.version={{.Version}}"`, a
+  fixed file time from the commit (`mod_timestamp`), for the six OS and CPU targets;
+- **archives**: `mirafleet_<version>_<os>_<arch>.tar.gz` (zip on Windows) containing the binary
+  and the licence and quickstart documents;
+- **packages** (`nfpms`): `.deb`, `.rpm`, `.apk`, built by nFPM, with the files and maintainer
+  scripts from `packaging/`;
+- **`checksums.txt`** (SHA-256), **SBOMs** (one per archive and package, from syft), and a
+  **keyless cosign signature** of `checksums.txt` (a `.sigstore.json` bundle);
+- a **draft** GitHub release (`draft: true`, pre-release detected from the tag).
+
+What it does *not* do is publish images, the Homebrew formula or npm. Those are separate jobs in
+`release.yml`, each with its own credential and its own human approval, so the tool that builds
+never holds a publishing secret. The tools (goreleaser, syft, cosign, nFPM) come from
+`scripts/release/tools.Dockerfile`, every `FROM` pinned by tag and digest. The local `snapshot`
+target runs goreleaser with signing and publishing skipped.
+
+### The npm wrapper
+
+`npm/mirafleet/` is the template of the package `@mirastacklabs/mirafleet`; `npm/platform/` is the
+template of the six per-platform packages (`@mirastacklabs/mirafleet-<os>-<cpu>`). The wrapper
+has **no dependencies** but lists the six platform packages as exact `optionalDependencies`. Each
+platform package declares `os` and `cpu`, so npm installs only the one that fits the machine.
+`bin/mirafleet.js` finds that package, starts its binary with the same arguments and
+`stdio: "inherit"`, forwards signals and exits with the child's exit code. It never writes to
+stdout (the MCP protocol owns stdout) and has no lifecycle scripts and no download step; that is
+what `npmtest` asserts. Neither template carries a version: `relgen npm` fills it in.
+
 ## Check your understanding
 
 1. `internal/central` handles SSH connections for a database-backed server, yet it does not
@@ -1497,6 +1586,10 @@ both places, not only in the browser.
     in the handler. Which test catches it, and why can you not hide the route from that test?
 14. In the Revoke click, name the first step that changes state, and three refusals that happen
     before it.
+15. Why is `tools/relgen` stdlib-only and kept out of the `mirafleet` binary? Which two places run
+    `relgen check`, and what does it protect against?
+16. What does goreleaser build here, and which three channels does it deliberately not publish to?
+17. Why does the npm wrapper have no `postinstall` script that downloads the binary?
 
 <details>
 <summary>Answers</summary>
@@ -1556,5 +1649,15 @@ both places, not only in the browser.
 14. Step 6, `Service.Lifecycle`. Before it: a Host not on the allowlist (`421`), no live
     session (redirect to `/login`), a missing or wrong `_csrf` token or a cross-site request
     (`403`), and a typed name that is not `dev/build-1` (`422`).
+15. It runs in CI with release permissions, so fewer dependencies means less to trust, and it is
+    release plumbing that users should not have to download. `release.yml`'s `verify` job and
+    `release.sh m6check` run it. It stops a release where one versioned file (plugin manifest,
+    marketplace `ref`, `server.json`, Compose tags, protocol level) still has the old version.
+16. The six OS/CPU binaries, archives, `.deb`/`.rpm`/`.apk` packages, `checksums.txt`, SBOMs and
+    the keyless signature, as a draft GitHub release. Not images, Homebrew or npm: separate jobs,
+    each with its own credential and approval, so the builder never holds a publish secret.
+17. Install scripts run arbitrary code on the user's machine at install time and need network
+    access. Shipping the binary inside a platform package means `npm install` only copies files,
+    and `npmtest` asserts that no lifecycle scripts exist.
 
 </details>

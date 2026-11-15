@@ -5,7 +5,7 @@
 > before relying on any row. This chapter compares mirafleet as designed, with all planned
 > milestones (M1 to M6) implemented. M1, M2, M3 (workspaces), M4 (the admin GUI) and M5 (the MCP
 > server, the Claude Code plugin and the other harness files) are done; release packaging (M6) is
-> not. See [../PLAN.md](../PLAN.md) for what is built today. Star counts are approximate. The rows
+> in progress and unreleased (section 12.7 covers distribution). See [../PLAN.md](../PLAN.md) for what is built today. Star counts are approximate. The rows
 > for other tools were last researched on 13 Nov 2026 and were **not** re-researched for the M4
 > or M5 refreshes; only the statements about mirafleet were re-checked against the code.
 
@@ -17,6 +17,7 @@
   and sandbox platforms.
 - Where mirafleet is genuinely different, where the alternatives are better, and what could make
   the whole premise wrong.
+- How the tools reach users, and the shipping trade-offs mirafleet chose (section 12.7).
 
 ## 12.1 Why mirafleet exists
 
@@ -451,6 +452,66 @@ Researched 13 Nov 2026. Star counts are approximate and change daily.
 - https://github.com/anthropics/sandbox-runtime
 - https://github.com/coder/coder
 
+## 12.7 How similar tools are distributed (M6)
+
+A tool that runs on servers, with a client on laptops, has to be installable by people who have
+never heard of it. This section compares *how* the tools in this chapter reach users with what
+mirafleet ships. It comes from general knowledge of these projects' public install pages and was
+**not** re-researched for this edit (it has no entries in 12.6), so treat the table as a sketch
+and check each project's own docs.
+
+<!-- verify: distribution rows for other tools were written without sources on 15 Nov 2026; re-research and add them to 12.6 before the wiki publish -->
+
+| Tool | How it typically reaches users |
+|---|---|
+| GitHub Actions runner | A downloadable archive per OS plus a configuration script; you place it yourself. |
+| GitLab Runner | Package repositories (deb and rpm), a Docker image, Homebrew, plain binaries. |
+| Buildkite agent | Package repositories, Homebrew, a Docker image, an install script. |
+| Coder | An install script, Homebrew, a Docker image, packages on the release page. |
+| Registry-based MCP SSH servers | Mostly `npx` or `uvx` from a package registry; little or no signing. |
+| **mirafleet (M6)** | One tag produces archives, `.deb` `.rpm` `.apk`, an OCI image on two registries (same digest), Compose files, Homebrew, `install.sh` and `install.ps1`, npm, the Claude Code marketplace and the MCP Registry. |
+
+### Where mirafleet is the same
+
+Nearly everyone offers an **archive plus a package plus a container image**, because servers
+differ: some teams use apt, some use Kubernetes, some copy a binary. mirafleet follows the pattern,
+and like the Go-based runners it ships one static binary, so a single build serves every distro.
+
+### Where it differs, and the trade-offs
+
+- **One build, many channels.** Some projects publish each channel from its own script, so the npm
+  package and the image can come from different builds. mirafleet builds once; its signed
+  `checksums.txt` and provenance cover the archives and packages, the image gets its own cosign
+  signature and provenance, and both registries carry the same digest. The cost is a longer,
+  approval-gated pipeline ([diagram](diagrams/release-pipeline.svg) in
+  [11.9](11-contributing.md#119-releasing-the-dco-and-new-package-formats-m6)).
+- **Keyless signing and provenance.** Many projects sign packages with a long-lived GPG key kept
+  by a maintainer; if the key leaks, every signature is suspect. Keyless means the signature is
+  tied to a workflow identity anyone can read. The cost: verifying needs `cosign` and an
+  understanding of the identity string, which a `gpg --verify` user may find unfamiliar.
+  Checksums stay the baseline the install scripts always enforce.
+- **No apt or yum repository.** Projects that run their own repositories let `apt upgrade` update
+  them. mirafleet ships packages as release files only: nothing to host or secure, but no
+  automatic updates. A repository is a sensible later addition if people ask.
+- **No Apple notarization or Windows code signing.** Larger projects pay for both so a
+  double-clicked download just runs. mirafleet chose cosign, provenance, checksums and one-line
+  quarantine instructions, to avoid accounts, fees and one more secret to protect. The cost is a
+  friction step for browser-downloaded zips; Homebrew, npm and the scripts never hit it.
+- **npm without install scripts.** MCP servers on registries often run an install script or fetch
+  a binary at first start. mirafleet's wrapper has no scripts and carries the binary in an
+  optional-dependency platform package, so `npm install` copies files and runs nothing. The cost is
+  seven packages to publish instead of one.
+- **No telemetry.** mirafleet sends no usage data, crash reports or update checks (SECURITY.md).
+  The price: the maintainers learn about problems only from issues.
+- **Upgrade safety is built in.** mirafleet backs up its database before any migration, refuses to
+  open a newer database, and has a version-skew rule so a mixed fleet is told who must upgrade
+  ([section 7.15](07-protocols.md#715-protocol-levels-and-version-skew-m6)).
+
+MIRASTACK LABS' own motive is practical: aarvee installs central once, raj puts runners on the spare
+servers, and durga, kalyan and sid each install only a small client. The channels let each person
+do their part with the tool they already have, and let aarvee check that what raj installed is
+what the project built.
+
 ## Check your understanding
 
 1. Why does a CI-style runner design fit an agent-driven fleet better than plain SSH?
@@ -471,6 +532,8 @@ Researched 13 Nov 2026. Star counts are approximate and change daily.
 9. Why does mirafleet's `exec` tool not count as "running a shell on the server"?
 10. Dana's company wants every admin to sign in with the company account and wants a read-only
     role for auditors. Does the mirafleet GUI do that, and why was it built without it?
+11. Name two trade-offs mirafleet made in how it ships (as opposed to what it does), and what
+    each one costs a user.
 
 <details>
 <summary>Answers</summary>
@@ -517,5 +580,10 @@ Researched 13 Nov 2026. Star counts are approximate and change daily.
     stays small and easy to audit. The commercial consoles compared above (Rundeck, Teleport and
     others) do offer them. Meanwhile the CLI-only route stays available to anyone with a shell on
     central.
+11. Any two of: no apt/yum repository (nothing to host, but no automatic updates); keyless cosign
+    instead of a GPG key (no key to steal, but users need `cosign`); no Apple or Windows code
+    signing (no accounts or secrets, but a quarantine step for browser-downloaded zips); npm
+    without install scripts (nothing runs at install, but seven packages); no telemetry (privacy,
+    but maintainers hear less).
 
 </details>

@@ -159,3 +159,13 @@ Caption: count the gates before the service call; the last half is the same as `
 4. CSRF: same-origin headers, then the `_csrf` token must match the cookie's key (403).
 5. The typed name must equal `dev/build-1` (422), then `Service.Lifecycle` runs with source `gui`.
 6. Same path as the CLI: tombstone, kick, cancel, one commit with the audit row. Then 303 back.
+
+## release-pipeline.svg
+Caption: follow the numbers left to right; the orange "OK?" marks are where a human must approve, and each credential sits in one job.
+1. A human pushes tag `v0.6.0`.
+2. `verify`: the tag is on `main`, `relgen check` passes, every `ci.yml` job is green on that commit.
+3. `build`: goreleaser makes archives and packages; no credentials in the job.
+4. `draft`: cosign signs `checksums.txt`, provenance is attached, a draft release is created (approval).
+5. `publish-release`: after the reviewer checks the draft, it is un-drafted (approval).
+6. `image`, `npm` and `brew` run side by side (each needs approval): Docker Hub and ghcr with one digest, seven npm packages, the tap formula.
+7. `mcp-registry` lists the npm package after `npm` succeeds. Pre-releases skip `brew` and `mcp-registry`.
