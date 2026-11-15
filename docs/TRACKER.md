@@ -18,7 +18,7 @@ Status: `done` · `running` · `next` · `waiting on user`.
 | M5 Orchestrator | done 14 Nov 2026 (`4e0649b`); S17 smoke in the full-product test |
 | M4 Admin GUI | built 15 Nov 2026; final review 0 P0/P1; G-01…G-43 closed or documented. Browser check (S19) in the full-product test |
 | M7 Developer workspaces | built 15 Nov 2026; combined review (3 reviewers) P1s fixed; hardening H-01…H-21 done. User smoke (S21) in the full-product test |
-| M6 Release and distribution | now lane N1–N3 and late lane L1–L9 done; version files at 0.6.0-rc.2; `m6check` OK; closing review P1s fixed |
+| M6 Release and distribution | now lane N1–N3 and late lane L1–L9 done; version files at 0.6.0 (bump PR); `m6check` OK; closing review P1s fixed |
 | Wiki | live, generated from main (guide + quickstart, MIRASTACK LABS cast) |
 
 ## Waiting on the user
