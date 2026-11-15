@@ -31,10 +31,15 @@ type adminCLI struct {
 	out  io.Writer
 	err  io.Writer
 	exit func(code int) // exec propagates the action's exit code
+	// callBody is call for a method with one body frame behind the request (credential.set); in
+	// is where credential values are read from (stdin, never argv).
+	callBody func(sock, method string, params any, body []byte, result any) error
+	in       io.Reader
 }
 
 func defaultAdminCLI() *adminCLI {
-	return &adminCLI{call: central.AdminCall, out: os.Stdout, err: os.Stderr, exit: os.Exit}
+	return &adminCLI{call: central.AdminCall, out: os.Stdout, err: os.Stderr, exit: os.Exit,
+		callBody: adminCallBody, in: os.Stdin}
 }
 
 func adminSock(data string) string { return filepath.Join(data, "admin.sock") }
@@ -51,6 +56,10 @@ func centralMain(args []string) error {
 		return centralInit(args[1:])
 	case "run":
 		return centralRun(args[1:])
+	case "keygen":
+		return centralKeygen(args[1:], os.Stdout, os.Stderr)
+	case "secrets":
+		return centralSecrets(args[1:], os.Stdin, os.Stdout)
 	}
 	return defaultAdminCLI().run(args)
 }
@@ -77,6 +86,8 @@ func (c *adminCLI) run(args []string) error {
 	case "operator":
 		return c.group(sub, rest, map[string]func([]string) error{"code": c.operatorCode,
 			"rotate-secret": c.operatorRotate, "list": c.operatorList, "revoke": c.operatorRevoke})
+	case "credential":
+		return c.credential(rest)
 	case "exec":
 		return c.exec(rest)
 	case "audit":
@@ -182,11 +193,16 @@ func (c *adminCLI) fleetCreate(args []string) error {
 	mode := fs.String("mode", "actions", "fleet mode: actions or workspace")
 	confirm := fs.Bool("confirm", false, "guarded fleet: exec needs -confirm FLEET")
 	wf := addWSFlags(fs)
+	creds := fs.String("credentials", "", "credentials to assign to the whole fleet, comma separated (workspace fleets)")
 	pos, err := adminParse(fs, args)
 	if err != nil {
 		return err
 	}
 	if err := adminWantArgs("fleet create", pos, 1, "one NAME"); err != nil {
+		return err
+	}
+	credNames, err := parseCredentialList(*creds, *mode)
+	if err != nil {
 		return err
 	}
 	params := api.FleetCreateParams{Name: pos[0], Mode: *mode, Confirm: *confirm}
@@ -205,7 +221,7 @@ func (c *adminCLI) fleetCreate(args []string) error {
 		return err
 	}
 	fmt.Fprintf(c.out, "fleet %s created (mode %s, confirm %v)\n", res.Fleet.Name, res.Fleet.Mode, res.Fleet.Confirm)
-	return nil
+	return c.attachCredentials(adminSock(*data), res.Fleet.Name, credNames)
 }
 
 func (c *adminCLI) fleetList(args []string) error {

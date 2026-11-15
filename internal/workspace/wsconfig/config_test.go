@@ -489,3 +489,51 @@ func TestCheckParentDirImmediateOnly(t *testing.T) {
 		t.Errorf("ancestor above the parent affected the result: %v", err)
 	}
 }
+
+func TestParseHost(t *testing.T) {
+	c, err := Parse([]byte("executor: host\nconcurrent: 8\nenv_allow: [LANG, CI]\nhost:\n  root: ~/work\n  cleanup: {delete_after: 720h}\n  job_max: 6h\n  corporate_ca_file: /etc/ssl/corp.pem\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Executor != ExecHost || c.Host.Root != "~/work" || c.Host.JobMax != 6*time.Hour || c.Host.DeleteAfter() != 720*time.Hour {
+		t.Fatalf("host: %+v", c.Host)
+	}
+	// Placeholder image and both network modes, so the runner's re-validation of a host spec passes.
+	if !c.AllowsImage(HostImage) || !c.AllowsNetwork("none") || !c.AllowsNetwork("egress") || c.AcceptsGuarded() {
+		t.Fatalf("accessors: %+v", c)
+	}
+	if c.Limits.MaxFile == 0 || c.Limits.ExecMax != DefaultExecMax {
+		t.Fatalf("limits: %+v", c.Limits)
+	}
+	if err := c.CheckFiles(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Defaults: a bare host config.
+	c, err = Parse([]byte("executor: host\nconcurrent: 1\n"))
+	if err != nil || c.Host.DeleteAfter() != DefaultHostDeleteAfter || c.Host.JobMax != DefaultHostJobMax {
+		t.Fatalf("defaults: %+v %v", c, err)
+	}
+	// delete_after 0 means never.
+	c, err = Parse([]byte("executor: host\nconcurrent: 1\nhost: {cleanup: {delete_after: 0s}}\n"))
+	if err != nil || c.Host.DeleteAfter() != 0 {
+		t.Fatalf("never: %v", err)
+	}
+}
+
+func TestParseHostRefusals(t *testing.T) {
+	for name, y := range map[string]string{
+		"images":      "executor: host\nconcurrent: 1\nimages: [alpine:3.20]\n",
+		"cpu limit":   "executor: host\nconcurrent: 1\nlimits: {cpus: 2}\n",
+		"containerd":  "executor: host\nconcurrent: 1\ncontainerd: {namespace: mirafleet, root: /var/lib/x}\n",
+		"relative":    "executor: host\nconcurrent: 1\nhost: {root: work}\n",
+		"job_max":     "executor: host\nconcurrent: 1\nhost: {job_max: 48h}\n",
+		"negative":    "executor: host\nconcurrent: 1\nhost: {cleanup: {delete_after: -1h}}\n",
+		"ca relative": "executor: host\nconcurrent: 1\nhost: {corporate_ca_file: ca.pem}\n",
+		"host block":  strings.Replace(osBase, "concurrent: 2", "concurrent: 2\nhost: {}", 1),
+	} {
+		if _, err := Parse([]byte(y)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

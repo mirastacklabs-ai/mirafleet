@@ -169,9 +169,9 @@ func TestLoadProject(t *testing.T) {
 		path        string
 	}{
 		{"stops at .git dir", deep, Project{}, ""},
-		{"git file level counts", filepath.Join(wt, "src"), Project{"wtf", "lab"}, filepath.Join(wt, ProjectName)},
+		{"git file level counts", filepath.Join(wt, "src"), Project{Fleet: "wtf", Context: "lab"}, filepath.Join(wt, ProjectName)},
 		{"walks to home", plain, Project{Fleet: "homefleet"}, filepath.Join(home, ProjectName)},
-		{"start itself", wt, Project{"wtf", "lab"}, filepath.Join(wt, ProjectName)},
+		{"start itself", wt, Project{Fleet: "wtf", Context: "lab"}, filepath.Join(wt, ProjectName)},
 		{"outside home: only start", filepath.Join(outside, "sub"), Project{}, ""},
 		{"outside home: start hit", outside, Project{Fleet: "out"}, filepath.Join(outside, ProjectName)},
 	} {

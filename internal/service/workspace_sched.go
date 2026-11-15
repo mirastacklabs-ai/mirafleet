@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 	"github.com/mirastacklabs-ai/mirafleet/internal/central/registry"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
@@ -31,6 +33,38 @@ type placementReq struct {
 	guarded bool
 	labels  map[string]string
 	image   string
+
+	// Host fleets (M7): held maps runner id to the operator whose live workspaces hold it; those
+	// runners are skipped and the first holder met is stored in *busyBy (for the busy refusal).
+	held       map[int64]string
+	busyBy     *string
+	busyRunner *string // name of that runner
+}
+
+// hostImage is the placeholder image of a host-fleet workspace row and spec (host mode has no
+// images; the store and the wire both require a non-empty one).
+const hostImage = "host"
+
+// heldRunners maps each runner of the fleet to the operator, other than opID, who has live
+// workspaces on it (docs/M7.md 3.4). Placement skips these; ReserveWorkspace re-checks atomically.
+func (s *Service) heldRunners(ctx context.Context, fleet string, opID int64) (map[int64]string, error) {
+	live, err := s.st.ListWorkspaces(ctx, store.WorkspaceFilter{Fleet: fleet, Limit: 1000,
+		States: []store.WorkspaceState{store.WorkspaceOpening, store.WorkspaceOpen, store.WorkspaceClosing}})
+	if err != nil {
+		return nil, err
+	}
+	held := map[int64]string{}
+	for _, w := range live {
+		if w.OperatorID != opID {
+			held[w.RunnerID] = w.Operator
+		}
+	}
+	return held, nil
+}
+
+// errRunnerBusy is the refusal for a host runner in use by another operator.
+func errRunnerBusy(runner, operator string) error {
+	return api.Errorf(api.CodeConflict, "busy: runner %s is in use by %s", runner, operator)
 }
 
 // candidates returns the runners that can take the request, best first: most free slots, with a
@@ -60,7 +94,19 @@ func (s *Service) candidates(ctx context.Context, req placementReq) ([]candidate
 		if req.guarded && si.SecureRuntime == "" {
 			continue
 		}
-		if !labelsSubset(req.labels, r.Labels) || !workspace.MatchImage(si.Images, req.image) {
+		if !labelsSubset(req.labels, r.Labels) {
+			continue
+		}
+		if req.cfg.Executor != store.ExecutorHost && !workspace.MatchImage(si.Images, req.image) {
+			continue
+		}
+		if who, ok := req.held[si.ID]; ok {
+			if req.busyBy != nil && *req.busyBy == "" {
+				*req.busyBy = who
+				if req.busyRunner != nil {
+					*req.busyRunner = r.Name
+				}
+			}
 			continue
 		}
 		cs = append(cs, candidate{info: si, runner: r})
@@ -164,4 +210,12 @@ func egressRule(e string) transport.EgressRule {
 		p = 443
 	}
 	return transport.EgressRule{Host: host, Port: p}
+}
+
+// refuseBusy audits (denied) and returns the busy refusal naming the holding operator.
+func (s *Service) refuseBusy(ctx context.Context, p auth.Principal, src Source, fleet, session, rid, runner, holder string) error {
+	den := s.wsEvent(p, src, api.MethodWorkspaceOpen, fleet, "", "", rid)
+	den.Subject, den.Outcome, den.Message = session, OutcomeDenied, "busy: runner "+runner+" is in use by "+holder
+	s.recordBestEffort(ctx, den)
+	return errRunnerBusy(runner, holder)
 }

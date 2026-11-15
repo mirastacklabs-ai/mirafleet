@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -18,10 +19,10 @@ import (
 )
 
 // allowedChannels is the per-role allow-list of channel types a peer may open toward central.
-// Anything not listed is rejected. Runners open none: central opens exec@ channels toward them
-// over their own connection.
+// Anything not listed is rejected. Runners open only events@ (host-mode usage events); central
+// opens exec@ and workspace@ channels toward them over their own connection.
 var allowedChannels = map[auth.Kind]map[string]bool{
-	auth.KindRunner:   {},
+	auth.KindRunner:   {transport.ChanEvents: true},
 	auth.KindOperator: {transport.ChanAPI: true},
 	auth.KindEnroll:   {transport.ChanJoin: true, transport.ChanRegister: true},
 }
@@ -79,8 +80,10 @@ func registryStatus(st store.Status) (registry.Status, bool) {
 func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
 	reg := s.cfg.Registry
 	staleAfter := reg.StaleAfter()
-	// Runners never open channels toward central.
-	go rejectChannels(auth.KindRunner, chans)
+	// Runners open only events@; everything else is rejected. Tracked by the wait group (this
+	// function is itself tracked, so Add cannot race Close's Wait).
+	s.wg.Add(1)
+	go func() { defer s.wg.Done(); s.runnerChannels(p, chans) }()
 	// A connection that never heartbeats is never registered; close it after the stale window.
 	var sess *registry.Session
 	var lastHB transport.Heartbeat
@@ -151,6 +154,9 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			if hb.Executor != "" {
 				s.reconcileAsync(p.ID)
 			}
+			if hasFeature(hb, transport.FeatureCreds) {
+				s.deliverAsync(p.ID)
+			}
 			lastHB = hb
 			if s.claimEdge(p.ID, now) {
 				lastTouch = now
@@ -161,6 +167,17 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			}
 		} else {
 			sess.Heartbeat(hb)
+			if hasFeature(hb, transport.FeatureCreds) {
+				s.cfg.Service.ReportCredentialStatus(p.ID, hb.Credentials)
+				if s.cfg.Service.ClaimDeliveryRetry(p.ID) { // last creds_sync failed: retry
+					s.retryDeliverAsync(p.ID)
+				}
+			}
+			if hb.Busy > 0 { // running background shells keep their workspaces from idling out
+				bctx, bcancel := context.WithTimeout(s.ctx, storeTimeout)
+				s.cfg.Service.TouchBusy(bctx, p.ID, hb.Busy)
+				bcancel()
+			}
 			lastHB = hb
 			if now.Sub(lastTouch) >= s.cfg.TouchInterval {
 				lastTouch = now
@@ -180,6 +197,81 @@ func (s *Server) reconcileAsync(id int64) {
 		defer s.wg.Done()
 		s.cfg.Service.ReconcileRunner(s.ctx, id)
 	}()
+}
+
+func hasFeature(hb transport.Heartbeat, f string) bool {
+	for _, x := range hb.Features {
+		if x == f {
+			return true
+		}
+	}
+	return false
+}
+
+// deliverAsync sends a connected host runner its full credential set (creds_sync) in the
+// background: the runner answers on the same connection that is still waiting for the first
+// heartbeat reply. Tracked like reconcileAsync. Failures are logged without values.
+func (s *Server) deliverAsync(id int64) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		if err := s.cfg.Service.RunnerConnected(s.ctx, id); err != nil {
+			s.cfg.Logf("credential delivery to runner %d: %v", id, err)
+		}
+	}()
+}
+
+// retryDeliverAsync re-sends the credential set of a runner whose last delivery failed. The
+// caller holds the claim from Service.ClaimDeliveryRetry. Tracked like deliverAsync.
+func (s *Server) retryDeliverAsync(id int64) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		if err := s.cfg.Service.RetryDelivery(s.ctx, id); err != nil {
+			s.cfg.Logf("credential delivery retry to runner %d: %v", id, err)
+		}
+	}()
+}
+
+// runnerChannels serves the channels a runner opens toward central: events@ only.
+func (s *Server) runnerChannels(p auth.Principal, chans <-chan ssh.NewChannel) {
+	for nch := range chans {
+		if !channelAllowed(auth.KindRunner, nch.ChannelType()) {
+			nch.Reject(ssh.UnknownChannelType, "channel type not allowed")
+			continue
+		}
+		ch, reqs, err := nch.Accept()
+		if err != nil {
+			continue
+		}
+		go ssh.DiscardRequests(reqs)
+		s.wg.Add(1) // the caller's counter keeps the total above zero while chans is open
+		go func() {
+			defer s.wg.Done()
+			defer ch.Close()
+			s.readEvents(p, ch)
+		}()
+	}
+}
+
+// readEvents ingests the length-prefixed EventBatch frames of one events@ channel until it ends
+// or a frame is invalid (the channel is then closed).
+func (s *Server) readEvents(p auth.Principal, r io.Reader) {
+	for {
+		b, err := transport.ReadEventBatch(r)
+		if err != nil {
+			if err != io.EOF && s.ctx.Err() == nil {
+				s.cfg.Logf("runner %q (id %d): events channel: %v", p.Name, p.ID, err)
+			}
+			return
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, storeTimeout)
+		err = s.cfg.Service.IngestRunnerEvents(ctx, p.ID, b)
+		cancel()
+		if err != nil {
+			s.cfg.Logf("runner %q (id %d): events not recorded: %v", p.Name, p.ID, err)
+		}
+	}
 }
 
 // toucher writes a runner's last_seen/info to the store off the heartbeat path. It holds at most
@@ -271,9 +363,13 @@ func (s *Server) register(sconn *ssh.ServerConn, p auth.Principal, hb transport.
 	if !ok {
 		return nil, fmt.Errorf("runner status %q", r.Status)
 	}
+	replacing := s.cfg.Registry.Get(r.ID) != nil
 	sess, err := s.cfg.Registry.Register(r.ID, r.Name, r.Fleet, sconn, st, hb)
 	if err != nil {
 		return nil, err
+	}
+	if replacing {
+		s.cfg.Service.RunnerReplaced(ctx, r.ID)
 	}
 	s.cfg.Logf("runner %s (id %d, %s) online (%s/%s)", r.Ref(), r.ID, r.Status, hb.OS, hb.Arch)
 	return sess, nil

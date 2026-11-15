@@ -41,7 +41,7 @@ type callBody struct {
 
 // takesBody reports whether the method may be followed by a request body frame.
 func takesBody(method string) bool {
-	return method == api.MethodWorkspaceWriteFile || method == api.MethodWorkspaceExec
+	return method == api.MethodWorkspaceWriteFile || method == api.MethodWorkspaceExec || method == api.MethodWorkspaceFS
 }
 
 // readBody reads the one request body frame (at most max bytes), arming the body timer.
@@ -124,7 +124,7 @@ func handleWorkspaceOpen(ctx context.Context, c *callCtx, req *api.Request) (any
 	if e := api.DecodeParams(req.Params, &p); e != nil {
 		return nil, e
 	}
-	w, reused, err := c.svc.OpenWorkspace(ctx, c.p, c.src, p.Fleet, p.Session, p.Image, p.Labels, p.Confirm)
+	w, reused, err := c.svc.OpenWorkspaceWith(ctx, c.p, c.src, p.Fleet, p.Session, p.Image, p.Labels, p.Confirm, p.Workdir, p.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +189,7 @@ func handleWorkspaceClose(ctx context.Context, c *callCtx, req *api.Request) (an
 	if e := api.DecodeParams(req.Params, &p); e != nil {
 		return nil, e
 	}
-	w, err := c.svc.CloseWorkspace(ctx, c.p, c.src, p.Workspace)
+	w, err := c.svc.CloseWorkspaceDelete(ctx, c.p, c.src, p.Workspace, p.Delete)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +257,7 @@ func handleWorkspaceKill(ctx context.Context, c *callCtx, req *api.Request) (any
 	if e := api.DecodeParams(req.Params, &p); e != nil {
 		return nil, e
 	}
-	w, err := c.svc.KillWorkspace(ctx, c.p, c.src, p.ID)
+	w, err := c.svc.KillWorkspaceDelete(ctx, c.p, c.src, p.ID, p.Delete)
 	if err != nil {
 		return nil, err
 	}

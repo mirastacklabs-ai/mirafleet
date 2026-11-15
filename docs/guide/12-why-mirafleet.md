@@ -11,6 +11,7 @@
 
 ## What you will learn
 
+- How host mode compares with dev containers and plain SSH (section 12.8; general-knowledge claims are marked).
 - Why an AI agent that operates many servers needs more than plain SSH or a CI pipeline.
 - What an AI API key is, what losing one costs, and where each kind of tool keeps it.
 - How mirafleet compares with CI runners, config-management tools, access tools, MCP SSH servers
@@ -65,12 +66,12 @@ When Claude Code (or any agent) talks to a language model, it sends each request
 provider's web service. The request carries a secret string, the **API key**. The provider uses
 the key to decide who to bill, which models the caller may use and how fast it may call them.
 
-Whoever holds the key *is* you, as far as the provider is concerned. MIRASTACK LABS's key is valuable
+Whoever holds the key *is* you, as far as the provider is concerned. MIRASTACK LABS' key is valuable
 because it gives:
 
-- **Billing.** Every token the key spends is charged to MIRASTACK LABS's account.
+- **Billing.** Every token the key spends is charged to MIRASTACK LABS' account.
 - **Model access.** Access to expensive models and to any special access MIRASTACK LABS negotiated.
-- **Rate limits.** The key's quota is shared. An attacker using it can starve MIRASTACK LABS's real work.
+- **Rate limits.** The key's quota is shared. An attacker using it can starve MIRASTACK LABS' real work.
 - **Organisation data.** Depending on the provider's features, keys can reach stored files,
   fine-tuned models, conversation or usage history and org settings.
 
@@ -511,6 +512,80 @@ MIRASTACK LABS' own motive is practical: aarvee installs central once, raj puts 
 servers, and durga, kalyan and sid each install only a small client. The channels let each person
 do their part with the tool they already have, and let aarvee check that what raj installed is
 what the project built.
+## 12.8 Remote development on a VM: how host mode compares (M7)
+
+MIRASTACK LABS has spare servers and VMs sitting idle, and its engineers want to use them for AI
+coding sessions without handing out server logins or Git tokens. M7 is that case: durga's Claude
+Code stays on durga's Mac, raj's spare VM runs the tool calls, and aarvee's central holds the
+credentials. Two other setups do the
+nearest job. This section compares them. **Statements about other products are general knowledge
+about how they usually work, not checked against their current documentation; verify before you
+decide.** Statements about mirafleet come from the code and [docs/M7.md](../M7.md).
+
+### The three setups in one sentence each
+
+- **Codespaces / dev containers** (general knowledge): a hosted or local container built from a
+  `devcontainer.json`; an editor (and often the AI tool) runs inside or attached to that container.
+- **Plain SSH plus agent forwarding** (general knowledge): you `ssh` to a VM, run the tools there
+  (or run an AI CLI there), and use `ssh -A` so the VM can use the keys held by the agent on your
+  laptop.
+- **mirafleet host mode**: Claude Code stays on the Mac for inference; its tool calls are sent
+  through central to a runner on the VM; credentials live on central.
+
+### Comparison
+
+| Question | Codespaces / dev containers (general knowledge) | SSH + agent forwarding (general knowledge) | mirafleet host mode |
+|---|---|---|---|
+| Where does the model's inference run? | Wherever the AI tool runs (often inside the environment, with its API key there) | On the VM if the AI CLI is installed there, with its API key there; or on the laptop with an MCP SSH server | On the Mac. The AI API key never goes to the VM |
+| Where do the repo and commands run? | In the container | On the VM | On the VM |
+| Who can reach the VM? | Provider-managed access | Anyone with network reach and a key; you manage it | Nobody dials in: the runner dials out to central |
+| Git credentials | Often a provider token injected into the environment, or forwarded; the process can read it | The forwarded agent: anything on the VM that can reach the socket (and root) can ask it to sign while you are connected | Stored encrypted on central, in runner memory only; the agent signs via a restricted socket (no export, pinned hosts) or a broker injects HTTPS headers; the agent never reads the value |
+| If the agent is prompt-injected | Can use what the environment holds | Can use your forwarded keys while connected | Can use the credential against its pinned hosts while a session is open; cannot copy it (the known gap: it can read the runner's own enrolment key; see [10.13.10](10-operations.md#101310-the-known-gap-in-plain-words)) |
+| Audit | Provider logs | sshd logs, if you set them up | Central audit rows for each call and aggregated credential use, without values |
+| Persistence | Container lifetime and provider policy | Whatever you configure | A directory per session on the VM; close never deletes; cleanup after 30 days |
+| Set-up effort | Low if you already use it | Low | Higher: central, a runner user, credentials; the gain is the central control |
+| Offline / outage | Needs the provider | Needs the VM | Needs central and the VM |
+
+### When each fits
+
+- If your team already lives in Codespaces or dev containers and your AI tool runs inside them, you
+  gain little from mirafleet host mode. (General knowledge about those products.)
+- If it is one person, one VM, and you are happy to keep the AI CLI and its API key on the VM, plain
+  SSH is simpler and mirafleet adds moving parts.
+- Host mode is for the case where **inference and its API key must stay on the Mac, the code and
+  credentials must stay off the Mac, and an administrator wants one place to assign, rotate and audit
+  credentials** for several developers and VMs.
+
+### What mirafleet host mode does *not* give you
+
+- No isolation inside the VM: the agent is the runner's user. The VM is the boundary. (Container mode,
+  M3, is the stronger local boundary.)
+- No egress control of its own: use the VM's firewall.
+- A single trust point: whoever controls central can read every stored credential.
+- The enrolment-key gap above, accepted in the OSS edition.
+- Linux VMs only for the runner.
+
+<!-- verify: re-read after the S21 user smoke; update the table if tool behaviour changed -->
+
+### Check the claims yourself
+
+Search each product's current documentation for "agent forwarding" risks, "devcontainer secrets" and
+how your AI tool stores its API key. Sections 12.2 and 12.6 list how this chapter treats such sources.
+
+### Check your understanding (M7)
+
+1. Name one case where plain SSH is the better choice than host mode.
+2. Where does the AI API key live in host mode?
+3. Which claims in this section are general knowledge, and what should you do with them?
+
+<details>
+<summary>Answers</summary>
+
+1. One person, one VM, happy to keep the AI CLI and its key on the VM.
+2. On the Mac only.
+3. Those about Codespaces/dev containers and SSH agent forwarding; verify them against current documentation.
+
+</details>
 
 ## Check your understanding
 

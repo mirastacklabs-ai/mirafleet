@@ -177,6 +177,42 @@ func checkOrchestratorDeps(t *testing.T, mod string, targets []string, goos, goa
 	}
 }
 
+// M7 host-mode packages: central/runner-only. The orchestrator side (orch, mcpserver, hook) and
+// the darwin/windows binaries must never link them. Packages that do not exist yet are tolerated
+// (they simply never show up in the dependency lists), so the check bites as soon as they appear.
+var m7ServerOnly = []string{"internal/workspace/hostx", "internal/secrets", "internal/workspace/broker", "internal/workspace/sshagent"}
+
+func isM7ServerOnly(pkg string) bool {
+	const mod = "github.com/mirastacklabs-ai/mirafleet/"
+	for _, p := range m7ServerOnly {
+		if pkg == mod+p || strings.HasPrefix(pkg, mod+p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestNoM7ServerPackagesOnOrchestratorOrNonLinux(t *testing.T) {
+	requireGo(t)
+	for _, goos := range []string{"darwin", "windows"} {
+		for _, pkg := range goDeps(t, goos) {
+			if isM7ServerOnly(pkg) {
+				t.Errorf("%s binary links %s", goos, pkg)
+			}
+		}
+	}
+	targets := []string{"internal/orch", "internal/mcpserver", "integrations/claude-code/hook"}
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		for _, rel := range targets {
+			for _, dep := range goListPkgs(t, goos, "amd64", "-deps", "-f", "{{.ImportPath}}", "./../../"+rel) {
+				if isM7ServerOnly(dep) {
+					t.Errorf("%s: %s links %s", goos, rel, dep)
+				}
+			}
+		}
+	}
+}
+
 const guiPkg = "github.com/mirastacklabs-ai/mirafleet/internal/gui"
 
 // forbiddenForGUI lists what internal/gui must never import (docs/M4.md 2.1): the GUI talks to

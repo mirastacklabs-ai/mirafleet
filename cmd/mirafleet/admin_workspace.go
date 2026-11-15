@@ -44,7 +44,7 @@ type wsFlags struct {
 func addWSFlags(fs *flag.FlagSet) *wsFlags {
 	return &wsFlags{
 		fs:       fs,
-		executor: fs.String("executor", "", "containerd (default) or opensandbox"),
+		executor: fs.String("executor", "", "containerd (default), opensandbox or host"),
 		image:    fs.String("image", "", "default image reference (must match -images)"),
 		images:   fs.String("images", "", "image allowlist, comma separated: exact refs or repo@sha256:* / repo:*"),
 		pull:     fs.String("pull", "", "if-not-present (default), always or never"),
@@ -200,6 +200,7 @@ func (c *adminCLI) fleetWorkspace(args []string) error {
 func (c *adminCLI) fleetWorkspaceSet(args []string) error {
 	fs, data := c.flags("fleet workspace set")
 	wf := addWSFlags(fs)
+	creds := fs.String("credentials", "", "credentials to assign to the whole fleet, comma separated")
 	pos, err := adminParse(fs, args)
 	if err != nil {
 		return err
@@ -207,10 +208,17 @@ func (c *adminCLI) fleetWorkspaceSet(args []string) error {
 	if err := adminWantArgs("fleet workspace set", pos, 1, "one fleet NAME"); err != nil {
 		return err
 	}
-	if len(wf.given()) == 0 {
+	credNames, err := parseCredentialList(*creds, "workspace")
+	if err != nil {
+		return err
+	}
+	if len(wf.given()) == 0 && len(credNames) == 0 {
 		return fmt.Errorf("%w: fleet workspace set: give at least one flag to change", errAdminUsage)
 	}
 	sock := adminSock(*data)
+	if len(wf.given()) == 0 { // credentials only
+		return c.attachCredentials(sock, pos[0], credNames)
+	}
 	var fl api.FleetsListResult
 	if err := c.call(sock, api.MethodFleetsList, nil, &fl); err != nil {
 		return err
@@ -240,7 +248,7 @@ func (c *adminCLI) fleetWorkspaceSet(args []string) error {
 		return err
 	}
 	fmt.Fprintf(c.out, "fleet %s workspace config updated\n", res.Fleet.Name)
-	return nil
+	return c.attachCredentials(sock, pos[0], credNames)
 }
 
 func (c *adminCLI) workspaceList(args []string) error {
@@ -272,6 +280,7 @@ func (c *adminCLI) workspaceList(args []string) error {
 
 func (c *adminCLI) workspaceKill(args []string) error {
 	fs, data := c.flags("workspace kill")
+	del := fs.Bool("delete", false, "also delete the session directory (host fleets)")
 	pos, err := adminParse(fs, args)
 	if err != nil {
 		return err
@@ -280,7 +289,7 @@ func (c *adminCLI) workspaceKill(args []string) error {
 		return err
 	}
 	var res api.WorkspaceKillResult
-	if err := c.call(adminSock(*data), api.MethodWorkspaceKill, api.WorkspaceKillParams{ID: pos[0]}, &res); err != nil {
+	if err := c.call(adminSock(*data), api.MethodWorkspaceKill, api.WorkspaceKillParams{ID: pos[0], Delete: *del}, &res); err != nil {
 		return err
 	}
 	if res.State == "closing" {

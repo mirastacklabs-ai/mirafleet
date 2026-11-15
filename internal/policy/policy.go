@@ -8,6 +8,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
+	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
 // ErrForbidden is returned when the policy denies an action.
@@ -44,7 +45,9 @@ func (TablePolicy) Authorize(_ context.Context, p auth.Principal, action string,
 		switch action {
 		case api.MethodHello, api.MethodFleetsList, api.MethodRunnersList, api.MethodActionRun,
 			api.MethodWorkspaceOpen, api.MethodWorkspaceExec, api.MethodWorkspaceReadFile,
-			api.MethodWorkspaceWriteFile, api.MethodWorkspaceClose, api.MethodWorkspaceList:
+			api.MethodWorkspaceWriteFile, api.MethodWorkspaceClose, api.MethodWorkspaceList,
+			api.MethodWorkspaceFS, api.MethodWorkspaceJobStart, api.MethodWorkspaceJobStatus,
+			api.MethodWorkspaceJobTail, api.MethodWorkspaceJobCancel, api.MethodWorkspaceOutputRead:
 			return nil
 		}
 	case auth.KindEnroll:
@@ -53,4 +56,19 @@ func (TablePolicy) Authorize(_ context.Context, p auth.Principal, action string,
 		}
 	}
 	return ErrForbidden
+}
+
+// RequiresConfirm reports whether a call needs `confirm` = fleet name on a guarded fleet. For
+// workspace.fs, fsOp is the call's op; it is ignored for other methods. On host-mode fleets the
+// guard is this typed confirm only (docs/M7.md Q10). Reads, listings, job_status/tail/cancel and
+// output_read never need it.
+func RequiresConfirm(method, fsOp string) bool {
+	switch method {
+	case api.MethodActionRun, api.MethodWorkspaceOpen, api.MethodWorkspaceExec,
+		api.MethodWorkspaceWriteFile, api.MethodWorkspaceJobStart:
+		return true
+	case api.MethodWorkspaceFS:
+		return transport.FSMutating(fsOp)
+	}
+	return false
 }

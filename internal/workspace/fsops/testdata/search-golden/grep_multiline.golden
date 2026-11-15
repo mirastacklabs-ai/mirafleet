@@ -1,0 +1,3 @@
+main.go:4:func main() {
+main.go:5:	println("Hello")
+main.go:6:}

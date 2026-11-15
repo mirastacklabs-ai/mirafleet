@@ -16,6 +16,8 @@
   as one static binary.
 - How the parts reach a machine (packages, image, Compose, operator channels) and the protocol
   level rule for mixed versions (M6).
+- The M7 host-mode runner: `hostx`, `fsops`, `sshagent`, `broker` and `secrets`, how central
+  holds credentials and delivers them to a runner's memory, and where those secrets live.
 
 This chapter is the map. It shows which programs exist, what each part of them is responsible for,
 who is allowed to talk to whom, and where every secret lives. The next chapter,
@@ -43,9 +45,7 @@ Everything in this guide uses the same fictional company, **MIRASTACK LABS**:
 - Runners are `build-1` (in `dev`) and `db-1` (in `prod`).
 - Operators (a person's registered key and machine, driven by a person or an AI agent) are `durga`
   and `kalyan`.
-- **aarvee** is the admin, with a shell on the central host, and runs `mirafleet central ...` there.
-  `raj` owns the spare servers and enrols them as runners. `sid` is the newest engineer, and the
-  reader of this guide.
+- **aarvee** is the admin, with a shell on the central host and runs `mirafleet central ...` there.
 - For workspace mode: aarvee creates `dev` as a **workspace** fleet (with `build-1` as a workspace
   runner), and durga's Claude Code opens a workspace on it, runs `go test` and reads and writes
   files ([chapter 1](01-what-is-mirafleet.md#the-workspace-running-example)). `prod` stays an
@@ -260,7 +260,7 @@ channels through a **`workspace.Executor`**, the Go interface in `internal/works
 
 | Executor | Package | What it does | Default? |
 |---|---|---|---|
-| `containerd` | `internal/workspace/ctrd` (Linux only) | Runs the container itself through the containerd Go client; builds the OCI spec; reads and writes files with `os.Root`; runs the egress proxy. | yes |
+| `containerd` | `internal/workspace/ctrd` (Linux only) | Runs the container itself through the containerd Go client; builds the OCI spec; reads and writes files with `os.Root` (confined to the workspace directory; the `host` executor does not use `os.Root`, see below); runs the egress proxy. | yes |
 | `opensandbox` | `internal/workspace/osb` | Speaks HTTPS to an [OpenSandbox](02-background.md#29-containers-containerd-and-opensandbox) server on the same host, through a TLS front, with mutual TLS. No SDK. | opt-in per fleet |
 
 Beside them: `internal/workspace/wsconfig` (loads and validates `workspace.yaml`),
@@ -304,6 +304,95 @@ Facts to remember about a workspace runner:
   with no central involved, so they still work after the runner was revoked.
 - **Root-equivalent.** A workspace runner can reach the containerd socket. See trust boundary 7
   below.
+
+### Host mode: the M7 runner
+
+
+M7 adds a third executor, `host`, selected by `executor: host` in `workspace.yaml`
+([chapter 1, 1.4a](01-what-is-mirafleet.md#14a-host-mode-remote-development-on-a-vm-m7)). Everything
+above the `workspace.Executor` interface (scheduling, sticky sessions, slots, the reaper, audit,
+policy, the `workspace.*` methods) is reused. What is new sits below it and beside it. Host mode is
+**Linux only**: `internal/workspace/hostx` has `_linux` files and a `doc_other.go` stub, and
+`mirafleet runner` refuses to start elsewhere anyway.
+
+| Component | Package / file | Job |
+|---|---|---|
+| **hostx** | `internal/workspace/hostx` | The `host` executor. Start-up hardening (`harden_linux.go`), session directories and cleanup (`sessions.go`, `sweep.go`), foreground `bash` with output capture (`exec_linux.go`), background jobs (`job_linux.go`, supervised by the hidden `mirafleet host-shim job` of `cmd/mirafleet/host_shim_linux.go`), XDG default paths (`xdg.go`), file operations through `fsops` (`files.go`). |
+| **fsops** | `internal/workspace/fsops` | A pure Go package (no OS-specific hooks) that implements the file tools: read, write, edit, multi-edit, notebook edit, ls, glob, grep. It runs inside the runner process, as the runner's user, so OS permissions are the boundary. Pure so that container mode could reuse it later. |
+| **sshagent** | `internal/workspace/sshagent` | The restricted per-session ssh-agent ([chapter 2, 2.14](02-background.md#214-host-mode-background-secrets-you-can-use-but-not-read-m7)): `List` and `Sign` only, user-auth requests only, host binding. |
+| **broker** | `internal/workspace/broker` | The local HTTPS proxy: per-session CA with name constraints (`ca.go`), credential injection (`cred.go`), registry token exchange (`registry.go`). |
+| **secrets** | `internal/secrets` | AES-256-GCM seal/open, the key from `MIRAFLEET_SECRETS_KEY`, the key-check value, `Rekey`. Central only: a test (`deps_test`) keeps `secrets`, `hostx`, `broker` and `sshagent` out of the orchestrator and macOS/Windows builds. |
+| **Credential holder** | `internal/runner/creds.go` | The runner's **in-memory** set of delivered credentials. Replaced atomically on each `creds_sync`. |
+| **Host ops glue** | `internal/runner/hostops.go`, `internal/runner/events.go` | Dispatches the new ops (`workspace.fs`, jobs, output paging) to hostx; wires a session's agent socket, broker and environment; sends aggregated usage events. |
+| **Credential service** | `internal/service/credentials.go` | Central's logic: set, list (masked), delete, assign, unassign, rotate, delivery, placement by credentials, the GitLab self-rotation client. |
+| **Dispatch** | `internal/service/{fsdispatch.go,jobs.go}`, `internal/central` | Routes `workspace.fs`, `workspace.job_*` and `workspace.output_read` to the runner (same ownership, confirm and audit checks as `workspace.exec`). |
+| **Events** | `internal/service/events.go` | Ingests runner usage events as audit rows with source `runner`. |
+| **GUI** | `internal/gui/handlers_credentials.go` | The **Credentials** page at `/credentials`. |
+| **Operator side** | `internal/orch`, `internal/mcpserver/{tools_fs,tools_bash,tools_ws}.go` | The new MCP tools, the upload/download transfer, and `.mirafleet.yaml` fields `remote` and `workdir`. |
+
+```mermaid
+flowchart LR
+  MAC["Mac: Claude Code<br/>+ mirafleet mcp"]
+  CEN(["central<br/>credentials (encrypted)"])
+  subgraph VM["VM, one OS user (dev)"]
+    RUN["runner process<br/>non-dumpable<br/>credential holder (memory)"]
+    AG["sshagent<br/>agent.sock"]
+    BR["broker<br/>127.0.0.1"]
+    SH["agent's shell,<br/>git, build jobs"]
+  end
+  GL["gitlab.example.com"]
+  MAC -- "MCP tool call (bash, edit...)" --> CEN
+  CEN -- "workspace@ channel: fs, job, creds_sync" --> RUN
+  RUN -- "starts as the same user" --> SH
+  SH -- "SSH_AUTH_SOCK" --> AG
+  SH -- "HTTPS_PROXY" --> BR
+  AG -- "signed login" --> GL
+  BR -- "TLS + injected header" --> GL
+```
+
+*Look at where the credentials sit: encrypted on central, in memory in the runner, and the shell
+reaches them only through the agent socket and the broker.*
+
+Facts to remember about a host runner:
+
+- **One OS user, one runner.** `runner join` and `runner run` run as an ordinary unprivileged user
+  (say `dev`). The runner refuses to start as uid 0, with any Linux capability, or if `$HOME` or the
+  state directory is group- or world-writable. Its config and state default to that user's XDG
+  directories (`$XDG_CONFIG_HOME/mirafleet`, `$XDG_STATE_HOME/mirafleet`), so it needs nothing outside
+  the home directory. A second runner on the same VM is a second user (`qa`), enrolled separately.
+- **Config.** `workspace.yaml` takes `executor: host` plus an optional `host:` block (`root`, `cleanup.delete_after`,
+  `job_max`, `corporate_ca_file`). A host runner takes no image, no resource limits and no egress
+  list: the VM and its firewall are the boundary.
+- **Directories.** Each session gets `<root>/sessions/<slug>` (mode `0700`; `<slug>` derives from
+  the session id). A project may share a named directory instead: `workdir: NAME` in
+  `.mirafleet.yaml` resolves to `<root>/work/<name>` (names match `^[a-z0-9][a-z0-9._-]{0,62}$`,
+  host fleets only, symlinks refused). Closing a workspace stops its processes and closes its
+  agent socket and broker session, but **keeps the directory**; reopening the same session
+  reattaches. The runner labels workspaces `mirafleet.session` and `mirafleet.workdir`, so
+  reattach is by session. A second open of a session that is still held is refused
+  (`ErrRefused`). The directory is `<root>/sessions/<slug>`, or `<root>/work/<name>` for a shared workdir; the labels are
+  `mirafleet.session`, `mirafleet.workdir` and `mirafleet.credentials`. The credential scope of the
+  open is saved as `creds_scope` in the session state directory, so a re-adopted session gets the
+  same, never a wider, set.
+- **One operator at a time.** A host runner is held by the operator who has live workspaces on it.
+  Another operator's `workspace_open` gets a `conflict` error, `busy: runner build-1 is in use by durga`, and placement skips the
+  runner. The hold is released when the last live workspace ends. It is enforced inside the store's
+  reserve transaction, with no extra table.
+- **Credentials are placed.** A fleet with credentials requested only places on a runner that holds
+  every one of them; asking for a credential on a non-host fleet is a bad request.
+- **Restart safe.** Background jobs survive a runner restart (the systemd unit uses
+  `KillMode=process`) and the runner re-adopts open sessions and running jobs when it starts.
+- **Guarded host fleets** are allowed. Guarding means only the typed `confirm` equal to the fleet
+  name for mutating tools.
+
+#### Where the credentials flow (the short version)
+
+Central stores each credential encrypted. The admin assigns it to a runner or to a whole fleet; the
+effective set of a runner is the **union** of both. Central pushes that set to each connected host
+runner on connect and on every change, as a `creds_sync` operation inside the already-authenticated
+SSH connection. The runner keeps the values in memory only, and swaps the whole set atomically.
+[Flow 34](04-flows.md#34-credential-assign-delivery-use-and-rotation) follows one credential
+from the GUI to a `git push`.
 
 ### Operator side
 
@@ -587,8 +676,9 @@ The boundaries, one by one:
    The line that matters is between that container and the runner host: a user namespace,
    no capabilities, a read-only root, a seccomp filter, cgroup limits and an empty network
    (or an allowlisting proxy). Chapter 5, [section 5.9](05-security.md#59-the-workspace-container-boundary),
-   covers each defence. Nothing the container does is trusted: the runner reads its files only
-   through `os.Root` and re-checks every path.
+   covers each defence. Nothing the container does is trusted: on a container fleet the runner
+   reads its files only through `os.Root` and re-checks every path. (A host-mode workspace has no
+   container; its file tools are not confined, see chapter 5, section 5.14.)
 7. **Runner host to containerd.** A runner that serves workspaces must reach the containerd
    socket, and **access to that socket is equivalent to root on the host**. A workspace runner
    is therefore a root-equivalent process: run it on a dedicated machine or VM, in its own
@@ -637,6 +727,10 @@ allowlist permits. The runner-side guard bounds the damage but cannot remove it.
 | **OpenSandbox API key** | The runner's admin (OpenSandbox's own key) | The runner host only | The file named by `opensandbox.api_key_file` in `workspace.yaml`; must be mode `0600` or `0400` and owned by the runner's user | Never in env or argv, never logged, never passed into a sandbox. The runner refuses to start if the file is missing or loose. |
 | **Node CA and certificates** (OpenSandbox executor) | `mirafleet runner tls-init -dir DIR` | The OpenSandbox host (the same machine as the runner) | `ca.pem`, `front.pem`, `front-key.pem`, `client.pem`, `client-key.pem`, all mode `0600` in a `0700` directory | The CA's private key is discarded right after signing. The front holds its server key; the runner holds the client key (mTLS). The runner may also pin the front's public key (`pin_sha256`). |
 | Workspace directories | `workspace.Create` | The workspace runner | `<containerd.root>/<ws_id>`, default `/var/lib/mirafleet/ws`; root-owned `0700` | The files an agent wrote. Not secret by design: **never put credentials in a workspace**. |
+| **Secrets master key** (32 bytes) (M7) | `mirafleet central keygen` | Central host | `MIRAFLEET_SECRETS_KEY` in a `0600` environment file read by `central run` | Nobody. The database stores only a key-check value (an HMAC of a constant). If it is lost, every stored credential is lost. |
+| **Credential values** (M7) | `central credential set` or the GUI | Central, then runner memory | `credentials.ciphertext` in `mirafleet.db` (AES-256-GCM); on a host runner **in memory only**, never on disk, in env or in argv | The runner that holds the assignment. The agent can use them through the agent socket and the broker, never read them. |
+| Per-session CA, agent socket (M7) | The host runner, per session | The VM | CA key in runner memory only; `agent.sock` (`0600`) and the CA certificate `ca.pem` (public), in the session's private directory (`0700`) <!-- verify: exact location of the session state dir; docs/M7.md says $XDG_STATE_HOME/mirafleet/sessions/<sid>/, while the code (hostx.SessionDir, runner.SessionHooks) keeps agent.sock, ca.pem, ssh_config, out/ and jobs/ in the session directory the executor reports -->   | The agent's processes can connect to the socket and trust the CA; neither is a secret. |
+| Host runner state (M7) | `runner join` as the runner's user | The VM | `$XDG_CONFIG_HOME/mirafleet` (config, enrolment key), `$XDG_STATE_HOME/mirafleet` (sessions, job logs, outputs, local audit) | The enrolment key is readable by the same OS user (an accepted gap, [5.14](05-security.md#514-host-mode-and-credentials-m7)). |
 | **The agent's AI API key** | The operator | The operator's laptop only | Environment of Claude Code | Never sent to central, never to a runner, never into a workspace. The env denylist (`*_API_KEY`, `ANTHROPIC_*`, ...) refuses to forward such names. |
 
 **Where the operator's files live, per operating system** (`internal/opconf`; setting
@@ -821,7 +915,10 @@ refused for its level.
 
 ## Planned parts (not in the code yet)
 
-M1, M2, M3 and M4 (the admin GUI) are done and M5 (the orchestrator) is built. M6 (release
+M1, M2, M3 and M4 (the admin GUI) are done, and M5 (the orchestrator) and M7 (host mode and
+credentials, above) are built. Not built yet: a container-mode version of the M7 file tools (the
+`fsops` package is pure Go, so wiring it into `ctrd` is a small follow-up; the new tools return
+`unsupported` on container fleets). M6 (release
 packaging, systemd units, the package-manager and plugin-marketplace listings) is in the
 repository but the first release is not published yet; see
 [the distribution view](#distribution-how-the-parts-reach-a-machine-m6). Not built, by design: more than one GUI admin, roles,
@@ -833,12 +930,12 @@ jump hosts per context.
 
 ## Check your understanding
 
-1. Which processes in MIRASTACK LABS's deployment listen on a network port, and which do not?
+1. Which processes in MIRASTACK LABS' deployment listen on a network port, and which do not?
 2. Why can the firewall in front of `db-1` block all inbound traffic and mirafleet still work?
 3. A developer wires the admin handler for `token.create` into the operator handler map by
    mistake. Which checks would still stop an operator from creating a join token?
-4. Where is the registration secret stored, and what does `durga` actually receive when
-   registering?
+4. Where is the registration secret stored, and what does `durga` actually receive when they
+   register?
 5. If central is fully compromised, what stops the attacker from running any command on `db-1`?
 6. Why can a compromised central not make `build-1` start a privileged container with the host's
    `/etc` mounted? And why must the `build-1` host still be treated as sensitive?
@@ -847,6 +944,9 @@ jump hosts per context.
    to send? Why is the model on the MCP side treated as untrusted input?
 9. aarvee revokes `prod/db-1` from the GUI. Which code path runs, and how does the audit row show
    that it came from the GUI?
+10. A VM has users `dev` and `qa`, each with its own runner. Why are they two runners and not one
+    runner serving two users? Which Unix feature keeps `qa`'s tools out of `dev`'s files?
+11. Where does the plaintext of a GitLab deploy key exist in a running host-mode system?
 
 <details>
 <summary>Answers</summary>
@@ -864,8 +964,8 @@ jump hosts per context.
    and `action.run`. (c) `Service.CreateToken` calls `authorize(..., adminOnly=true)`, which
    requires `p.Kind == auth.KindAdmin` directly, independent of the policy.
 4. In the central database, in the `settings` table under `registration_secret`, mode `0600`.
-   durga never receives the secret. durga types or pipes a 60-second *code* derived from it and
-   gets back the status `active`; durga's own private key never leaves the laptop.
+   Durga never receives the secret. Durga types or pipes a 60-second *code* derived from it and
+   gets back the status `active`; their own private key never leaves their machine.
 5. The runner's actions guard. It only runs actions defined in the runner's own `actions.yaml`,
    as an argv list without a shell, with parameters that fully match their regex. Central cannot
    change that file.
@@ -882,6 +982,13 @@ jump hosts per context.
 9. The handler calls `service.Lifecycle` through `gui.Backend`, the same method as the CLI, so it
    gets the same tombstone, kick, in-flight cancel and single-transaction audit row. The row has
    `source` = `gui` and the actor is the GUI username (principal kind `admin`).
+10. A host runner runs every tool as its own OS user, so a runner is exactly one user. Two users
+   means two enrolments (two join tokens, two keys) and credentials assigned to each separately.
+   Plain file permissions (home directories `0700`, session directories `0700`, sockets `0600`)
+   keep them apart.
+11. Briefly on central while it decrypts the value to push it, and in the memory of the one
+    runner that holds the assignment (and in the agent's signing code). Never on disk
+    in plaintext, never in an environment variable, argument list or child process.
 
 </details>
 

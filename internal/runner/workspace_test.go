@@ -67,6 +67,9 @@ func (s *syncBuf) String() string {
 	return s.b.String()
 }
 
+// chanHook (M7 tests) lets a test accept channels the runner opens toward the fake central.
+var chanHook func(ssh.NewChannel) bool
+
 // wsHarness is a fake central (a real SSH server) driving a real Runner in workspace mode.
 type wsHarness struct {
 	t     *testing.T
@@ -79,6 +82,18 @@ type wsHarness struct {
 }
 
 func newHarness(t *testing.T, y string, ex *fake.Executor, mod func(*Config)) *wsHarness {
+	t.Helper()
+	var w workspace.Executor
+	if ex != nil {
+		w = ex
+	}
+	h := newHarnessFor(t, y, w, mod)
+	h.ex = ex
+	return h
+}
+
+// newHarnessFor drives any executor (h.ex stays nil unless the caller sets it).
+func newHarnessFor(t *testing.T, y string, ex workspace.Executor, mod func(*Config)) *wsHarness {
 	t.Helper()
 	dir := t.TempDir()
 	if _, err := keys.Generate(dir, "host", "host"); err != nil {
@@ -106,7 +121,7 @@ func newHarness(t *testing.T, y string, ex *fake.Executor, mod func(*Config)) *w
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	h := &wsHarness{t: t, hbs: make(chan transport.Heartbeat, 64), ex: ex, log: &syncBuf{}}
+	h := &wsHarness{t: t, hbs: make(chan transport.Heartbeat, 64), log: &syncBuf{}}
 	conns := make(chan ssh.Conn, 4)
 	go func() {
 		for {
@@ -122,6 +137,9 @@ func newHarness(t *testing.T, y string, ex *fake.Executor, mod func(*Config)) *w
 				}
 				go func() {
 					for c := range chans {
+						if chanHook != nil && chanHook(c) {
+							continue
+						}
 						c.Reject(ssh.Prohibited, "")
 					}
 				}()

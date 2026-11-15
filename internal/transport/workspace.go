@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"unicode/utf8"
 )
@@ -22,6 +23,16 @@ const (
 	OpWrite   = "write"
 	OpDestroy = "destroy"
 	OpList    = "list"
+
+	// Dev-workspace operations (docs/M7.md §3, §4): file tools, background jobs, output paging and
+	// credential delivery. Shapes and validation live in devws.go.
+	OpFS         = "fs"
+	OpJobStart   = "job_start"
+	OpJobStatus  = "job_status"
+	OpJobTail    = "job_tail"
+	OpJobCancel  = "job_cancel"
+	OpOutputRead = "output_read"
+	OpCredsSync  = "creds_sync"
 )
 
 // Limits of the workspace protocol. The runner re-validates everything; these only bound the wire.
@@ -115,6 +126,15 @@ type WorkspaceRequest struct {
 	Mode      int64             `json:"mode,omitempty"`
 	Length    int64             `json:"length,omitempty"`
 	TimeoutMs int64             `json:"timeout_ms,omitempty"`
+
+	// Delete (M7, destroy on a host runner only): also delete the session directory.
+	Delete bool `json:"delete,omitempty"`
+
+	// Dev-workspace payloads (M7): exactly the one matching Op is set. creds_sync carries its
+	// secrets in a body of StdinLen bytes (see CredsSyncBody), never in this request.
+	FS  *FSOp     `json:"fs,omitempty"`
+	Job *JobOp    `json:"job,omitempty"`
+	Out *OutputOp `json:"out,omitempty"`
 }
 
 // WorkspaceExec is the exec outcome in a WorkspaceResult.
@@ -125,6 +145,15 @@ type WorkspaceExec struct {
 	Truncated  bool   `json:"truncated,omitempty"`
 	TimedOut   bool   `json:"timed_out,omitempty"`
 	DurationMs int64  `json:"duration_ms"`
+
+	// M7 (additive): full output is kept on the runner. Ref names it for output_read; the byte
+	// counts are the true totals; Omitted is how many bytes the inline text left out.
+	Ref         string `json:"ref,omitempty"`
+	StdoutBytes int64  `json:"stdout_bytes,omitempty"`
+	StderrBytes int64  `json:"stderr_bytes,omitempty"`
+	Omitted     int64  `json:"omitted,omitempty"`
+	// Cwd is the session's working directory after the command (host mode), a runner path.
+	Cwd string `json:"cwd,omitempty"`
 }
 
 // WorkspaceFile describes a file op outcome. For read, Length raw bytes follow the result frame.
@@ -152,6 +181,14 @@ type WorkspaceResult struct {
 	File       *WorkspaceFile  `json:"file,omitempty"`
 	List       []WorkspaceInfo `json:"list,omitempty"`
 	DurationMs int64           `json:"duration_ms"`
+
+	// M7 results; the one matching the request's op is set. For an fs result with Length > 0,
+	// that many raw body bytes follow the frame.
+	FS     *FSResult        `json:"fs,omitempty"`
+	Job    *JobResult       `json:"job,omitempty"`
+	Jobs   []JobResult      `json:"jobs,omitempty"`
+	Output *OutputResult    `json:"output,omitempty"`
+	Creds  *CredsSyncResult `json:"creds,omitempty"`
 }
 
 func validWSID(id string) bool {
@@ -193,8 +230,16 @@ func inRange(what string, v, max int64) error {
 func (r *WorkspaceRequest) Validate() error {
 	switch r.Op {
 	case OpCreate, OpExec, OpRead, OpWrite, OpDestroy, OpList:
+	case OpFS, OpJobStart, OpJobStatus, OpJobTail, OpJobCancel, OpOutputRead, OpCredsSync:
+		return r.validateDev()
 	default:
 		return errors.New("unknown op")
+	}
+	if r.FS != nil || r.Job != nil || r.Out != nil {
+		return errors.New("dev payload set on a legacy op")
+	}
+	if r.Delete && r.Op != OpDestroy {
+		return errors.New("delete is only valid for destroy")
 	}
 	if r.ID != "" && !validWSID(r.ID) {
 		return errors.New("bad id")
@@ -337,8 +382,12 @@ func (s *WorkspaceSpec) validate() error {
 	return nil
 }
 
-// strictUnmarshal decodes exactly one JSON value, refusing unknown fields and trailing data.
+// strictUnmarshal decodes exactly one JSON value, refusing unknown fields (exact-case keys, no
+// duplicates) and trailing data.
 func strictUnmarshal(b []byte, v any) error {
+	if err := checkExactKeys(b, reflect.TypeOf(v)); err != nil {
+		return err
+	}
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -394,7 +443,7 @@ func (r *WorkspaceResult) Validate() error {
 	if f := r.File; f != nil && (f.Size < 0 || f.Mode < 0 || f.Length < 0 || f.Length > MaxBodyBytes) {
 		return errors.New("bad file result")
 	}
-	return nil
+	return r.validateDevResult()
 }
 
 // WriteResult writes res as one frame: a 4-byte big-endian length, then the JSON. The encoded size

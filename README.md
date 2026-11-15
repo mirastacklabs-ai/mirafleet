@@ -87,6 +87,7 @@ sudo -u mirafleet mirafleet central runner approve dev/web-1
 sudo -u mirafleet mirafleet central operator code                    # valid for 60 seconds
 # On your laptop
 echo "$REGISTRATION_CODE" | mirafleet mcp login central.example.com:2222 -name durga -code -
+mirafleet mcp api fleets.list
 mirafleet mcp api action.run '{"fleet":"dev","runner":"web-1","action":"uptime"}'
 ```
 

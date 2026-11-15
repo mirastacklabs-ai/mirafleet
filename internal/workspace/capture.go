@@ -140,3 +140,6 @@ func (c *Capture) Result() (string, bool) {
 	sb.WriteString(string(c.tail[c.tailOff:]))
 	return sb.String(), truncated
 }
+
+// Dropped returns the sanitised bytes left out of the middle (valid once output is complete).
+func (c *Capture) Dropped() int64 { return c.dropped }

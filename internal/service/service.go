@@ -64,6 +64,9 @@ type Config struct {
 	WorkspaceOpenTimeout time.Duration
 	// ReaperInterval is the workspace reaper sweep period; 0 means 60 seconds.
 	ReaperInterval time.Duration
+
+	// Credentials (M7, docs/M7.md section 4); see credentials.go. All optional.
+	Credentials CredentialsConfig
 }
 
 // Service implements the central operations. Safe for concurrent use.
@@ -85,6 +88,8 @@ type Service struct {
 	mu        sync.Mutex     // guards startedAt and inflightOps
 	startedAt time.Time      // when this central process started its workspace housekeeping
 	inflight  map[string]int // in-flight ops per workspace id (exec, read, write)
+
+	cred *credState
 }
 
 // New validates cfg and returns a Service.
@@ -118,8 +123,12 @@ func New(cfg Config) (*Service, error) {
 	if reapEvery <= 0 {
 		reapEvery = DefaultReaperInterval
 	}
-	return &Service{st: cfg.Store, pol: cfg.Policy, live: cfg.Live, hostKey: cfg.HostKey, now: cfg.Now, logf: logf,
-		opConns: cfg.OperatorConns, maxPerOp: maxPerOp, openTimeout: openTimeout, reapEvery: reapEvery, openMargin: DefaultOpenMargin}, nil
+	s := &Service{st: cfg.Store, pol: cfg.Policy, live: cfg.Live, hostKey: cfg.HostKey, now: cfg.Now, logf: logf,
+		opConns: cfg.OperatorConns, maxPerOp: maxPerOp, openTimeout: openTimeout, reapEvery: reapEvery, openMargin: DefaultOpenMargin}
+	if err := s.initCredentials(cfg.Credentials); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 var errForbidden = api.Errorf(api.CodeForbidden, "forbidden")

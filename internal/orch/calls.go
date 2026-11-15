@@ -27,7 +27,8 @@ var panicOnGuard = false
 func idempotent(method string) bool {
 	switch method {
 	case api.MethodFleetsList, api.MethodRunnersList, api.MethodWorkspaceList,
-		api.MethodWorkspaceReadFile, api.MethodWorkspaceOpen:
+		api.MethodWorkspaceReadFile, api.MethodWorkspaceOpen,
+		api.MethodWorkspaceJobStatus, api.MethodWorkspaceOutputRead:
 		return true
 	}
 	return false
@@ -56,12 +57,19 @@ func isTransport(err error) bool {
 	return false
 }
 
+// bodyIfConn is implemented by a Conn that can read a response body conditionally
+// (apiclient.Client); workspace.fs needs it for image results.
+type bodyIfConn interface {
+	CallReadBodyIf(ctx context.Context, method string, params, result any, hasBody func() bool) ([]byte, error)
+}
+
 // callIO carries the optional bodies and the result of one call.
 type callIO struct {
 	result   any
 	body     []byte // request body frame, when hasBody
 	hasBody  bool
-	wantBody bool // a response body frame follows the result
+	wantBody bool        // a response body frame follows the result
+	bodyIf   func() bool // a response body frame follows the result only if this says so
 	got      []byte
 	addr     string // set by call: the address of the context the call went to
 }
@@ -169,6 +177,14 @@ func (o *Orch) call(ctx context.Context, cname, method string, params any, x *ca
 
 func (o *Orch) invoke(ctx context.Context, c Conn, method string, params any, x *callIO) error {
 	switch {
+	case x.bodyIf != nil:
+		// A body frame only when the result says so (workspace.fs image).
+		if bc, ok := c.(bodyIfConn); ok {
+			b, err := bc.CallReadBodyIf(ctx, method, params, x.result, x.bodyIf)
+			x.got = b
+			return err
+		}
+		return c.Call(ctx, method, params, x.result)
 	case x.wantBody:
 		b, err := c.CallReadBody(ctx, method, params, x.result)
 		x.got = b
@@ -237,6 +253,9 @@ func (o *Orch) WorkspaceOpen(ctx context.Context, cname string, p api.WorkspaceO
 	if e := api.ValidateSession(p.Session); e != nil {
 		return nil, &Error{Code: e.Code, Message: e.Message}
 	}
+	if e := api.ValidateCredentialNames(p.Credentials); e != nil {
+		return nil, &Error{Code: e.Code, Message: e.Message}
+	}
 	var r api.WorkspaceOpenResult
 	if err := o.call(ctx, cname, api.MethodWorkspaceOpen, p, &callIO{result: &r}); err != nil {
 		return nil, err
@@ -287,8 +306,13 @@ func (o *Orch) WorkspaceWriteFile(ctx context.Context, cname string, p api.Works
 
 // WorkspaceClose closes a workspace. Never retried.
 func (o *Orch) WorkspaceClose(ctx context.Context, cname, id string) (*api.WorkspaceCloseResult, error) {
+	return o.WorkspaceCloseWith(ctx, cname, api.WorkspaceCloseParams{Workspace: id})
+}
+
+// WorkspaceCloseWith closes a workspace; p.Delete also deletes a host-mode session directory.
+func (o *Orch) WorkspaceCloseWith(ctx context.Context, cname string, p api.WorkspaceCloseParams) (*api.WorkspaceCloseResult, error) {
 	var r api.WorkspaceCloseResult
-	if err := o.call(ctx, cname, api.MethodWorkspaceClose, api.WorkspaceCloseParams{Workspace: id}, &callIO{result: &r}); err != nil {
+	if err := o.call(ctx, cname, api.MethodWorkspaceClose, p, &callIO{result: &r}); err != nil {
 		return nil, err
 	}
 	return &r, nil

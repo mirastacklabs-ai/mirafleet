@@ -1,0 +1,19 @@
+# mirafleet host-mode runner as a systemd USER unit (docs/M7.md §3.3). Install as the runner's own
+# user (no root):
+#   mkdir -p ~/.config/systemd/user && cp mirafleet-runner.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now mirafleet-runner
+# So it starts at boot and survives logout, an admin runs once: loginctl enable-linger USER
+[Unit]
+Description=mirafleet runner (host mode)
+Documentation=https://github.com/mirastacklabs-ai/mirafleet
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/mirafleet runner run -workspace %h/.config/mirafleet/workspace.yaml
+# Background shells (job supervisors) must survive a runner restart.
+KillMode=process
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

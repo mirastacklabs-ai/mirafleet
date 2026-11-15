@@ -124,6 +124,13 @@ type actionRow struct {
 
 type runnerWSRow struct{ ID, Operator, Image, State string }
 
+// runnerCredRow is a credential the runner holds: name, kind, hosts and status only.
+type runnerCredRow struct {
+	Name, URL, Kind string
+	Hosts           []string
+	Status          badgeView
+}
+
 type runnerDetail struct {
 	Fleet, Name, URL, Status, Kind string
 	Online                         bool
@@ -134,6 +141,7 @@ type runnerDetail struct {
 	Executor, Slots                string
 	Actions                        []actionRow
 	Workspaces                     []runnerWSRow
+	Credentials                    []runnerCredRow
 	Audit                          []auditRow
 	Ops                            []opButton
 	CanRevoke                      bool
@@ -340,6 +348,22 @@ func (s *Server) runnerDetailPage(w http.ResponseWriter, r *http.Request) {
 		}
 		det.Workspaces = append(det.Workspaces, runnerWSRow{ID: inertRunnerText(ws.WsID, 64),
 			Operator: inertRunnerText(ws.Operator, 64), Image: inertRunnerText(ws.Image, runnerTextMax), State: string(ws.State)})
+	}
+	// A revoked runner holds nothing (and the store no longer resolves it by name).
+	var creds []api.RunnerCredential
+	if rv.Status != store.StatusRevoked {
+		var err error
+		if creds, err = be.RunnerCredentials(ctx, a.P, service.SourceGUI, store.Ref{Fleet: rv.Fleet, Runner: rv.Name}); err != nil {
+			s.backendFail(w, r, err)
+			return
+		}
+	}
+	for _, c := range creds {
+		row := runnerCredRow{Name: inertRunnerText(c.Name, 64), URL: credURL(c.Name), Kind: c.Kind, Status: deliveryBadge(c.Status)}
+		for _, h := range c.Hosts {
+			row.Hosts = append(row.Hosts, inertRunnerText(h, runnerTextMax))
+		}
+		det.Credentials = append(det.Credentials, row)
 	}
 	evs, err := be.ListAudit(ctx, a.P, service.SourceGUI,
 		store.AuditFilter{Fleet: rv.Fleet, Runner: rv.Name, Desc: true, Limit: detailAuditRows})

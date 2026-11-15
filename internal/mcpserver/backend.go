@@ -23,7 +23,23 @@ type Backend interface {
 	WorkspaceWriteFile(ctx context.Context, cname string, p api.WorkspaceWriteFileParams, data []byte) (*api.WorkspaceWriteFileResult, error)
 	WorkspaceClose(ctx context.Context, cname, id string) (*api.WorkspaceCloseResult, error)
 	WorkspaceList(ctx context.Context, cname, fleet string) (*api.WorkspaceListResult, error)
+
+	// M7 dev-workspace calls (tools_fs.go, tools_bash.go).
+	WorkspaceCloseWith(ctx context.Context, cname string, p api.WorkspaceCloseParams) (*api.WorkspaceCloseResult, error)
+	WorkspaceFS(ctx context.Context, cname string, p api.FSParams, data []byte) (*api.FSResult, []byte, error)
+	JobStart(ctx context.Context, cname string, p api.JobStartParams) (*api.JobStartResult, error)
+	JobStatus(ctx context.Context, cname string, p api.JobStatusParams) (*api.JobStatusResult, error)
+	JobTail(ctx context.Context, cname string, p api.JobTailParams) (*api.JobTailResult, error)
+	JobCancel(ctx context.Context, cname string, p api.JobCancelParams) (*api.JobCancelResult, error)
+	OutputRead(ctx context.Context, cname string, p api.OutputReadParams) (*api.OutputReadResult, error)
+	Upload(ctx context.Context, cname, projectDir string, p orch.UploadParams) (*orch.TransferResult, error)
+	Download(ctx context.Context, cname, projectDir string, p orch.DownloadParams) (*orch.TransferResult, error)
 }
+
+// ProjectDirer is optionally implemented by a Backend that knows the local project directory
+// (where .mirafleet.yaml lives); upload and download are confined to it. Without it the
+// server's working directory is used.
+type ProjectDirer interface{ ProjectDir() string }
 
 var _ Backend = (*orch.Orch)(nil)
 

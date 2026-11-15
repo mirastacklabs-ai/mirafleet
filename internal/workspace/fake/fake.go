@@ -28,6 +28,7 @@ type ws struct {
 	spec    workspace.Spec
 	created time.Time
 	files   map[string]*file
+	dev     *devState // set when SessionRoot is configured (devops.go)
 }
 
 // Executor is the fake. Configure the exported fields before first use.
@@ -43,6 +44,9 @@ type Executor struct {
 	MaxFile int64
 	// Slots caps live workspaces (0 = unlimited); Create beyond it returns ErrUnavailable.
 	Slots int
+	// SessionRoot, when set, turns on the M7 host-mode behaviour (devops.go): every workspace
+	// gets a 0700 session directory under it with a "work" tree the file tools run on.
+	SessionRoot string
 
 	mu     sync.Mutex
 	ws     map[workspace.ID]*ws
@@ -108,7 +112,15 @@ func (e *Executor) Create(ctx context.Context, s workspace.Spec) error {
 		labels[k] = v
 	}
 	s.Labels = labels
-	e.ws[s.ID] = &ws{spec: s, created: time.Now(), files: map[string]*file{}}
+	w := &ws{spec: s, created: time.Now(), files: map[string]*file{}}
+	if e.SessionRoot != "" {
+		d, err := newDevState(e.SessionRoot, s.ID)
+		if err != nil {
+			return fmt.Errorf("%w: %v", workspace.ErrUnavailable, err)
+		}
+		w.dev = d
+	}
+	e.ws[s.ID] = w
 	return nil
 }
 
@@ -126,6 +138,7 @@ func (e *Executor) Exec(ctx context.Context, id workspace.ID, r workspace.ExecRe
 	if _, err := workspace.CleanPath(r.Cwd); err != nil {
 		return workspace.ExecResult{}, fmt.Errorf("%w: cwd: %v", workspace.ErrRefused, err)
 	}
+	r.Env = e.sessionEnvFor(id, r.Env)
 	if f == nil {
 		return workspace.ExecResult{}, nil
 	}
@@ -160,6 +173,9 @@ func (e *Executor) ReadFile(ctx context.Context, id workspace.ID, p string, off,
 	cp, err := workspace.CleanPath(p)
 	if err != nil {
 		return nil, workspace.FileInfo{}, fmt.Errorf("%w: %v", workspace.ErrRefused, err)
+	}
+	if w.dev != nil {
+		return w.dev.readFile(cp, off, n)
 	}
 	if off < 0 {
 		return nil, workspace.FileInfo{}, fmt.Errorf("%w: negative offset", workspace.ErrRefused)
@@ -199,6 +215,9 @@ func (e *Executor) WriteFile(ctx context.Context, id workspace.ID, p string, r i
 	if err != nil || cp == workspace.Root {
 		return workspace.FileInfo{}, fmt.Errorf("%w: bad path", workspace.ErrRefused)
 	}
+	if w.dev != nil {
+		return w.dev.writeFile(cp, body, off, truncate, mode)
+	}
 	f := w.files[cp]
 	if f == nil {
 		f = &file{mode: mode.Perm()}
@@ -230,6 +249,9 @@ func (e *Executor) Destroy(ctx context.Context, id workspace.ID) error {
 	defer e.mu.Unlock()
 	if !workspace.ValidID(id) {
 		return fmt.Errorf("%w: invalid id", workspace.ErrRefused)
+	}
+	if w := e.ws[id]; w != nil && w.dev != nil {
+		w.dev.stop()
 	}
 	delete(e.ws, id)
 	return nil

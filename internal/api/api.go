@@ -61,6 +61,22 @@ const (
 	MethodWorkspaceClose     = "workspace.close"
 	MethodWorkspaceList      = "workspace.list"
 
+	// Dev-workspace operator methods (api@mirafleet; docs/M7.md §3.7). Types in devws.go.
+	MethodWorkspaceFS         = "workspace.fs"
+	MethodWorkspaceJobStart   = "workspace.job_start"
+	MethodWorkspaceJobStatus  = "workspace.job_status"
+	MethodWorkspaceJobTail    = "workspace.job_tail"
+	MethodWorkspaceJobCancel  = "workspace.job_cancel"
+	MethodWorkspaceOutputRead = "workspace.output_read"
+
+	// Credential admin methods (admin socket / GUI only; never on api@mirafleet; docs/M7.md §4.1).
+	MethodCredentialSet      = "credential.set"
+	MethodCredentialList     = "credential.list"
+	MethodCredentialDelete   = "credential.delete"
+	MethodCredentialAssign   = "credential.assign"
+	MethodCredentialUnassign = "credential.unassign"
+	MethodCredentialRotate   = "credential.rotate"
+
 	// Workspace admin methods (admin socket only).
 	MethodFleetWorkspaceSet  = "fleet.workspace_set"
 	MethodWorkspaceAdminList = "workspace.admin_list"
@@ -127,7 +143,9 @@ func IsOperatorMethod(m string) bool {
 	switch m {
 	case MethodHello, MethodFleetsList, MethodRunnersList, MethodActionRun,
 		MethodWorkspaceOpen, MethodWorkspaceExec, MethodWorkspaceReadFile,
-		MethodWorkspaceWriteFile, MethodWorkspaceClose, MethodWorkspaceList:
+		MethodWorkspaceWriteFile, MethodWorkspaceClose, MethodWorkspaceList,
+		MethodWorkspaceFS, MethodWorkspaceJobStart, MethodWorkspaceJobStatus,
+		MethodWorkspaceJobTail, MethodWorkspaceJobCancel, MethodWorkspaceOutputRead:
 		return true
 	}
 	return false
@@ -141,7 +159,9 @@ func IsAdminMethod(m string) bool {
 		MethodRunnerLifecycle, MethodOperatorCode, MethodOperatorRotateSecret,
 		MethodOperatorList, MethodOperatorRevoke, MethodAuditList,
 		MethodFleetWorkspaceSet, MethodWorkspaceAdminList, MethodWorkspaceKill,
-		MethodGUIResetAdmin, MethodFleetSetConfirm:
+		MethodGUIResetAdmin, MethodFleetSetConfirm,
+		MethodCredentialSet, MethodCredentialList, MethodCredentialDelete,
+		MethodCredentialAssign, MethodCredentialUnassign, MethodCredentialRotate:
 		return true
 	}
 	return false
@@ -628,6 +648,11 @@ type RunnerInfo struct {
 	// ActionsOmitted: the runner advertises actions, but the response's action budget was used up
 	// by earlier runners; query it alone or ask for fewer runners to see them.
 	ActionsOmitted bool `json:"actions_omitted,omitempty"`
+	// Host-mode runners (M7, additive): supported features, the credentials held (names, kinds,
+	// hosts, status only; fingerprints and expiry are admin-only) and running background jobs.
+	Features    []string           `json:"features,omitempty"`
+	Credentials []RunnerCredential `json:"credentials,omitempty"`
+	Busy        int                `json:"busy,omitempty"`
 }
 
 // ActionParamInfo describes one action parameter. Default is absent when required.
@@ -772,6 +797,12 @@ type WorkspaceOpenParams struct {
 	Image   string            `json:"image,omitempty"` // must be in the fleet allowlist
 	Labels  map[string]string `json:"labels,omitempty"`
 	Confirm string            `json:"confirm,omitempty"` // fleet name on guarded fleets
+	// Credentials (M7, additive) narrows the credentials the session uses to this subset of those
+	// the runner holds; empty = all. Placement needs every named credential on the runner.
+	Credentials []string `json:"credentials,omitempty"`
+	// Workdir (M7, additive, host fleets only) names a shared directory on the runner instead of
+	// the per-session one (docs/M7.md Q4). A name, never a path.
+	Workdir string `json:"workdir,omitempty"`
 }
 type WorkspaceOpenResult struct {
 	Workspace WorkspaceInfo `json:"workspace"`
@@ -796,6 +827,15 @@ type WorkspaceExecResult struct {
 	TimedOut   bool   `json:"timed_out,omitempty"`
 	DurationMS int64  `json:"duration_ms"`
 	RequestID  string `json:"request_id,omitempty"`
+	// M7 (additive, host mode): the full output stays on the runner. Ref names it for
+	// workspace.output_read; the byte counts are the true totals; Omitted is how many bytes the
+	// inline text left out.
+	Ref         string `json:"ref,omitempty"`
+	StdoutBytes int64  `json:"stdout_bytes,omitempty"`
+	StderrBytes int64  `json:"stderr_bytes,omitempty"`
+	Omitted     int64  `json:"omitted,omitempty"`
+	// Cwd is the session's working directory after the command (host mode).
+	Cwd string `json:"cwd,omitempty"`
 }
 
 type WorkspaceReadFileParams struct {
@@ -832,6 +872,8 @@ type WorkspaceWriteFileResult struct {
 
 type WorkspaceCloseParams struct {
 	Workspace string `json:"workspace"`
+	// Delete (M7, host mode) also deletes the session directory; close alone keeps it.
+	Delete bool `json:"delete,omitempty"`
 }
 type WorkspaceCloseResult struct {
 	// State is "closing" when the runner could not be told to destroy the workspace now and the
@@ -884,6 +926,8 @@ type WorkspaceAdminListResult struct {
 
 type WorkspaceKillParams struct {
 	ID string `json:"id"`
+	// Delete (M7, host mode) also deletes the session directory.
+	Delete bool `json:"delete,omitempty"`
 }
 
 // WorkspaceKillResult carries the resulting state: "closed", or "closing" when the runner could not be

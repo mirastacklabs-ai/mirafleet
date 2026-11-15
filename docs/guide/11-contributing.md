@@ -6,6 +6,7 @@ with the code, a checklist for reviewing a change, and some real first tasks.
 
 ## What you will learn
 
+- How to add an MCP file tool and a credential kind (section 11.10).
 - Each ground rule from [CLAUDE.md](../../CLAUDE.md), with the reason it exists.
 - The workflow for a change: plan, implement, read-only review, with P0 to P3 severities.
 - How milestone plans (`docs/M*.md`) work and how to read one.
@@ -24,7 +25,7 @@ with the code, a checklist for reviewing a change, and some real first tasks.
 These come from [CLAUDE.md](../../CLAUDE.md) **as of 13 Nov 2026**. If the two ever disagree,
 CLAUDE.md wins and this table should be fixed. Read the file itself too; it is short and
 binding. Status today: M1, M2, M3 (workspaces), M4 (the admin GUI) and M5 (the MCP server and
-harness integrations) are done; M6 (release) is in progress. A rule without a reason gets broken the first time it is inconvenient, so here is the reason for
+harness integrations) are done, M7 (host mode) is built; M6 (release) is in progress. A rule without a reason gets broken the first time it is inconvenient, so here is the reason for
 each.
 
 | Rule | Why |
@@ -611,6 +612,93 @@ the PATH and `npx` variants (Windows: `.exe` or `cmd /c npx`); mention `-project
 tests to `integrations/harnesses_m6_test.go`; if the harness has file-based commands, copy the
 shared body and let `relgen harness` keep the copies equal; add it to `harnesscheck` (it runs the
 harness CLI's own "list MCP servers" command where one works without an account).
+## 11.10 Extending developer workspaces (M7)
+
+Two recipes for the M7 code. Read [8.13](08-code-tour.md#813-developer-workspaces-m7-the-new-packages) first. The
+general rules of [11.1](#111-the-ground-rules-with-reasons) apply: container-only commands, no new
+dependencies, and a secret value must never reach a log, audit row, error message, tool result or
+file the agent can read.
+
+### Add an MCP file tool (a new `workspace.fs` op)
+
+Example: a `stat` tool. (The `stat` op already exists in the enum; the steps below are what a *new*
+op needs, and for `stat` you would only do steps 5 to 8.) All file tools run in the runner process,
+so the op travels the whole path from the model to `fsops`.
+
+1. `internal/workspace/fsops`: implement the operation as a pure function on `FS` with a golden test
+   under `testdata/`. Return `*fsops.Error` kinds (`ErrNotFound`, `ErrRefused`, ...), not raw `os`
+   errors. The host-mode tools are not confined: absolute paths work anywhere the OS user can reach, so
+   do not add a path check that pretends otherwise. (`os.Root` is for the container executor.)
+2. `internal/transport/devws.go`: add the op constant to `FSOps`, list its allowed fields in
+   `fsAllowed` (a field not listed for the op is `bad_request`, which is how strictness is kept), and
+   add it to `FSMutating` if it changes files (that is what makes a guarded fleet demand `confirm`).
+3. `internal/workspace/hostx/files.go`: add a case to `Files.Do`. Mirror it in
+   `internal/workspace/fake/devops.go` so `TestM7Done` can run it.
+4. `internal/service/fsdispatch.go`: add what the audit row records in `fsAuditParams`. Record
+   sizes and hashes, **never content, patterns or edit strings**.
+5. `internal/mcpserver/tools_fs.go`: the schema string (`additionalProperties:false`, `fsProps`,
+   `confirmProp` if mutating), the handler (`DecodeArgs`, `checkRemotePath`, `checkFS`, `s.runFS`,
+   `s.makeOut`), and the `Tool` entry with honest annotations: read-only tools are
+   `ReadOnly+Idempotent`, tools that change files are `Destructive`.
+6. `integrations/claude-code/hook/hook.go`: add the name to `knownTools` (a test compares it with the
+   server) and decide whether `remote: true` projects deny a local twin.
+7. Tests: the expected set and hints in `TestM5Done/02_tools` (it fixes the exact tool list on
+   purpose, so you must change it knowingly), the miscased-key test, and a case in `TestM7Done`
+   step 3. Run `scripts/dev.sh go test -race ./internal/workspace/... ./internal/mcpserver/...
+   ./internal/service/...` then the full gate once.
+8. Docs: the table in [7.16](07-protocols.md#716-developer-workspaces-m7-tools-jobs-credentials)
+   and this guide's tool count.
+
+A tool that is *not* a file operation (a new kind of background work, say) follows the job path
+instead: `transport` job op, `hostx` job code, `service/jobs.go`, `orch/devws.go`, `mcpserver/tools_bash.go`.
+
+### Add a credential kind
+
+Example: `aws-key`. Think first: a kind exists to let the agent *use* something without *having*
+it. For each kind you must answer "which process uses the secret, and why can the agent not
+read it?" For `ssh-key` it is the agent socket; for `https-token` and `registry` it is the broker.
+If your kind needs a third mechanism (here: signing AWS requests), you are adding a security
+boundary, not a field: write the threat-model row in `docs/M7.md` and get a review first. Ask
+before adding a dependency.
+
+1. `internal/transport/devws.go`: the `Cred...` constant, `ValidCredKind`, and the `CredMeta.Validate`
+   rules for its fields (reject fields that belong to other kinds, as the existing kinds do).
+2. `internal/store/store.go`: the `CredentialKind` constant and its validity check. The kind is stored
+   in the `credentials` row and the extra fields in the `meta` JSON, so usually no migration is
+   needed; if you add a column, follow 8.8 "a new store method and a migration".
+3. `internal/service/credentials.go`: `metaFromParams` and `credFingerprint` (the fingerprint is
+   a hash, never part of the value) and the masked `credInfo`. Sealing needs no change: the whole
+   payload is sealed with AAD of id and version.
+4. `internal/runner/creds.go`: turn the delivered value into the runner's in-memory type. This is
+   the only place the plaintext exists outside the sealing code.
+5. The mechanism: a new `Provider` for `sshagent`, a new injection kind in `broker/cred.go`
+   (add it to `Credential.Validate`, keep `String`/`GoString`/`LogValue` redacting), or a new
+   package. Tests must prove **the value never appears in logs, errors or responses** (see
+   `broker_test.go` for the pattern) and that **other hosts are not intercepted**.
+6. `internal/runner/hostops.go`: wire it into the per-session set-up and tear-down.
+7. `cmd/mirafleet/admin_credentials.go`: flags for `credential set` (the value still comes from
+   standard input) and `internal/gui/handlers_credentials.go`: the form field (write-only; the
+   page must render no value, and the decoy scan in the GUI tests must still pass).
+8. Tests: `storetest` if the store changed; step 1 and step 9 of `TestM7Done` (add a decoy for the
+   new kind: it must be absent from everything); the integration leak scan if the mechanism is real.
+9. Docs: [7.16](07-protocols.md#716-developer-workspaces-m7-tools-jobs-credentials),
+   [10.13](10-operations.md#1013-developer-workspaces-on-a-vm-m7-host-mode-and-credentials), the
+   threat-model table in `docs/M7.md` section 4.6, and `credential-flow.svg` if the flow differs.
+
+### Check your understanding (M7)
+
+1. Why must a new `workspace.fs` op list its fields in `fsAllowed`?
+2. Why does a new credential kind need a threat-model row?
+3. What must a new tool's audit params never contain?
+
+<details>
+<summary>Answers</summary>
+
+1. Unlisted fields for an op are `bad_request`; that keeps the protocol strict.
+2. Each kind is a way to use a secret without having it; a new mechanism is a new security boundary.
+3. Content, patterns, edit strings or any secret; only op, path, sizes and hashes.
+
+</details>
 
 ## Check your understanding
 

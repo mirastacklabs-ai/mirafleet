@@ -41,20 +41,22 @@ func WorkspaceDefaults(c store.WorkspaceConfig) store.WorkspaceConfig {
 	if len(c.Images) == 0 && c.DefaultImage != "" {
 		c.Images = []string{c.DefaultImage}
 	}
-	if c.CPUMilli == 0 {
-		c.CPUMilli = 2000
-	}
-	if c.MemoryMB == 0 {
-		c.MemoryMB = 4096
-	}
-	if c.Pids == 0 {
-		c.Pids = 1024
-	}
-	if c.TmpfsMB == 0 {
-		c.TmpfsMB = 512
-	}
-	if c.DiskMB == 0 {
-		c.DiskMB = 10240
+	if host := c.Executor == store.ExecutorHost; !host { // the VM is the boundary: no limits
+		if c.CPUMilli == 0 {
+			c.CPUMilli = 2000
+		}
+		if c.MemoryMB == 0 {
+			c.MemoryMB = 4096
+		}
+		if c.Pids == 0 {
+			c.Pids = 1024
+		}
+		if c.TmpfsMB == 0 {
+			c.TmpfsMB = 512
+		}
+		if c.DiskMB == 0 {
+			c.DiskMB = 10240
+		}
 	}
 	if c.IdleTTL == 0 {
 		c.IdleTTL = 24 * time.Hour
@@ -171,6 +173,35 @@ func validSpecLabels(labels map[string]string) error {
 // (the "start" audit row, fail closed) and the runner asked to create it.
 func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Source, fleet, session, image string,
 	labels map[string]string, confirm string) (store.Workspace, bool, error) {
+	return s.OpenWorkspaceIn(ctx, p, src, fleet, session, image, labels, confirm, "")
+}
+
+// workdirRE is the shared-directory name grammar (the same as a fleet name).
+var workdirRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
+// labelWorkdir is the reserved spec label that carries workdir to the host executor
+// (hostx.LabelWorkdir).
+const labelWorkdir = "mirafleet.workdir"
+
+// labelSession is the reserved spec label carrying the session id to the host executor
+// (hostx.LabelSession), which keys the session directory by it so a reopen reattaches.
+const labelSession = "mirafleet.session"
+
+// OpenWorkspaceIn is OpenWorkspace with an optional shared workdir name (host fleets only, Q4).
+func (s *Service) OpenWorkspaceIn(ctx context.Context, p auth.Principal, src Source, fleet, session, image string,
+	labels map[string]string, confirm, workdir string) (store.Workspace, bool, error) {
+	return s.OpenWorkspaceWith(ctx, p, src, fleet, session, image, labels, confirm, workdir, nil)
+}
+
+// labelCredentials is the reserved spec label that narrows the credentials a session uses
+// (runner.LabelCredentials): a comma-separated list, absent = every credential the runner holds.
+const labelCredentials = "mirafleet.credentials"
+
+// OpenWorkspaceWith is OpenWorkspaceIn plus an optional credential subset (host fleets only,
+// docs/M7.md 4.2): placement needs a runner that holds every named credential, and the names go
+// to the runner in the reserved spec label.
+func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src Source, fleet, session, image string,
+	labels map[string]string, confirm, workdir string, credentials []string) (store.Workspace, bool, error) {
 
 	if err := s.requireOperator(ctx, p, src, api.MethodWorkspaceOpen); err != nil {
 		return store.Workspace{}, false, err
@@ -211,11 +242,51 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		}
 		return store.Workspace{}, false, badRequest(api.MsgConfirmRequired)
 	}
-	if image == "" {
-		image = cfg.DefaultImage
-	}
-	if !cfg.ImageAllowed(image) {
-		return store.Workspace{}, false, badRequest("image is not allowed by the fleet")
+	host := cfg.Executor == store.ExecutorHost
+	specLabels := labels
+	if host { // no images in host mode; guarding is the typed confirm above, nothing else (Q10)
+		if image != "" {
+			return store.Workspace{}, false, badRequest("host fleets take no image")
+		}
+		image = hostImage
+		if workdir != "" && !workdirRE.MatchString(workdir) {
+			return store.Workspace{}, false, badRequest("invalid workdir name")
+		}
+		specLabels = make(map[string]string, len(labels)+3)
+		for k, v := range labels {
+			specLabels[k] = v
+		}
+		specLabels[labelSession] = session // reserved: the runner keys the session dir by it
+		if workdir != "" {
+			specLabels[labelWorkdir] = workdir // reserved: not a placement label
+		}
+		if len(credentials) > 0 {
+			seen := map[string]bool{}
+			for _, n := range credentials {
+				if !transport.ValidCredName(n) || seen[n] || len(seen) >= transport.MaxSyncCreds {
+					return store.Workspace{}, false, badRequest("invalid credentials list")
+				}
+				seen[n] = true
+			}
+			joined := strings.Join(credentials, ",")
+			if len(joined) > transport.MaxSpecLabelBytes {
+				return store.Workspace{}, false, badRequest("credentials list is too long")
+			}
+			specLabels[labelCredentials] = joined
+		}
+	} else {
+		if len(credentials) > 0 {
+			return store.Workspace{}, false, badRequest("credentials need a host fleet")
+		}
+		if workdir != "" {
+			return store.Workspace{}, false, badRequest("workdir needs a host fleet")
+		}
+		if image == "" {
+			image = cfg.DefaultImage
+		}
+		if !cfg.ImageAllowed(image) {
+			return store.Workspace{}, false, badRequest("image is not allowed by the fleet")
+		}
 	}
 	rid, err := newRequestID()
 	if err != nil {
@@ -241,11 +312,45 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		return store.Workspace{}, false, api.Errorf(api.CodeConflict, "workspace limit reached (%d)", maxPerOp)
 	}
 
-	cands, err := s.candidates(ctx, placementReq{fleet: fleet, cfg: cfg, guarded: f.Confirm, labels: labels, image: image})
+	preq := placementReq{fleet: fleet, cfg: cfg, guarded: f.Confirm && !host, labels: labels, image: image}
+	heldBy, heldRunner := "", ""
+	if host { // one operator per runner: skip runners another operator holds
+		preq.busyBy, preq.busyRunner = &heldBy, &heldRunner
+		if preq.held, err = s.heldRunners(ctx, fleet, p.ID); err != nil {
+			return store.Workspace{}, false, s.fail("place workspace", err)
+		}
+	}
+	cands, err := s.candidates(ctx, preq)
 	if err != nil {
 		return store.Workspace{}, false, s.fail("place workspace", err)
 	}
-	spec := buildSpec(cfg, image, labels, f.Confirm)
+	if len(credentials) > 0 && len(cands) > 0 { // placement needs every named credential (Q33)
+		rs := make([]store.Runner, len(cands))
+		for i, c := range cands {
+			rs[i] = c.runner
+		}
+		ok, ferr := s.FilterRunnersByCredentials(ctx, rs, credentials)
+		if ferr != nil {
+			return store.Workspace{}, false, ferr
+		}
+		keep := make(map[int64]bool, len(ok))
+		for _, r := range ok {
+			keep[r.ID] = true
+		}
+		kept := cands[:0]
+		for _, c := range cands {
+			if keep[c.info.ID] {
+				kept = append(kept, c)
+			}
+		}
+		if cands = kept; len(cands) == 0 && heldBy == "" {
+			return store.Workspace{}, false, api.Errorf(api.CodeConflict, "no runner holds every requested credential")
+		}
+	}
+	if len(cands) == 0 && heldBy != "" {
+		return store.Workspace{}, false, s.refuseBusy(ctx, p, src, fleet, session, rid, heldRunner, heldBy)
+	}
+	spec := buildSpec(cfg, image, specLabels, f.Confirm && !host)
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
 		return store.Workspace{}, false, s.fail("encode spec", err)
@@ -257,6 +362,14 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 			break
 		}
 		tried++
+		if len(credentials) > 0 { // narrowing never widens: re-check against what it holds now
+			if _, rerr := s.ResolveCredentials(ctx, c.info.ID, credentials); rerr != nil {
+				if errors.Is(rerr, ErrCredentialNotHeld) {
+					continue
+				}
+				return store.Workspace{}, false, rerr
+			}
+		}
 		now := s.now()
 		id := string(workspace.NewID())
 		row := store.Workspace{WsID: id, FleetID: f.ID, RunnerID: c.info.ID, OperatorID: p.ID, Session: session,
@@ -266,6 +379,11 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		start.Params = map[string]string{"image": image, "session": session}
 		w, existing, err := s.st.ReserveWorkspace(ctx, row, c.info.Slots, maxPerOp, now, start)
 		if errors.Is(err, store.ErrFull) {
+			continue
+		}
+		var held *store.HeldError
+		if errors.As(err, &held) { // lost the race to another operator (the store is the authority)
+			heldBy, heldRunner = held.Operator, c.runner.Name
 			continue
 		}
 		if err != nil {
@@ -337,6 +455,9 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 			continue
 		}
 		return store.Workspace{}, false, retErr
+	}
+	if heldBy != "" {
+		return store.Workspace{}, false, s.refuseBusy(ctx, p, src, fleet, session, rid, heldRunner, heldBy)
 	}
 	return store.Workspace{}, false, api.Errorf(api.CodeUnavailable, "no runner can take this workspace right now")
 }
@@ -458,12 +579,23 @@ func (s *Service) ownedWorkspace(ctx context.Context, p auth.Principal, src Sour
 // finishes it; the returned workspace then has state closing. Closing a terminal workspace is a
 // no-op returning it.
 func (s *Service) CloseWorkspace(ctx context.Context, p auth.Principal, src Source, wsID string) (store.Workspace, error) {
+	return s.CloseWorkspaceDelete(ctx, p, src, wsID, false)
+}
+
+// CloseWorkspaceDelete is CloseWorkspace; with del (host fleets only) the runner also deletes the
+// session directory. A close without del keeps it.
+func (s *Service) CloseWorkspaceDelete(ctx context.Context, p auth.Principal, src Source, wsID string, del bool) (store.Workspace, error) {
 	if err := s.requireOperator(ctx, p, src, api.MethodWorkspaceClose); err != nil {
 		return store.Workspace{}, err
 	}
 	w, err := s.ownedWorkspace(ctx, p, src, api.MethodWorkspaceClose, wsID)
 	if err != nil {
 		return store.Workspace{}, err
+	}
+	if del {
+		if err := s.requireHostFleet(ctx, w.Fleet); err != nil {
+			return store.Workspace{}, err
+		}
 	}
 	if w.State.Terminal() {
 		return w, nil
@@ -478,6 +610,9 @@ func (s *Service) CloseWorkspace(ctx context.Context, p auth.Principal, src Sour
 	start := s.now()
 	ev := s.wsEvent(p, src, api.MethodWorkspaceClose, w.Fleet, w.Runner, w.WsID, rid)
 	ev.Time, ev.Subject, ev.Outcome = start, w.Session, OutcomeStart
+	if del {
+		ev.Params = map[string]string{"delete": "true"}
+	}
 	if w.State == store.WorkspaceOpen {
 		w, err = s.st.SetWorkspaceState(ctx, w.WsID, []store.WorkspaceState{store.WorkspaceOpen}, store.WorkspaceClosing, "closed by operator", start, ev)
 		if err != nil {
@@ -490,7 +625,7 @@ func (s *Service) CloseWorkspace(ctx context.Context, p auth.Principal, src Sour
 
 	dctx, cancel := context.WithTimeout(ctx, workspaceCloseTimeout)
 	res, lerr := s.live.Workspace(dctx, w.RunnerID, transport.WorkspaceRequest{Op: transport.OpDestroy, ID: w.WsID,
-		TimeoutMs: workspaceCloseTimeout.Milliseconds()}, nil, nil)
+		TimeoutMs: workspaceCloseTimeout.Milliseconds(), Delete: del}, nil, nil)
 	cancel()
 
 	end := s.wsEvent(p, src, api.MethodWorkspaceClose, w.Fleet, w.Runner, w.WsID, rid)

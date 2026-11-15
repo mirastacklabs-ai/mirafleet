@@ -27,6 +27,11 @@ type RunnerView struct {
 	// Actions an actions-mode runner advertised (informational, from the latest heartbeat,
 	// bounded by Heartbeat.Validate). Never used for authorisation.
 	Actions []transport.ActionInfo
+	// Host-mode runners (M7): the features and running-job count of the latest heartbeat, and the
+	// credentials the runner is assigned (name, kind, hosts, status only).
+	Features    []string
+	Busy        int
+	Credentials []api.RunnerCredential
 }
 
 // ListRunners lists a fleet's non-revoked runners merged with the registry snapshot. Allowed
@@ -70,9 +75,18 @@ func (s *Service) listRunners(ctx context.Context, fleet string, includeRevoked 
 				v.LastSeenAt = si.LastHeartbeat
 			}
 			v.Actions = si.Info.Actions
+			v.Features, v.Busy = si.Info.Features, si.Info.Busy
 			if si.Slots > 0 {
 				v.Slots, v.Executor, v.FreeSlots = si.Slots, si.Executor, si.Slots
 				ids = append(ids, r.ID)
+			}
+		}
+		for _, f := range v.Features {
+			if f == transport.FeatureHost {
+				if cv, err := s.RunnerCredentialViews(ctx, r.ID); err == nil {
+					v.Credentials = cv
+				}
+				break
 			}
 		}
 		out[i] = v

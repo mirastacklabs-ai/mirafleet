@@ -1,0 +1,8 @@
+README.md
+docs/a.md
+keep.log
+main.go
+src/app.go
+src/sub/deep.go
+src/sub/root-only.txt
+src/util.py

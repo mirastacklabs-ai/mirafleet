@@ -35,6 +35,8 @@ func main() {
 		err = mcpMain(os.Args[2:], os.Stdin, os.Stdout)
 	case "workspace-init": // hidden: PID 1 inside workspace containers, not in usage
 		err = initproc.Run()
+	case "host-shim": // hidden: supervisor of one host-mode background shell (linux)
+		err = hostShimMain(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	default:

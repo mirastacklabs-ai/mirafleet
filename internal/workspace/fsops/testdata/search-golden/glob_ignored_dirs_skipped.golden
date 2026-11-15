@@ -1,0 +1,12 @@
+main.go
+src/sub/deep.go
+src/app.go
+.gitignore
+.hidden/secret.txt
+README.md
+bin.dat
+docs/a.md
+keep.log
+src/.gitignore
+src/sub/root-only.txt
+src/util.py

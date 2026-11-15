@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"regexp"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/opconf"
 	"github.com/mirastacklabs-ai/mirafleet/internal/orch"
 )
 
@@ -39,6 +41,7 @@ const (
 	schemaWSOpen = `{"type":"object","properties":{` + cmnProps + `,` +
 		`"image":{"type":"string","description":"Image from the fleet allowlist. Omit for the fleet default."},` +
 		`"labels":{"type":"object","additionalProperties":{"type":"string"},"description":"Runner labels the workspace must land on."},` +
+		`"credentials":{"type":"array","items":{"type":"string"},"maxItems":32,"description":"Host-mode fleets: narrow the session to these credential names (a subset of those the runner holds). Omit to use all."},` +
 		confirmProp + `},"additionalProperties":false}`
 	schemaExec = `{"type":"object","properties":{` + cmnProps + `,` + wsProp + `,` +
 		`"command":{"type":"string","description":"Shell command, run as /bin/sh -c. Give exactly one of command or argv."},` +
@@ -61,7 +64,9 @@ const (
 		`"offset":{"type":"integer","minimum":0,"description":"Byte offset to write at. 0 (default) replaces the file."},` +
 		`"mode":{"type":"integer","minimum":0,"maximum":511,"description":"Permission bits for a new file (decimal, e.g. 420 for 0644)."},` +
 		confirmProp + `},"required":["path","content"],"additionalProperties":false}`
-	schemaWSClose = `{"type":"object","properties":{` + cmnProps + `,` + wsProp + `},"additionalProperties":false}`
+	schemaWSClose = `{"type":"object","properties":{` + cmnProps + `,` + wsProp + `,` +
+		`"delete":{"type":"boolean","description":"Host-mode fleets: also delete the session directory and everything in it. DESTRUCTIVE: set it only when the user asked for it. Without it the directory is kept and reattached on the next open."}},` +
+		`"additionalProperties":false}`
 
 	outWSOpen = `{"type":"object","properties":{"workspace":{"type":"object","properties":{` +
 		`"id":{"type":"string"},"fleet":{"type":"string"},"runner":{"type":"string"},"session":{"type":"string"},"image":{"type":"string"},` +
@@ -178,11 +183,12 @@ func (s *wsState) unbindID(cname, id string) {
 	s.mu.Unlock()
 }
 
-// WorkspaceTools returns workspace_open, exec, read_file, write_file and workspace_close. Each
+// WorkspaceTools returns workspace_open, exec, read_file, write_file and workspace_close, then the
+// M7 dev tools (bash and background shells, file tools, upload and download). Each
 // call creates its own binding state, so every server process (and test) is independent.
 func WorkspaceTools(b Backend) []Tool {
 	s := &wsState{b: b, bound: map[bindKey]string{}, fleetOf: map[wsRef]string{}, locks: map[bindKey]*keyLock{}}
-	return []Tool{
+	base := []Tool{
 		{
 			Name: "workspace_open",
 			Description: "Open (or reattach to) your isolated workspace on a fleet. exec, read_file and write_file use it automatically, " +
@@ -234,6 +240,8 @@ func WorkspaceTools(b Backend) []Tool {
 			Handler:      s.close,
 		},
 	}
+	base = append(base, s.bashTools()...)
+	return append(base, s.fsTools()...)
 }
 
 // ---- target and workspace selection ----
@@ -352,7 +360,11 @@ func (s *wsState) pick(ctx context.Context, contextArg, fleetArg, wsArg string, 
 	if !found { // fail closed: an unknown fleet might be guarded
 		return selection{}, &Error{Code: api.CodeNotFound, Message: "no such fleet in this context"}
 	}
-	r, err := s.b.WorkspaceOpen(ctx, t.Context, api.WorkspaceOpenParams{Fleet: t.Fleet, Session: session})
+	wd, perr := s.projectWorkdir()
+	if perr != nil {
+		return selection{}, perr
+	}
+	r, err := s.b.WorkspaceOpen(ctx, t.Context, api.WorkspaceOpenParams{Fleet: t.Fleet, Session: session, Workdir: wd})
 	if err != nil {
 		return selection{}, guardedRewrite(toolError(err), t)
 	}
@@ -422,9 +434,13 @@ func (s *wsState) open(ctx context.Context, req Request) (any, error) {
 		Image   string            `json:"image"`
 		Labels  map[string]string `json:"labels"`
 		Confirm string            `json:"confirm"`
+		Creds   []string          `json:"credentials"`
 	}
 	if err := DecodeArgs(req, &a); err != nil {
 		return nil, err
+	}
+	if e := api.ValidateCredentialNames(a.Creds); e != nil {
+		return nil, badRequest(e.Message)
 	}
 	if err := checkName("context", a.Context); err != nil {
 		return nil, err
@@ -454,9 +470,14 @@ func (s *wsState) open(ctx context.Context, req Request) (any, error) {
 		return nil, lerr
 	}
 	defer unlock()
+	wd, perr := s.projectWorkdir()
+	if perr != nil {
+		return nil, perr
+	}
 	r, err := s.b.WorkspaceOpen(ctx, t.Context, api.WorkspaceOpenParams{
-		Fleet: t.Fleet, Session: session, Image: a.Image, Labels: a.Labels,
-		Confirm: a.Confirm, // verbatim: never defaulted or cached
+		Fleet: t.Fleet, Session: session, Image: a.Image, Labels: a.Labels, Workdir: wd,
+		Confirm:     a.Confirm, // verbatim: never defaulted or cached
+		Credentials: a.Creds,
 	})
 	if err != nil {
 		return nil, guardedRewrite(toolError(err), t)
@@ -479,6 +500,8 @@ type execOut struct {
 	Truncated    bool   `json:"truncated"`
 	OmittedBytes int    `json:"omitted_bytes"`
 	TimedOut     bool   `json:"timed_out,omitempty"`
+	Ref          string `json:"ref,omitempty"`
+	Note         string `json:"note,omitempty"`
 	Duration     string `json:"duration"`
 	Workspace    string `json:"workspace"`
 	Where        where  `json:"where"`
@@ -541,11 +564,21 @@ func (s *wsState) exec(ctx context.Context, req Request) (any, error) {
 		return nil, s.failed(ctx, sel, err)
 	}
 	c := orch.CapOutput([]byte(r.Stdout), []byte(r.Stderr), s.b.OutputCap())
-	return execOut{
+	out := execOut{
 		ExitCode: r.ExitCode, Stdout: c.Stdout, Stderr: c.Stderr,
-		Truncated: c.Truncated || r.Truncated, OmittedBytes: c.OmittedBytes, TimedOut: r.TimedOut,
+		Truncated: c.Truncated || r.Truncated || r.Omitted > 0, OmittedBytes: c.OmittedBytes + int(r.Omitted), TimedOut: r.TimedOut,
+		Ref:      r.Ref,
 		Duration: (time.Duration(r.DurationMS) * time.Millisecond).String(), Workspace: sel.id, Where: whereOf(sel.t),
-	}, nil
+	}
+	if out.Truncated {
+		out.Note = fmt.Sprintf("output was cut (%d bytes omitted)", out.OmittedBytes)
+		if r.Ref != "" {
+			out.Note += "; page the full output with read_output {\"ref\":\"" + r.Ref + "\"} (offset, limit, tail_lines, grep)"
+		} else {
+			out.Note += "; re-run with a filter such as grep or tail"
+		}
+	}
+	return out, nil
 }
 
 // ---- read_file ----
@@ -812,6 +845,7 @@ func (s *wsState) close(ctx context.Context, req Request) (any, error) {
 		Fleet     string `json:"fleet"`
 		Context   string `json:"context"`
 		Workspace string `json:"workspace"`
+		Delete    bool   `json:"delete"`
 	}
 	if err := DecodeArgs(req, &a); err != nil {
 		return nil, err
@@ -820,7 +854,12 @@ func (s *wsState) close(ctx context.Context, req Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	r, err := s.b.WorkspaceClose(ctx, sel.t.Context, sel.id)
+	var r *api.WorkspaceCloseResult
+	if a.Delete {
+		r, err = s.b.WorkspaceCloseWith(ctx, sel.t.Context, api.WorkspaceCloseParams{Workspace: sel.id, Delete: true})
+	} else {
+		r, err = s.b.WorkspaceClose(ctx, sel.t.Context, sel.id)
+	}
 	if err != nil {
 		return nil, s.failed(ctx, sel, err)
 	}
@@ -830,4 +869,21 @@ func (s *wsState) close(ctx context.Context, req Request) (any, error) {
 		state = "closed"
 	}
 	return closeOut{State: state, Workspace: sel.id, Where: whereOf(sel.t)}, nil
+}
+
+// projectWorkdir is the `workdir:` of the project's .mirafleet.yaml (docs/M7.md §3.4, §3.8): the
+// shared directory name sent with workspace_open. The file is re-read at every open; an invalid
+// one is an error, never silently ignored. `remote: true` needs no wire field: it only steers the
+// plugin and hook.
+func (s *wsState) projectWorkdir() (string, error) {
+	dir, err := s.projectDir()
+	if err != nil {
+		return "", nil // no project directory: no project file
+	}
+	home, _ := os.UserHomeDir()
+	p, _, perr := opconf.LoadProject(dir, home)
+	if perr != nil {
+		return "", badRequest("the project file .mirafleet.yaml is invalid")
+	}
+	return p.Workdir, nil
 }

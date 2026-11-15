@@ -144,23 +144,95 @@ func TestHooksExecForm(t *testing.T) {
 	}
 	for ev, sub := range want {
 		groups := h.Hooks[ev]
-		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
-			t.Fatalf("%s: want one group with one hook: %+v", ev, groups)
+		wantGroups := 1
+		if ev == "PreToolUse" {
+			wantGroups = 2 // mirafleet tools (guarded confirm) and local tools (remote deny)
 		}
-		hk := groups[0].Hooks[0]
-		// Exec form: command is the bare executable and args is set, so no shell is involved
-		// (works on Windows without sh or PowerShell).
-		if hk.Type != "command" || hk.Command != "mirafleet" {
-			t.Fatalf("%s: %+v", ev, hk)
+		if len(groups) != wantGroups {
+			t.Fatalf("%s: want %d groups: %+v", ev, wantGroups, groups)
 		}
-		if strings.Join(hk.Args, " ") != "mcp hook claude-code "+sub {
-			t.Fatalf("%s args: %q", ev, hk.Args)
+		for _, g := range groups {
+			if len(g.Hooks) != 1 {
+				t.Fatalf("%s: want one hook per group: %+v", ev, g)
+			}
+			hk := g.Hooks[0]
+			// Exec form: command is the bare executable and args is set, so no shell is involved
+			// (works on Windows without sh or PowerShell).
+			if hk.Type != "command" || hk.Command != "mirafleet" {
+				t.Fatalf("%s: %+v", ev, hk)
+			}
+			if strings.Join(hk.Args, " ") != "mcp hook claude-code "+sub {
+				t.Fatalf("%s args: %q", ev, hk.Args)
+			}
+			if strings.ContainsAny(hk.Command, " \t") {
+				t.Fatalf("%s: command has whitespace", ev)
+			}
+			if ev == "SessionEnd" && hk.Timeout != 15 {
+				t.Fatalf("SessionEnd timeout %d", hk.Timeout)
+			}
 		}
-		if strings.ContainsAny(hk.Command, " \t") {
-			t.Fatalf("%s: command has whitespace", ev)
+	}
+}
+
+// The second PreToolUse group lists exactly the nine local tools as an exact-string matcher
+// (letters and | only, so Claude Code does not treat it as a regexp).
+func TestPreToolUseLocalToolsMatcher(t *testing.T) {
+	var h hooksFile
+	readJSON(t, &h, "hooks", "hooks.json")
+	m := h.Hooks["PreToolUse"][1].Matcher
+	if !regexp.MustCompile(`^[A-Za-z|]+$`).MatchString(m) {
+		t.Fatalf("matcher %q is not a plain alternation", m)
+	}
+	got := strings.Split(m, "|")
+	sort.Strings(got)
+	want := []string{"Bash", "Edit", "Glob", "Grep", "LS", "MultiEdit", "NotebookEdit", "Read", "Write"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("local matcher %q, want %v", m, want)
+	}
+	// The anchored mirafleet matcher stays first and unchanged.
+	if h.Hooks["PreToolUse"][0].Matcher != "^mcp__plugin_mirafleet_mirafleet__.*" {
+		t.Fatalf("mirafleet matcher %q", h.Hooks["PreToolUse"][0].Matcher)
+	}
+}
+
+// Every text file under integrations/ uses LF line endings.
+func TestLFLineEndings(t *testing.T) {
+	err := filepath.WalkDir(".", func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
 		}
-		if ev == "SessionEnd" && hk.Timeout != 15 {
-			t.Fatalf("SessionEnd timeout %d", hk.Timeout)
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(b), "\r") {
+			t.Errorf("%s contains CR", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The shared body, and so every skill and command copy, explains the remote workflow.
+func TestSharedBodyExplainsRemoteWorkflow(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("commands", "mirafleet.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"remote: true", "workspace_open", "clone", "multi_edit", "run_in_background", "bash_output", "push", "CLAUDE.md", "never visible"} {
+		if !strings.Contains(string(b), s) {
+			t.Errorf("shared body lacks %q", s)
+		}
+	}
+	for _, f := range []string{"opencode/README.md", "generic/README.md", "README.md", "claude-code/README.md"} {
+		rb, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(rb), "remote: true") {
+			t.Errorf("%s does not mention remote: true", f)
 		}
 	}
 }

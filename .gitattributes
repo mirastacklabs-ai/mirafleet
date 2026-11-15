@@ -38,3 +38,6 @@ internal/gui/static/LICENSES/** -text
 internal/gui/static/vendor/** -text
 # licenses/extra holds byte copies (Oswald-OFL.txt has CRLF) that relgen compares byte-for-byte.
 licenses/extra/** -text
+
+# fsops golden fixtures are byte-exact (notes.txt has a mixed CRLF line on purpose): never normalise.
+internal/workspace/fsops/testdata/fixtures/** -text

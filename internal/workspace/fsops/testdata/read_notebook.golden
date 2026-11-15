@@ -1,0 +1,17 @@
+<cell id="intro"><cell_type>markdown</cell_type>
+# Title
+Some <b>text</b> & more
+</cell id="intro">
+<cell id="calc">
+print('hello')
+1 + 1
+hello
+world
+
+<Figure size 1x1>
+[image/png output attached as image 1]
+ValueError: bad
+</cell id="calc">
+<cell id="cell-2">
+x = 'héllo ☃'
+</cell id="cell-2">

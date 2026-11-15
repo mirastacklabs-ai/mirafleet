@@ -19,6 +19,9 @@
   signature versus provenance, keyless signing, SBOMs, packages and systemd units (user units
   and linger), OCI images and registries, Compose, npm optional dependencies, Homebrew taps,
   plugin marketplaces, protocol levels and the DCO.
+- For host mode (§2.14): SSH agent forwarding versus a broker, a TLS-intercepting proxy, secrets
+  at rest with a master key (AES-GCM), credential rotation, and how one OS user on a VM is
+  isolated from another (permissions, `ptrace`, `/proc`, "dumpable").
 
 Each section ends with **Why mirafleet needs this**. You can read the sections in any order and
 come back when a later chapter mentions one. Terms are also in the [glossary](glossary.md).
@@ -49,12 +52,12 @@ make new stamps, so nobody can forge yours.
 
 ```mermaid
 sequenceDiagram
-    participant A as durga's laptop (holds private key)
-    participant C as Central (holds durga's public key)
+    participant A as Durga's laptop (holds private key)
+    participant C as Central (holds Durga's public key)
     C->>A: "Sign this challenge (unique to this session)"
     A->>C: signature made with private key
     C->>C: check signature with stored public key
-    Note over C: valid means durga holds the private key
+    Note over C: valid means Durga holds the private key
 ```
 
 **Ed25519** is one particular signature algorithm. It is fast, has small keys (32 bytes for the
@@ -151,7 +154,7 @@ runners, and cheap multiplexing. See [chapter 7](07-protocols.md).
 
 ## 2.3 Host-key pinning versus trust-on-first-use
 
-Suppose durga's first connection to `central.example.com:2222` meets a stranger instead: an
+Suppose Durga's first connection to `central.example.com:2222` meets a stranger instead: an
 attacker who intercepts the traffic and answers with *their* host key. This is a
 **man-in-the-middle** attack. How does the client know the key is central's?
 
@@ -174,7 +177,7 @@ mirafleet pins everywhere:
 - There is **no TOFU fallback** and no prompt, even when there is no terminal.
 
 An example with MIRASTACK LABS: aarvee generates the token on central and sends it to the `db-1` admin by a
-channel they trust (a password manager, say). An attacker on the network can see the traffic
+channel they trust (their password manager, say). An attacker on the network can see the traffic
 but cannot change the token, so cannot swap the host key. If the attacker presents their own key,
 `db-1` sees the hash mismatch and stops, *without handing over the secret*.
 
@@ -513,7 +516,8 @@ it. Go 1.24 added **`os.Root`**: you open a directory as a root, and every later
 through it is confined to it, even through symlinks and `..`. The executor opens each
 workspace directory as an `os.Root`, so nothing outside `/workspace` is reachable
 (`internal/workspace/ctrd/files_linux.go`). It also checks that the file is a regular file, so a
-FIFO (a pipe in a file) cannot hang the runner.
+FIFO (a pipe in a file) cannot hang the runner. This is the container executor only: the M7
+host-mode file tools are deliberately not confined (see chapter 5, section 5.14).
 
 ### The workspace life cycle
 
@@ -903,6 +907,129 @@ The **DCO** (Developer Certificate of Origin) is a one-line promise, added to a 
 licence. It is the lightweight alternative to a contributor licence agreement, and a CI check
 (`dco.yml`) looks for it. Only the person who wrote the commit can make that promise. See
 [chapter 11](11-contributing.md).
+## 2.14 Host mode background: secrets you can use but not read (M7)
+
+<!-- verify: section 2.14 describes M7 as decided in docs/M7.md; check names (session-bind@openssh.com, PR_SET_DUMPABLE, NameConstraints, AES-256-GCM) against internal/workspace/{sshagent,hostx,broker} and internal/secrets at reconciliation. -->
+
+Host mode ([chapter 1, section 1.4a](01-what-is-mirafleet.md#14a-host-mode-remote-development-on-a-vm-m7))
+runs the agent's commands directly on a VM, with no container wall. The agent also has to
+`git push` to a private GitLab, which needs a secret. The puzzle: **how do you let a program use a
+secret without letting it read the secret?** This section teaches the four ideas the answer uses.
+
+### Idea 1: using a key without holding it (SSH agent, forwarding, and a broker)
+
+Normally `ssh` reads your private key from a file such as `~/.ssh/id_ed25519` and signs a
+challenge with it (see [2.1](#21-public-key-cryptography-and-ed25519) and [2.2](#22-ssh)). Anything
+that can read that file can steal the key.
+
+An **ssh-agent** is a small program that holds keys in memory and offers a Unix socket
+([2.11](#211-unix-sockets-file-permissions-and-umask)). `ssh` connects to the socket (the path is in
+the environment variable `SSH_AUTH_SOCK`) and says "sign this challenge for key X". The agent
+signs and returns the signature. The key never leaves the agent. The agent protocol has other
+requests too: add a key, remove one, lock the agent, list keys.
+
+**Agent forwarding** (`ssh -A`) lets a remote machine reach *your* agent through the SSH
+connection. It is convenient, and it has a known problem: anyone with root on the remote machine
+(or the same user) can ask your agent to sign things for as long as you are connected. A
+forwarded agent is a **signing oracle**: you cannot read the key, but you can make it sign.
+
+mirafleet does not forward an agent from the Mac. Instead the runner starts a **restricted
+agent per session** (`internal/workspace/sshagent`) that:
+
+- answers only `List` and `Sign` (no add, remove, lock or key export);
+- signs only one kind of request, an SSH *user-authentication* request for the SSH user named in
+  the credential (usually `git`). It parses what it is asked to sign and refuses anything else, such
+  as a certificate signature or a random blob someone wants signed by "your" key;
+- with **host binding** (the OpenSSH extension `session-bind@openssh.com`, OpenSSH 8.9 and later) the
+  client tells the agent *which server it is talking to*. The agent signs only if that server's host
+  key is in the credential's pinned `known_hosts`. Without binding, an attacker could point `ssh` at
+  their own server and use the agent to sign a login there.
+
+The agent still works as an oracle against the pinned hosts, and that **residual risk** is accepted
+and documented ([section 5.14](05-security.md#514-host-mode-and-credentials-m7)).
+
+**HTTPS has no agent.** Tokens go in an `Authorization` header that the client builds itself. So
+the runner runs a **broker**: a small local proxy (`internal/workspace/broker`) on
+`127.0.0.1`. The tools are told to use it (`HTTPS_PROXY`). When a tool opens a connection to
+`gitlab.example.com`, the broker does a **TLS interception** (the same trick corporate "inspection"
+proxies use, here for a good reason): it terminates the TLS connection itself, using a certificate
+for that one host issued by a **per-session certificate authority** (CA), adds the
+`Authorization` header, opens its own verified TLS connection to the real server and passes the
+data both ways. The tool trusts the broker because the runner puts the session CA into the tools'
+trust list (`SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS` and friends). Two details
+keep this safe:
+
+- The CA carries a **name constraint**: its certificates are valid only for the hosts of that
+  session's credentials. Even if a process steals the CA certificate, it cannot mint a certificate
+  for `bank.example.com`. And the CA's private key exists only in the runner's memory.
+- Connections to any other host are a plain tunnel (`CONNECT`): the broker does not look inside.
+
+Docker and container-registry logins add a wrinkle: the registry answers `401` with a "get a
+token from this URL" hint, the client fetches a short-lived **JWT** (a signed token) and retries.
+The broker does that exchange itself, so the agent never sees a JWT either.
+
+**Why mirafleet needs this.** An SSH agent socket and a local broker are the only two things
+about the secret that the agent's processes can touch. Neither will hand out the secret itself.
+
+### Idea 2: secrets at rest with a master key
+
+Central must store the secrets so it can send them to runners. A database holding passwords in
+clear text means that a stolen backup is a stolen company. So central stores each value
+**encrypted**, using **AES-256-GCM** (from Go's standard library, `internal/secrets`):
+
+- **AES-256** is a block cipher (a scrambling function that needs a 32-byte key to unscramble).
+- **GCM** is a mode that also produces an *authentication tag*: change one byte of the stored
+  data and decryption fails. That is called *authenticated encryption*.
+- Every value gets a fresh random **nonce** (a number used once, 12 bytes). Reusing a nonce with
+  the same key is a catastrophic mistake in GCM, so it is random per value.
+- The **associated data** (AAD) is extra text that is authenticated but not stored encrypted. The
+  AAD is the credential's id and version, so a ciphertext cannot be copied from one credential
+  row to another and still decrypt.
+
+The key itself, the **master key** (32 random bytes, base64), is *not* in the database. Central
+reads it from the environment variable `MIRAFLEET_SECRETS_KEY`, which aarvee puts in a `0600` file
+and generates with `mirafleet central keygen`. The database stores only a **key-check value**
+(an HMAC of a constant, [2.4](#24-hashes-hmac-and-constant-time-comparison)), so central can notice
+at start-up "the key is missing or wrong" and refuse to start rather than quietly produce garbage.
+`central secrets rekey` re-encrypts everything under a new key in one transaction.
+
+**Why mirafleet needs this.** Copying `mirafleet.db` (a backup, a disk image) no longer leaks the
+credentials. The honest limit: someone who gets *both* the database and the environment (for
+instance root on the central host) gets everything. Central stays a single trust point.
+
+### Idea 3: credential rotation
+
+Secrets should expire. A **rotation** replaces a credential's value with a new one and retires the
+old one. Why it matters: if a token leaked six months ago, rotation caps the damage to its
+lifetime. In mirafleet a rotation is just "replace the value": central pushes the new value to every
+runner that holds it, and the runner swaps its in-memory set atomically, so the next `git push`
+uses the new token without restarting anything. An **expiry** date warns early (14 days ahead), and
+for GitLab project access tokens central can rotate by itself (`rotate: gitlab_self`): it calls
+GitLab's "rotate this token" API using the token itself, stores the new value, and pushes it. Why
+central does that and not the runner: the runner's process must not need to reach out and write
+secrets into the database; central is already the place that stores them.
+
+### Idea 4: OS-user isolation on a VM
+
+Host mode has no container, so isolation between things on a VM is plain Unix:
+
+- Each **user** (a number called the *uid*) owns files. With home directories at mode `0700`,
+  user `qa` cannot enter `/home/dev`. This is the wall between two runners on one VM.
+- **Same-user processes are not isolated by default.** The agent's shell and the runner both run as
+  `dev`. Two Linux features let a process spy on another process of the same user:
+  - **`ptrace`** lets a process attach to another (debuggers use it) and read its memory.
+  - **`/proc/<pid>/`** exposes a process's environment (`environ`), command line, memory (`mem`),
+    open files (`fd`), and more, and the same user may normally read them.
+- A process can ask the kernel to be **non-dumpable** (`prctl(PR_SET_DUMPABLE, 0)`). The kernel then
+  denies `ptrace` attach and denies other non-root processes access to `/proc/<pid>/{mem,environ,
+  fd,...}`, and writes no core dump. The runner does this as its very first act, **before any secret
+  is loaded**. That is what stops an agent running as the same user from reading the secrets out of
+  the runner's memory.
+- `root` can still read anything. Host mode never claims to defend against root on the VM.
+
+**Why mirafleet needs this.** These four ideas together make "use without reading" real on a VM
+with no container. [Chapter 3](03-architecture.md#host-mode-the-m7-runner) shows the
+components; [chapter 5.14](05-security.md#514-host-mode-and-credentials-m7) attacks them.
 
 ---
 
@@ -929,6 +1056,12 @@ licence. It is the lightweight alternative to a contributor licence agreement, a
 10. An attacker swaps both a release archive and `checksums.txt` on a mirror. Which check still
     catches it, and what does that check prove?
 11. Why can a user unit for a host-mode runner stop at logout, and what stops that?
+12. Why is a forwarded ssh-agent called a "signing oracle", and which two restrictions on
+   mirafleet's per-session agent reduce that?
+13. Why does the credential store use a random nonce per value, and what happens if someone copies
+   one credential's ciphertext into another credential's row?
+14. A process running as the same user as the runner tries `cat /proc/<runner pid>/environ` and
+    `gdb -p <runner pid>`. Why do both fail, and what would still work for the root user?
 
 <details>
 <summary>Answers</summary>
@@ -954,7 +1087,7 @@ licence. It is the lightweight alternative to a contributor licence agreement, a
 6. With a user namespace, "root" inside is mapped to an unprivileged host id, so an escape lands
    as a nobody. But the container still shares the host kernel, so a kernel bug is a way out;
    a VM-like runtime (gVisor, Kata) is needed to remove that risk.
-7. The executor reads files through `os.Root`, which confines every path (symlinks and `..`
+7. The containerd executor reads files through `os.Root`, which confines every path (symlinks and `..`
    included) to the workspace directory. The link cannot leave `/workspace`.
 8. Any two of: the `SameSite=Strict` cookie is not sent on a cross-site request; the browser's
    `Sec-Fetch-Site` / `Origin` headers show a foreign origin and central refuses the request;
@@ -968,5 +1101,14 @@ licence. It is the lightweight alternative to a contributor licence agreement, a
     checksum alone would pass, because the attacker wrote a matching hash.)
 11. A user unit runs only while its user has a session. `loginctl enable-linger dev` keeps the
     user's services running with nobody logged in.
+12. You cannot read the key from it, but anyone who can reach its socket can ask it to sign. The
+   mirafleet agent answers only `List` and `Sign`, signs only SSH user-authentication requests for the
+   credential's user, and (with host binding) only when the server's host key is pinned.
+13. Reusing a nonce with one GCM key breaks its security, so every value gets a fresh random
+   one. The associated data is the credential's id and version, so the copied ciphertext fails
+   its authentication tag and is refused.
+14. The runner set itself non-dumpable before loading any secret, so the kernel denies `ptrace`
+    attach and denies same-uid access to `/proc/<pid>/environ` and `mem`. Root can still read both;
+    host mode does not defend against root on the VM.
 
 </details>

@@ -64,6 +64,16 @@ Hooks: SessionStart writes a handoff so the MCP server (same parent PID) reuses 
 that session's workspaces (best effort, 10 s). PreToolUse answers `ask` when `confirm` is set; it
 never allows. Central enforces `confirm` regardless of the hook.
 
+## Remote projects (`remote: true`)
+
+If `.mirafleet.yaml` has `remote: true`, a second PreToolUse group (matcher
+`Bash|Read|Write|Edit|MultiEdit|Grep|Glob|LS|NotebookEdit`) runs the same `pre-tool-use` hook. It
+reads the project file from `${CLAUDE_PROJECT_DIR}` and **denies** the local tool with a reason naming
+the mirafleet tool to use (`bash`, `read`, `write`, `edit`, `multi_edit`, `grep`, `glob`, `ls`,
+`notebook_edit`). It fails open when there is no project file or `remote` is false, and fails closed
+(deny, with the parse error) when the file cannot be read or parsed. The MCP server works without
+the hook; the skill carries the remote workflow.
+
 ## Troubleshooting
 
 - Tools missing or `/mcp` shows `plugin:mirafleet:mirafleet` failed: `which mirafleet`; launch

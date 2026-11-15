@@ -149,6 +149,24 @@ func (d *DB) ReserveWorkspace(ctx context.Context, w store.Workspace, slots, max
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		// 1b. One operator per host runner: live rows of another operator hold it.
+		var executor string
+		if err := tx.QueryRowContext(ctx, `SELECT executor FROM fleet_workspace WHERE fleet_id = ?`, w.FleetID).
+			Scan(&executor); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if executor == string(store.ExecutorHost) {
+			var holder string
+			err := tx.QueryRowContext(ctx, `SELECT o.name FROM workspaces w JOIN operators o ON o.id = w.operator_id
+ WHERE w.runner_id = ? AND w.operator_id <> ? AND w.state IN ('opening','open','closing') ORDER BY w.id LIMIT 1`,
+				w.RunnerID, w.OperatorID).Scan(&holder)
+			if err == nil {
+				return &store.HeldError{Operator: holder}
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
 		// 2. Per-operator cap.
 		if maxPerOp > 0 {
 			n, err := countLive(ctx, tx, "operator_id", w.OperatorID)

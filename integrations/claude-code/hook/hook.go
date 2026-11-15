@@ -11,7 +11,8 @@
 //   - SessionEnd documents reason values clear, resume, logout, prompt_input_exit, other.
 //   - PreToolUse adds tool_name, tool_input (tool specific object) and tool_use_id. Output is
 //     {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow|deny|ask|defer",
-//     "permissionDecisionReason":"..."}}. We only ever emit "ask".
+//     "permissionDecisionReason":"..."}}. We emit "ask" (guarded confirm) and "deny" (local tools
+//     in a remote project, remote.go); never "allow".
 //   - Exit 0 = success (stdout parsed as JSON); exit 2 = blocking error; other = non-blocking.
 //     We exit 0 always, so a failing hook can never block a session.
 //   - CLAUDE_PROJECT_DIR is exported to the hook process and is the project root.
@@ -65,6 +66,10 @@ var knownFields = []string{"confirm", "fleet", "runner", "action", "workspace", 
 var knownTools = map[string]bool{
 	"list_fleets": true, "list_runners": true, "run_action": true, "workspace_open": true, "exec": true,
 	"read_file": true, "write_file": true, "workspace_close": true, "workspace_list": true,
+	// M7 remote tools (docs/M7.md §3.7).
+	"bash": true, "bash_output": true, "kill_shell": true, "job_list": true, "read_output": true,
+	"read": true, "write": true, "edit": true, "multi_edit": true, "grep": true, "glob": true,
+	"ls": true, "notebook_edit": true, "upload": true, "download": true,
 }
 
 // Backend is the slice of *orch.Orch that SessionEnd needs.
@@ -80,6 +85,7 @@ type Env struct {
 	StateDir   string // handoff files
 	ConfigDir  string // keys, known_hosts, contexts.yaml
 	ProjectDir string // CLAUDE_PROJECT_DIR; empty: the hook input's cwd
+	Home       string // home directory, bounds the .mirafleet.yaml walk-up; empty: project dir only
 	PPID       int    // the harness PID
 	Now        func() time.Time
 
@@ -93,6 +99,7 @@ type Env struct {
 // Directory lookup errors leave the field empty; session-start then reports and exits 0.
 func DefaultEnv() Env {
 	e := Env{PPID: os.Getppid(), ProjectDir: os.Getenv("CLAUDE_PROJECT_DIR"), Now: time.Now}
+	e.Home, _ = os.UserHomeDir()
 	e.StateDir, _ = opconf.StateDir()
 	e.ConfigDir, _ = opconf.Dir()
 	return e
@@ -144,7 +151,7 @@ func Run(ctx context.Context, event string, stdin io.Reader, stdout, stderr io.W
 	case "session-end":
 		sessionEnd(ctx, stdin, stderr, env)
 	case "pre-tool-use":
-		preToolUse(stdin, stdout, stderr)
+		preToolUse(stdin, stdout, stderr, env)
 	default:
 		fmt.Fprintf(stderr, "mirafleet hook: unknown event %q\n", clipRunes(orch.Sanitize([]byte(event)), fieldMax))
 	}
@@ -279,12 +286,15 @@ func ask(stdout io.Writer, reason string) {
 	stdout.Write(append(b, '\n'))
 }
 
-func preToolUse(stdin io.Reader, stdout, stderr io.Writer) {
+func preToolUse(stdin io.Reader, stdout, stderr io.Writer, env Env) {
 	in, err := readInput(stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "mirafleet hook: pre-tool-use: bad input: %v\n", err)
 		ask(stdout, genericReason)
 		return
+	}
+	if denyRemote(stdout, env, in) {
+		return // a local tool in a remote project (or with an unreadable project file): denied
 	}
 	ti := bytes.TrimSpace(in.ToolInput)
 	if len(ti) == 0 || string(ti) == "null" {

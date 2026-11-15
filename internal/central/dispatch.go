@@ -100,6 +100,13 @@ func operatorTable() *methodTable {
 			api.MethodWorkspaceWriteFile: handleWorkspaceWriteFile,
 			api.MethodWorkspaceClose:     handleWorkspaceClose,
 			api.MethodWorkspaceList:      handleWorkspaceList,
+
+			api.MethodWorkspaceFS:         handleWorkspaceFS,
+			api.MethodWorkspaceJobStart:   handleJobStart,
+			api.MethodWorkspaceJobStatus:  handleJobStatus,
+			api.MethodWorkspaceJobTail:    handleJobTail,
+			api.MethodWorkspaceJobCancel:  handleJobCancel,
+			api.MethodWorkspaceOutputRead: handleOutputRead,
 		},
 		timeout: operatorTimeout,
 	}
@@ -116,7 +123,9 @@ func operatorTimeout(m string) time.Duration {
 		return wsOpenOuterTimeout
 	case api.MethodWorkspaceExec:
 		return wsExecOuterTimeout
-	case api.MethodWorkspaceReadFile, api.MethodWorkspaceWriteFile:
+	case api.MethodWorkspaceReadFile, api.MethodWorkspaceWriteFile, api.MethodWorkspaceFS,
+		api.MethodWorkspaceJobStart, api.MethodWorkspaceJobStatus, api.MethodWorkspaceJobTail,
+		api.MethodWorkspaceJobCancel, api.MethodWorkspaceOutputRead:
 		return wsFileOuterTimeout
 	case api.MethodWorkspaceClose:
 		return wsCloseOuterTimeout
@@ -200,7 +209,8 @@ func buildRunnersList(vs []service.RunnerView) api.RunnersListResult {
 	used := 0
 	for i, v := range vs {
 		ri := api.RunnerInfo{Name: v.Name, Status: string(v.Status), Online: v.Online, Labels: v.Labels,
-			Slots: v.Slots, FreeSlots: v.FreeSlots, Executor: v.Executor}
+			Slots: v.Slots, FreeSlots: v.FreeSlots, Executor: v.Executor,
+			Features: v.Features, Credentials: v.Credentials, Busy: v.Busy}
 		var acts []api.ActionInfo
 		for _, a := range v.Actions {
 			ai := api.ActionInfo{Name: a.Name}

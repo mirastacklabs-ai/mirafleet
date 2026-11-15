@@ -41,12 +41,27 @@ If the harness has custom commands or prompts, reuse the body in
 `mirafleet`, plus aliases such as `openfleet` if you like. See [../opencode](../opencode/README.md)
 for an example.
 
-## Remote projects (host mode)
+## Remote projects (`remote: true`)
 
-For a project with `remote: true` in `.mirafleet.yaml`, the command body tells the model to use
-only the mirafleet tools against the runner VM. Without Claude Code's hook nothing blocks the
-harness's own local tools, so use the harness's tool permissions to keep them off.
-<!-- verify: tool names and `remote:` semantics match M7 as merged -->
+A project whose `.mirafleet.yaml` has `remote: true` does all its work on the remote machine through
+central; the model still runs on your laptop. The server exposes tools that replace the harness's
+local ones:
+
+| mirafleet tool | Replaces | Notes |
+|---|---|---|
+| `bash`, `bash_output`, `kill_shell`, `job_list` | Bash and background shells | `run_in_background: true` for builds over about 2 minutes |
+| `read`, `write`, `edit`, `multi_edit` | Read, Write, Edit, MultiEdit | `edit` needs a unique `old_string` |
+| `grep`, `glob`, `ls`, `notebook_edit` | Grep, Glob, LS, NotebookEdit | run on the remote workspace |
+| `read_output` | - | pages long or truncated output |
+| `upload`, `download` | - | local project dir and remote, only when asked |
+
+Workflow: `workspace_open`, clone with a plain `git@` or `https://` URL, edit with the remote tools,
+long builds as background shells, commit and push from the workspace. Credentials are held by the
+runner and injected; the agent never sees them.
+
+Without hooks nothing blocks the harness's local tools in a remote project. The command body and the
+server instructions carry the rule (instructions only); you can also disable the local tools in the
+harness's own permission settings.
 
 ## Works with no hooks. What you lose
 

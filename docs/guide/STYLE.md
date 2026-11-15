@@ -56,6 +56,8 @@ guide they understand the whole design and code and never need to ask the author
 | `diagrams/gui-setup.svg` | first-start GUI setup: setup token file → `/setup` → first session |
 | `diagrams/gui-revoke.svg` | a runner revoke from the GUI: Host, session, CSRF and typed-name checks → `Service.Lifecycle` → audit |
 | `diagrams/release-pipeline.svg` | a release: tag → `verify` → `build` → `draft` → `publish-release` → `image`, `npm`, `brew` → `mcp-registry`, with the approval points |
+| `diagrams/host-session.svg` | host mode: open, session directory (0700), per-session agent and broker, close keeps the dir, reattach, cleanup |
+| `diagrams/credential-flow.svg` | credentials: set and seal on central, assign, `creds_sync` to runner memory, agent/broker use, audit, rotate |
 
 ## Chapter files
 `README.md` (index and reading order), `glossary.md`, `01-what-is-mirafleet.md`,

@@ -12,7 +12,7 @@ the static handler must serve /static/<hash>/fonts/... for the same hash it give
 
 PAGE DATA (every screen's root value; struct or map, these exact names):
     .Title      string      page title, also <title>
-    .Nav        string      active nav key: overview fleets runners tokens operators workspaces audit account, or ""
+    .Nav        string      active nav key: overview fleets runners tokens credentials operators workspaces audit account, or ""
     .Authed     bool        false on setup/login: header shows no nav, no sign-out, no theme switch
     .CSRF       string      token for forms and hx-headers (the pre-session token on setup/login)
     .Theme      string      light | dark | system (renders data-theme)
@@ -26,7 +26,7 @@ LAYOUT (layout.html)
 
 NAV, CHROME
     ui/mark             the three-bar mark (inline SVG), arg ignored
-    ui/nav-links        the 8 nav links, arg = page data (.Nav)
+    ui/nav-links        the 9 nav links, arg = page data (.Nav)
     ui/flash            the flash message, arg = page data ($); also used for the aria-live region
     ui/crumbs           breadcrumb list, arg = page data ($)
     ui/csrf             hidden _csrf input, arg = page data ($), inside a form
@@ -60,6 +60,7 @@ and a POST form; destructive ones use ".dialog.danger" and a ".btn-danger" submi
 <li><a href="/fleets"{{if eq .Nav "fleets"}} aria-current="page"{{end}}>Fleets</a></li>
 <li><a href="/runners"{{if eq .Nav "runners"}} aria-current="page"{{end}}>Runners</a></li>
 <li><a href="/tokens"{{if eq .Nav "tokens"}} aria-current="page"{{end}}>Join tokens</a></li>
+<li><a href="/credentials"{{if eq .Nav "credentials"}} aria-current="page"{{end}}>Credentials</a></li>
 <li><a href="/operators"{{if eq .Nav "operators"}} aria-current="page"{{end}}>Operators</a></li>
 <li><a href="/workspaces"{{if eq .Nav "workspaces"}} aria-current="page"{{end}}>Workspaces</a></li>
 <li><a href="/audit"{{if eq .Nav "audit"}} aria-current="page"{{end}}>Audit</a></li>

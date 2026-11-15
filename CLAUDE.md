@@ -26,6 +26,10 @@ Milestones: [docs/PLAN.md](docs/PLAN.md). Developer guide (for new engineers):
   Business/Enterprise). Runner workspaces (M3) use containerd via its Go client, which also works on
   Docker hosts (Docker Engine runs on containerd).
 - The runner-side actions guard is the security boundary: argv only, no shell, regex-validated params.
+- Fleet modes: `actions` (guard above), `workspace` with a container executor, and `workspace` with
+  executor `host` (M7: the runner is one OS user on a VM; no guard, the VM is the boundary). Host
+  mode never lets a secret reach the agent: credentials live on central, in runner memory only,
+  used through the per-session ssh-agent and HTTPS broker. See ARCHITECTURE "Host mode".
 - Harness-agnostic core: Claude Code first, then opencode, Kilo Code, etc. The MCP server must work
   with no hooks; harness-specific code lives only in `integrations/<harness>/`.
 - OSS stays lean. Enterprise features (RBAC, SSO, HA, ...) are out of scope; leave interface seams only.

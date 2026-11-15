@@ -28,6 +28,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 	"github.com/mirastacklabs-ai/mirafleet/internal/central/registry"
 	"github.com/mirastacklabs-ai/mirafleet/internal/policy"
+	"github.com/mirastacklabs-ai/mirafleet/internal/secrets"
 	"github.com/mirastacklabs-ai/mirafleet/internal/service"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store/sqlite"
@@ -132,9 +133,22 @@ type harnessOpts struct {
 	cfg  func(*Config)
 	wrap func(Backend) Backend
 	reg  bool
+	// noKey leaves the credential feature unconfigured (no secrets key).
+	noKey bool
 }
 
 type harnessOpt func(*harnessOpts)
+
+// withoutSecretsKey builds the service without a secrets key.
+func withoutSecretsKey() harnessOpt { return func(o *harnessOpts) { o.noKey = true } }
+
+// testRing adapts a secrets.Key to service.KeyRing.
+type testRing struct{ k secrets.Key }
+
+func (r testRing) Seal(pt, aad []byte) ([]byte, error) { return secrets.Seal(r.k, pt, aad) }
+func (r testRing) Open(ct, aad []byte) ([]byte, error) { return secrets.Open(r.k, ct, aad) }
+func (r testRing) Check() []byte                       { return r.k.Check() }
+func (r testRing) VerifyCheck(stored []byte) bool      { return r.k.VerifyCheck(stored) }
 
 // withConfig adjusts the server Config.
 func withConfig(f func(*Config)) harnessOpt { return func(o *harnessOpts) { o.cfg = f } }
@@ -153,6 +167,14 @@ func newGUIHarness(t *testing.T, opts ...harnessOpt) *guiHarness {
 		f(&o)
 	}
 	ctx := context.Background()
+	var credCfg service.CredentialsConfig
+	if !o.noKey {
+		key, _, err := secrets.GenerateKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		credCfg.Key = testRing{key}
+	}
 	h := &guiHarness{t: t, dir: t.TempDir(), clk: &testClock{}, live: &fakeLive{res: &transport.WorkspaceResult{Code: transport.CodeOK}}}
 	db, err := sqlite.Open(ctx, filepath.Join(h.dir, "mirafleet.db"))
 	if err != nil {
@@ -169,7 +191,7 @@ func newGUIHarness(t *testing.T, opts ...harnessOpt) *guiHarness {
 		t.Fatal(err)
 	}
 	h.svc, err = service.New(service.Config{Store: db, Policy: policy.TablePolicy{}, Live: h.live, HostKey: host,
-		OperatorConns: fakeConns{}, Now: h.clk.now, Logf: h.logf})
+		OperatorConns: fakeConns{}, Now: h.clk.now, Logf: h.logf, Credentials: credCfg})
 	if err != nil {
 		t.Fatal(err)
 	}

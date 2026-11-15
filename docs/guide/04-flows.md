@@ -19,8 +19,11 @@
   work (idle and absolute expiry, survival across a restart, the generation check), how a revoke
   click reaches the same code as the CLI, how `reset-admin` recovers a lost password and why a
   join token is shown once (flows 24 to 29).
+- How a **host-mode** workspace is opened and reattached, how `bash` keeps its full output and is
+  paged, how a background job runs, how a credential travels from `credential set` to `git push`
+  and is rotated, and how a restarted runner re-adopts its sessions and jobs (flows 30 to 36).
 
-[Chapter 3](03-architecture.md) showed the parts. This chapter shows them moving: twenty-nine flows,
+[Chapter 3](03-architecture.md) showed the parts. This chapter shows them moving: thirty-six flows,
 each following one thing that really happens in mirafleet, from the command someone types to the
 rows that end up in the database. Every flow starts with a one-sentence summary, then a diagram and
 a numbered explanation that names the functions involved, so you can open the code and follow
@@ -36,7 +39,7 @@ dead" mark), **step** (one 60-second window of the registration code).
 
 | Name | Meaning in this chapter |
 |---|---|
-| `central.example.com:2222` | MIRASTACK LABS's central. Data dir `/var/lib/mirafleet/central`. |
+| `central.example.com:2222` | MIRASTACK LABS' central. Data dir `/var/lib/mirafleet/central`. |
 | `dev`, `prod` | Fleets. `prod` is created with `-confirm` (a guarded fleet). |
 | `build-1` (in `dev`), `db-1` (in `prod`) | Runners. |
 | `durga`, `kalyan` | Operators. |
@@ -588,7 +591,7 @@ no clock to keep in sync with the laptop.*
    the code is **not** returned. The code itself is never put in the audit row.
 2. aarvee passes the code to `durga` in any way they like (chat, voice). A leaked code is
    useless once its 60-second window ends.
-3. **`mcpLogin`** on durga's laptop (`mirafleet mcp login central.example.com:2222 -name durga -code -`)
+3. **`mcpLogin`** on Durga's laptop (`mirafleet mcp login central.example.com:2222 -name durga -code -`)
    requires `-code -`, validates the address and name, refuses on Windows (the key loader fails
    closed there), reads the code from stdin, creates the config dir (`opconf.EnsureDir`, `0700`) and
    generates `operator_ed25519` if it is missing (key comment = the name).
@@ -982,8 +985,8 @@ channel on the runner, and the closed connection. Any one is enough.*
    `execOn` returns. `Exec` notices that the *caller's* context is fine but the *session's* is not, and
    returns `context.Cause(sess.ctx)`, the `*KickError`.
 5. **`RunAction`** recognises the `KickError` (`errors.As`) and writes the outcome row
-   `cancelled` with the message "runner revoked", then returns `unavailable: runner revoked` to durga.
-   durga's tool sees why it stopped.
+   `cancelled` with the message "runner revoked", then returns `unavailable: runner revoked` to Durga.
+   Durga's tool sees why it stopped.
 6. **On the runner**, the connection drop ends `session`; its deferred `cancel()` cancels the context
    that every `serveExec` derives from. Also, the closed channel ends the goroutine copying
    `io.Copy(io.Discard, ch)`, which cancels the action. `exec.Cmd.Cancel` calls `killTree`:
@@ -1036,7 +1039,7 @@ sequenceDiagram
   serveOperator->>RunAction: request ctx cancelled
   RunAction->>Registry: Exec ctx cancelled -> channel closed, runner kills process
   RunAction->>sqlite: RecordAudit (outcome cancelled, "request cancelled")
-  Note over adminCLI,Registry: kalyan reconnects: KeyAuth sees status revoked, denied
+  Note over adminCLI,Registry: Kalyan reconnects: KeyAuth sees status revoked, denied
 ```
 
 *Look at the order: commit first, kick second. A revoked key can never authenticate again.*
@@ -1047,16 +1050,16 @@ sequenceDiagram
    a set of live `ssh.ServerConn` per operator id; `KickOperator` copies the set under the lock and
    closes the connections **after releasing the lock**.
 3. Closing the connection ends `sconn.Wait()` in `serveOperator`, which cancels the connection
-   context. Every `serveAPIChannel` and every `RunAction` derived from it is cancelled. For kalyan's
+   context. Every `serveAPIChannel` and every `RunAction` derived from it is cancelled. For Kalyan's
    running action, `Registry.Exec`'s context ends, the exec channel closes, and the runner kills the
    process group, exactly as in flow 8, step 6.
 4. The outcome row says `cancelled`, message "request cancelled" (not "runner revoked": the runner
    is fine, the *caller* is gone).
-5. **The race.** kalyan could authenticate *just before* the commit, and `OperatorConns.add` could run
+5. **The race.** Kalyan could authenticate *just before* the commit, and `OperatorConns.add` could run
    *after* the kick. Then the kick would find nothing to close. That is why `serveOperator` re-reads
    the operator by id right after `add` and closes the connection if it is no longer active. Revoke
    commits before it kicks, so either the kick or this check catches every connection.
-6. After revoke, `KeyAuth.Authenticate` (user `operator`) returns `ErrDenied` for kalyan's key. If kalyan
+6. After revoke, `KeyAuth.Authenticate` (user `operator`) returns `ErrDenied` for Kalyan's key. If kalyan
    registers again with the same key, the store answers `conflict` (the key belongs to a revoked
    operator). A new key under the name `kalyan` is allowed, because the unique index on names covers only
    non-revoked operators.
@@ -1316,7 +1319,7 @@ sequenceDiagram
 
 ## 13. `workspace.exec`, end to end
 
-**In one sentence:** durga's agent runs `go test ./...` inside durga's workspace; the command runs in the
+**In one sentence:** durga's agent runs `go test ./...` inside their workspace; the command runs in the
 container, the result comes back as one buffered answer, and two audit rows record exactly what
 ran.
 
@@ -1397,7 +1400,7 @@ sequenceDiagram
 10. **Audit `outcome`.** Central writes the second row with the same `request_id`, the exit code,
     duration and an outcome of `ok`, `error`, `cancelled` or `timeout`, and returns
     `{exit_code, stdout, stderr, truncated, timed_out, duration_ms, request_id}`.
-11. **Cancel.** If durga's channel closes (or central shuts down, or durga's operator key is
+11. **Cancel.** If durga's channel closes (or central shuts down, or their operator key is
     revoked), the context is cancelled, the channel to the runner closes, and the executor kills the
     exec. One caveat: a daemonised child that double-forks can outlive an exec timeout, until the
     workspace is destroyed. The pids and memory limits bound the damage.
@@ -1420,7 +1423,7 @@ sequenceDiagram
   participant Srv as central api@ channel
   participant Svc as service.WriteWorkspaceFile
   participant Run as build-1
-  participant FS as workspace dir (os.Root)
+  participant FS as workspace dir (os.Root, container executor)
 
   Op->>Srv: request frame {workspace, path, length, sha256}
   Op->>Srv: body frame (length bytes)
@@ -1431,7 +1434,7 @@ sequenceDiagram
   Svc->>Svc: SHA-256 of body must equal sha256 (constant time)
   Svc->>Svc: audit start row (path, bytes, sha256)
   Svc->>Run: workspace@ channel: request, then length raw bytes, CloseWrite
-  Run->>FS: write (temp file and rename when truncating), confined by os.Root
+  Run->>FS: write (temp file and rename when truncating), confined by os.Root (container executor)
   Run-->>Svc: result {size}
   Svc-->>Op: {size}
 ```
@@ -1454,8 +1457,10 @@ sequenceDiagram
 5. A `start` row (path, byte count, sha256, **never the content**) is written, then central sends
    the runner the request followed by exactly `length` raw bytes and `CloseWrite`. The runner
    refuses a mismatch.
-6. The executor writes through `os.Root` opened on the workspace directory, so a symlink planted
-   by the agent cannot lead outside it. With `truncate` it writes a temp file and renames it. New
+6. The container executor writes through `os.Root` opened on the workspace directory, so a symlink
+   planted by the agent cannot lead outside it. (The `host` executor has no container: it writes
+   with plain OS calls below the session directory and the OS user's permissions are the
+   boundary.) With `truncate` it writes a temp file and renames it. New
    files are chowned to the container's mapped uid. A **soft** disk quota is checked before the write
    (over quota refuses; [section 5.9](05-security.md#59-the-workspace-container-boundary) explains
    why it is only "soft").
@@ -1465,7 +1470,8 @@ sequenceDiagram
 1. The request has `workspace`, `path`, `offset?` and `limit?`. There is no request body, so
    nothing special is deferred.
 2. After the same gates, central writes a `start` row (path, offset, limit) and asks the runner.
-3. The runner opens the file through `os.Root` with `O_NOFOLLOW` and `O_NONBLOCK`, then checks with
+3. The container executor opens the file through `os.Root` (the host executor: plain OS calls from the
+   session directory) with `O_NOFOLLOW` and `O_NONBLOCK`, then checks with
    `fstat` that it is a regular file (a FIFO or a device would hang the runner), and replies with
    a result frame followed by the raw bytes.
 4. Central **buffers** the bytes (at most 1 MiB), checks that their count matches the runner's
@@ -1602,7 +1608,7 @@ their own transaction with their own audit row, with the reaper as a backstop.
 ## MCP flows (M5)
 
 Flows 19 to 23 are the orchestrator story (new in M5): what happens on durga's laptop between
-durga's harness and central. Chapter 3 draws the [packages](03-architecture.md#operator-side);
+their harness and central. Chapter 3 draws the [packages](03-architecture.md#operator-side);
 chapter 2 explains [MCP](02-background.md#210-mcp-and-harnesses). The cast: durga runs Claude
 Code with the mirafleet plugin in a project that has a `.mirafleet.yaml` saying `fleet: dev`,
 and durga's `contexts.yaml` has one context, `mirastack`, pointing at `central.example.com:2222`. A
@@ -2056,6 +2062,349 @@ and refreshing or going back cannot mint a second one.
 
 The registration code (Operators screen) follows the same rule for a different reason: each
 "Show code" press is audited by `service.OperatorCode`, so the page never refreshes it by itself.
+## Host-mode flows (M7)
+
+<!-- verify: flows 30 to 36 are written from docs/M7.md plus the decided-behaviour notes; step lists name functions that exist in the m7-wave-a worktree (hostx.Executor, hostx.Manager, runner credHolder, service.DeliverRunner, service.RotateDue/rotate, service.IngestRunnerEvents) but the end-to-end wiring (central dispatch for workspace.fs / job_* / output_read / credential.*, S17) was still being added. Re-check each step against the merged code. -->
+
+Flows 30 to 36 are the host-mode story (new in M7). The cast: raj owns a spare VM `vm1.example.com`
+with an ordinary user `dev` and a runner `vm1-dev` in fleet `dev` (workspace mode, executor `host`).
+MIRASTACK LABS' private GitLab, `gitlab.example.com`, is reachable only from the VM. aarvee stored two
+credentials on central: `gitlab-deploy` (kind `ssh-key`, host `gitlab.example.com`) and
+`gitlab-api` (kind `https-token`, host `gitlab.example.com`), and assigned both to `vm1-dev`. Durga's
+project has `.mirafleet.yaml` with `fleet: dev` and `remote: true`. Chapter 3 draws the
+[components](03-architecture.md#host-mode-the-m7-runner).
+
+---
+
+## 30. Open a host workspace
+
+**Summary:** the same `workspace.open` as flow 12, with three extra checks (is this runner free,
+does it hold the credentials, is the session already held) and a directory instead of a container.
+
+```mermaid
+sequenceDiagram
+  participant H as Claude Code
+  participant M as mirafleet mcp
+  participant S as service.Service
+  participant St as store (sqlite)
+  participant R as runner vm1-dev
+  participant X as hostx.Executor
+  H->>M: workspace_open {session, credentials?}
+  M->>S: workspace.open (api@)
+  S->>S: host fleet? credentials narrowed, never widened
+  S->>St: reserve (one-operator hold check)
+  S->>R: workspace@ op=create (labels: session, workdir, credentials)
+  R->>R: every named credential held?
+  R->>X: Create
+  X-->>R: session dir (0700)
+  R->>R: start agent socket and broker session
+  R-->>S: created
+  S->>St: row opening to open, audit workspace.open
+  S-->>M: workspace id, reused=false
+```
+
+1. **The tool call.** Claude Code calls `workspace_open`. Arguments: an optional `credentials` list
+   (names; a subset of what the runner holds; the default is all of them), and the session name
+   (`cc:<id>`, flow 20). `.mirafleet.yaml` with `remote: true` also makes the plugin's skill tell
+   Claude to use only the mirafleet tools for this project.
+2. **Central checks the fleet.** It is the same ownership and policy path as flow 12. A host fleet
+   must be in workspace mode with executor `host`. Asking for credentials on any other fleet is a
+   `bad request` ("credentials need a host fleet"), and so is a `workdir`.
+3. **Placement filters by credentials.** `FilterRunnersByCredentials` keeps only runners whose
+   effective set holds *every* requested credential. `ResolveCredentials` turns "all" into the
+   concrete list. A request can **narrow** the set but never widen it: naming a credential the
+   runner does not hold fails, and so does naming one nobody assigned.
+4. **One operator at a time.** Inside the store's reserve transaction, central counts live
+   workspaces (`opening`, `open`, `closing`) of *other* operators on that runner. If there is any,
+   the open is refused with code `conflict` and `busy: runner NAME is in use by kalyan`, and placement had already skipped such
+   runners if another was free. No table is added: it is a count over `workspaces`. The hold ends
+   when the holder's last live workspace is closed, reaped, expired, killed, or `lost`.
+5. **The create request.** Central sends `workspace@mirafleet` `create` with labels. The runner
+   (never central) decides the directory.
+6. **The runner creates a directory, not a container.** `hostx.Manager.OpenFor` makes
+   `<root>/sessions/<slug>` (mode `0700`), or, when the label `mirafleet.workdir` carries a name that
+   matches `^[a-z0-9][a-z0-9._-]{0,62}$`, `<root>/work/<name>`. Symlinks are refused. `<slug>` is the
+   session id when it is a short safe name, else `h_` plus a hash of it (`hostx.Slug`), because ids
+   such as `cc:<uuid>` are not safe directory names. The runner labels the workspace with
+   `mirafleet.session` (the orchestrator's session id), so reopening the session reattaches. If the
+   same session is already open on that runner the open is refused (`ErrRefused`).
+7. **Tools get their secrets-without-secrets.** The runner starts the session's ssh-agent on
+   `agent.sock`, a broker session with a per-session CA, writes `ssh_config` and `ca.pem`, and hands
+   the executor the environment (`SSH_AUTH_SOCK`, `GIT_SSH_COMMAND`, `HTTPS_PROXY`,
+   `SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`, ...) through `SetSessionEnv`. Every child
+   process gets these over anything the agent sets.
+8. **Audit and answer.** The row goes `opening` to `open` and `audit.action = workspace.open` is
+   written, as in flow 12. The result carries the workspace id.
+
+**What can go wrong:** the runner is held by another operator (step 4, `busy`); no runner holds all
+requested credentials (`unavailable`); `workdir` is invalid or the runner is a container runner.
+
+---
+
+## 31. Reattach by session
+
+**Summary:** closing keeps the directory, and opening the same session (or `workdir`) later finds it
+again, with its files, even after a runner restart.
+
+1. Durga closes their laptop. Claude Code exits, `SessionEnd` or the idle reaper closes the
+   workspace (flows 21 and 22). `workspace_close` stops every process group of the session, closes
+   the agent socket and broker session, and **keeps the directory**. The `workspaces` row becomes
+   `closed`; a record of the directory (`<slug>.json`: dir, created, last used) stays in the
+   runner's state.
+2. The next day Durga runs `claude --resume`. The handoff file gives the same session name
+   `cc:<id>` (flow 20).
+3. `workspace_open` runs flow 30 again. The sticky-session rule from flow 12 finds no live row (the
+   old one is `closed`), so a new row and a new workspace id are made, but the runner receives the
+   *same session id* as the label `mirafleet.session`, so `hostx.Manager.OpenFor` maps it to the
+   *same slug* and finds the existing directory. Their checkout, build caches and
+   uncommitted edits are there. Credentials are loaded fresh from the runner's current set, not from
+   anything saved.
+4. With `workdir: shared-app` in `.mirafleet.yaml`, two sessions (or two different Claude sessions
+   of the same operator) share `<root>/work/shared-app`.
+5. `workspace_list` shows the directories with their size and last use, including ones with no
+   live workspace.
+6. **Cleanup** is the only thing that deletes a directory. A daily runner sweep
+   (`hostx.Manager.Sweep`) deletes directories not used for `cleanup.delete_after` (default 30
+   days; `0` or a negative value means never). Tool results warn three days before. Explicit
+   deletion: `workspace_close {delete: true}` (owner only), `mirafleet runner host prune
+   [-older-than D] [-yes]` on the VM (a dry run without `-yes`), or the admin `workspace.kill`
+   with delete on central. A directory with a running background job is never swept.
+
+**What can go wrong:** two live handles for the same session are refused. The next *operator* on a
+runner can read directories the previous operator left, because they are the same OS user; this is
+documented ([section 5.14](05-security.md#514-host-mode-and-credentials-m7)).
+
+---
+
+## 32. `bash` with full output and paging
+
+**Summary:** a foreground command runs as the runner's user in the session's current directory;
+its full output is saved on the VM; if the reply had to be cut, the reply says so and how to read
+the rest.
+
+```mermaid
+sequenceDiagram
+  participant H as Claude Code
+  participant M as mirafleet mcp
+  participant S as service.Service
+  participant R as runner vm1-dev
+  participant X as hostx (bash)
+  H->>M: bash {command, timeout_s}
+  M->>S: workspace.exec
+  S->>S: owner, confirm, audit start row
+  S->>R: workspace@ op=exec
+  R->>X: Bash(command, timeout, request id)
+  X->>X: bash -lc, tee to out/request id
+  X-->>R: exit code, inline text, bytes, ref, cwd
+  R-->>S: result
+  S->>S: audit end row
+  S-->>M: result
+  M->>M: cap, neutralise control tags
+  H->>M: read_output {ref, offset, tail_lines, grep}
+  M->>S: workspace.output_read
+  S->>R: op=output_read
+  R-->>M: exactly the requested bytes
+```
+
+1. **Dispatch.** Same path as flow 13 (ownership, `confirm` on a guarded fleet, `start` audit row
+   before dispatch). The tool is `bash{command, timeout_s, description, run_in_background}`. The
+   default timeout is 120 s and the maximum is 600 s (10 minutes, like Claude Code's Bash tool).
+2. **A fresh shell each time.** The runner runs `bash -lc COMMAND` (fallback `sh -c`) with a
+   *clean* environment: only the names in the runner's `env_allow`, the runner-set tool
+   variables of flow 30, `HOME`, `USER`, `PATH` and `LANG`. It starts a new session and process group
+   (`Setsid`) and passes only file descriptors 0 to 2. Environment variables set in one call do
+   **not** persist.
+3. **The directory does persist.** A wrapper reports the final `pwd` on an extra descriptor; the
+   runner saves it per session, and the result carries it as `Cwd`. The next call starts there. This
+   mimics Claude Code's own Bash tool.
+4. **Everything is saved.** While the command runs, the runner tees stdout and stderr into
+   `out/<request_id>` in the session's state directory. The last 32 such files are kept, each at most
+   64 MiB (`hostx.KeepOutputs`, `hostx.MaxOutputFile`).
+5. **Never a silent cut.** The reply holds as much text as fits (a budget of about 32 KiB of JSON
+   text per stream) and always carries `stdout_bytes`, `stderr_bytes`, `truncated` (with how many
+   bytes were omitted from the head and the tail) and a `ref`. The text itself says how to page.
+6. **Paging.** `read_output{ref, offset, limit, tail_lines, grep}` reads the saved file: a byte
+   `offset` and `limit` (at most 1 MiB), the last N lines, or only lines matching an RE2 regular
+   expression. It returns `next_offset` to continue. Paging a 5 MiB build log from offset 0 in
+   chunks returns exactly the original bytes.
+7. **The MCP layer.** The `mcp` process applies the output cap from chapter 5.11 and neutralises
+   harness-control tags (such as `<system-reminder>`) in every tool result and error. The file
+   tools' own notices are plain `[Warning: ...]` text. See [section 5.11](05-security.md#511-prompt-injection-through-tool-output).
+8. **Timeout.** When `timeout_s` passes, the runner kills the whole process group, and the
+   result says so and still carries the output saved so far.
+
+---
+
+## 33. A background job
+
+**Summary:** `run_in_background` starts a supervised shell that outlives the tool call, writes its
+output to files, and is polled, tailed or killed later.
+
+1. **Start.** `bash {command, run_in_background: true}` becomes `workspace.job_start`. The runner
+   starts the hidden `mirafleet host-shim job` (`cmd/mirafleet/host_shim_linux.go`), which runs the
+   command in its own process group and supervises it. The reply returns at once with a
+   `shell_id`.
+2. **Where output goes.** The shim writes `stdout`, `stderr` and `status.json` under
+   `jobs/<id>/` in the session's state directory. The files belong to the agent's own user, so they
+   are informational: the agent could edit them. Each stream is capped at 256 MiB
+   (`hostx.MaxJobStream`): the shim checks the file sizes about every poll and, when one passes the
+   cap, kills the job and records it as canceled with the message "job killed: output exceeded the
+   per-stream cap". Nothing is rotated or dropped before that.
+3. **Limits.** At most 8 background shells per session; a maximum duration per fleet (default 12
+   hours, at most 24). When it passes, the group is killed.
+4. **Polling.** `bash_output{shell_id, filter?}` returns the output since the **previous**
+   `bash_output` call (each call advances the position), plus the state and exit code. A `filter`
+   regular expression returns only matching lines. `read_output{shell_id, stream, offset, ...}` re-reads
+   from any earlier point. `job_list` lists the session's shells with state and exit code.
+5. **Killing.** `kill_shell{shell_id}` signals the whole process group.
+6. **A running job keeps the workspace alive.** The runner's heartbeat reports `busy`, central touches the
+   workspace row at most every 5 minutes, and the idle reaper ([flow 16](#16-the-ttl-reaper)) skips
+   a busy session. The sweep of flow 31 also never deletes a directory with a running job.
+7. **Runner restart.** See flow 35: a job survives it.
+
+**What can go wrong:** the shell id is unknown (`not_found`), the 8-shell limit is reached, or the
+command exits at once (`state: exited` with an exit code and the output so far).
+
+---
+
+## 34. Credential assign, delivery, use and rotation
+
+**Summary:** aarvee enters a secret once; central stores it encrypted; the runner receives it in
+memory; the agent uses it without reading it; later aarvee replaces it and the new value is live
+at once.
+
+```mermaid
+sequenceDiagram
+  participant D as aarvee (GUI / CLI)
+  participant C as service.Service
+  participant DB as sqlite (ciphertext)
+  participant R as runner vm1-dev (memory)
+  participant A as agent socket / broker
+  participant G as gitlab.example.com
+  D->>C: credential.set (value in a body frame)
+  C->>DB: seal (AES-GCM), audit credential.set, no value
+  D->>C: credential.assign gitlab-deploy to vm1-dev
+  C->>C: effective set = runner assignments union fleet assignments
+  C->>R: creds_sync (generation, whole set)
+  R->>R: swap the in-memory set atomically
+  Note over R,A: agent runs git push
+  A->>G: signed login or injected header
+  R->>C: events: credential.use (aggregated)
+  D->>C: credential.set (new value)
+  C->>R: creds_sync (new generation)
+  Note over R,A: next git push uses the new value
+```
+
+**A. Set.** On central the value arrives as a *body frame* (the same mechanism as file
+transfer, [flow 14](#14-reading-and-writing-files-body-frames)), so it is never in a JSON request
+that gets logged. The CLI reads it from stdin only: `mirafleet central credential set gitlab-deploy
+-kind ssh-key -hosts gitlab.example.com -known-hosts ./pinned < ./deploy_key`. A flag or argument
+carrying the value is refused. The GUI form is write-only too, and has no file upload. Other flags:
+`-user`, `-auth basic|bearer|header`, `-header NAME`, `-host-binding required|off`, `-expires`,
+`-rotate gitlab_self -rotate-project P`. `service.SetCredential` validates the kind and hosts,
+computes a fingerprint (admin-only), seals the value with `internal/secrets` (AES-256-GCM, fresh
+nonce, AAD = credential id and version), stores the row, and writes an audit row naming the
+credential but **never the value**. Replacing the value bumps `version` and sets `rotated_at`.
+
+**B. Assign.** `credential.assign NAME -runner fleet/runner` or `-fleet F` stores a row in
+`credential_assignments` (exactly one of runner or fleet; the database enforces it). A runner's
+**effective set** is its own assignments united with those of its fleet.
+
+**C. Deliver.** `Service.DeliverRunner` builds the set for a connected host runner and sends it
+as a `creds_sync` operation on the `workspace@mirafleet` channel, **on connect and on every change**
+(`RunnerConnected`, `deliverHolders`, `deliverTo`). Each sync carries a generation number
+and the whole set. The runner's `credHolder.apply` replaces its set atomically: a removed
+credential stops working at once, and a stale (lower-generation) sync is ignored. Values live in runner
+memory only. A **revoked** runner gets nothing again, because its connection is gone.
+The heartbeat reports each credential's name, kind, hosts and status (`ok`, `expiring`, `expired`,
+`invalid`); operators see names, kinds, hosts and status in `runners.list`, while fingerprints and
+expiry dates are admin-only.
+
+**D. Use.**
+- *SSH:* the agent runs `git clone git@gitlab.example.com:mirastack/app.git`. `ssh` reads `SSH_AUTH_SOCK`
+  and asks the session's restricted agent to sign. With host binding the agent first checks that the
+  server's host key is in `gitlab-deploy`'s pinned `known_hosts`; it signs only the user-auth request
+  for the user `git`.
+- *HTTPS:* `git clone https://gitlab.example.com/mirastack/app.git` goes to the broker through
+  `HTTPS_PROXY`. Because `gitlab.example.com` is a credential host, the broker terminates TLS with
+  the per-session CA, strips whatever `Authorization` header the client sent, adds the stored one,
+  and forwards over verified TLS (system certificates plus the corporate CA). Redirects are never
+  followed. A host without a credential is a raw `CONNECT` tunnel.
+- *Registry:* on a `401 Bearer` challenge the broker fetches the token itself and caches it per
+  scope; the client never sees a 401 or a JWT.
+- *Audit:* every use is logged in the runner's local JSONL file and counted. Counts are sent to central
+  as `events` batches (per session, credential, host and status, in 60-second windows; at most 128
+  events or 64 KiB per batch). Central writes audit rows `credential.use` with source `runner`; a
+  flood becomes an `events.dropped` row.
+**E. Rotate.** Three ways, from least to most automatic.
+1. *Manual:* aarvee runs `credential set` (or uses the GUI replace form) with the new value, which
+   goes through step C. Every running session uses it from its next connection.
+2. *Expiry warnings:* 14 days before `expires`, the credential's status becomes `expiring` (GUI,
+   heartbeat, and tool results that name the credential).
+3. *GitLab self-rotation (opt-in):* with `rotate: gitlab_self`, central's `RunRotation` loop calls
+   `RotateDue` and, when less than 7 days remain, `rotate`: it calls GitLab's
+   `POST /projects/:id/access_tokens/self/rotate` with the token itself (the token needs the
+   `self_rotate` scope), stores the new sealed value **in the same transaction as its audit row**,
+   then pushes it to every assigned runner. It needs central to reach GitLab over HTTPS (system
+   certificates plus the file named by `MIRAFLEET_CORPORATE_CA_FILE`). If GitLab is unreachable,
+   the failure is audited (a `credential.rotate` row with outcome `error`), shown in the GUI, and the
+   old token keeps working until it expires; rotation then is manual.
+
+**What can go wrong:** the runner is offline when the value changes (it receives the whole set on
+reconnect); the wrong or missing `MIRAFLEET_SECRETS_KEY` (central refuses to start when credentials exist but the key is missing or wrong;
+[section 6.19](06-data-model.md#619-host-mode-and-credentials-migration-0004-m7)); a credential is deleted while sessions use it (the next `creds_sync` removes
+it, and the next use fails).
+
+---
+
+## 35. Runner restart: re-adoption
+
+**Summary:** a restarted runner picks its sessions and running jobs back up instead of treating them
+as lost.
+
+1. **What survives.** The systemd unit uses `KillMode=process`, so stopping the runner kills only
+   the runner process and not its children. Background shells run under `host-shim` in their own
+   process group, so they keep going. Directories are just files.
+2. **Start-up.** The new runner process hardens itself first (non-dumpable, no core dumps, refuses
+   uid 0 and capabilities; [section 5.14](05-security.md#514-host-mode-and-credentials-m7)),
+   *then* connects to central. It holds **no secrets** yet.
+3. **Reconnect and sync.** Central sees the runner connect (a newer connection replaces an older half-open one and
+   writes a `runner.replaced` audit row, and the GUI flags the runner) and sends `creds_sync`
+   (flow 34 C). Only now do the secrets exist in the new process's memory.
+4. **Re-adopt sessions.** The executor reads its session records (`hostx.Manager.OpenSessions`):
+   sessions whose `open` flag was left set are re-attached. The runner then re-wires their
+   credentials (`devMgr.adopt`, called once with the adopted workspaces at start): for each session it
+   reads the `creds_scope` file that the original open saved in the session state directory
+   (`<state>/sessions/<slug>/`) and rebuilds the agent socket, broker session and environment with
+   **that same, never wider** set. Until `creds_sync` has delivered the values the session has no
+   secrets, and a session whose `creds_scope` file is missing or unreadable gets **no** credentials
+   rather than all of them (the next open fixes it).
+5. **Re-adopt jobs.** For each job directory, the executor reads `status.json`, which records the
+   supervisor's pid and its process **start time**, so a reused pid is not mistaken for the job. A
+   job whose supervisor is still the same process stays `running`; one recorded as `running` whose
+   supervisor is gone is reported `lost`, and one that finished while the runner was down keeps the
+   state and exit code the supervisor wrote.
+6. **Reconcile.** Central's reconcile (flow 17) compares its `open` rows with the runner's
+   list; sessions the runner re-adopted stay `open`, so Durga's `bash_output` simply continues.
+   A session the runner cannot find becomes `lost`.
+
+**What can go wrong:** the runner was down so long that central marked the workspaces `lost`
+(flow 17); the runner process was killed together with its children (the unit file did not have
+`KillMode=process`).
+
+---
+
+## 36. The cleanup sweep and prune
+
+**Summary:** a once-a-day sweep and one command delete directories nobody is using.
+
+1. The runner runs `hostx.Manager.Sweep` daily. For each session directory it compares `last_used`
+   with `cleanup.delete_after`. Over the limit and not busy: delete (only inside `root`; the
+   deletion refuses paths that resolve outside it). Within 3 days of the limit: add a warning
+   to results.
+2. `mirafleet runner host prune [-older-than D] [-yes]` does the same by hand. Without `-yes` it is a
+   dry run that lists what would go.
+3. The timestamp comes from an injectable clock in tests, so "30 days later" is a test without waiting.
 
 ---
 
@@ -2072,6 +2421,9 @@ The registration code (Operators screen) follows the same rule for a different r
 | GUI setup token | made at first start or by `reset-admin`; valid 24 h; single use | `EnsureGUISetup`, `gui reset-admin`, `CompleteGUISetup` (flows 24, 28) | none: a file and a table row |
 | GUI session | live until idle 30 min, 12 h old, replaced by a password change, or deleted | `GUILogin`, `GUILogout`, `ChangeGUIPassword`, `ResetGUIAdmin`, the purge (flows 25, 27, 28) | none to runners; the browser is sent to `/login` on its next request |
 | Workspace | `opening`, `open`, `closing`, `closed`, `failed`, `lost` (see [chapter 6](06-data-model.md#the-workspace-state-machine)) | `workspace.open` / `close`, the reaper, reconcile, revoke cascades, `workspace.kill` | runner revoke: its workspaces go `closing` then `lost`; operator revoke: `closing` then `closed`; runner disable: no new open, exec or write |
+| Host session directory (M7) | present (live or closed), deleted | `workspace_close {delete: true}`, the daily sweep, `runner host prune`, admin kill with delete | none: closing never deletes (flow 31) |
+| Background job (M7) | running, then exited, killed or timed out | `bash {run_in_background}`, `kill_shell`, job limit, runner restart re-adoption | a running job keeps its workspace busy and is not reaped (flow 33) |
+| Credential (M7) | stored, assigned, delivered (per runner: `ok`, `expiring`, `expired`, `invalid`), deleted | `credential set/assign/unassign/rotate/delete` | delivery on connect and on every change (flow 34) |
 
 ## Failure: what you see and what the system does
 
@@ -2129,6 +2481,11 @@ The registration code (Operators screen) follows the same rule for a different r
 | GUI: revoke form with the wrong typed name | `422`, the form again with an error | Nothing changes (flow 26). |
 | GUI: resubmitted token form | "already created; the token is not shown again" | No second token is minted (flow 29). |
 | GUI: all hash slots busy | `503` with `Retry-After: 1` | Argon2id runs at most two at a time (flow 25). |
+| `workspace_open` on a host runner another operator holds (M7) | `conflict`: "busy: runner NAME is in use by kalyan" | A `denied` audit row; placement had skipped held runners if another was free (flow 30). |
+| Requested credential not held by any runner of the fleet (M7) | `unavailable`, naming no value | Nothing is created (flow 30). |
+| `bash` output too long for the reply (M7) | The text plus `stdout_bytes`, `stderr_bytes`, `truncated` and a `ref` | The full output is on the VM; `read_output` pages it (flow 32). |
+| Runner restarted while a job runs (M7) | `bash_output` continues | The job survives and is re-adopted (flow 35). |
+| GitLab unreachable at self-rotation (M7) | A "rotation failed" notice in the GUI | An audit row; the old token keeps working until it expires (flow 34). |
 
 ## Check your understanding
 
@@ -2140,7 +2497,7 @@ The registration code (Operators screen) follows the same rule for a different r
    happens if writing it fails?
 4. An admin disables `db-1` while a 5-minute action is running on it. Does the action stop? What
    about when the admin revokes `db-1` instead?
-5. After `central operator revoke kalyan`, kalyan's laptop is still connected for a fraction of a second.
+5. After `central operator revoke kalyan`, Kalyan's laptop is still connected for a fraction of a second.
    Which two mechanisms make sure it does not stay connected?
 6. durga sends `workspace.open` for session `s1` twice. What does durga get the second time, and
    what if `build-1` went offline in between?
@@ -2152,7 +2509,7 @@ The registration code (Operators screen) follows the same rule for a different r
    about the environment?
 10. The MCP `exec` tool is called while the connection to central drops. Is the call retried? Is
     a `list_fleets` call retried? Why the difference?
-11. durga quits Claude Code for lunch and comes back with `claude --resume`. What happens to the
+11. durga quits Claude Code for lunch and comes back with `claude --resume`. What happens to durga's
     workspace in between, and which file makes the reattach work? What changes with no hooks?
 12. The model calls `run_action` on `prod` and the hook shows durga a prompt. Which two components
     would still stop a call that has no `confirm`, even with no plugin installed?
@@ -2162,6 +2519,14 @@ The registration code (Operators screen) follows the same rule for a different r
     phone's browser, and why on the very next request?
 15. aarvee revokes `dev/build-1` from the GUI. List the checks before `Service.Lifecycle` runs, and
     say what the audit row records that tells it apart from a CLI revoke.
+16. Durga closes a host workspace on Monday and reopens the same session on Wednesday. Which
+    files are still there, and what is the only thing that deletes them?
+17. A 200 MiB build log scrolls past in a foreground `bash` call. What does Claude receive, and
+    how can it read the error at line 41,203?
+18. aarvee replaces the value of `gitlab-api`. Does `vm1-dev` need a restart? What happens to a
+    `git push` already in flight?
+19. The runner is restarted during a 3-minute build. Why does the build survive, and why can
+    the new runner process not read the token it needs?
 
 <details>
 <summary>Answers</summary>
@@ -2171,7 +2536,7 @@ The registration code (Operators screen) follows the same rule for a different r
    the SSH host-key callback, so on a mismatch the handshake aborts and the token is never sent.
 2. At 10:03:59 it works: the code is valid for the whole step 10:03:00 to 10:03:59, and the
    same code verifies repeatedly. At 10:04:01 it is refused: `VerifyCode` only accepts the code of
-   the current step, and the step changed. kalyan gets the identical "registration refused" error and
+   the current step, and the step changed. Kalyan gets the identical "registration refused" error and
    must ask the admin for the new code.
 3. The start row records intent before any side effect. If it cannot be written (database
    unavailable), `RunAction` returns `unavailable` ("audit unavailable") and nothing is executed:
@@ -2188,7 +2553,7 @@ The registration code (Operators screen) follows the same rule for a different r
    `serveOperator` re-reads the operator right after `add` and closes the connection if it is not
    active. New connections are refused by `KeyAuth` because the stored status is `revoked`.
 6. The second time durga gets the same workspace with `reused: true`. If `build-1` is offline, durga
-   gets `unavailable`: central never creates a fresh workspace elsewhere, because the files are on
+   gets `unavailable`: central never creates a fresh workspace elsewhere, because their files are on
    `build-1`.
 7. Reading the body costs memory (up to 1 MiB per call) and time. If central read it first, anyone
    with a valid connection could make it buffer megabytes for requests that will be refused (wrong
@@ -2221,6 +2586,17 @@ The registration code (Operators screen) follows the same rule for a different r
 15. `Host` allowlist, in-flight cap and body limits; a live session; the CSRF checks (cross-origin
     headers, then the token); the typed name `dev/build-1`. Then the same service code as the CLI.
     The row has `source` = `gui` and actor `aarvee`; the CLI's row says `cli`.
+16. All of them: closing keeps the directory and reopening the same session finds it again. Only the
+    cleanup sweep (after `delete_after`, default 30 days), `workspace_close {delete: true}`, `runner host
+    prune` or an admin kill with delete removes it.
+17. The first part of the output (about 32 KiB per stream), exact byte counts, how much was
+    omitted, and a `ref`. It calls `read_output {ref, grep: "error"}` or `tail_lines` or an
+    `offset`, and gets exactly those bytes from the file on the VM.
+18. No. Central pushes a new `creds_sync`; the runner swaps its in-memory set atomically and
+    the next request uses the new value. A push in flight keeps whatever it was already given.
+19. The unit uses `KillMode=process` and the job runs under `host-shim` in its own process group, so
+    it is not killed. The new runner starts with no secrets in memory and receives them again by
+    `creds_sync` after it reconnects; nothing was ever on disk.
 
 </details>
 

@@ -88,6 +88,16 @@ type wsState struct {
 	gen    uint64 // bumped on every confirm; lets a List prune only entries confirmed before it began
 	tomb   tombstones
 	now    func() time.Time // injectable clock (tombstone expiry)
+
+	gone  func(workspace.ID)   // called when a workspace was destroyed (M7: tears its credential wiring down)
+	adopt func([]workspace.ID) // called once with the workspaces found at start (M7: wires their credentials)
+}
+
+// goneWS tells the runner a workspace no longer exists.
+func (s *wsState) goneWS(id workspace.ID) {
+	if s.gone != nil {
+		s.gone(id)
+	}
 }
 
 const (
@@ -156,12 +166,17 @@ func (s *wsState) seed(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var adopted []workspace.ID
 	for _, in := range infos {
 		if workspace.ValidID(in.ID) {
 			s.live[in.ID] = &wsEntry{sem: make(chan struct{}, maxExecPerWorkspace), confirmed: true}
+			adopted = append(adopted, in.ID)
 		}
 	}
 	s.seeded = true
+	if s.adopt != nil {
+		s.adopt(adopted) // M7: wire credentials for the sessions that survived a runner restart
+	}
 	return nil
 }
 
@@ -210,7 +225,8 @@ func (s *wsState) admit(ctx context.Context, op *wsOp) (release func(), a admiss
 		}
 		e.refs++
 		return func() { relInflight() }, admitOK
-	case transport.OpExec:
+	case transport.OpExec, transport.OpFS, transport.OpJobStart, transport.OpJobStatus,
+		transport.OpJobTail, transport.OpJobCancel, transport.OpOutputRead:
 		e := s.live[op.id]
 		if e == nil || e.doomed || e.destroying {
 			relInflight()
@@ -251,6 +267,8 @@ func (s *wsState) createDone(id workspace.ID, ok bool, logf func(string, ...any)
 		failed := err != nil && !errors.Is(err, workspace.ErrNotFound)
 		if failed {
 			logf("workspace %s: deferred destroy after in-flight create failed: %v", id, err)
+		} else {
+			s.goneWS(id)
 		}
 		s.mu.Lock()
 		if cur := s.live[id]; cur == e {
@@ -342,17 +360,22 @@ type wsOp struct {
 	mode    fs.FileMode
 	limit   int64 // read: bytes wanted
 	bodyLen int64 // raw request body bytes (exec stdin or write data)
+
+	credRestrict bool     // create: the open named credentials (LabelCredentials)
+	credNames    []string // create: those names
 }
 
 // prepare re-validates req against the runner's config. It never trusts central.
 func (s *wsState) prepare(req *transport.WorkspaceRequest) (*wsOp, *opErr) {
 	op := &wsOp{req: req, id: workspace.ID(req.ID)}
 	switch req.Op {
-	case transport.OpCreate, transport.OpExec, transport.OpRead, transport.OpWrite, transport.OpDestroy:
+	case transport.OpCreate, transport.OpExec, transport.OpRead, transport.OpWrite, transport.OpDestroy,
+		transport.OpFS, transport.OpJobStart, transport.OpJobStatus, transport.OpJobTail,
+		transport.OpJobCancel, transport.OpOutputRead:
 		if !workspace.ValidID(op.id) {
 			return nil, refuse("invalid workspace id")
 		}
-	case transport.OpList:
+	case transport.OpList, transport.OpCredsSync:
 	default:
 		return nil, refuse("unknown op")
 	}
@@ -408,11 +431,34 @@ func (s *wsState) prepare(req *transport.WorkspaceRequest) (*wsOp, *opErr) {
 		}
 		labels := make(map[string]string, len(sp.Labels))
 		for k, v := range sp.Labels {
+			if k == LabelCredentials {
+				labels[k] = v // reserved label central sets; removed below
+				continue
+			}
+			if k == LabelWorkdir { // reserved label for the host executor, which reads it
+				if h, ok := s.ex.(HostModer); !ok || !h.HostMode() {
+					return nil, refuse("workdir needs a host runner")
+				}
+				labels[k] = v
+				continue
+			}
+			if k == LabelSession { // reserved label for the host executor, which reads it
+				if h, ok := s.ex.(HostModer); !ok || !h.HostMode() {
+					return nil, refuse("session label needs a host runner")
+				}
+				labels[k] = v
+				continue
+			}
 			if strings.HasPrefix(strings.ToLower(k), "mirafleet.") {
 				return nil, refuse("label names starting with mirafleet. are reserved")
 			}
 			labels[k] = v
 		}
+		restrict, names, lerr := credNamesFromLabels(labels)
+		if lerr != nil {
+			return nil, refuse("%v", lerr)
+		}
+		op.credRestrict, op.credNames = restrict, names
 		allow := make([]workspace.EgressRule, 0, len(sp.Allow))
 		for _, a := range sp.Allow {
 			allow = append(allow, workspace.EgressRule{Host: a.Host, Port: a.Port})
@@ -566,6 +612,10 @@ func auditParams(req *transport.WorkspaceRequest) map[string]string {
 		p["path"] = clip(req.Path, 512)
 		p["offset"] = fmt.Sprint(req.Offset)
 		p["bytes"] = fmt.Sprint(req.Length)
+	default:
+		if isDevOp(req.Op) {
+			return devAuditParams(req)
+		}
 	}
 	return p
 }
@@ -758,7 +808,7 @@ func (r *Runner) serveWorkspace(ctx context.Context, nch ssh.NewChannel) {
 		if err := transport.WriteResult(ch, &out.res, wsResultMax); err != nil {
 			return err
 		}
-		if out.res.Code == transport.CodeOK && req.Op == transport.OpRead {
+		if out.res.Code == transport.CodeOK && (req.Op == transport.OpRead || (req.Op == transport.OpFS && len(out.data) > 0)) {
 			if _, err := ch.Write(out.data); err != nil {
 				return err
 			}
@@ -813,9 +863,21 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 	case transport.OpCreate:
 		cctx, cancel := context.WithTimeout(ctx, wsCreateTimeout)
 		defer cancel()
+		if op.credRestrict && len(op.credNames) > 0 {
+			if r.dev == nil {
+				return fail(transport.CodeRefused, "refused", errors.New("this runner holds no credentials"))
+			}
+			if err := r.dev.checkNames(op.credNames); err != nil {
+				return fail(transport.CodeRefused, "refused", err)
+			}
+		}
 		if err := s.ex.Create(cctx, op.spec); err != nil {
 			s.cleanupFailedCreate(ctx, op.id)
 			return failFor(cctx, err)
+		}
+		if fo := r.devOpen(op); fo != nil {
+			s.cleanupFailedCreate(ctx, op.id)
+			return *fo
 		}
 		return outcome{res: transport.WorkspaceResult{Code: transport.CodeOK}}
 	case transport.OpDestroy:
@@ -868,7 +930,7 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 					err = fmt.Errorf("executor destroy panicked: %v", p)
 				}
 			}()
-			return s.ex.Destroy(dctx, op.id)
+			return r.destroyEx(dctx, op)
 		}()
 		if derr != nil && !errors.Is(derr, workspace.ErrNotFound) {
 			out := failFor(dctx, derr)
@@ -876,6 +938,7 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 			return out
 		}
 		notFound := derr != nil
+		s.goneWS(op.id)
 		// The lock was dropped around the executor call, so a create may have been admitted since.
 		// Only the entry this destroy saw is deleted; a newer create's entry is doomed instead (its
 		// container may now be about to exist), and createDone destroys it once it settles.
@@ -921,6 +984,9 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 		return outcome{res: transport.WorkspaceResult{Code: transport.CodeOK, List: list}}
 	case transport.OpExec:
 		return r.runExec(ctx, op, body)
+	case transport.OpFS, transport.OpJobStart, transport.OpJobStatus, transport.OpJobTail,
+		transport.OpJobCancel, transport.OpOutputRead, transport.OpCredsSync:
+		return r.runDev(ctx, op, body)
 	case transport.OpRead:
 		fctx, cancel := context.WithTimeout(ctx, wsFileTimeout)
 		defer cancel()
@@ -950,7 +1016,34 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 	return fail(transport.CodeBadRequest, "refused", errors.New("unknown op"))
 }
 
+// runBash runs a foreground `bash -lc` on a host executor: the executor owns the timeout and the
+// cwd, keeps the full output under Ref and fills the byte counts (the transport result has no
+// cwd field; the next command starts in it).
+func (r *Runner) runBash(ctx context.Context, bx BashExecutor, op *wsOp, command string) outcome {
+	we, err := bx.Bash(ctx, op.id, command, op.timeout, newRequestID())
+	if ctx.Err() != nil { // cancelled by central
+		return fail(transport.CodeInternal, "cancelled", ctx.Err())
+	}
+	if err != nil {
+		return failFor(ctx, err)
+	}
+	o := outcome{res: transport.WorkspaceResult{Code: transport.CodeOK, Exec: &we}, exit: we.ExitCode, audit: "ok"}
+	switch {
+	case we.TimedOut:
+		o.audit = "timeout"
+		o.res.Message = "timed out; process killed"
+	case we.ExitCode != 0:
+		o.audit = "failed"
+	}
+	return o
+}
+
 func (r *Runner) runExec(ctx context.Context, op *wsOp, body []byte) outcome {
+	if bx, ok := r.ws.ex.(BashExecutor); ok && len(body) == 0 && len(op.env) == 0 && (op.cwd == "" || op.cwd == workspace.Root) {
+		if a := op.req.Argv; len(a) == 3 && a[0] == "bash" && a[1] == "-lc" {
+			return r.runBash(ctx, bx, op, a[2])
+		}
+	}
 	xctx, cancel := context.WithTimeout(ctx, op.timeout)
 	defer cancel()
 	outC, errC := workspace.NewCapture(wsOutputBudget/2), workspace.NewCapture(wsOutputBudget/2)
@@ -1005,6 +1098,7 @@ func (r *Runner) fillHeartbeat(hb *transport.Heartbeat) {
 			hb.Images = append(hb.Images, im)
 		}
 	}
+	r.fillDevHeartbeat(hb)
 }
 
 // diskSampleEvery is the period of the disk sampler (a var so tests can shorten it).
@@ -1078,6 +1172,7 @@ func (r *Runner) sampleDisks(ctx context.Context) {
 			outc, msg = "failed", msg+": "+derr.Error()
 		} else {
 			s.forget(id)
+			s.goneWS(id)
 		}
 		r.cfg.Audit.Log(audit.Event{Action: "workspace.disk_kill", Outcome: outc, ExitCode: -1,
 			Message: clip(msg, wsMsgMax), Subject: string(id), RequestID: newRequestID()})
