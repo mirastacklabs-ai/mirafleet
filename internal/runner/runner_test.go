@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +25,8 @@ type fakeCentral struct {
 	addr  string
 	mu    sync.Mutex
 	times []time.Time
+
+	replied atomic.Int64 // "delay:<d>" mode: requests answered so far
 }
 
 func (f *fakeCentral) connTimes() []time.Time {
@@ -83,6 +86,17 @@ func startFake(t *testing.T, mode string) (*fakeCentral, runnerKit) {
 				}()
 				if mode == "drop" {
 					conn.Close()
+					return
+				}
+				if d, ok := strings.CutPrefix(mode, "delay:"); ok {
+					delay, _ := time.ParseDuration(d)
+					for req := range reqs { // reply to every request, but only after delay
+						go func() {
+							time.Sleep(delay)
+							req.Reply(true, nil)
+							f.replied.Add(1)
+						}()
+					}
 					return
 				}
 				for range reqs { // mute: never reply
@@ -149,6 +163,44 @@ func TestHeartbeatReplyTimeoutReconnects(t *testing.T) {
 	}
 	if n := len(f.connTimes()); n < 3 {
 		t.Fatalf("runner did not reconnect after heartbeat timeout (%d connections)", n)
+	}
+}
+
+// A reply later than HeartbeatTimeout drops the connection (runner redials).
+func TestHeartbeatTimeoutDropsSlowReply(t *testing.T) {
+	f, kit := startFake(t, "delay:3s")
+	runFake(t, f, kit, func(c *Config) {
+		c.HeartbeatEvery = 50 * time.Millisecond
+		c.HeartbeatTimeout = 200 * time.Millisecond
+		c.BackoffMin, c.BackoffMax = 20*time.Millisecond, 100*time.Millisecond
+	})
+	deadline := time.Now().Add(10 * time.Second)
+	for len(f.connTimes()) < 3 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := len(f.connTimes()); n < 3 {
+		t.Fatalf("runner did not drop a reply later than HeartbeatTimeout (%d connections)", n)
+	}
+}
+
+// A reply later than 2*HeartbeatEvery but within HeartbeatTimeout keeps the connection. Only an
+// absence is asserted, so host load cannot flake it (the 10s budget is never near).
+func TestHeartbeatSlowReplyWithinTimeoutKeepsConnection(t *testing.T) {
+	f, kit := startFake(t, "delay:300ms") // > 2*50ms
+	runFake(t, f, kit, func(c *Config) {
+		c.HeartbeatEvery = 50 * time.Millisecond
+		c.HeartbeatTimeout = 10 * time.Second
+		c.BackoffMin, c.BackoffMax = 20*time.Millisecond, 100*time.Millisecond
+	})
+	deadline := time.Now().Add(20 * time.Second)
+	for f.replied.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := f.replied.Load(); n < 3 {
+		t.Fatalf("only %d slow replies seen", n)
+	}
+	if n := len(f.connTimes()); n != 1 {
+		t.Fatalf("runner dropped the connection despite replies within HeartbeatTimeout (%d connections)", n)
 	}
 }
 

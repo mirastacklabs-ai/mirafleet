@@ -77,6 +77,8 @@ const (
 	MethodOperatorList         = "operator.list"
 	MethodOperatorRevoke       = "operator.revoke"
 	MethodAuditList            = "audit.list"
+	MethodGUIResetAdmin        = "gui.reset_admin"
+	MethodFleetSetConfirm      = "fleet.set_confirm"
 
 	// Enrol methods (join@mirafleet / register@mirafleet, user "enroll" only).
 	MethodEnrollJoin     = "enroll.join"
@@ -138,7 +140,8 @@ func IsAdminMethod(m string) bool {
 	case MethodFleetCreate, MethodTokenCreate, MethodTokenList, MethodTokenRevoke,
 		MethodRunnerLifecycle, MethodOperatorCode, MethodOperatorRotateSecret,
 		MethodOperatorList, MethodOperatorRevoke, MethodAuditList,
-		MethodFleetWorkspaceSet, MethodWorkspaceAdminList, MethodWorkspaceKill:
+		MethodFleetWorkspaceSet, MethodWorkspaceAdminList, MethodWorkspaceKill,
+		MethodGUIResetAdmin, MethodFleetSetConfirm:
 		return true
 	}
 	return false
@@ -514,9 +517,40 @@ type OperatorRevokeParams struct {
 	Name string `json:"name"`
 }
 
+// AuditListParams selects audit rows (ascending by id). SinceID and Limit are the original
+// fields; the rest are optional exact-match filters (Action is a prefix when ActionPrefix is
+// set), a time range and an upper id bound.
 type AuditListParams struct {
-	SinceID int64 `json:"since_id,omitempty"`
-	Limit   int   `json:"limit,omitempty"`
+	SinceID      int64      `json:"since_id,omitempty"`
+	Limit        int        `json:"limit,omitempty"`
+	BeforeID     int64      `json:"before_id,omitempty"`
+	Fleet        string     `json:"fleet,omitempty"`
+	Runner       string     `json:"runner,omitempty"`
+	Actor        string     `json:"actor,omitempty"`
+	Source       string     `json:"source,omitempty"`
+	Outcome      string     `json:"outcome,omitempty"`
+	Action       string     `json:"action,omitempty"`
+	ActionPrefix bool       `json:"action_prefix,omitempty"`
+	Workspace    string     `json:"workspace,omitempty"`
+	RequestID    string     `json:"request_id,omitempty"`
+	From         *time.Time `json:"from,omitempty"`
+	To           *time.Time `json:"to,omitempty"`
+}
+
+// GUIResetAdminResult carries the fresh GUI setup token. It is shown once by the CLI.
+type GUIResetAdminResult struct {
+	SetupToken string `json:"setup_token"`
+}
+
+// FleetSetConfirmParams is the fleet.set_confirm request (guard flag).
+type FleetSetConfirmParams struct {
+	Fleet   string `json:"fleet"`
+	Confirm bool   `json:"confirm"`
+}
+
+// FleetSetConfirmResult returns the updated fleet.
+type FleetSetConfirmResult struct {
+	Fleet FleetInfo `json:"fleet"`
 }
 
 // AuditEvent mirrors store.AuditEvent.

@@ -66,6 +66,8 @@ func adminTable() *methodTable {
 			api.MethodFleetWorkspaceSet:    handleFleetWorkspaceSet,
 			api.MethodWorkspaceAdminList:   handleWorkspaceAdminList,
 			api.MethodWorkspaceKill:        handleWorkspaceKill,
+			api.MethodGUIResetAdmin:        handleGUIResetAdmin,
+			api.MethodFleetSetConfirm:      handleFleetSetConfirm,
 		},
 		timeout: func(m string) time.Duration {
 			switch m {

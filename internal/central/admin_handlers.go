@@ -153,12 +153,8 @@ func handleAuditList(ctx context.Context, c *callCtx, req *api.Request) (any, er
 	if e := api.DecodeParams(req.Params, &p); e != nil {
 		return nil, e
 	}
-	// The service has no audit read; keep the admin-only gate here, independent of the table.
-	if c.p.Kind != auth.KindAdmin {
-		return nil, api.Errorf(api.CodeForbidden, "forbidden")
-	}
-	if p.SinceID < 0 || p.Limit < 0 {
-		return nil, api.Errorf(api.CodeBadRequest, "since_id and limit must be >= 0")
+	if p.SinceID < 0 || p.BeforeID < 0 || p.Limit < 0 {
+		return nil, api.Errorf(api.CodeBadRequest, "since_id, before_id and limit must be >= 0")
 	}
 	limit := p.Limit
 	if limit == 0 {
@@ -167,10 +163,19 @@ func handleAuditList(ctx context.Context, c *callCtx, req *api.Request) (any, er
 	if limit > auditMaxLimit {
 		limit = auditMaxLimit
 	}
-	evs, err := c.st.ListAudit(ctx, p.SinceID, limit)
+	f := store.AuditFilter{AfterID: p.SinceID, BeforeID: p.BeforeID, Limit: limit,
+		Fleet: p.Fleet, Runner: p.Runner, Actor: p.Actor, Source: p.Source, Outcome: p.Outcome,
+		Action: p.Action, ActionPrefix: p.ActionPrefix, Workspace: p.Workspace, RequestID: p.RequestID}
+	if p.From != nil {
+		f.From = *p.From
+	}
+	if p.To != nil {
+		f.To = *p.To
+	}
+	// The service gates (admin only, audited denial) and reads.
+	evs, err := c.svc.ListAudit(ctx, c.p, c.src, f)
 	if err != nil {
-		c.logf("admin: list audit: %v", err)
-		return nil, api.Internal(err)
+		return nil, err
 	}
 	out := api.AuditListResult{Events: make([]api.AuditEvent, len(evs))}
 	for i, e := range evs {
@@ -269,4 +274,28 @@ func fleetInfo(f store.Fleet, admin bool) api.FleetInfo {
 		}
 	}
 	return fi
+}
+
+func handleGUIResetAdmin(ctx context.Context, c *callCtx, req *api.Request) (any, error) {
+	var none struct{}
+	if e := api.DecodeParams(req.Params, &none); e != nil {
+		return nil, e
+	}
+	tok, err := c.svc.ResetGUIAdmin(ctx, c.p, c.src)
+	if err != nil {
+		return nil, err
+	}
+	return api.GUIResetAdminResult{SetupToken: tok}, nil
+}
+
+func handleFleetSetConfirm(ctx context.Context, c *callCtx, req *api.Request) (any, error) {
+	var p api.FleetSetConfirmParams
+	if e := api.DecodeParams(req.Params, &p); e != nil {
+		return nil, e
+	}
+	f, err := c.svc.SetFleetConfirm(ctx, c.p, c.src, p.Fleet, p.Confirm)
+	if err != nil {
+		return nil, err
+	}
+	return api.FleetSetConfirmResult{Fleet: fleetInfo(f, c.exposeConfig())}, nil
 }

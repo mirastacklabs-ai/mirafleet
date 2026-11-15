@@ -256,7 +256,7 @@ func runM3Done(t *testing.T, b m3Backend) {
 		rctx, cancel := context.WithCancel(context.Background())
 		rc := runner.New(runner.Config{Central: e.addr, Name: name, Signer: e.signer(name), KnownHosts: e.knownHosts,
 			Workspace: b.exec(t, name), WorkspaceConfig: wc, Labels: map[string]string{"zone": "lies"}, Version: "test",
-			HeartbeatEvery: 50 * time.Millisecond, BackoffMin: 20 * time.Millisecond, BackoffMax: 100 * time.Millisecond})
+			HeartbeatEvery: 50 * time.Millisecond, HeartbeatTimeout: 10 * time.Second, BackoffMin: 20 * time.Millisecond, BackoffMax: 100 * time.Millisecond})
 		r := &m3Runner{cancel: cancel, done: make(chan struct{})}
 		go func() { rc.Run(rctx); close(r.done) }()
 		runners[name] = r

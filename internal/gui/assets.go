@@ -35,6 +35,7 @@ var servedExt = map[string]string{
 	".css":   "text/css; charset=utf-8",
 	".js":    "text/javascript; charset=utf-8",
 	".woff2": "font/woff2",
+	".svg":   "image/svg+xml",
 }
 
 // vendoredDirs hold third-party files: each must be listed in ASSETS.md with a matching

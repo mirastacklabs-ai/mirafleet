@@ -42,10 +42,13 @@ type Config struct {
 	Logf            func(format string, args ...any)
 
 	HeartbeatEvery time.Duration // default 15s
-	BackoffMin     time.Duration // default 1s
-	BackoffMax     time.Duration // default 60s; clamped to >= BackoffMin
-	HealthyAfter   time.Duration // connection must stay up this long (with an acked heartbeat) to reset backoff; default 30s
-	MaxExec        int           // concurrent actions; default 4
+	// HeartbeatTimeout is how long to wait for central's heartbeat reply before dropping the
+	// connection. Default 2*HeartbeatEvery.
+	HeartbeatTimeout time.Duration
+	BackoffMin       time.Duration // default 1s
+	BackoffMax       time.Duration // default 60s; clamped to >= BackoffMin
+	HealthyAfter     time.Duration // connection must stay up this long (with an acked heartbeat) to reset backoff; default 30s
+	MaxExec          int           // concurrent actions; default 4
 }
 
 type Runner struct {
@@ -73,6 +76,9 @@ func New(cfg Config) *Runner {
 	}
 	if cfg.HeartbeatEvery <= 0 {
 		cfg.HeartbeatEvery = 15 * time.Second
+	}
+	if cfg.HeartbeatTimeout <= 0 {
+		cfg.HeartbeatTimeout = 2 * cfg.HeartbeatEvery
 	}
 	if cfg.BackoffMin <= 0 {
 		cfg.BackoffMin = time.Second
@@ -247,7 +253,7 @@ func (r *Runner) fillActions(hb *transport.Heartbeat) {
 	}
 }
 
-// heartbeat sends one heartbeat and waits for the reply for at most 2x the interval. On timeout
+// heartbeat sends one heartbeat and waits for the reply for at most HeartbeatTimeout. On timeout
 // or ctx cancel it closes the client so the reconnect loop takes over.
 func (r *Runner) heartbeat(ctx context.Context, client *ssh.Client, payload []byte) error {
 	type reply struct {
@@ -259,7 +265,7 @@ func (r *Runner) heartbeat(ctx context.Context, client *ssh.Client, payload []by
 		ok, _, err := client.SendRequest(transport.ReqHeartbeat, true, payload)
 		c <- reply{ok, err}
 	}()
-	t := time.NewTimer(2 * r.cfg.HeartbeatEvery)
+	t := time.NewTimer(r.cfg.HeartbeatTimeout)
 	defer t.Stop()
 	select {
 	case x := <-c:

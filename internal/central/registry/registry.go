@@ -474,6 +474,15 @@ func (r *Registry) Workspace(ctx context.Context, id int64, req transport.Worksp
 	stopLink := context.AfterFunc(sess.ctx, cancel)
 	defer stopLink()
 	res, err := workspaceOn(ectx, sess.conn, &req, payload, bodyLen, body, out)
+	if err != nil && ctx.Err() == nil && sess.ctx.Err() == nil {
+		// The channel may fail a moment before the session teardown lands; give the cause a
+		// brief chance so the error is the deterministic "runner went offline".
+		select {
+		case <-sess.ctx.Done():
+		case <-time.After(100 * time.Millisecond):
+		case <-ctx.Done():
+		}
+	}
 	if err != nil && ctx.Err() == nil && sess.ctx.Err() != nil {
 		return nil, context.Cause(sess.ctx)
 	}

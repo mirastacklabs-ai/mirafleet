@@ -213,7 +213,7 @@ func (e *env) startRunner(name string, mod ...func(*runner.Config)) {
 	cfg := runner.Config{
 		Central: e.addr, Name: name, Signer: e.signer(name), KnownHosts: e.knownHosts, Actions: e.acts,
 		Labels: map[string]string{"role": name}, Version: "test",
-		HeartbeatEvery: 50 * time.Millisecond, BackoffMin: 20 * time.Millisecond, BackoffMax: 100 * time.Millisecond,
+		HeartbeatEvery: 50 * time.Millisecond, HeartbeatTimeout: 10 * time.Second, BackoffMin: 20 * time.Millisecond, BackoffMax: 100 * time.Millisecond,
 	}
 	for _, m := range mod {
 		m(&cfg)

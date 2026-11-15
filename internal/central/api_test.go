@@ -200,6 +200,7 @@ func TestAPIAdminAndEnrollMethodsForbidden(t *testing.T) {
 		api.MethodFleetCreate, api.MethodTokenCreate, api.MethodTokenList, api.MethodTokenRevoke,
 		api.MethodRunnerLifecycle, api.MethodOperatorCode, api.MethodOperatorRotateSecret,
 		api.MethodOperatorList, api.MethodOperatorRevoke, api.MethodAuditList,
+		api.MethodGUIResetAdmin, api.MethodFleetSetConfirm,
 		api.MethodEnrollJoin, api.MethodEnrollRegister,
 	}
 	before := len(e.auditRows())
