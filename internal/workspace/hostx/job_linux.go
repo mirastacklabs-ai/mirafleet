@@ -51,6 +51,9 @@ func (e *Engine) StartJob(s Session, command, description string, timeout time.D
 	if timeout <= 0 || timeout > e.jobMax {
 		timeout = e.jobMax
 	}
+	lk := e.startLock(s.ID) // the count below and the new job's status must not interleave
+	lk.Lock()
+	defer lk.Unlock()
 	running := 0
 	if jobs, err := e.ListJobs(s); err == nil {
 		for _, j := range jobs {

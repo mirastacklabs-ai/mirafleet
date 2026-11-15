@@ -20,7 +20,8 @@ func TestNewExecutorHost(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
 	old := hostHarden
-	hostHarden = func(...string) error { return nil } // the test may run as root in a container
+	var checked []string
+	hostHarden = func(d ...string) error { checked = d; return nil } // the test may run as root in a container
 	defer func() { hostHarden = old }()
 
 	wc, err := wsconfig.Parse([]byte("executor: host\nconcurrent: 2\nhost: {root: \"~/sessions\"}\n"))
@@ -43,6 +44,19 @@ func TestNewExecutorHost(t *testing.T) {
 	}
 	if err := ex.Close(); err != nil { // stops the sweeper
 		t.Fatal(err)
+	}
+	// H-12: both the state dir and $HOME go through the group/world-writable check.
+	if len(checked) != 2 || checked[1] != home {
+		t.Fatalf("hardening checked %v, want the state dir and %s", checked, home)
+	}
+	if err := hostx.CheckDir(checked[1], os.Geteuid()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	if hostx.CheckDir(home, os.Geteuid()) == nil {
+		t.Fatal("group-writable $HOME accepted")
 	}
 }
 

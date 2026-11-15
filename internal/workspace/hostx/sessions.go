@@ -38,7 +38,7 @@ var ErrNoSession = errors.New("no such session")
 // SessionsConfig configures a Manager.
 type SessionsConfig struct {
 	Root        string                      // parent of the per-session dirs (default Paths.SessionsRoot())
-	StateDir    string                      // session metadata lives in StateDir/sessions
+	StateDir    string                      // session records live in StateDir/meta
 	DeleteAfter time.Duration               // 0 selects DefaultDeleteAfter; negative never deletes
 	WarnBefore  time.Duration               // 0 selects DefaultWarnBefore
 	Busy        func(sessionID string) bool // true while the session has a running job (set by the exec layer)
@@ -95,7 +95,13 @@ func NewManager(cfg SessionsConfig) (*Manager, error) {
 	return &Manager{cfg: cfg, held: map[string]int{}, saved: map[string]time.Time{}}, nil
 }
 
-func (c SessionsConfig) metaDir() string { return filepath.Join(c.StateDir, "sessions") }
+func (c SessionsConfig) metaDir() string { return filepath.Join(c.StateDir, "meta") }
+
+// stateDir is the executor's per-session state (jobs, saved output, creds_scope). The records
+// live apart in metaDir, so no session id can collide with a record file name.
+func (c SessionsConfig) stateDir(slug string) string {
+	return filepath.Join(c.StateDir, "sessions", slug)
+}
 
 // Own session directories and named workdirs live in separate subdirectories of Root, so a
 // workdir name can never equal (and share a directory with) a session slug.
@@ -467,6 +473,10 @@ func (m *Manager) remove(slug string, mt *meta) error {
 		if err := os.RemoveAll(dir); err != nil {
 			return err
 		}
+	}
+	// The executor's state (saved output up to 2 GiB, job logs) goes with the session.
+	if err := os.RemoveAll(m.cfg.stateDir(slug)); err != nil {
+		return err
 	}
 	delete(m.saved, slug)
 	if err := os.Remove(m.metaPath(slug)); err != nil && !errors.Is(err, fs.ErrNotExist) {
