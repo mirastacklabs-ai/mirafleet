@@ -15,6 +15,10 @@
   `os.Root`.
 - The web basics behind the admin GUI (§2.12): HTTP, TLS certificates and fingerprints, cookies
   and sessions, same-origin, CSRF, CSP, DNS rebinding, HSTS, htmx fragments and Argon2id.
+- The release and distribution basics behind M6 (§2.13): semver and tags, checksum versus
+  signature versus provenance, keyless signing, SBOMs, packages and systemd units (user units
+  and linger), OCI images and registries, Compose, npm optional dependencies, Homebrew taps,
+  plugin marketplaces, protocol levels and the DCO.
 
 Each section ends with **Why mirafleet needs this**. You can read the sections in any order and
 come back when a later chapter mentions one. Terms are also in the [glossary](glossary.md).
@@ -771,6 +775,137 @@ above is one of its defences, and the GUI is only as safe as the weakest one.
 
 ---
 
+## 2.13 Release and distribution basics
+
+M6 puts mirafleet into other people's hands. This section explains the words you meet in
+[RELEASING.md](../RELEASING.md), [chapter 10](10-operations.md) and the release workflow.
+
+### Tags, versions and releases
+
+A **git tag** is a permanent name for one commit. mirafleet uses **semantic versioning**
+(semver): `vMAJOR.MINOR.PATCH`, such as `v0.6.0`. Patch means bug fixes, minor means new
+features, major means a breaking change. While the major number is 0 anything may still change,
+so mirafleet treats the minor number as the one that matters. A **pre-release** adds a suffix,
+such as `v0.6.0-rc.1` ("release candidate 1"): a rehearsal that users do not get by default.
+
+A **release** is what the project publishes for one tag: a GitHub page with downloadable files,
+plus the same build pushed to a container registry, npm and Homebrew. One tag makes every
+channel, so they all carry the same version.
+
+**Why mirafleet needs this.** If versions drifted between channels, "I run 0.6.0" would not tell
+you which code a user has. `tools/relgen` checks that every file holding a version agrees with
+the tag before anything is built.
+
+### Checksum, signature, provenance: three different promises
+
+raj, at MIRASTACK LABS, downloads `mirafleet_0.6.0_linux_amd64.tar.gz` for a spare server. How does it know the file is the real one?
+
+- A **checksum** is a **hash** (section 2.4) of the file, such as SHA-256. The project publishes
+  the expected hash in `checksums.txt`; you hash your download and compare. It catches a
+  corrupted or swapped download. It does not help if an attacker also replaced `checksums.txt`,
+  because they can write a matching hash.
+- A **signature** closes that hole: `checksums.txt` is signed, and you check the signature
+  against a public key (section 2.1). Only whoever holds the private key could have made it.
+- **Provenance** says where a file came from: this exact file was built by this workflow, in
+  this repository, from this commit. It is a signed statement (an **attestation**) that GitHub
+  records for each archive and package. A signature proves "the project approved this";
+  provenance proves "the project's own pipeline built it from public source, not someone's
+  laptop".
+
+mirafleet signs with **cosign** in **keyless** mode. Keyless means there is no long-lived private
+key to steal or lose. During the release GitHub gives the workflow a short-lived identity token;
+a service (Sigstore's Fulcio) turns it into a certificate that lives for minutes and says "this
+signature was made by workflow `release.yml` of `mirastacklabs-ai/mirafleet` on tag `vX.Y.Z`";
+the signature is also written to a public log. You verify by checking that certificate identity,
+not by holding a key. The signature bundle is `checksums.txt.sigstore.json`.
+
+**Why mirafleet needs this.** Runners hold real power over servers, and a tampered runner binary
+would be a perfect backdoor. `install.sh` always checks the checksum, and checks the signature
+too with `--verify-signature`. There is no Apple or Microsoft code signing; see
+[section 5.13](05-security.md#513-supply-chain-and-releases).
+
+### SBOM
+
+An **SBOM** (software bill of materials) is a list of every library inside a program, with
+versions, like the ingredients on a food label. Each archive and package ships one, made by the
+tool `syft`. When a library gets a security advisory, users can search SBOMs to see whether they
+are affected. `THIRD_PARTY_LICENSES.txt` is the licence-text version of the same idea.
+
+### Linux packages and systemd
+
+A `.deb` (Debian, Ubuntu), `.rpm` (Red Hat family) or `.apk` (Alpine) is an archive that the
+system's package manager installs, upgrades and removes. mirafleet builds all three with
+**nFPM**, a tool that reads one description file. A package can also run small scripts when it
+is installed or removed.
+
+**systemd** starts and supervises services on most Linux servers. A **unit file** describes one
+service: which program to run, as which user, what to do when it crashes, and how much of the
+system it may touch (the sandbox lines). Two kinds matter here:
+
+- A **system unit** lives in `/usr/lib/systemd/system/` and runs for the whole machine, from
+  boot. Central uses one.
+- A **user unit** lives in `/usr/lib/systemd/user/` and runs as an ordinary user, who normally
+  must be logged in. **Linger** (`loginctl enable-linger dev`) tells systemd to keep that
+  user's services running without a login. Host-mode runners (M7) need it: the runner is the
+  user `dev`, and nobody is logged in as `dev` on a server.
+
+**Why mirafleet needs this.** A package gives an admin a sandboxed central with the right user,
+directories and file modes in one command, instead of by hand from a checklist.
+
+### Container images, registries, digests and Compose
+
+An **OCI image** is a container's frozen file system plus a start command, in an open standard
+format that Docker also uses. A **registry** is a server that stores images by name: Docker Hub
+is `docker.io`, GitHub's is `ghcr.io`. An image has **tags** (names such as `0.6.0` or `latest`,
+which can later be moved to a different image) and a **digest** (a SHA-256 of the image, which
+can never be moved). mirafleet pushes one build to two registries and both hold the same
+digest, so you can check it. The image is built `FROM scratch`: only the static binary and the
+licence files, no shell and no package manager. That is a very small attack surface, and the
+reason admin work uses `docker exec <container> mirafleet central …` rather than a shell.
+
+**Docker Compose** describes several containers, volumes and ports in one YAML file and starts
+them with `docker compose up`. `deploy/compose/` holds ready-made files for central, for a
+runner, and for a one-machine lab.
+
+**Why mirafleet needs this.** The image is the quickest way to run central, and the digest lets
+you prove that a pull from either registry gave you the same bytes.
+
+### npm, optional dependencies and the wrapper
+
+**npm** is the package manager for JavaScript, and `npx` runs a package without installing it
+for good. Many MCP clients start servers that way, so mirafleet publishes to npm even though it
+is a Go program. `@mirastacklabs/mirafleet` is a tiny launcher script; the real binary is in six
+**platform packages**, one per operating system and CPU. The launcher lists all six as
+**optional dependencies**: npm installs the one whose `os` and `cpu` fields match the machine
+and skips the others without an error. The packages have no install scripts, so nothing runs at
+install time. A **scope** (`@mirastacklabs/`) is the owner's prefix; only that organisation can
+publish under it. **Trusted publishing** lets the GitHub workflow publish without a stored
+password and attaches provenance to the package.
+
+### Homebrew, plugin marketplaces and the MCP Registry
+
+Homebrew is a package manager for macOS (and Linux). A **formula** is a small Ruby file that says
+where to download a program and what its checksum is. A **tap** is a GitHub repository of
+formulas that you add yourself: `brew install mirastacklabs-ai/tap/mirafleet`. A
+**marketplace** (Claude Code's) is a catalogue file, `.claude-plugin/marketplace.json`, that
+lists plugins and the git tag to fetch each from. The **MCP Registry** is a public directory of
+MCP servers; mirafleet is listed there by its npm package.
+
+### Protocol level and DCO
+
+A **protocol level** is one whole number saying which version of the wire protocol a program
+speaks. While the major version is 0 it equals the minor version (`v0.6.x` is level 6). Central
+accepts peers at its own level and one below, and refuses the rest with a message that says who
+must upgrade. See [chapter 10](10-operations.md) for the upgrade order.
+
+The **DCO** (Developer Certificate of Origin) is a one-line promise, added to a commit as
+`Signed-off-by: Name <email>`, that you have the right to submit the change under the project's
+licence. It is the lightweight alternative to a contributor licence agreement, and a CI check
+(`dco.yml`) looks for it. Only the person who wrote the commit can make that promise. See
+[chapter 11](11-contributing.md).
+
+---
+
 ## Check your understanding
 
 1. A runner has a private key and central has its public key. What does the runner prove during
@@ -791,6 +926,9 @@ above is one of its defences, and the GUI is only as safe as the weakest one.
    Dana's browser holds a valid session cookie. Name two things that stop the request from
    working.
 9. Why is SHA-256 a poor way to store a password, and what does Argon2id do differently?
+10. An attacker swaps both a release archive and `checksums.txt` on a mirror. Which check still
+    catches it, and what does that check prove?
+11. Why can a user unit for a host-mode runner stop at logout, and what stops that?
 
 <details>
 <summary>Answers</summary>
@@ -825,5 +963,10 @@ above is one of its defences, and the GUI is only as safe as the weakest one.
    second. Argon2id is deliberately slow and memory-hungry (64 MiB per hash here) and uses a
    random salt per password, so each guess costs real time and memory and precomputed tables
    are useless.
+10. The cosign signature of `checksums.txt`. The attacker's `checksums.txt` has no valid
+    signature whose certificate names the `release.yml` workflow, so verification fails. (The
+    checksum alone would pass, because the attacker wrote a matching hash.)
+11. A user unit runs only while its user has a session. `loginctl enable-linger dev` keeps the
+    user's services running with nobody logged in.
 
 </details>

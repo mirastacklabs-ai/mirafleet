@@ -14,6 +14,8 @@
   default), why it calls the same service as the CLI and which packages it may import.
 - Which platforms are supported (including where the keys live on each), and why mirafleet ships
   as one static binary.
+- How the parts reach a machine (packages, image, Compose, operator channels) and the protocol
+  level rule for mixed versions (M6).
 
 This chapter is the map. It shows which programs exist, what each part of them is responsible for,
 who is allowed to talk to whom, and where every secret lives. The next chapter,
@@ -739,11 +741,88 @@ One detail: "client disconnect cancels an admin `exec`" (for example pressing Ct
 `mirafleet central exec`) works only on Linux, because it depends on a hang-up signal that macOS
 does not report reliably. On other systems the request still ends at its own timeout.
 
+## Distribution: how the parts reach a machine (M6)
+
+The architecture above is the same however mirafleet is installed. What M6 adds is *where each
+program comes from* and *who starts it*. It is still one static binary; the channels differ in
+how they put it on a machine and what surrounds it.
+
+```mermaid
+flowchart LR
+  TAG["git tag vX.Y.Z"] -->|"release.yml builds"| ART["archives, .deb .rpm .apk,<br/>checksums.txt + signature"]
+  TAG -->|"image job"| IMG["OCI image<br/>docker.io + ghcr.io"]
+  TAG -->|"npm job"| NPM["npm: wrapper +<br/>6 platform packages"]
+  TAG -->|"brew job"| BREW["Homebrew tap"]
+  ART -->|"dpkg / rpm"| CEN["central host<br/>systemd unit"]
+  ART -->|"dpkg / rpm"| RUN["runner host<br/>systemd unit"]
+  IMG -->|"docker / Compose"| CEN
+  IMG -->|"Compose"| RUN
+  ART -->|"install.sh, install.ps1"| OP["operator laptop<br/>mirafleet mcp"]
+  NPM -->|"npx"| OP
+  BREW -->|"brew install"| OP
+```
+
+*Look at the three kinds of target: only the central and runner hosts run a service. The
+operator laptop just runs `mirafleet mcp` when a harness starts it.*
+
+| Program | Packages (Linux) | Image and Compose | Operator channels |
+|---|---|---|---|
+| central | `mirafleet-central.service`, user `mirafleet`, data in `/var/lib/mirafleet/central`, config `/etc/mirafleet/central.env` | `central` plus a one-shot `central-init`, volume `/var/lib/mirafleet` | none |
+| runner, actions mode | `mirafleet-runner.service`, user `mirafleet`, needs an `actions.yaml` | the image runs it; `deploy/compose/runner/` | none |
+| runner, container workspaces | `mirafleet-runner-workspace.service`, runs as root, `After=containerd.service` | not supported (needs host containerd) | none |
+| runner, host mode (M7) | a user unit and a `mirafleet-runner@.service` template, one OS user per runner | not supported (needs a real OS user) | none |
+| `mirafleet mcp` | the binary is in the package too | the image is not used for this | Homebrew, `install.sh`, `install.ps1`, npm, archive, plugin marketplace |
+
+<!-- verify: host-mode units (M7) are decided in docs/M6.md section 2.5 but not yet packaged on this branch -->
+
+Four facts that connect back to the architecture:
+
+- **Packages never start anything and never create runner users.** An admin enables the unit
+  after editing `/etc/mirafleet/`. The scripts never delete `/var/lib/mirafleet`, even when you
+  purge the package, so an uninstall cannot destroy the database or keys.
+- **The central unit is sandboxed** (`ProtectSystem=strict`, writes only to
+  `/var/lib/mirafleet/central`, no new privileges). It must still reach the same files as in
+  [Where does each secret and key live?](#where-does-each-secret-and-key-live): the admin
+  socket is in that directory, and the peer-UID check means admin commands run as the unit's
+  user: `sudo -u mirafleet mirafleet central ...`. In a container: `docker exec <c> mirafleet central ...`.
+- **The image is `FROM scratch` and runs as UID 65532.** It exposes 2222 and 8443; the GUI
+  certificate lives in the volume, so its fingerprint survives restarts. The documented
+  `docker run` and Compose files publish 8443 on `127.0.0.1` only. See
+  [section 5.12](05-security.md#512-attacking-the-gui).
+- **Central still needs no internet.** Packages and images are fetched by the admin, not by
+  central. No channel adds a call home.
+
+For the commands, see [chapter 10](10-operations.md); for the pipeline that builds all of this,
+see [RELEASING.md](../RELEASING.md) and [the code tour](08-code-tour.md).
+
+### Protocol levels
+
+Central, runners and operators are separate programs that an admin upgrades one at a time, so for
+a while they run different versions. To keep that safe, every release has a **protocol level**:
+one integer equal to the minor version while the major version is 0 (`v0.6.x` is level 6). It
+lives in `internal/protover` (`protover.Current`, `protover.Check`).
+
+The rule: central at level N accepts runners and operators at N and N-1. Anything else is refused
+with a message that names who must upgrade, such as "runner `db-1` is protocol 4, central needs 5
+or 6: upgrade mirafleet on that runner" or "central is protocol 6, this runner is 7: upgrade
+central first". A peer that sends no level counts as level 0 and is refused. Hence the **upgrade
+order: central first, then runners, then operators**.
+
+Without a rule, an old runner could meet a new central and fail in a confusing way halfway
+through a request (a field it does not know, a method that moved). A refusal at connect time
+turns that into one clear sentence.
+
+<!-- verify: protover.Check exists and is tested, but it is not yet wired into the heartbeat, `hello`, audit (`runner.refused_version`) or runner backoff; that is late-lane step L2 in docs/M6.md section 2.2 -->
+Status: the rule and its tests exist; wiring it into the heartbeat (`proto`), the operator
+`hello` and the audit log arrives with the late lane of M6, after M7. Until then no connection is
+refused for its level.
+
 ## Planned parts (not in the code yet)
 
-M1, M2, M3 and M4 (the admin GUI) are done and M5 (the orchestrator) is built. Next: M6
-(release). So you do not look for them: release packaging, systemd units, the package-manager and
-plugin-marketplace listings (M6). Also not built, by design: more than one GUI admin, roles,
+M1, M2, M3 and M4 (the admin GUI) are done and M5 (the orchestrator) is built. M6 (release
+packaging, systemd units, the package-manager and plugin-marketplace listings) is in the
+repository but the first release is not published yet; see
+[the distribution view](#distribution-how-the-parts-reach-a-machine-m6). Not built, by design: more than one GUI admin, roles,
 single sign-on and two-factor login (enterprise features; `gui.Backend` is the seam). Workspace mode, the containerd executor
 and the OpenSandbox executor are **built** (M3, [M3.md](../M3.md)). The MCP stdio server, the
 Claude Code plugin and hooks, and the opencode and generic notes are **built** (M5,

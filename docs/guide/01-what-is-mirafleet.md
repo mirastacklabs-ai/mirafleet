@@ -8,6 +8,7 @@
 - Which parts are built today (M1, M2, M3 and M5), which platforms are supported (the
   orchestrator works on Windows too), and the milestone plan.
 - How an agent actually drives a fleet: by calling MCP tools such as `exec` and `run_action`.
+- How you get mirafleet (the release channels, section 1.10) and that it sends no telemetry.
 
 New words are explained the first time they appear and collected in the [glossary](glossary.md).
 
@@ -292,7 +293,7 @@ the admin CLI already covers the GUI's functions. Full details are in [../PLAN.m
 | **M3** Workspaces | `workspace.Executor`, containerd executor, optional OpenSandbox executor, scheduling and sticky sessions, TTL reaper, reconcile, `workspace.*` API, egress proxy | done (13 Nov 2026); see [../M3.md](../M3.md) |
 | **M5** Orchestrator | the real `mirafleet mcp` stdio MCP server (nine tools), contexts and project defaults, session handoff, Claude Code plugin and hooks, opencode and generic notes, Windows support, action discovery; see [../M5.md](../M5.md) | **built** (smoke test with real Claude Code pending) |
 | **M4** Admin GUI | web screens on central (HTML pages from Go templates, with htmx, a small library that updates page parts from the server): Overview, Fleets, Runners, Join tokens, Operators, Workspaces, Audit, Account; HTTPS only, one admin account; see [../M4.md](../M4.md) | done (15 Nov 2026) |
-| **M6** Release | CI, packages (`.deb` and `.rpm` are the install files for Debian/Ubuntu and Red Hat systems; plus a container image), signing, install script, plugin stores | **planned** |
+| **M6** Release | CI, Linux packages (`.deb`, `.rpm`, `.apk`), an OCI image, Docker Compose files, signed checksums and build provenance, install scripts, an npm wrapper, a Homebrew tap, plugin marketplace and MCP Registry entries, a quickstart, a threat model and protocol-version checks; see [../M6.md](../M6.md) and section 1.10 | **built in the repository; first release `v0.6.0` not yet published** <!-- verify: update when the v0.6.0 tag is pushed and the wiki is live --> |
 
 What this means for you today:
 
@@ -316,8 +317,9 @@ What this means for you today:
   OpenSandbox server.
 - The Claude Code plugin (`integrations/claude-code/`) adds the slash commands, the session
   handoff and an extra confirm prompt. It is built but still to be smoke-tested with a real
-  Claude Code. Installing it from a plugin store arrives with M6, so for now `mirafleet` must be
-  on your `PATH`.
+  Claude Code. Once `v0.6.0` is published (M6), you add it from the `mirastacklabs` plugin
+  marketplace (section 1.10). Either way `mirafleet` itself must be on your `PATH`: the plugin
+  does not contain the binary.
 - Central also serves an **admin GUI**: a web page at `https://central.example.com:8443`. It is
   on by default, always HTTPS, and protected by one admin account that Dana creates on first
   start with a one-time setup token (the story is [flow 24](04-flows.md#24-first-start-setup-of-the-gui)).
@@ -342,6 +344,31 @@ Read [chapter 2](02-background.md) for the ideas mirafleet builds on. If you alr
 keys, SSH, HMAC, SQLite and Go contexts, skim its headings and move to
 [chapter 3](03-architecture.md).
 
+## 1.10 How you get mirafleet (M6)
+
+One git tag, such as `v0.6.0`, produces every channel from one build, so they all carry the same
+version. The tag is explained in [section 2.13](02-background.md#213-release-and-distribution-basics);
+the maintainer checklist is [RELEASING.md](../RELEASING.md).
+
+| You are | Channel | Notes |
+|---|---|---|
+| aarvee, installing **central**, or raj, enrolling a spare server as a **runner** (Linux) | `.deb` or `.rpm` (and `.apk`) from the GitHub release | creates the `mirafleet` user, the units and `/etc/mirafleet/`; starts nothing. `.apk` ships no service files |
+| aarvee or raj, on any Linux with Docker | OCI image `docker.io/mirastack/mirafleet` or `ghcr.io/mirastacklabs-ai/mirafleet` (same digest) and the Compose files in `deploy/compose/` | central, and an actions-mode runner; no container workspaces or host mode in the image |
+| durga on her Mac, installing the **orchestrator** (`mirafleet mcp`) | Homebrew tap, `install.sh` (Linux, macOS), `install.ps1` (Windows), the release archive | the scripts always verify the SHA-256 checksum |
+| kalyan, whose harness starts MCP servers with `npx` | npm `@mirastacklabs/mirafleet` | a launcher plus one platform package; not for the Claude Code plugin on Windows |
+| durga, using Claude Code | plugin marketplace `mirastacklabs` | slash commands, session handoff, confirm prompt; the binary must already be installed |
+| anyone with Go | `go install github.com/mirastacklabs-ai/mirafleet/cmd/mirafleet@v0.6.0` | prints `v0.6.0` from the build information |
+
+The MCP Registry also lists mirafleet (by its npm package) so that clients that browse it can
+find it. Chapter 10 has the commands for each channel.
+
+**No telemetry.** mirafleet sends no usage data, crash reports or update checks anywhere. Its
+only network connections are the ones you configure: runners and operators to central, and, only
+if you turn on token self-rotation for a stored credential (planned, M7), central to your GitLab.
+That promise is in [SECURITY.md](../../SECURITY.md), and a review item checks that no new code
+adds an unconfigured outbound connection.
+<!-- verify: GitLab self-rotation is M7 and not yet built on this branch -->
+
 ## Check your understanding
 
 1. Why do runners dial out to central instead of central dialling in to runners?
@@ -354,6 +381,8 @@ keys, SSH, HMAC, SQLite and Go contexts, skim its headings and move to
    and what happens if Alice opens the same session twice?
 7. Claude Code wants to run `go test ./...`. Which MCP tool does it call, and what does the
    tool send to central?
+8. Which channels would you use to put central on a Debian server, and to put the MCP server on
+   kalyan's Windows laptop? Does mirafleet phone home to check for updates?
 
 <details>
 <summary>Answers</summary>
@@ -375,5 +404,8 @@ keys, SSH, HMAC, SQLite and Go contexts, skim its headings and move to
    server wraps a `command` as `["/bin/sh","-c",command]`, opens a workspace first if none is
    bound (on an unguarded default fleet), and sends one `workspace.exec` request to central over
    its SSH connection.
+8. Central on Debian: the `.deb` package (or the Compose files if the server runs Docker). The
+   MCP server on kalyan's Windows laptop: `install.ps1`, the release zip, or `npx` for an MCP
+   config. No: mirafleet has no telemetry and no update checks.
 
 </details>

@@ -76,6 +76,12 @@ uses the SQLite store; the runner writes JSON lines to a file. See [chapter 8](0
 **AuthProvider.** The Go interface that turns an SSH public key into a principal. One of four
 "enterprise seams". See [chapter 8](08-code-tour.md).
 
+**Attestation.** A signed statement about an artifact. mirafleet's releases carry a *build
+provenance* attestation for each archive and package: "this file was built by this workflow from
+this commit". Check one with `gh attestation verify FILE --repo mirastacklabs-ai/mirafleet`. See
+[chapter 2](02-background.md#213-release-and-distribution-basics) and
+[chapter 5](05-security.md#513-supply-chain-and-releases).
+
 ## B
 
 **Body frame.** A second length-prefixed frame sent right after a workspace request frame,
@@ -165,6 +171,18 @@ and [chapter 3](03-architecture.md#operator-side).
 **CVE.** "Common Vulnerabilities and Exposures": a public id for a known security bug, such as
 CVE-2024-45337 in the Go SSH library. See [chapter 5](05-security.md).
 
+**Checksum.** A hash (usually SHA-256) of a file, published in `checksums.txt`, to detect a
+corrupted or swapped download. It does not stop someone who replaces the file *and* the checksum;
+that is what a signature is for. See
+[chapter 2](02-background.md#213-release-and-distribution-basics).
+
+**Compose (Docker Compose).** A tool and YAML format that describes several containers, volumes
+and ports and starts them together. mirafleet ships `deploy/compose/` for central, an actions
+runner and a one-machine lab. See [chapter 10](10-operations.md).
+
+**cosign.** The Sigstore tool mirafleet uses to sign `checksums.txt` and the container images.
+See *keyless* and [chapter 5](05-security.md#513-supply-chain-and-releases).
+
 ## D
 
 **DACL (discretionary access-control list).** The Windows list of "which account may do what" on
@@ -203,6 +221,11 @@ the result cannot be reused for another purpose. See
 independent gates; admin-only calls add a direct check of the caller's kind as a third. Admin
 methods are absent from the operator method table, and the policy denies them as well. See
 [chapter 5](05-security.md).
+
+**DCO (Developer Certificate of Origin).** A short statement that you have the right to submit a
+change under the project's licence, recorded by a `Signed-off-by: Name <email>` line in the
+commit. A CI check (`dco.yml`) looks for it on every commit of a pull request. Only the commit's
+author can make the promise. See [chapter 11](11-contributing.md).
 
 ## E
 
@@ -267,6 +290,10 @@ exactly one fleet; each fleet has a mode (`actions` or `workspace`). See
 
 **Frame.** One length-prefixed message: 4 bytes (big-endian) giving the JSON length, then the
 JSON. See [chapter 7](07-protocols.md).
+
+**Formula (Homebrew).** A small Ruby file that tells Homebrew where to download a program and its
+checksum. mirafleet's formula is generated from `checksums.txt` by `relgen brew` and lives in the
+*tap*. See [chapter 2](02-background.md#213-release-and-distribution-basics).
 
 ## G
 
@@ -373,6 +400,11 @@ See [chapter 4](04-flows.md).
 **known_hosts.** A file recording the pinned host key. Written by `runner join` and `mcp login`
 after the first, pinned connection. See [chapter 2](02-background.md#23-host-key-pinning-versus-trust-on-first-use).
 
+**Keyless signing.** Signing with a short-lived certificate tied to an identity (here: the
+`release.yml` workflow of this repository on a `v*` tag, proved by GitHub's OIDC token) instead of
+a long-lived private key that could be stolen. You verify the identity, not a key. See
+[chapter 2](02-background.md#213-release-and-distribution-basics).
+
 ## L
 
 **Labels.** Key/value tags on a runner (such as `role=jump`). Labels set by a join token are
@@ -384,6 +416,10 @@ actions. See [chapter 6](06-data-model.md).
 
 **Lifecycle (operations).** `approve`, `disable`, `enable`, `revoke`; available only on central,
 never over `api@mirafleet`. See [chapter 5](05-security.md).
+
+**Linger.** A systemd setting (`loginctl enable-linger dev`) that keeps a user's services running
+when that user is not logged in. Host-mode runners need it. See *user unit* and
+[chapter 2](02-background.md#213-release-and-distribution-basics).
 
 ## M
 
@@ -411,6 +447,11 @@ can talk to it. See [chapter 5](05-security.md#59-the-workspace-container-bounda
 
 **Mode (fleet).** `actions` or `workspace`. See [chapter 1](01-what-is-mirafleet.md#14-two-fleet-modes).
 
+**Marketplace (Claude Code).** A catalogue file, `.claude-plugin/marketplace.json`, listing plugins
+and the git tag to fetch each from. mirafleet's is named `mirastacklabs`. See
+[chapter 2](02-background.md#213-release-and-distribution-basics) and
+[chapter 10](10-operations.md).
+
 ## N
 
 **NAT.** Network address translation: a router hides many machines behind one address and blocks
@@ -419,6 +460,13 @@ inbound connections. Outbound-only runners work through it. See
 
 **nerdctl.** A command-line tool for containerd with Docker-like commands. Alternative to the Docker CLI in the dev
 scripts (`MIRAFLEET_CTR=nerdctl` on a Linux host with containerd). See [chapter 9](09-dev-setup-and-testing.md).
+
+**nFPM.** The tool that builds the `.deb`, `.rpm` and `.apk` packages from one description (run by
+goreleaser). See [chapter 2](02-background.md#213-release-and-distribution-basics).
+
+**npm scope.** The owner prefix of an npm package name: `@mirastacklabs/mirafleet`. Only that
+organisation can publish under it. See
+[chapter 2](02-background.md#213-release-and-distribution-basics).
 
 ## O
 
@@ -456,6 +504,15 @@ result says `truncated: true`. See [chapter 5](05-security.md#511-prompt-injecti
 
 **Outbound-only.** All connections start from the runner or operator toward central; nothing
 dials in to a runner. See [chapter 1](01-what-is-mirafleet.md#12-what-mirafleet-does).
+
+**OCI image.** A container image in the open standard format; mirafleet's is `FROM scratch` and is
+published to `docker.io/mirastack/mirafleet` and `ghcr.io/mirastacklabs-ai/mirafleet` with the
+same digest. See *Image (container)* and
+[chapter 2](02-background.md#213-release-and-distribution-basics).
+
+**Optional dependency.** An npm dependency that npm installs only if it fits the machine (matching
+`os` and `cpu`) and skips otherwise without error. The mirafleet npm wrapper lists its six
+platform packages this way. See [chapter 2](02-background.md#213-release-and-distribution-basics).
 
 ## P
 
@@ -508,6 +565,15 @@ operator API. See [chapter 1](01-what-is-mirafleet.md#11-the-problem) and
 **Public key / private key.** The shareable and secret halves of a key pair. See
 [chapter 2](02-background.md#21-public-key-cryptography-and-ed25519).
 
+**Protocol level.** One integer saying which wire-protocol version a program speaks: the minor
+version while the major version is 0 (`v0.6.x` is 6). Central accepts its own level and one
+below; upgrade central first, then runners, then operators. Code: `internal/protover`. See
+[chapter 3](03-architecture.md#protocol-levels).
+
+**Provenance.** A record of where an artifact came from: which workflow, repository and commit
+built it. GitHub stores it as an *attestation*. See
+[chapter 5](05-security.md#513-supply-chain-and-releases).
+
 ## R
 
 **Rate limit.** A cap on how often something may happen, using a token bucket. See
@@ -548,6 +614,14 @@ actions. See [chapter 1](01-what-is-mirafleet.md#13-the-three-roles).
 
 **runner.yaml.** The runner's own config file written by `runner join` in its data dir (mode
 0600). See [chapter 10](10-operations.md).
+
+**Registry (container).** A server that stores container images by name, such as Docker Hub
+(`docker.io`) or GitHub's `ghcr.io`. Not the in-memory runner *Registry* above. See
+[chapter 2](02-background.md#213-release-and-distribution-basics).
+
+**Release.** What the project publishes for one git tag: the GitHub release with archives,
+packages, `checksums.txt` and a signature, plus the image, npm packages, Homebrew formula and
+registry entry built from the same tag. See [RELEASING.md](../RELEASING.md).
 
 ## S
 
@@ -646,6 +720,22 @@ registration code. See [chapter 2](02-background.md#25-totp-style-rotating-codes
 **Store.** The Go interface for persistence, with domain-level atomic operations; the SQLite
 implementation lives in `internal/store/sqlite`. See [chapter 6](06-data-model.md).
 
+**SBOM (software bill of materials).** A list of every library inside a program with its version,
+published for each archive and package (made by `syft`). See
+[chapter 2](02-background.md#213-release-and-distribution-basics).
+
+**Semver (semantic versioning).** `MAJOR.MINOR.PATCH`: patch for fixes, minor for features, major
+for breaking changes. A pre-release adds a suffix such as `-rc.1`. See
+[chapter 2](02-background.md#213-release-and-distribution-basics).
+
+**Signature.** Proof, made with a private key, that a holder approved some data; checked with the
+matching public key or certificate. mirafleet signs `checksums.txt` (and images) with cosign. See
+[chapter 5](05-security.md#513-supply-chain-and-releases).
+
+**systemd unit.** A file that tells systemd how to run a service: program, user, restart rule and
+sandbox. mirafleet's packages install `mirafleet-central.service`, `mirafleet-runner.service` and
+`mirafleet-runner-workspace.service`. See *user unit* and [chapter 10](10-operations.md).
+
 ## T
 
 **TOFU (trust on first use).** Accepting a server's key the first time and warning only if it
@@ -674,6 +764,12 @@ time step. mirafleet's registration code is TOTP-style but long and with 60 s st
 **Transaction.** A group of database changes that commit or roll back together. See
 [chapter 2](02-background.md#26-sqlite-transactions-and-wal).
 
+**Tag (git).** A permanent name for one commit. A tag `vX.Y.Z` on `main` is what starts a release
+and fixes the version of every channel. See [RELEASING.md](../RELEASING.md).
+
+**Tap (Homebrew).** A GitHub repository of formulas you add yourself:
+`brew install mirastacklabs-ai/tap/mirafleet`. See *formula*.
+
 ## U
 
 **umask.** A per-process mask removing permission bits from newly created files; central uses
@@ -687,6 +783,10 @@ lands as a nobody and workspaces cannot touch each other's files. See
 
 **Unix domain socket.** A local-only connection endpoint that is a file. See
 [chapter 2](02-background.md#211-unix-sockets-file-permissions-and-umask).
+
+**User unit.** A systemd unit in `/usr/lib/systemd/user/` that runs as an ordinary user rather than
+for the whole machine. It normally runs only while that user is logged in, unless *linger* is on.
+Host-mode runners (M7) use one. See [chapter 2](02-background.md#213-release-and-distribution-basics).
 
 ## W
 

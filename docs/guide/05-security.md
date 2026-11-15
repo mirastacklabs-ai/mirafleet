@@ -15,6 +15,8 @@
   runner's hostname, brute force, a stolen cookie, a copied database, a leaked setup token and a
   man in the middle on the first visit; why the default bind is all interfaces and how to
   restrict it; and what HSTS would break.
+- How a release is protected from tampering (supply chain, section 5.13): checksums versus
+  signatures versus provenance, and what the install paths do and do not check.
 - What mirafleet does **not** protect against, so you do not promise more than it delivers.
 
 Terms in **bold** are explained in the [glossary](glossary.md). Chapter 3
@@ -498,7 +500,8 @@ but never from the global cap. These limits are a
 
 Every dependency, direct or transitive, and any bundled binary must be Apache-2.0, MIT,
 BSD-2-Clause, BSD-3-Clause, ISC or 0BSD (fonts may be SIL OFL-1.1). `scripts/dev.sh licenses`
-runs `go-licenses` against that list today; no CI exists yet, it comes with M6. This is a
+runs `go-licenses` against that list, and CI runs it on every pull request (M6, see
+[5.13](#513-supply-chain-and-releases)). This is a
 *legal* rule, but it is also a *security* habit: a small, checked
 dependency list is a small attack surface, and "ask before adding a dependency" means every new
 module gets a human look. `modernc.org/sqlite` is pure Go, so the build stays
@@ -916,7 +919,7 @@ Be clear about these. Do not describe mirafleet as providing them.
 10. **Secrets in action parameters.** Parameters are written to the audit table verbatim.
 11. **Client-supplied hints.** The optional `client` string a caller sends in `hello` (the
     "who am I" call, chapter 7 section 7.5) is recorded, not trusted.
-12. **Things not built yet.** Release signing (M6), MCP elicitation (a server-side
+12. **Things not built yet.** MCP elicitation (a server-side
     question to the human) and SSH jump hosts. Do not assume protections for features that do
     not exist yet. (Workspaces and containers are built since
     M3; their limits are listed at the end of [section 5.9](#what-is-not-protected-workspaces).)
@@ -1264,6 +1267,73 @@ accept the self-signed certificate, which would lock Dana out of her own GUI.
 - A denial of service by a flood: the 32-request cap and the rate limits are a backstop. Put a
   firewall in front, as for the SSH port.
 
+## 5.13 Supply chain and releases
+
+M6 adds a new kind of attacker: someone who does not attack a running mirafleet but the thing
+you install. Runners can act on servers, so a poisoned binary is as bad as a stolen key. The
+user-level summary is in [THREAT-MODEL.md](../THREAT-MODEL.md) (section 4.6, "Supply chain and
+distribution"); this section teaches the reasoning. The mechanics are in
+[section 2.13](02-background.md#213-release-and-distribution-basics), the maintainers' steps in
+[RELEASING.md](../RELEASING.md).
+
+### Three promises, three attackers
+
+Take raj, who downloads `mirafleet_0.6.0_linux_amd64.deb` for a spare server.
+
+| Attacker | What they do | Which check catches it |
+|---|---|---|
+| A flaky or hostile mirror | changes the `.deb` | the **checksum**: `sha256sum -c checksums.txt` fails |
+| Someone on the same mirror | changes the `.deb` **and** `checksums.txt` | not the checksum (it matches). The **cosign signature** of `checksums.txt` fails: they cannot sign as the release workflow |
+| Someone who gets a file built elsewhere into a release | uploads a build from their own machine | **provenance** (`gh attestation verify`): it names the workflow and commit, and their file has none |
+
+`install.sh` and `install.ps1` always verify the checksum and refuse if it is missing, unlisted
+or wrong (no checksum tool also means refuse). With `--verify-signature` they additionally run
+`cosign verify-blob` against the **exact identity**: the `release.yml` workflow of this repository
+at a `v*` tag, issued by GitHub's OIDC service. Without that flag the signature is checked only
+when `cosign` happens to be installed. **Without the identity check, any valid Sigstore signature
+would pass**, including one made by an attacker's own GitHub account. That is why renaming
+`release.yml` breaks verification for old installers ([RELEASING.md](../RELEASING.md), section 8).
+
+### Where the pipeline is defended
+
+- **Tags and publishing need a human.** Only admins may create `v*` tags. Every publishing job
+  runs in the protected `release` environment, so each waits for the maintainer to approve it in
+  the GitHub UI, and each credential (Docker Hub, npm, the Homebrew tap token) is used by exactly
+  one job. The goreleaser step that builds holds no publish credential at all. Without this, one
+  compromised build step could push to every channel.
+- **CI cannot be hijacked by a pull request.** CI runs with read-only permissions and no secrets,
+  never uses `pull_request_target`, and pins every action by commit hash. A stranger's pull
+  request therefore cannot read a token or change a tool under you.
+- **Dependencies stay few and permissive.** `go-licenses` (section 5.3.17), `govulncheck` and
+  Dependabot run in CI. A new module needs a human look.
+- **Images are small and signed by digest.** The image has nothing but the binary: no shell to
+  abuse and no bundled certificates. The same digest is on both registries and each is signed.
+- **npm and Homebrew follow the same bytes.** npm packages have no install scripts and carry
+  provenance; the Homebrew formula is generated from `checksums.txt`.
+
+### What this does not give you
+
+- **No Apple notarization and no Microsoft code signing.** A zip downloaded in a browser is
+  quarantined by the OS until you remove the flag (`xattr -d com.apple.quarantine`, or
+  `Unblock-File`) after checking the checksum yourself. The trust anchor is the checksum plus the
+  cosign and provenance chain, not a platform vendor.
+- **A compromised maintainer account or GitHub itself.** Signatures prove "this workflow built
+  it", not "the code is honest". Immutable releases and the approval step shrink the risk.
+- **The Claude Code plugin hooks run `mirafleet` from `PATH`.** Whoever controls `PATH` on the
+  laptop controls the hook.
+
+### GUI exposure and the fingerprint, as shipped
+
+Packaged defaults matter because most admins never change them. The package and the image let the
+GUI listen on every interface (`0.0.0.0:8443`) with a self-signed certificate; the Compose file
+and the documented `docker run` publish it on `127.0.0.1` only. The first-visit
+man-in-the-middle gap ([Attack 8](#attack-8-a-man-in-the-middle-on-the-first-visit)) is
+unchanged: aarvee compares the fingerprint that central logs (or shows on the setup page) with
+the browser's **before** typing the setup token, or does the first visit over `ssh -L`. The
+package prints a firewall note when it installs: open 2222 to runners and operators, and 8443
+only to admins' networks. It does not change the firewall for you.
+
+
 ## Check your understanding
 
 1. A colleague says "we do not need regexes on action parameters, we do not use a shell." What
@@ -1300,6 +1370,9 @@ accept the self-signed certificate, which would lock Dana out of her own GUI.
 16. Why does central send HSTS only with an operator certificate?
 17. Dana changes her GUI password. Why can a copied session cookie not be used afterwards, even
     on a cookie that has not expired?
+18. An attacker on a download mirror replaces a release archive and `checksums.txt`. Which check
+    still catches it, and why not the checksum?
+19. What does each of checksum, signature and provenance prove, and what does none of them prove?
 
 <details>
 <summary>Answers</summary>
@@ -1371,5 +1444,11 @@ accept the self-signed certificate, which would lock Dana out of her own GUI.
 17. The password change bumps the admin's generation and deletes the other session rows in the
     same transaction. Even a surviving row would fail the generation comparison in
     `GUIAuthenticate` on its next request.
+18. The mirror's replaced `checksums.txt` still matches the replaced file, so the checksum passes.
+    The cosign signature fails: the attacker cannot produce a certificate that names the
+    `release.yml` workflow of this repository. With `--verify-signature`, `install.sh` refuses.
+19. A signature proves who built the file; provenance proves it came from this workflow and
+    commit; neither proves the code is honest. A checksum alone proves only that the file equals
+    what the same server published.
 
 </details>

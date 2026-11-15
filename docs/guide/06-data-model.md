@@ -19,6 +19,8 @@
 - The three GUI tables of migration 0003 (`gui_admins`, `gui_setup`, `gui_sessions`), why they
   hold only hashes, the two new audit indexes, the `gui.*` and `audit.export` audit actions and
   the filtered audit read (section 6.17).
+- The `backups/` directory in the data dir: when central copies the database before a migration,
+  what it keeps, and how a rollback uses it (section 6.18).
 
 Each new database word is explained where it first appears, and the main ones are also in the
 [glossary](glossary.md). Quick versions: a **transaction** is a group of changes that all
@@ -454,6 +456,10 @@ knows). Take a backup of `mirafleet.db` before upgrading, because there is no "d
 `gui_sessions` and two new `audit` indexes (`audit_actor`, `audit_request`). Same rules: automatic
 on the first `central run` of the new binary, in the one migration transaction, and an older
 binary then refuses to open the database. See [6.17](#617-the-gui-tables-migration-0003).
+
+**Since M6 central backs up for you.** Before any migration on an existing database it writes a
+consistent copy to `<data dir>/backups/` and keeps the three newest; if the copy fails it does not
+migrate. See [6.18](#618-backups-before-a-migration-m6-no-schema-change).
 
 ## 6.11 The audit table
 
@@ -1005,6 +1011,50 @@ all following 6.13 (a mutator takes `now` and its `AuditEvent` and commits both 
 the GUI's Older and Newer links carry an id, not an offset, so a page costs the same however deep
 you go and no row is skipped or repeated while new rows arrive.
 
+## 6.18 Backups before a migration (M6, no schema change)
+
+Migrations are forward-only (section 6.10), so the only way back from a bad upgrade is a copy of
+the database made *before* the migration. M6 makes central do that by itself. The code is
+`internal/store/sqlite/backup.go` (`backupBeforeMigrate`), called by `Open` before the migration
+transaction starts. M6 adds no table and no migration.
+
+When does a backup happen? Let `cur` be the database's `PRAGMA user_version` and `latest` the
+number of migrations in this binary.
+
+| Situation | What central does |
+|---|---|
+| `cur = 0` (a brand-new database) | no backup: there is nothing to protect |
+| `cur = latest` (no migration pending) | no backup |
+| `0 < cur < latest` (an upgrade) | back up, then migrate |
+| `cur > latest` (database newer than the binary) | refuse to start, before anything is written, with the message `database schema version N is newer than this binary supports (M): refusing to open; install a newer mirafleet, or restore a backup from the backups directory taken before the upgrade` |
+
+How the copy is made:
+
+- `VACUUM INTO '<tmp>'` is a SQLite statement that writes a consistent copy of the live database
+  (WAL mode, section 2.6) to a new file. It is safe while central has the database open, which a
+  plain `cp` of `mirafleet.db` is not (the newest changes may still sit in `-wal`).
+- The directory is `<data dir>/backups/` (mode `0700`, in central's data directory, for example
+  `/var/lib/mirafleet/central/backups/`), the file is mode `0600` and is named
+  `mirafleet-schema<cur>-<UTC yyyymmddThhmmssZ>.db`, for example
+  `mirafleet-schema2-20261115T093000Z.db`. The copy is written under a temporary name and renamed,
+  so a crash never leaves a half-written file that looks like a backup.
+- The **three newest** backups are kept; older ones are deleted right after a successful backup.
+  The pruning only touches files that match the name pattern, so a file you put there stays.
+- **If the backup fails** (disk full, bad permissions), central does **not** migrate. It stops
+  with the error, because migrating without a safety copy is the one thing the backup exists to
+  prevent.
+
+The backup holds everything the database holds, so it needs the same care as the database: it
+sits in the `0700` directory, and any stored credentials in it are encrypted with
+`MIRAFLEET_SECRETS_KEY` (M7), so a backup is useless without that key, and so is restoring one.
+<!-- verify: stored credentials and MIRAFLEET_SECRETS_KEY are M7 and are not yet in the schema on this branch -->
+
+**Rollback**, in short (the full steps with commands are in [chapter 10](10-operations.md) and
+[RELEASING.md](../RELEASING.md), section 6): stop central, reinstall the previous version, move
+`mirafleet.db`, `mirafleet.db-wal` and `mirafleet.db-shm` aside, copy the newest backup back as
+`mirafleet.db`, start central. Everything written after the upgrade is lost. Move the `-wal` and
+`-shm` files aside too: a stale `-wal` next to a restored file could be replayed onto it.
+
 ## Check your understanding
 
 1. Why does `runners` have a *partial* unique index on `(fleet_id, name)` but a plain `UNIQUE`
@@ -1029,6 +1079,10 @@ you go and no row is skipped or repeated while new rows arrive.
     and why does `gui_admins` still deserve protection?
 12. Dana changes her GUI password. Which column makes every other session invalid, and what does
     the database guarantee about the number of active admins?
+13. Central starts on a database at schema 2 with a binary that has 3 migrations. What happens
+    first, and what if `backups/` is read-only? What if the database is at schema 4?
+14. After a bad upgrade, sid restores a backup by copying it over `mirafleet.db` but leaves
+    `mirafleet.db-wal` in place. Why is that risky?
 
 <details>
 <summary>Answers</summary>
@@ -1071,6 +1125,13 @@ you go and no row is skipped or repeated while new rows arrive.
 12. `gui_admins.generation`: the change bumps it, and a session whose `generation` differs fails
     in `GUIAuthenticate` (the other session rows are also deleted in the same transaction). The
     partial unique index `gui_admins_one_active` guarantees at most one `active` admin.
+13. Because `0 < 2 < 3`, central first writes `backups/mirafleet-schema2-<time>.db` with
+    `VACUUM INTO`, prunes to the newest three, then migrates. If `backups/` is read-only the
+    backup fails and central refuses to start without touching the database. At schema 4 the
+    database is newer than the binary, so central refuses before writing anything and tells the
+    admin to install a newer mirafleet or restore a backup.
+14. SQLite may replay the old `-wal` file onto the restored database, mixing newer changes into
+    an older file. Move `-wal` and `-shm` aside together with `mirafleet.db`.
 
 </details>
 

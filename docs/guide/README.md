@@ -10,8 +10,13 @@ tests, and make your first change without asking the authors.
 
 > **Status:** M1, M2 and M3 (workspaces) are done (13 Nov 2026), M5 (the orchestrator: MCP
 > server, Claude Code plugin and hooks, Windows support) is built, and M4 (the admin GUI) is
-> done. A smoke test of M5 with a real Claude Code is still to run. Next: M6 (release). Where a
-> feature is planned, the guide says so and links the milestone in [../PLAN.md](../PLAN.md).
+> done. A smoke test of M5 with a real Claude Code is still to run. M6 (release and
+> distribution: packages, image, Compose, install scripts, npm, Homebrew, signed checksums, the
+> quickstart and the threat model) is built in the repository; the first release, `v0.6.0`, is
+> not published yet. To try mirafleet, follow the [quickstart](../QUICKSTART.md). This guide is
+> also published on the project wiki (generated from `docs/`; edit the files here).
+> <!-- verify: add the wiki link once the wiki is published (docs/M6.md section 8, P7/P8) -->
+> Where a feature is planned, the guide says so and links the milestone in [../PLAN.md](../PLAN.md).
 
 ## The story in one paragraph
 
@@ -33,12 +38,12 @@ Read in order the first time. Later, jump around with the map below.
 | # | Chapter | What it gives you | Time |
 |---|---|---|---|
 | 0 | [Glossary](glossary.md) | Every term, alphabetical. Keep it open in a tab. | skim 10 min, then look things up |
-| 1 | [What is mirafleet?](01-what-is-mirafleet.md) | The problem, the three roles, the big picture | 25 min |
-| 2 | [Background](02-background.md) | Public-key crypto, SSH, HMAC, TOTP, SQLite, context, containers (namespaces, seccomp, cgroups, egress proxy, `os.Root`), MCP in depth (JSON-RPC, tools, harness, plugin, skill, hook), Unix sockets, Windows DACLs, and the web basics behind the GUI (HTTP, TLS certificates, cookies, sessions, CSRF, CSP, htmx, password hashing) | 95 min |
-| 3 | [Architecture](03-architecture.md) | Components, packages, the orchestrator, the admin GUI, executors, trust boundaries (the model is untrusted input) and how they fit | 70 min |
+| 1 | [What is mirafleet?](01-what-is-mirafleet.md) | The problem, the three roles, the big picture, the release channels (1.10) | 25 min |
+| 2 | [Background](02-background.md) | Public-key crypto, SSH, HMAC, TOTP, SQLite, context, containers (namespaces, seccomp, cgroups, egress proxy, `os.Root`), MCP in depth (JSON-RPC, tools, harness, plugin, skill, hook), Unix sockets, Windows DACLs, and the web basics behind the GUI (HTTP, TLS certificates, cookies, sessions, CSRF, CSP, htmx, password hashing), and release basics (semver, checksum vs signature vs provenance, SBOM, systemd user units, OCI registries, npm optional dependencies, DCO; 2.13) | 95 min |
+| 3 | [Architecture](03-architecture.md) | Components, packages, the orchestrator, the admin GUI, executors, trust boundaries (the model is untrusted input), how the parts are distributed and the protocol-level rule (M6) and how they fit | 70 min |
 | 4 | [Flows](04-flows.md) | Twenty-nine step-by-step flows: join, register, run an action, revoke, the workspace flows (open, exec, files, close, reaper, reconcile), the MCP flows (one `exec` tool call, session handoff, idle on exit, SessionEnd, guarded `confirm`) and the GUI flows (first-start setup, login, a revoke click, session lifetime, `reset-admin`, a token shown once) | 110 min |
-| 5 | [Security](05-security.md) | Every defence, the workspace container boundary, prompt injection through tool output, attacks on the GUI, and what would go wrong without each defence | 110 min |
-| 6 | [Data model](06-data-model.md) | The SQLite tables (including the workspace and GUI tables), migrations, the audit log, and the local files M5 added | 50 min |
+| 5 | [Security](05-security.md) | Every defence, the workspace container boundary, prompt injection through tool output, attacks on the GUI, the supply chain (5.13), and what would go wrong without each defence | 110 min |
+| 6 | [Data model](06-data-model.md) | The SQLite tables (including the workspace and GUI tables), migrations, the audit log, the local files M5 added, and the pre-migration backups (6.18) | 50 min |
 | 7 | [Protocols](07-protocols.md) | SSH users, channels, framing, the JSON API | 40 min |
 | 8 | [Code tour](08-code-tour.md) | Package by package, with function names | 60 min |
 | 9 | [Dev setup and testing](09-dev-setup-and-testing.md) | Build, run, test, debug | 30 min |
@@ -131,6 +136,9 @@ instead of a picture, the code itself is readable: `A -->|label| B` means "A sen
 
 - [../ARCHITECTURE.md](../ARCHITECTURE.md): the formal design.
 - [../PLAN.md](../PLAN.md): milestones. [../M2.md](../M2.md), [../M3.md](../M3.md), [../M4.md](../M4.md), [../M5.md](../M5.md): detailed decisions.
+- [../QUICKSTART.md](../QUICKSTART.md): install and first run, per channel (M6).
+- [../THREAT-MODEL.md](../THREAT-MODEL.md): what is protected, from whom, and what is not (M6).
+- [../RELEASING.md](../RELEASING.md): the maintainer's release checklist (M6). Design: [../M6.md](../M6.md).
 - [../BRAND.md](../BRAND.md): colours and fonts.
 - [../../CLAUDE.md](../../CLAUDE.md): ground rules for contributors and AI agents.
 - [STYLE.md](STYLE.md): the rules this guide follows.
