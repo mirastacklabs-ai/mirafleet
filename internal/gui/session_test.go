@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 )
 
@@ -214,5 +216,40 @@ func TestFooterVersionOnlyWhenAuthed(t *testing.T) {
 		if b := h.get(p).Body.String(); strings.Contains(b, "test-1.2.3") {
 			t.Errorf("%s shows the version before auth", p)
 		}
+	}
+}
+
+// G-39: the theme switch returns to the page it was used on, never to an off-site target.
+func TestThemeReturnsToPage(t *testing.T) {
+	h := newAdminHarness(t)
+	if b := h.get("/audit?fleet=prod").Body.String(); !strings.Contains(b, `name="next" value="/audit?fleet=prod"`) {
+		t.Fatalf("footer lacks next: %.200s", b)
+	}
+	for _, c := range []struct{ next, want string }{
+		{"/audit?fleet=prod", "/audit?fleet=prod"},
+		{"", "/account"},
+		{"//evil.example/x", "/"},
+		{"https://evil.example/", "/"},
+	} {
+		rec := h.post("/account/theme", url.Values{"theme": {"dark"}, "next": {c.next}})
+		if rec.Code != 303 || rec.Header().Get("Location") != c.want {
+			t.Errorf("next %q: %d -> %q, want %q", c.next, rec.Code, rec.Header().Get("Location"), c.want)
+		}
+	}
+}
+
+// conflictBackend answers ChangeGUIPassword with a conflict.
+type conflictBackend struct{ Backend }
+
+func (conflictBackend) ChangeGUIPassword(context.Context, auth.Principal, int64, string, string) (string, error) {
+	return "", api.Errorf(api.CodeConflict, "the account changed while you were editing it; try again")
+}
+
+// G-39: a conflict while changing the password is a 422 on the form, not a 500.
+func TestPasswordChangeConflictIs422(t *testing.T) {
+	h := newAdminHarness(t, withBackend(func(be Backend) Backend { return conflictBackend{be} }))
+	rec := h.post("/account/password", url.Values{"current": {testPW}, "new": {"another long password"}, "new2": {"another long password"}})
+	if rec.Code != 422 || !strings.Contains(rec.Body.String(), "the account changed") {
+		t.Errorf("status %d: %.300s", rec.Code, rec.Body.String())
 	}
 }

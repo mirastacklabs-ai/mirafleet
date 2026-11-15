@@ -73,7 +73,7 @@ func cookieToken(r *http.Request, name string) (string, bool) {
 	if err != nil || len(c.Value) != 43 {
 		return "", false
 	}
-	if b, err := base64.RawURLEncoding.DecodeString(c.Value); err != nil || len(b) != 32 {
+	if b, err := base64.RawURLEncoding.Strict().DecodeString(c.Value); err != nil || len(b) != 32 {
 		return "", false
 	}
 	return c.Value, true

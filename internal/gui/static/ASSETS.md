@@ -14,10 +14,12 @@ licence file to exist. Update this file in the same change as any asset.
 
 ## Provenance
 
-- htmx: the npm tarball's SHA-1 (`a85363c4...aa7`) and SRI (`sha512-Thx/WtpeOQqS...tamA==`) were
-  checked against the registry metadata. Licence text is the tarball's `package/LICENSE`.
-- Oswald: licence text from https://github.com/google/fonts/blob/main/ofl/oswald/OFL.txt.
-  Google serves only woff2 subsets, so the latin subset is used; no upstream checksum is published.
+- htmx: the npm tarball's SHA-1 `a85363c4c5af94cd634df04c4b83d06dd0e91aa7` and SRI
+  `sha512-Thx/WtpeOQqSrqBCw/A1cwGJGg4UrVa3+sW0GmrM3p4gJgO89ecH4qtbnyzDDWFvBTqjnIMCgELTNt636dtamA==`
+  match the registry metadata (re-checked 2026-11-15). Licence text is the tarball's `package/LICENSE`.
+- Oswald: licence text from https://github.com/google/fonts/blob/main/ofl/oswald/OFL.txt (the
+  file's last change in google/fonts is commit `b6f0fe1740573b70ee367fbaba04b7586be85af3`, checked
+  2026-11-15). Google serves only woff2 subsets, so the latin subset is used; no upstream checksum is published.
 - JetBrains Mono: archive SHA-256 `6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf`
   (GitHub publishes none); licence text is the archive's `OFL.txt`.
 - Fonts are SIL OFL-1.1 (the font exception in CLAUDE.md): shipped with their licence text, never sold alone.

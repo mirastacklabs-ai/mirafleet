@@ -522,7 +522,7 @@ func (c *adminCLI) audit(args []string) error {
 	workspace := fs.String("workspace", "", "only this workspace ID")
 	requestID := fs.String("request-id", "", "only this request ID")
 	fromS := fs.String("from", "", "only events at or after this time (RFC 3339 or YYYY-MM-DD)")
-	toS := fs.String("to", "", "only events before this time (RFC 3339 or YYYY-MM-DD)")
+	toS := fs.String("to", "", "only events at or before this time (RFC 3339 or YYYY-MM-DD)")
 	pos, err := adminParse(fs, args)
 	if err != nil {
 		return err

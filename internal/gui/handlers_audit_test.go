@@ -514,3 +514,22 @@ func TestAuditFilterFormIsPlainGet(t *testing.T) {
 		t.Errorf("filter form = %s", form)
 	}
 }
+
+// G-35: an upper bound covers the last millisecond of the unit the operator typed.
+func TestParseAuditTimeEndCoversUnit(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"2026-11-14", "2026-11-14T23:59:59.999Z"},
+		{"2026-11-14T09:30", "2026-11-14T09:30:59.999Z"},
+		{"2026-11-14T09:30:15", "2026-11-14T09:30:15.999Z"},
+		{"2026-11-14T09:30:15Z", "2026-11-14T09:30:15.999Z"},
+		{"2026-11-14T09:30:15.250Z", "2026-11-14T09:30:15.25Z"},
+	} {
+		got, ok := parseAuditTime(c.in, true)
+		if !ok || got.Format("2006-01-02T15:04:05.999Z07:00") != c.want {
+			t.Errorf("end %q = %v %v, want %s", c.in, got, ok, c.want)
+		}
+	}
+	if got, _ := parseAuditTime("2026-11-14", false); got.Hour() != 0 || got.Nanosecond() != 0 {
+		t.Errorf("start of a date = %v", got)
+	}
+}

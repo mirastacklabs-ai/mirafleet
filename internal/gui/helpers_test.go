@@ -128,9 +128,6 @@ type guiHarness struct {
 	clients int
 }
 
-// authEnv is the former name of guiHarness, kept for files that still use it.
-type authEnv = guiHarness
-
 type harnessOpts struct {
 	cfg  func(*Config)
 	wrap func(Backend) Backend
@@ -200,9 +197,6 @@ func newAdminHarness(t *testing.T, opts ...harnessOpt) *guiHarness {
 	}
 	return h
 }
-
-// newAuthEnv is the former constructor, kept for files that still call it.
-func newAuthEnv(t *testing.T) *authEnv { return newGUIHarness(t) }
 
 // newServer builds a GUI server over be (data directory dir) with the harness's clock, log and
 // fixed host data; mod adjusts the Config. A test that needs a second server over the same

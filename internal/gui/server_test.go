@@ -815,3 +815,35 @@ func TestRouteTimeout(t *testing.T) {
 		t.Errorf("route deadline %s", got)
 	}
 }
+
+// G-23 and G-24: the certificate expiry warning, and wildcard SANs stay off the Host allowlist.
+func TestCertExpiryWarning(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		now  time.Duration // offset from the certificate's issue time
+		want string
+	}{
+		{"fresh", 24 * time.Hour, ""},
+		{"near expiry", selfSignedValidity - 10*24*time.Hour, "expires on"},
+		{"expired", selfSignedValidity + 24*time.Hour, "expired on"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t, nil)
+			base := time.Now()
+			e.s.now = func() time.Time { return base.Add(c.now) }
+			e.s.warnCertExpiry()
+			got := e.log()
+			if c.want == "" && strings.Contains(got, "WARNING") || c.want != "" && !strings.Contains(got, c.want) {
+				t.Errorf("log = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestOperatorCertWildcardSANNotAllowed(t *testing.T) {
+	cf, kf := writeOperatorCert(t, t.TempDir(), 0o600, "gui.corp.example", "*.corp.example")
+	e := newEnv(t, func(c *Config) { c.CertFile, c.KeyFile = cf, kf })
+	if e.s.guard.names["*.corp.example"] || !e.s.guard.names["gui.corp.example"] {
+		t.Errorf("allowlist = %v", e.s.guard.names)
+	}
+}

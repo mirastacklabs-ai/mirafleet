@@ -95,9 +95,9 @@ func exemptPath(p string) bool {
 func isRedirect(c int) bool { return c >= 300 && c < 400 }
 
 // secAdminEnv is an env with the admin created, and a signed-in client.
-func secAdminEnv(t *testing.T) (*authEnv, *testClient) {
+func secAdminEnv(t *testing.T) (*guiHarness, *testClient) {
 	t.Helper()
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("server log:\n%s", e.logText())
@@ -106,7 +106,7 @@ func secAdminEnv(t *testing.T) (*authEnv, *testClient) {
 	return e, loginForTest(t, e)
 }
 
-func rawDB(t *testing.T, e *authEnv) *sql.DB {
+func rawDB(t *testing.T, e *guiHarness) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(e.dir, "mirafleet.db")+"?_pragma=busy_timeout(10000)")
 	if err != nil {
@@ -249,7 +249,7 @@ func TestSecurityCSRFOnEveryPost(t *testing.T) {
 }
 
 func TestSecurityCSRFOnSetup(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	if _, created, err := e.srv.PrepareSetup(t.Context()); err != nil || !created {
 		t.Fatal(created, err)
 	}
@@ -435,7 +435,7 @@ func TestSecurityPolledFragmentsArePassive(t *testing.T) {
 // ---- before an admin exists ----
 
 func TestSecurityBeforeSetupEverythingGoesToSetup(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	if _, created, err := e.srv.PrepareSetup(t.Context()); err != nil || !created {
 		t.Fatal(created, err)
 	}
@@ -555,7 +555,7 @@ func dumpTable(t *testing.T, db *sql.DB, table string) []string {
 }
 
 func TestSecurityDBCopyYieldsNoCookie(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	live := map[string]bool{}
 	harvest := func(c *testClient) {
 		for _, v := range c.jar {
@@ -805,7 +805,7 @@ func lintHTML(s string, source bool) []string {
 func htmlSamples(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	pre := newAuthEnv(t)
+	pre := newGUIHarness(t)
 	if _, created, err := pre.srv.PrepareSetup(t.Context()); err != nil || !created {
 		t.Fatal(created, err)
 	}

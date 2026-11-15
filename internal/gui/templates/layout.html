@@ -35,7 +35,7 @@
 {{if .Authed}}<span>mirafleet {{.Version}}</span>{{end}}
 {{if .RequestID}}<span>request {{.RequestID}}</span>{{end}}
 <span class="header-spacer"></span>
-{{if .Authed}}<form class="row" method="post" action="/account/theme">{{template "ui/csrf" .}}<span class="label">Theme</span>
+{{if .Authed}}<form class="row" method="post" action="/account/theme">{{template "ui/csrf" .}}{{if .Path}}<input type="hidden" name="next" value="{{.Path}}">{{end}}<span class="label">Theme</span>
 <button class="btn btn-quiet btn-sm" type="submit" name="theme" value="light"{{if eq .Theme "light"}} aria-pressed="true"{{end}}>Light</button>
 <button class="btn btn-quiet btn-sm" type="submit" name="theme" value="dark"{{if eq .Theme "dark"}} aria-pressed="true"{{end}}>Dark</button>
 <button class="btn btn-quiet btn-sm" type="submit" name="theme" value="system"{{if eq .Theme "system"}} aria-pressed="true"{{end}}>System</button></form>{{end}}

@@ -430,3 +430,14 @@ func TestOperatorsWorkspacesCSRFOnEveryPost(t *testing.T) {
 		t.Error("state changed")
 	}
 }
+
+// G-37: session and image text goes through inertRunnerText, so a bidi control never reaches the page.
+func TestWorkspacesShowInertText(t *testing.T) {
+	h := newOpsHarness(t)
+	op := h.operator("alice", "fp-bidi")
+	r := h.runner("prod", "p1")
+	h.ws("prod", r, op, "sess‮evil", "img‮gpj")
+	if b := h.get("/workspaces").Body.String(); strings.Contains(b, "‮") || !strings.Contains(b, "sess") {
+		t.Errorf("bidi control reached the workspaces page (or the row is missing)")
+	}
+}
