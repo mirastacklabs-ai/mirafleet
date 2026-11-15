@@ -402,9 +402,12 @@ func strOf(raw json.RawMessage) string {
 	return s
 }
 
-// oneLine sanitises s (ANSI, controls, bidi and other format characters) and folds whitespace.
+// oneLine sanitises s (ANSI, controls, bidi and other format characters), folds whitespace and
+// neutralises harness tags (orch.NeutralizeTags), so a value taken from a project file or tool
+// arguments cannot carry one into a reason (H-20).
 func oneLine(s string) string {
-	return strings.Join(strings.Fields(orch.Sanitize([]byte(s))), " ")
+	out, _ := orch.NeutralizeTags(strings.Join(strings.Fields(orch.Sanitize([]byte(s))), " "))
+	return out
 }
 
 func clipRunes(s string, n int) string {

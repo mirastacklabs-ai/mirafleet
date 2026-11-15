@@ -8,10 +8,12 @@ import (
 )
 
 // goDeps lists the import paths the binary links for goos.
-func goDeps(t *testing.T, goos string) []string {
+func goDeps(t *testing.T, goos string) []string { return goDepsArch(t, goos, "amd64") }
+
+func goDepsArch(t *testing.T, goos, goarch string) []string {
 	t.Helper()
 	cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", ".")
-	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0")
+	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list for %s: %v\n%s", goos, err, out)
@@ -192,12 +194,39 @@ func isM7ServerOnly(pkg string) bool {
 	return false
 }
 
+// serverSide lists the server-side stacks a darwin/windows binary must never link (H-19).
+var serverSide = []string{"internal/service", "internal/runner", "internal/central"}
+
+func isServerSide(pkg string) bool {
+	const mod = "github.com/mirastacklabs-ai/mirafleet/"
+	for _, p := range serverSide {
+		if pkg == mod+p || strings.HasPrefix(pkg, mod+p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 func TestNoM7ServerPackagesOnOrchestratorOrNonLinux(t *testing.T) {
 	requireGo(t)
+	const hostx = "github.com/mirastacklabs-ai/mirafleet/internal/workspace/hostx"
+	// Positive control: the linux binary links hostx on both architectures, otherwise the
+	// non-linux checks below could pass vacuously.
+	for _, goarch := range []string{"amd64", "arm64"} {
+		found := false
+		for _, pkg := range goDepsArch(t, "linux", goarch) {
+			found = found || pkg == hostx
+		}
+		if !found {
+			t.Errorf("linux/%s binary does not link %s: the non-linux check proves nothing", goarch, hostx)
+		}
+	}
 	for _, goos := range []string{"darwin", "windows"} {
-		for _, pkg := range goDeps(t, goos) {
-			if isM7ServerOnly(pkg) {
-				t.Errorf("%s binary links %s", goos, pkg)
+		for _, goarch := range []string{"amd64", "arm64"} {
+			for _, pkg := range goDepsArch(t, goos, goarch) {
+				if isM7ServerOnly(pkg) || isServerSide(pkg) {
+					t.Errorf("%s/%s binary links %s", goos, goarch, pkg)
+				}
 			}
 		}
 	}

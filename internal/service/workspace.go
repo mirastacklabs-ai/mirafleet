@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -301,6 +302,11 @@ func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src S
 	}
 	for _, w := range live {
 		if w.Fleet == fleet && w.Session == session && (w.State == store.WorkspaceOpen || w.State == store.WorkspaceOpening) {
+			if host && len(credentials) > 0 && !sameCredSet(w.Spec, specLabels[labelCredentials]) {
+				// H-04: a reused session keeps the narrowing it was opened with.
+				return store.Workspace{}, false, api.Errorf(api.CodeConflict,
+					"session %q is open with a different credentials list", session)
+			}
 			return s.reuse(ctx, p, src, w, rid)
 		}
 	}
@@ -520,6 +526,22 @@ func (s *Service) finishWorkspace(ctx context.Context, id string, from, to store
 }
 
 // reuse returns a sticky workspace, or unavailable when its runner is offline.
+// sameCredSet reports whether the credentials label stored in specJSON names the same set as
+// want (a comma-separated list; order and repeats do not matter, absent = empty).
+func sameCredSet(specJSON, want string) bool {
+	var spec transport.WorkspaceSpec
+	_ = json.Unmarshal([]byte(specJSON), &spec)
+	norm := func(l string) string {
+		if l == "" {
+			return ""
+		}
+		parts := strings.Split(l, ",")
+		slices.Sort(parts)
+		return strings.Join(slices.Compact(parts), ",")
+	}
+	return norm(spec.Labels[labelCredentials]) == norm(want)
+}
+
 func (s *Service) reuse(ctx context.Context, p auth.Principal, src Source, w store.Workspace, rid string) (store.Workspace, bool, error) {
 	if w.State == store.WorkspaceOpening { // C-14: the create is still in flight; do not hand out a half-made workspace
 		ev := s.wsEvent(p, src, api.MethodWorkspaceOpen, w.Fleet, w.Runner, w.WsID, rid)

@@ -1,4 +1,7 @@
-package central
+// Package adminclient is the client side of central's admin socket. It lives apart from
+// internal/central so the darwin and windows binaries (which carry the admin CLI) never link the
+// server-side stack (H-19).
+package adminclient
 
 import (
 	"crypto/rand"
@@ -11,10 +14,13 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 )
 
-// AdminCall is the client side of the admin socket (used by `mirafleet central ...`): it sends
+// ActionTimeoutS is the action.run timeout the CLI asks for (the service caps it).
+const ActionTimeoutS = 600
+
+// Call is the client side of the admin socket (used by `mirafleet central ...`): it sends
 // one framed request and reads one framed response. params and result may be nil. A response
 // error is returned as *api.Error. There is no overall deadline: action.run may run for minutes.
-func AdminCall(socketPath, method string, params, result any) error {
+func Call(socketPath, method string, params, result any) error {
 	var rawParams json.RawMessage
 	if params != nil {
 		b, err := json.Marshal(params)

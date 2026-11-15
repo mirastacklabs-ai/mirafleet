@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/mirastacklabs-ai/mirafleet/internal/orch"
 )
 
 // DefaultInstructions is the server instructions text unless Config.Instructions is set.
@@ -481,8 +483,8 @@ func logfFrom(ctx context.Context) func(format string, args ...any) {
 }
 
 // controlTagRE matches harness control tags (open, close or cut off) in the JSON text of a
-// result, both as a literal "<" and as the "<" that encoding/json writes.
-var controlTagRE = regexp.MustCompile(`(?i)(?:<|\\u003c)(\s*/?\s*(?:system[-_ ]?reminder|command-(?:name|message|args)|local-command-(?:stdout|caveat)|user-prompt-submit-hook|function_calls|function_results|antml:))`)
+// result, both as a literal "<" and as the "<" that encoding/json writes (see orch.TagRE).
+var controlTagRE = orch.TagRE
 
 // neutralize is the last line of defence for every result (success and error): remote text is
 // data and must never carry a harness control tag into the orchestrator's context. The leading

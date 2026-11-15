@@ -207,5 +207,15 @@ func (s *Service) lifecycle(ctx context.Context, p auth.Principal, src Source, r
 		s.logf("service: live SetStatus(%d, %s) failed, kicking: %v", r.ID, to, err)
 		s.live.Kick(r.ID, "status sync failed")
 	}
+	switch to {
+	case store.StatusDisabled:
+		s.withdrawRunner(ctx, r.ID) // H-02: the runner drops its secrets
+	case store.StatusActive:
+		if r.Status == store.StatusDisabled && s.cred != nil { // re-enable: deliver again
+			if err := s.DeliverRunner(context.WithoutCancel(ctx), r.ID); err != nil {
+				s.logf("service: deliver credentials to runner %d: %v", r.ID, err)
+			}
+		}
+	}
 	return out, nil
 }

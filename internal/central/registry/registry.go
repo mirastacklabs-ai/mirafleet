@@ -426,10 +426,11 @@ func workspaceAllowed(op string, st Status) error {
 	case StatusDisabled:
 		switch op {
 		case transport.OpRead, transport.OpDestroy, transport.OpList,
-			transport.OpJobStatus, transport.OpJobCancel, transport.OpOutputRead: // wind down
+			transport.OpJobStatus, transport.OpJobCancel, transport.OpOutputRead, // wind down
+			transport.OpCredsSync: // central withdraws a disabled runner's secrets with an empty set (H-02)
 			return nil
 		case transport.OpCreate, transport.OpExec, transport.OpWrite, transport.OpFS,
-			transport.OpJobStart, transport.OpJobTail, transport.OpCredsSync:
+			transport.OpJobStart, transport.OpJobTail:
 			return ErrDisabled
 		}
 		return fmt.Errorf("unknown workspace op %q", op)
