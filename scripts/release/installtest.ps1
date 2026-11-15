@@ -17,6 +17,7 @@ function Ok([string]$m) { Write-Host "ok   $m" }
 function Bad([string]$m) { Write-Host "FAIL $m"; $script:fail = 1 }
 
 Add-Type -TypeDefinition @'
+#pragma warning disable SYSLIB0057 // X509Certificate2 ctor: X509CertificateLoader does not exist before .NET 9
 using System; using System.IO; using System.Net; using System.Net.Sockets; using System.Net.Security;
 using System.Security.Cryptography; using System.Security.Cryptography.X509Certificates; using System.Text; using System.Threading;
 public static class TestServer {

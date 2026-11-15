@@ -13,7 +13,7 @@ One git tag `vX.Y.Z` (or `vX.Y.Z-rc.N`) on `main` produces every channel from th
 
 | Channel | Produced by job | Notes |
 |---|---|---|
-| GitHub release: archives (6 targets), `.deb` `.rpm` `.apk`, `checksums.txt` (+ `.sig`, `.pem`, `.sigstore.json`), SBOMs, `install.sh`, `install.ps1`, `THIRD_PARTY_LICENSES.txt` | `build`, `draft`, `publish-release` | cosign keyless signature of `checksums.txt`; build provenance for every archive and package |
+| GitHub release: archives (6 targets), `.deb` `.rpm` `.apk`, `checksums.txt` (+ `checksums.txt.sigstore.json`), SBOMs, `install.sh`, `install.ps1`, `THIRD_PARTY_LICENSES.txt` | `build`, `draft`, `publish-release` | cosign keyless signature of `checksums.txt`; build provenance for every archive and package |
 | OCI image `docker.io/mirastack/mirafleet` and `ghcr.io/mirastacklabs-ai/mirafleet` | `image` | one multi-arch build, same digest in both; cosign + provenance for both. Tags `X.Y.Z`, `X.Y`, `latest`; a pre-release gets only `X.Y.Z-rc.N` |
 | npm `@mirastacklabs/mirafleet` + six platform packages | `npm` | trusted publishing with provenance; pre-releases go to dist-tag `next` |
 | Homebrew tap `mirastacklabs-ai/homebrew-tap` | `brew` | not for pre-releases |
@@ -23,6 +23,8 @@ Job order: `verify` -> `build` -> `draft` -> `publish-release` -> (`image`, `npm
 `mcp-registry`. `verify` and `build` hold no credentials. `draft`, `publish-release`, `image`,
 `npm`, `brew` and `mcp-registry` all run in the protected `release` environment, so each waits for
 the reviewer to approve it in the GitHub UI. Each credential is used by one job only.
+Environment approvals are made by the user in the GitHub UI; an agent never approves a
+deployment, not even after a yes.
 
 ## 2. Accounts and secrets to set up first (M6.md section 9, step P1)
 
@@ -31,14 +33,14 @@ ever does, use the git-ignored `.env.local`.
 
 | What | Where | Used by |
 |---|---|---|
-| Ruleset on `main`: PR required, required checks (`gate`, `licenses`, `lint`, `dco`, both `orchestrator` jobs), no direct push; allow auto-merge, delete head branches, squash only | repo settings | all changes (section 4) |
+| Ruleset on `main`: PR required, required checks (`gate`, `licenses`, `lint`, `dco`, and the two orchestrator checks `windows-latest` and `macos-latest`), no direct push; allow auto-merge, delete head branches, squash only | repo settings | all changes (section 4) |
 | Ruleset on tags `v*`: only admins create, update or delete | repo settings | keeps releases deliberate |
 | Environment `release`: required reviewer = the maintainer; deployment tags limited to `v*` | repo settings | every publishing job |
 | Immutable releases (if offered), private vulnerability reporting, wiki enabled | repo settings | |
 | Repo `mirastacklabs-ai/homebrew-tap` (public, folder `Formula/`) | GitHub | `brew` |
 | Secret `HOMEBREW_TAP_TOKEN`: fine-grained PAT, contents read/write on the tap only, with an expiry | `release` environment secret | `brew` only |
 | Docker Hub namespace `mirastack`, public repo `mirafleet` | hub.docker.com | `image` |
-| Variable `DOCKERHUB_USERNAME` and secret `DOCKERHUB_TOKEN`: access token, read/write on `mirastack/mirafleet` only | `release` environment | `image` only |
+| Variable `DOCKERHUB_USERNAME` and secret `DOCKERHUB_TOKEN`: a personal access token with Read & Write scope (works on the free plan; an Organization Access Token is an option only if the org's plan has it, never a requirement) | `release` environment | `image` only |
 | npm account with 2FA and org `mirastacklabs`; a trusted publisher for each of the 7 packages (repository `mirastacklabs-ai/mirafleet`, workflow `release.yml`, environment `release`) | npmjs.com | `npm` |
 | Secret `NPM_TOKEN`: only if npm will not let you set up trusted publishing before a package exists; use it for the first publish, then delete it | `release` environment secret | `npm` |
 | ghcr, cosign, provenance, MCP Registry | none | GitHub OIDC and the job's `GITHUB_TOKEN`; no secret |
@@ -120,13 +122,15 @@ commits in the message. See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## 6. Rollback
 
-**A bad release** (published artifacts cannot be recalled; make the next version good):
-- GitHub release: edit it back to a draft, or delete it, and say why in the notes. Delete the tag
-  only if no registry has been published from it; never force-move a tag. Ship `vX.Y.(Z+1)`.
-- npm: `npm deprecate @mirastacklabs/mirafleet@X.Y.Z "use X.Y.(Z+1)"` (and the platform packages).
-  `npm unpublish` works only within 72 hours and burns the version.
-- Image: move `latest` by pushing the fixed version; old digests stay. Document the bad tag.
-- Homebrew: revert the commit in the tap. MCP Registry: publish the fixed version.
+**A bad release** (published artifacts cannot be recalled; make the next version good). Every
+action below needs the maintainer's explicit **yes**:
+- **yes** GitHub release: edit it back to a draft, or delete it, and say why in the notes. With
+  immutable releases, leave it published, note it in the release notes, and ship Z+1. Delete the
+  tag only if no registry has been published from it; never force-move a tag. Ship `vX.Y.(Z+1)`.
+- **yes** npm: `npm deprecate @mirastacklabs/mirafleet@X.Y.Z "use X.Y.(Z+1)"` (and the platform
+  packages). `npm unpublish` works only within 72 hours and burns the version.
+- **yes** Image: move `latest` by pushing the fixed version; old digests stay. Document the bad tag.
+- **yes** Homebrew: revert the commit in the tap. **yes** MCP Registry: publish the fixed version.
 
 **A bad upgrade on a server** (central backs up its SQLite database before every migration and
 keeps the 3 newest in `<data>/backups/`):
