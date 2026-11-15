@@ -89,7 +89,7 @@ role:
 |---|---|---|---|
 | `mirafleet central init`, `central run` | **Central**: the server in the middle | one Linux host | its data directory (default `/var/lib/mirafleet/central`) |
 | `mirafleet central fleet ...`, `token ...`, `runner ...`, `operator ...`, `exec`, `audit` | **Admin CLI**: talks to the *running* central over a local socket | the central host | a running central |
-| `mirafleet runner join`, `runner run` | **Runner**: sits on a fleet server | each Linux server in a fleet | its data directory (default `/var/lib/mirafleet/runner`) and either an `actions.yaml` or (workspace mode) a `workspace.yaml` |
+| `mirafleet runner join`, `runner run` | **Runner**: sits on a fleet server | each Linux server in a fleet | its data directory (default: root `/var/lib/mirafleet/runner`, other users `$XDG_CONFIG_HOME/mirafleet`; the packaged service user passes `-data /var/lib/mirafleet/runner`) and either an `actions.yaml` or (workspace mode) a `workspace.yaml` |
 | `mirafleet runner tls-init`, `tls-front`, `workspace list`, `workspace prune` | **Runner helpers** for workspace mode | the workspace runner's host | the runner's `workspace.yaml` (list, prune) or a new directory (tls-init) |
 | `mirafleet mcp` (or `mcp serve`), `mcp login`, `mcp context`, `mcp api`, `mcp hook` | **Orchestrator**: what an operator's machine runs | laptop (Linux, macOS, Windows) | a config directory with the operator key |
 
@@ -705,7 +705,7 @@ allowlist permits. The runner-side guard bounds the damage but cannot remove it.
 |---|---|---|---|---|
 | **Central host key** (Ed25519 private) | `central init` (`keys.Generate`) | Central host | `<data>/host_ed25519`, mode `0600` | Nobody. Its *hash* is embedded in every join token and registration code so clients can pin central. |
 | Central host public key | `central init` | Central host | `<data>/host_ed25519.pub` (public) | Runners and operators store it in their `known_hosts` after join/login. |
-| **Runner private key** | `runner join` | The runner host | `<runner data>/runner_ed25519`, mode `0600` (default data dir `/var/lib/mirafleet/runner`) | Nobody. Central stores only the *public* key (`runners.pubkey`). |
+| **Runner private key** | `runner join` | The runner host | `<runner data>/runner_ed25519`, mode `0600` (data dir: root `/var/lib/mirafleet/runner`, other users `$XDG_CONFIG_HOME/mirafleet`; the packaged service passes `-data /var/lib/mirafleet/runner`) | Nobody. Central stores only the *public* key (`runners.pubkey`). |
 | Runner `known_hosts` | `runner join` | The runner host | `<runner data>/known_hosts`, mode `0600` | Pins central's host key. Written only after the pinned join succeeded. |
 | Runner `runner.yaml` | `runner join` (written last) | The runner host | `<runner data>/runner.yaml` | Central address, runner name, fleet. Its existence marks the directory as "joined". |
 | Runner `actions.yaml` | The runner's admin | The runner host | `/etc/mirafleet/actions.yaml` (default for `-actions`) | Nobody else. This is the allowlist. |

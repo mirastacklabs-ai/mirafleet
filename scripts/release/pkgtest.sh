@@ -130,7 +130,9 @@ else
 	for u in central runner runner-workspace; do want "$S/mirafleet-$u.service" 644 root:root; done
 	want "$S/mirafleet-runner@.service" 644 root:root
 	want "$U/mirafleet-runner.service" 644 root:root
-	grep -q '^KillMode=process' "$S/mirafleet-runner@.service" "$U/mirafleet-runner.service" || fail "host-mode units need KillMode=process"
+	for f in "$S/mirafleet-runner@.service" "$U/mirafleet-runner.service"; do
+		grep -q '^KillMode=process' "$f" || fail "host-mode unit $f needs KillMode=process"
+	done
 	# verify wants every referenced unit to exist: stand in for containerd when absent
 	if [ ! -e "$S/containerd.service" ] && [ ! -e /etc/systemd/system/containerd.service ]; then
 		mkdir -p /run/systemd/system

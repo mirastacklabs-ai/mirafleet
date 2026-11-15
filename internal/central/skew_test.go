@@ -125,8 +125,9 @@ func TestSkewRunnerRefusedAudited(t *testing.T) {
 			if d := clk.waits[1]; d < 48*time.Second || d > 72*time.Second {
 				t.Fatalf("second wait %s, want ~60s", d)
 			}
-			if n := len(e.auditRowsFor("runner.refused_version")); n != 2 {
-				t.Fatalf("audit rows after retry = %d, want 2", n)
+			// The retry is refused again but audited once per runner per 10 minutes.
+			if n := len(e.auditRowsFor("runner.refused_version")); n != 1 {
+				t.Fatalf("audit rows after retry = %d, want 1 (throttled)", n)
 			}
 		})
 	}

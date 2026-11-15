@@ -80,7 +80,7 @@ sudo systemctl enable --now mirafleet-central       # the journal shows the GUI 
 sudo -u mirafleet mirafleet central fleet create dev -mode actions
 sudo -u mirafleet mirafleet central token create -fleet dev          # join token, shown once
 # On a runner (after: sudo cp /usr/share/doc/mirafleet/examples/actions.yaml /etc/mirafleet/)
-echo "$JOIN_TOKEN" | sudo -u mirafleet mirafleet runner join central.example.com:2222 -name web-1 -token -
+echo "$JOIN_TOKEN" | sudo -u mirafleet mirafleet runner join central.example.com:2222 -name web-1 -data /var/lib/mirafleet/runner -token -
 sudo systemctl enable --now mirafleet-runner
 # Back on central
 sudo -u mirafleet mirafleet central runner approve dev/web-1

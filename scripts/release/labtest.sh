@@ -60,7 +60,7 @@ ok "central is up; ports published on 127.0.0.1 only"
 dc exec -T central $M central fleet create prod >/dev/null
 tok=$(dc exec -T central $M central token create -fleet prod 2>/dev/null)
 [ -n "$tok" ] || fail "no join token"
-printf '%s\n' "$tok" | dc run --rm -T runner runner join central:2222 -name lab-1 -token - >/dev/null || fail "runner join failed"
+printf '%s\n' "$tok" | dc run --rm -T runner runner join central:2222 -name lab-1 -data /var/lib/mirafleet/runner -token - >/dev/null || fail "runner join failed"
 dc exec -T central $M central runner approve prod/lab-1 >/dev/null
 dc up -d runner >/dev/null 2>&1 || fail "runner did not start"
 

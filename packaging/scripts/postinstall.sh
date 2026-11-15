@@ -22,8 +22,9 @@ if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
 	systemctl daemon-reload || true
 	if [ "$upgrade" = 1 ]; then
 		# Restarts only units that are already running; migrations take an automatic backup.
+		# User units (systemctl --user) are not reachable from here: users restart those themselves.
 		systemctl try-restart mirafleet-central.service mirafleet-runner.service \
-			mirafleet-runner-workspace.service || true
+			mirafleet-runner-workspace.service 'mirafleet-runner@*.service' || true
 	fi
 fi
 

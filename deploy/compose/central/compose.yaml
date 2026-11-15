@@ -18,7 +18,8 @@ services:
       central-init:
         condition: service_completed_successfully
     env_file:
-      - path: central.env
+      # Untracked and gitignored; see central.env (the tracked template) for what goes in it.
+      - path: central.env.local
         required: false
     volumes:
       - central-data:/var/lib/mirafleet

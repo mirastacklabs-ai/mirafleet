@@ -116,6 +116,8 @@ type Server struct {
 
 	edgeMu sync.Mutex
 	edgeAt map[int64]time.Time // last connect/disconnect store write per runner id
+	// refusedAt is the last runner.refused_version audit row per runner id (guarded by edgeMu).
+	refusedAt map[int64]time.Time
 
 	// ctx is cancelled by Close before it waits: it stops the reaper and any reconcile.
 	ctx    context.Context

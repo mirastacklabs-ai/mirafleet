@@ -37,8 +37,10 @@ docker compose exec central mirafleet central runner list
 docker compose exec central mirafleet central operator code
 ```
 
-SSH (runners and operators) is on port 2222 of this host. `central.env` is read as an env file
-(optional; keep it mode 0600).
+SSH (runners and operators) is on port 2222 of this host. `central.env.local` is read as an env
+file (optional, untracked and gitignored). Create it private, with `umask 077` or `chmod 600`;
+the secrets key goes there (`(umask 077; docker run --rm docker.io/mirastack/mirafleet:0.6.0
+central keygen >> central.env.local)`). `central.env` is only a tracked template of the settings.
 
 ## Back up and stop
 

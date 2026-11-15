@@ -70,7 +70,9 @@ jobs:
           # Check names that must have succeeded on the tagged commit. They come from gate.yml (push)
           # and ci.yml (push to main); keep in step with both. dco runs on pull requests only and is
           # enforced there, so it is not listed.
-          REQUIRED: gate licenses vuln lint dist integration e2e-systemd
+          # windows-latest and macos-latest are the orchestrator.yml matrix jobs (name: matrix.os),
+          # which runs on push to main.
+          REQUIRED: gate licenses vuln lint dist integration e2e-systemd windows-latest macos-latest
         run: |
           # Wait up to 50 minutes for slow jobs; fail at once when any required check failed.
           for _ in $(seq 1 50); do
@@ -135,7 +137,8 @@ jobs:
           cp -- *.tar.gz *.zip *.deb *.rpm *.apk *.sbom.json checksums.txt ../release/
           cd ../..
           cp scripts/install.sh scripts/install.ps1 dist/THIRD_PARTY_LICENSES.txt dist/release/
-          # every file in checksums.txt is present and nothing else is hashed
+          # every file listed in checksums.txt is present and matches its hash (files not listed,
+          # such as install.sh, install.ps1 and the licenses file, are not checked by this)
           (cd dist/release && sha256sum -c checksums.txt)
           ls -l dist/release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -187,6 +190,8 @@ jobs:
             dist/release/*.rpm
             dist/release/*.apk
             dist/release/checksums.txt
+            dist/release/install.sh
+            dist/release/install.ps1
       - name: draft GitHub release with every asset
         env:
           GH_TOKEN: ${{ github.token }}

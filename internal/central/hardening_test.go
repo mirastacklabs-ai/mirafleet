@@ -347,6 +347,20 @@ func TestClaimEdgeThrottles(t *testing.T) {
 	}
 }
 
+func TestClaimRefusalThrottles(t *testing.T) {
+	e := newEnv(t, "r1")
+	now := time.Unix(5000, 0)
+	if !e.srv.claimRefusal(1, now) || e.srv.claimRefusal(1, now.Add(refusalGap-time.Second)) {
+		t.Fatal("second refusal audit within 10 minutes must be throttled")
+	}
+	if !e.srv.claimRefusal(2, now) {
+		t.Fatal("other runner throttled")
+	}
+	if !e.srv.claimRefusal(1, now.Add(refusalGap)) {
+		t.Fatal("refusal audit after the gap must pass")
+	}
+}
+
 type blockTouchStore struct {
 	store.Store
 	release chan struct{}

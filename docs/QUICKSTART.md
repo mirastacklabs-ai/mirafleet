@@ -83,8 +83,11 @@ sudo ls -l /etc/mirafleet/central.env        # must be -rw------- root root
 ```
 
 `/etc/mirafleet/central.env` must stay mode `0600`, owner root (systemd reads it before dropping
-to the `mirafleet` user). With Compose, append the printed `MIRAFLEET_SECRETS_KEY=...` line to
-`deploy/compose/central/central.env` (mode 0600). Plain container: pass it with `--env-file`.
+to the `mirafleet` user). With Compose, write the printed `MIRAFLEET_SECRETS_KEY=...` line to
+the untracked, gitignored `deploy/compose/central/central.env.local`, created private
+(`cd deploy/compose/central && (umask 077; docker run --rm mirastack/mirafleet:0.6.0 central keygen >> central.env.local)`,
+or `chmod 600 central.env.local` afterwards). `central.env` in that directory is only a tracked
+template. Plain container: pass it with `--env-file`.
 
 **Back this key up somewhere apart from the data directory** (a password manager). If you lose
 it you lose every stored credential, and central will refuse to start with credentials present
@@ -266,6 +269,10 @@ in order.
    Alternative, as root: the system unit with `User=`, one instance per user:
    `sudo systemctl enable --now mirafleet-runner@dev`.
    Background shells survive a runner restart (`KillMode=process`).
+
+   After a package upgrade the installer restarts the system units (`mirafleet-runner@*`
+   included), but it cannot reach a user's own units: run
+   `systemctl --user restart mirafleet-runner` as `dev` to pick up the new binary.
 
 6. **The VM firewall is the egress control.** mirafleet adds no egress allowlist in host mode.
    Allow the VM to reach your GitLab (SSH 22 or your port, and HTTPS 443) and whatever builds
@@ -458,7 +465,7 @@ docker compose cp central:/var/lib/mirafleet/central/gui/setup-token -   # setup
 M="docker compose exec -T central mirafleet"
 $M central fleet create prod
 $M central token create -fleet prod 2>/dev/null |
-  docker compose run --rm -T runner runner join central:2222 -name lab-1 -token -
+  docker compose run --rm -T runner runner join central:2222 -name lab-1 -data /var/lib/mirafleet/runner -token -
 $M central runner approve prod/lab-1
 docker compose up -d runner
 $M central operator code | sed -n 's/^code: *//p' |

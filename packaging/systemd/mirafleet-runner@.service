@@ -1,6 +1,8 @@
 # mirafleet host-mode runner as a system unit, one instance per user (docs/M7.md §3.3):
 #   systemctl enable --now mirafleet-runner@dev
 # The runner refuses to run as root; %i is the ordinary user whose files the agent may touch.
+# The workspace file is read from /home/%i: in a system unit %h is root's home, not the User='s,
+# so it cannot be used here. A user whose home is elsewhere sets ExecStart in a drop-in.
 [Unit]
 Description=mirafleet runner for user %i (host mode)
 Documentation=https://github.com/mirastacklabs-ai/mirafleet

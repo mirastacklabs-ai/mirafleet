@@ -124,7 +124,7 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			// level 0. Tell the runner why, audit it, and close.
 			if verr := protover.Check("runner", p.Name, s.cfg.Proto, hb.Proto); verr != nil {
 				s.refuseRunner(sconn, p, r, verr)
-				continue
+				return
 			}
 		}
 		if err := hb.Validate(); err != nil && len(hb.Actions) > 0 {
@@ -207,9 +207,11 @@ const refuseTimeout = 5 * time.Second
 func (s *Server) refuseRunner(sconn *ssh.ServerConn, p auth.Principal, r *ssh.Request, verr error) {
 	msg := verr.Error()
 	s.cfg.Logf("runner %q (id %d) refused: %s", p.Name, p.ID, msg)
-	actx, cancel := context.WithTimeout(context.Background(), storeTimeout)
-	s.cfg.Service.RunnerRefusedVersion(actx, p.ID, msg)
-	cancel()
+	if s.claimRefusal(p.ID, s.cfg.Now()) {
+		actx, cancel := context.WithTimeout(context.Background(), storeTimeout)
+		s.cfg.Service.RunnerRefusedVersion(actx, p.ID, msg)
+		cancel()
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -366,6 +368,25 @@ func (s *Server) claimEdge(id int64, now time.Time) bool {
 		return false
 	}
 	s.setEdgeLocked(id, now)
+	return true
+}
+
+// refusalGap is the minimum spacing of runner.refused_version audit rows per runner: a runner
+// that retries every minute would otherwise write a row per attempt, indefinitely.
+const refusalGap = 10 * time.Minute
+
+// claimRefusal reports whether a runner.refused_version audit row for runner id may be written
+// now, and records it if so (same pattern as claimEdge). The refusal itself is never throttled.
+func (s *Server) claimRefusal(id int64, now time.Time) bool {
+	s.edgeMu.Lock()
+	defer s.edgeMu.Unlock()
+	if last, ok := s.refusedAt[id]; ok && now.Sub(last) < refusalGap {
+		return false
+	}
+	if s.refusedAt == nil {
+		s.refusedAt = map[int64]time.Time{}
+	}
+	s.refusedAt[id] = now
 	return true
 }
 

@@ -58,23 +58,26 @@ Write-Host 'setup: starting the test server'
 $cert = [TestServer]::Start("$W\www")
 $certFile = "$W\cert.pem"
 [IO.File]::WriteAllText($certFile, [TestServer]::CertPem)
-$isWin = ($PSVersionTable.PSEdition -eq 'Desktop') -or $IsWindows
+# PowerShell 7+ only ($IsWindows does not exist in Windows PowerShell 5.1).
+$isWin = $IsWindows
+# Everything from here runs inside try, so the throwaway root is removed from LocalMachine\Root and
+# $W is deleted even when a case throws (a developer running this as admin must not keep a stray
+# trusted root).
+$script:exitCode = 0
+try {
 if ($isWin) {
     # CurrentUser\Root pops a modal confirmation dialog (hangs a headless runner); the CI runner is
     # an administrator, so trust the throwaway cert in LocalMachine\Root, which never prompts.
     Write-Host 'setup: trusting the test cert in LocalMachine\Root'
     $pub = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, $cert.RawData)
     $store = New-Object System.Security.Cryptography.X509Certificates.X509Store 'Root', 'LocalMachine'
-    $store.Open('ReadWrite'); $store.Add($pub); $store.Close()
     $script:trusted = $pub
+    $store.Open('ReadWrite'); $store.Add($pub); $store.Close()
 } else {
     $env:SSL_CERT_FILE = $certFile
 }
 $env:MIRAFLEET_INSTALL_BASE_URL = "https://localhost:$([TestServer]::Port)"
 
-# Everything below runs inside try so the throwaway root is removed from LocalMachine\Root even when
-# a case throws or exits (a developer running this as admin must not keep a stray trusted root).
-try {
 $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'amd64' }
 $V = 'v9.9.9'
 $archive = "mirafleet_9.9.9_windows_$arch.zip"
@@ -150,7 +153,7 @@ $ident = ((Get-Content $sig -Raw) -replace '^sig-by:\s*', '').Trim()
 if ($ident -match $re) { exit 0 } else { exit 1 }
 '@
 if ($isWin) {
-    Set-Content -Path "$W\bin\cosign.cmd" -Value "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"$stub`" %*"
+    Set-Content -Path "$W\bin\cosign.cmd" -Value "@echo off`r`npwsh -NoProfile -ExecutionPolicy Bypass -File `"$stub`" %*"
 } else {
     Set-Content -Path "$W\bin\cosign" -Value "#!/bin/sh`nexec pwsh -NoProfile -File '$stub' `"`$@`""
     chmod +x "$W\bin\cosign"
@@ -166,9 +169,9 @@ if ($r[0] -ne 0 -and -not (Exe "$W\d7") -and $r[1] -match 'FAILED') { Ok 'wrong 
 $env:PATH = $oldPath
 
 # PATH untouched without -AddToPath is checked by reading the user PATH on Windows only.
-Remove-Item -Recurse -Force $W -ErrorAction SilentlyContinue
-if ($script:fail -eq 0) { Write-Host 'installtest.ps1: OK' } else { Write-Host 'installtest.ps1: FAIL'; exit 1 }
+if ($script:fail -eq 0) { Write-Host 'installtest.ps1: OK' } else { Write-Host 'installtest.ps1: FAIL'; $script:exitCode = 1 }
 } finally {
+    Remove-Item -Recurse -Force $W -ErrorAction SilentlyContinue
     if ($script:trusted) {
         try {
             $st = New-Object System.Security.Cryptography.X509Certificates.X509Store 'Root', 'LocalMachine'
@@ -177,3 +180,4 @@ if ($script:fail -eq 0) { Write-Host 'installtest.ps1: OK' } else { Write-Host '
         } catch { Write-Host "cleanup: could not remove the test cert: $_" }
     }
 }
+exit $script:exitCode

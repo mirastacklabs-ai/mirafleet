@@ -3,7 +3,9 @@ Description=mirafleet runner (actions mode)
 Documentation=https://github.com/mirastacklabs-ai/mirafleet
 After=network-online.target
 Wants=network-online.target
-# Join first: sudo -u mirafleet mirafleet runner join ... (writes runner.yaml).
+# Join first: sudo -u mirafleet mirafleet runner join ... -data /var/lib/mirafleet/runner (writes
+# runner.yaml). Root defaults -data to /var/lib/mirafleet/runner; other users default to
+# $XDG_CONFIG_HOME/mirafleet, so the service user must pass -data.
 # The actions file is yours to write: see /usr/share/doc/mirafleet/examples/actions.yaml.
 ConditionPathExists=/var/lib/mirafleet/runner/runner.yaml
 ConditionPathExists=/etc/mirafleet/actions.yaml

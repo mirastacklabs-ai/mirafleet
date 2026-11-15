@@ -187,10 +187,14 @@ fleet. Send it over a channel you trust.
 
 ### Step 5: join the runner
 
-On `build-1`, as the user that will run the runner (needs write access to its data directory):
+On `build-1`, as the user that will run the runner (needs write access to its data directory).
+The default data directory depends on who you are: **root: `/var/lib/mirafleet/runner`; other
+users: `$XDG_CONFIG_HOME/mirafleet`**. The packaged `mirafleet-runner.service` runs as the
+`mirafleet` user with `-data /var/lib/mirafleet/runner`, so when you join as that user you must
+pass the same `-data`:
 
 ```console
-$ echo "$JOIN_TOKEN" | mirafleet runner join central.example.com:2222 -name build-1 -token -
+$ echo "$JOIN_TOKEN" | sudo -u mirafleet mirafleet runner join central.example.com:2222 -name build-1 -data /var/lib/mirafleet/runner -token -
 joined fleet "dev" as runner "build-1": status pending
 an admin must approve this runner on central before it can run actions
 next: start it with `mirafleet runner run -data /var/lib/mirafleet/runner` (under systemd; the unit ships with the M6 packages)
@@ -450,7 +454,7 @@ Durations are whole seconds or more (`90s`, `2m`, `24h`). Sizes use `MiB`, `GiB`
 
 | Command | Flags | What it does |
 |---|---|---|
-| `runner join ADDR` | `-name NAME` (required), `-data DIR` (default `/var/lib/mirafleet/runner`), `-token -` (required, reads stdin) | Enrol with central. `ADDR` is `host:port`, and comes first (flags may follow). Writes key, `known_hosts`, `runner.yaml`. |
+| `runner join ADDR` | `-name NAME` (required), `-data DIR` (default: root `/var/lib/mirafleet/runner`; other users `$XDG_CONFIG_HOME/mirafleet`; the packaged service user must pass `-data /var/lib/mirafleet/runner`), `-token -` (required, reads stdin) | Enrol with central. `ADDR` is `host:port`, and comes first (flags may follow). Writes key, `known_hosts`, `runner.yaml`. |
 | `runner run` | `-data DIR` (same default), `-actions FILE` (default `/etc/mirafleet/actions.yaml`) **or** `-workspace FILE` (typically `/etc/mirafleet/workspace.yaml`) | Connect and serve until SIGINT/SIGTERM. **Exactly one mode**: giving both is refused, and workspace mode never falls back to actions. Starting workspace mode loads and checks `workspace.yaml` and the executor first; any failure stops the runner with a message. |
 | `runner tls-init` | `-dir DIR` (required; new or empty; created 0700), `-days N` (default 365, 1 to 3650) | Mint the per-node PKI for the OpenSandbox option: a CA (its private key is discarded after signing), the TLS front's server certificate (SAN `127.0.0.1`, `::1`, `localhost`) and the runner's client certificate; ECDSA P-256, all files 0600. Prints the paths, the expiry and the lines for `workspace.yaml` (`ca_file`, `pin_sha256`, `client_cert`, `client_key`). Never overwrites; refuses a symlink. |
 | `runner tls-front` | `-dir DIR` (required: the `tls-init` directory), `-listen ADDR` (default `127.0.0.1:8443`, loopback only), `-upstream ADDR` (default `127.0.0.1:8080`, loopback, plain HTTP) | Run the small TLS 1.3 + mTLS reverse proxy that sits in front of OpenSandbox. Runs until SIGINT/SIGTERM. |
@@ -1173,7 +1177,7 @@ env_allow: [LANG, CI, GOFLAGS]
 containerd: {namespace: mirafleet, root: /var/lib/mirafleet/ws}
 EOF
 chmod 0644 /etc/mirafleet/workspace.yaml
-printf '%s\n' "$TOKEN" | mirafleet runner join central.example.com:2222 -name build-1 -token -
+printf '%s\n' "$TOKEN" | mirafleet runner join central.example.com:2222 -name build-1 -data /var/lib/mirafleet/runner -token -
 mirafleet runner run -workspace /etc/mirafleet/workspace.yaml
 ```
 
@@ -1921,7 +1925,10 @@ walk through the fleet. For central:
 sudo apt install ./mirafleet_0.7.0_linux_amd64.deb     # or dnf; Compose: change the image tag, docker compose up -d
 ```
 
-The package `try-restart`s the running system units. When central starts with a database that is
+The package `try-restart`s the running system units (`mirafleet-central`, `mirafleet-runner`,
+`mirafleet-runner-workspace` and every `mirafleet-runner@*` instance). It cannot reach a user's own
+units: after an upgrade, each user who runs the runner as a user unit restarts it with
+`systemctl --user restart mirafleet-runner`. When central starts with a database that is
 older than the binary, it makes an **online backup first**: `VACUUM INTO`
 `<data>/backups/mirafleet-schema<N>-<UTC time>.db` (directory 0700, file 0600), then migrates, then
 keeps the **3 newest** backups. Why before, not after? A migration that fails halfway or loses data
@@ -2014,8 +2021,10 @@ ls -l /etc/mirafleet/central.env                          # must stay -rw-------
 
 The package ships that file as `0600` root with a commented `#MIRAFLEET_SECRETS_KEY=` placeholder,
 and `mirafleet-central.service` loads it with `EnvironmentFile=/etc/mirafleet/central.env`. Restart
-central. (With Compose, append the line to `deploy/compose/central/central.env`; with a plain
-container, pass it with `--env-file`.) **Back the key up somewhere other than the central host.** If the key is lost,
+central. (With Compose, write the line to the untracked, gitignored
+`deploy/compose/central/central.env.local`, created with `umask 077` or followed by
+`chmod 600`; the tracked `central.env` there is only a template. With a plain container, pass it
+with `--env-file`.) **Back the key up somewhere other than the central host.** If the key is lost,
 every stored credential is lost (central refuses to start without the right key once credentials
 exist, so a lost key never silently corrupts anything). The key is shown once, by `keygen`, on
 standard output; the warning goes to standard error so `>>` does not capture it.
