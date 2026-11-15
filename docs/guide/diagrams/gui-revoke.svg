@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 492" width="840" height="492" role="img" aria-labelledby="t d">
+<title id="t">Revoking a runner from the GUI</title>
+<desc id="d">Dana types dev/build-1 on the revoke page and submits the form. Central's GUI checks the Host header, the form type and size, the session cookie, the same-origin headers, the CSRF token and the typed name. Only then does it call Service.Lifecycle with source gui, the same code path as the CLI: tombstone, kick, cancel, then one commit of status revoked and the audit row. The browser gets a 303 redirect back.</desc>
+<style>
+:root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
+@media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
+svg{--T:12s;--slot:2s}
+.bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
+.pn{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.bx{fill:#F6F5F1;fill:var(--band,#F6F5F1);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
+.ttl{font:600 21px Oswald,"Arial Narrow",Arial,sans-serif;text-transform:uppercase;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.h{font-weight:600;letter-spacing:.12em;text-transform:uppercase;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.m{fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.b{font-weight:700;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.ln{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none}
+.lnd{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.ahp{fill:#00695F;fill:var(--accent,#00695F)}
+.dot{fill:#FF671F;fill:var(--signal,#FF671F)}
+.bdg{fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.bt{font-weight:700;fill:#FFFFFF;fill:var(--bg,#FFFFFF);text-anchor:middle}
+.chw{fill:#FBEFDC;fill:var(--warnbg,#FBEFDC);stroke:#8A5300;stroke:var(--warn,#8A5300)}
+.chb{fill:#FDE8E6;fill:var(--badbg,#FDE8E6);stroke:#B42318;stroke:var(--bad,#B42318)}
+.cho{fill:#E0F0EE;fill:var(--okbg,#E0F0EE);stroke:#00695F;stroke:var(--ok,#00695F)}
+.tw{fill:#8A5300;fill:var(--warn,#8A5300);font-weight:700}
+.tb{fill:#B42318;fill:var(--bad,#B42318);font-weight:700}
+.to{fill:#00695F;fill:var(--ok,#00695F);font-weight:700}
+.rule{stroke:#FF671F;stroke:var(--signal,#FF671F);stroke-width:2}
+.pk{display:none}
+@media (prefers-reduced-motion:no-preference){
+.st{animation:lit var(--T) linear infinite both;animation-delay:calc((var(--i) - 1) * var(--slot))}
+.pk{display:inline;animation:mv var(--T) linear infinite}
+}
+@keyframes lit{0%{opacity:.25}1%{opacity:1}15.5%{opacity:1}16.67%{opacity:.25}100%{opacity:.25}}
+@keyframes mv{0%{transform:translate(110px,130px)}9%,33.33%{transform:translate(380px,128px)}40%,50%{transform:translate(380px,190px)}55%,66.67%{transform:translate(380px,224px)}72%,83.33%{transform:translate(700px,130px)}89%,100%{transform:translate(700px,258px)}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0,0L10,5L0,10z"/></marker></defs>
+<rect class="bg" width="840" height="492"/>
+<text class="ttl" x="10" y="32">Revoke from the GUI</text>
+<line class="rule" x1="10" y1="42" x2="70" y2="42"/>
+
+<!-- browser -->
+<rect class="pn" x="10" y="76" width="180" height="240" rx="4"/>
+<text class="h" x="20" y="96">Dana's browser</text>
+<rect class="bx" x="20" y="104" width="160" height="204" rx="2"/>
+<text class="m" x="28" y="120">revoke page</text>
+<g class="st" style="--i:1"><rect class="cho" x="28" y="128" width="144" height="16" rx="2"/><text class="to" x="34" y="141">type dev/build-1</text>
+<rect class="cho" x="28" y="150" width="144" height="16" rx="2"/><text class="to" x="34" y="163">submit the form</text></g>
+<g class="st" style="--i:6"><rect class="cho" x="28" y="272" width="144" height="16" rx="2"/><text class="to" x="34" y="285">303 and a note</text></g>
+
+<!-- central GUI -->
+<rect class="pn" x="240" y="76" width="280" height="240" rx="4"/>
+<text class="h" x="250" y="96">Central: GUI</text>
+<rect class="bx" x="250" y="104" width="260" height="48" rx="2"/>
+<text class="m" x="258" y="120">middleware</text>
+<g class="st" style="--i:2"><rect class="chw" x="258" y="126" width="244" height="16" rx="2"/><text class="tw" x="264" y="139">Host listed, body capped</text></g>
+<rect class="bx" x="250" y="162" width="260" height="146" rx="2"/>
+<text class="m" x="258" y="178">handler runnerOp</text>
+<g class="st" style="--i:3"><rect class="chw" x="258" y="184" width="244" height="16" rx="2"/><text class="tw" x="264" y="197">live session, active admin</text></g>
+<g class="st" style="--i:4"><rect class="chw" x="258" y="206" width="244" height="16" rx="2"/><text class="tw" x="264" y="219">same-origin headers</text>
+<rect class="chw" x="258" y="228" width="244" height="16" rx="2"/><text class="tw" x="264" y="241">_csrf matches cookie key</text></g>
+<g class="st" style="--i:5"><rect class="chw" x="258" y="250" width="244" height="16" rx="2"/><text class="tw" x="264" y="263">typed name = dev/build-1</text></g>
+<text class="m" x="258" y="290">a refusal: error page, no change</text>
+
+<!-- service and store -->
+<rect class="pn" x="570" y="76" width="260" height="240" rx="4"/>
+<text class="h" x="580" y="96">Service and store</text>
+<rect class="bx" x="580" y="104" width="240" height="50" rx="2"/>
+<text class="m" x="588" y="120">Service.Lifecycle(revoke)</text>
+<g class="st" style="--i:5"><rect class="cho" x="588" y="128" width="224" height="16" rx="2"/><text class="to" x="594" y="141">source gui, actor admin</text></g>
+<rect class="bx" x="580" y="164" width="240" height="52" rx="2"/>
+<text class="m" x="588" y="180">registry (in memory)</text>
+<g class="st" style="--i:6"><rect class="chb" x="588" y="188" width="224" height="16" rx="2"/><text class="tb" x="594" y="201">tombstone, kick, cancel</text></g>
+<rect class="bx" x="580" y="226" width="240" height="82" rx="2"/>
+<text class="m" x="588" y="242">SQLite (one transaction)</text>
+<g class="st" style="--i:6"><rect class="chb" x="588" y="248" width="224" height="16" rx="2"/><text class="tb" x="594" y="261">status = revoked</text>
+<rect class="cho" x="588" y="270" width="224" height="16" rx="2"/><text class="to" x="594" y="283">audit: runner.revoke, gui</text></g>
+
+<!-- arrows -->
+<g class="st" style="--i:1">
+<line class="ln" x1="192" y1="126" x2="238" y2="126" marker-end="url(#ah)"/>
+<text x="196" y="114">POST</text>
+<circle class="bdg" cx="215" cy="148" r="11"/><text class="bt" x="215" y="152.5">1</text>
+</g>
+<g class="st" style="--i:2"><circle class="bdg" cx="215" cy="180" r="11"/><text class="bt" x="215" y="184.5">2</text></g>
+<g class="st" style="--i:3"><circle class="bdg" cx="545" cy="192" r="11"/><text class="bt" x="545" y="196.5">3</text></g>
+<g class="st" style="--i:4"><circle class="bdg" cx="545" cy="226" r="11"/><text class="bt" x="545" y="230.5">4</text></g>
+<g class="st" style="--i:5">
+<line class="ln" x1="522" y1="130" x2="568" y2="130" marker-end="url(#ah)"/>
+<text x="528" y="118">call</text>
+<circle class="bdg" cx="545" cy="152" r="11"/><text class="bt" x="545" y="156.5">5</text>
+</g>
+<g class="st" style="--i:6">
+<circle class="bdg" cx="545" cy="262" r="11"/><text class="bt" x="545" y="266.5">6</text>
+<line class="lnd" x1="238" y1="288" x2="192" y2="288" marker-end="url(#ah)"/>
+<text x="200" y="278">303</text>
+</g>
+<circle class="dot pk" cx="0" cy="0" r="7"/>
+
+<!-- steps -->
+<text class="h" x="10" y="346">Steps</text>
+<g class="st" style="--i:1"><text x="10" y="370"><tspan class="b">1</tspan> Dana types dev/build-1 on the revoke page and submits: POST /runners/dev/build-1/revoke.</text></g>
+<g class="st" style="--i:2"><text x="10" y="390"><tspan class="b">2</tspan> Middleware: the Host must be allowed, the body a urlencoded form under 64 KiB (421, 415, 413).</text></g>
+<g class="st" style="--i:3"><text x="10" y="410"><tspan class="b">3</tspan> Session: the cookie's hash finds a live row of the active admin, else 303 to /login.</text></g>
+<g class="st" style="--i:4"><text x="10" y="430"><tspan class="b">4</tspan> CSRF: same-origin headers, then the _csrf token must match the cookie's key (403).</text></g>
+<g class="st" style="--i:5"><text x="10" y="450"><tspan class="b">5</tspan> The typed name must equal dev/build-1 (422), then Service.Lifecycle runs with source gui.</text></g>
+<g class="st" style="--i:6"><text x="10" y="470"><tspan class="b">6</tspan> Same path as the CLI: tombstone, kick, cancel, one commit with the audit row. Then 303 back.</text></g>
+</svg>

@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 492" width="840" height="492" role="img" aria-labelledby="t d">
+<title id="t">First-start GUI setup</title>
+<desc id="d">Central starts with no GUI admin and makes a setup token. It stores only the token's SHA-256 and a 24 hour expiry in SQLite and writes the token to a file with mode 0600. Dana reads the file on the central host, opens the setup page and checks the certificate fingerprint. She submits the token, a username and a password. One transaction compares the hash, checks the expiry, inserts the admin and deletes the setup row. The token file is deleted and her first session starts.</desc>
+<style>
+:root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
+@media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
+svg{--T:12s;--slot:2s}
+.bg{fill:#FFFFFF;fill:var(--bg,#FFFFFF)}
+.pn{fill:#FFFFFF;fill:var(--surface,#FFFFFF);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+.bx{fill:#F6F5F1;fill:var(--band,#F6F5F1);stroke:#E4E2DC;stroke:var(--line,#E4E2DC);stroke-width:1}
+text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#1C1C1C;fill:var(--text,#1C1C1C)}
+.ttl{font:600 21px Oswald,"Arial Narrow",Arial,sans-serif;text-transform:uppercase;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.h{font-weight:600;letter-spacing:.12em;text-transform:uppercase;fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.m{fill:#5E5E5E;fill:var(--muted,#5E5E5E)}
+.b{font-weight:700;fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.ln{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none}
+.lnd{stroke:#00695F;stroke:var(--accent,#00695F);stroke-width:2;fill:none;stroke-dasharray:5 4}
+.ahp{fill:#00695F;fill:var(--accent,#00695F)}
+.dot{fill:#FF671F;fill:var(--signal,#FF671F)}
+.bdg{fill:#0A0A0A;fill:var(--ink,#0A0A0A)}
+.bt{font-weight:700;fill:#FFFFFF;fill:var(--bg,#FFFFFF);text-anchor:middle}
+.chw{fill:#FBEFDC;fill:var(--warnbg,#FBEFDC);stroke:#8A5300;stroke:var(--warn,#8A5300)}
+.chb{fill:#FDE8E6;fill:var(--badbg,#FDE8E6);stroke:#B42318;stroke:var(--bad,#B42318)}
+.cho{fill:#E0F0EE;fill:var(--okbg,#E0F0EE);stroke:#00695F;stroke:var(--ok,#00695F)}
+.tw{fill:#8A5300;fill:var(--warn,#8A5300);font-weight:700}
+.tb{fill:#B42318;fill:var(--bad,#B42318);font-weight:700}
+.to{fill:#00695F;fill:var(--ok,#00695F);font-weight:700}
+.rule{stroke:#FF671F;stroke:var(--signal,#FF671F);stroke-width:2}
+.pk{display:none}
+@media (prefers-reduced-motion:no-preference){
+.st{animation:lit var(--T) linear infinite both;animation-delay:calc((var(--i) - 1) * var(--slot))}
+.pk{display:inline;animation:mv var(--T) linear infinite}
+}
+@keyframes lit{0%{opacity:.25}1%{opacity:1}15.5%{opacity:1}16.67%{opacity:.25}100%{opacity:.25}}
+@keyframes mv{0%{transform:translate(350px,140px)}9%,16.67%{transform:translate(120px,206px)}22%,33.33%{transform:translate(120px,130px)}40%,50%{transform:translate(725px,122px)}55%,66.67%{transform:translate(400px,240px)}72%,83.33%{transform:translate(120px,260px)}89%,100%{transform:translate(725px,285px)}}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahp" d="M0,0L10,5L0,10z"/></marker></defs>
+<rect class="bg" width="840" height="492"/>
+<text class="ttl" x="10" y="32">First start: GUI setup</text>
+<line class="rule" x1="10" y1="42" x2="70" y2="42"/>
+
+<!-- data directory -->
+<rect class="pn" x="10" y="76" width="220" height="240" rx="4"/>
+<text class="h" x="20" y="96">Central data</text>
+<rect class="bx" x="20" y="104" width="200" height="66" rx="2"/>
+<text class="m" x="28" y="120">DATA/gui/</text>
+<g class="st" style="--i:2"><rect class="cho" x="28" y="126" width="184" height="16" rx="2"/><text class="to" x="34" y="139">setup-token, mode 0600</text></g>
+<g class="st" style="--i:6"><rect class="chb" x="28" y="146" width="184" height="16" rx="2"/><text class="tb" x="34" y="159">setup-token deleted</text></g>
+<rect class="bx" x="20" y="180" width="200" height="128" rx="2"/>
+<text class="m" x="28" y="196">SQLite</text>
+<g class="st" style="--i:1"><rect class="chw" x="28" y="202" width="184" height="16" rx="2"/><text class="tw" x="34" y="215">gui_setup: hash, 24 h</text></g>
+<g class="st" style="--i:5"><rect class="cho" x="28" y="224" width="184" height="16" rx="2"/><text class="to" x="34" y="237">gui_admins: new admin</text>
+<rect class="chb" x="28" y="246" width="184" height="16" rx="2"/><text class="tb" x="34" y="259">gui_setup: row deleted</text></g>
+<g class="st" style="--i:6"><rect class="cho" x="28" y="268" width="184" height="16" rx="2"/><text class="to" x="34" y="281">gui_sessions: new row</text></g>
+
+<!-- central -->
+<rect class="pn" x="290" y="76" width="270" height="240" rx="4"/>
+<text class="h" x="300" y="96">Central: GUI</text>
+<rect class="bx" x="300" y="104" width="250" height="56" rx="2"/>
+<text class="m" x="308" y="120">start, no active admin</text>
+<g class="st" style="--i:1"><rect class="chw" x="308" y="130" width="234" height="16" rx="2"/><text class="tw" x="314" y="143">EnsureGUISetup: token</text></g>
+<rect class="bx" x="300" y="170" width="250" height="44" rx="2"/>
+<text class="m" x="308" y="186">GET and POST /setup</text>
+<g class="st" style="--i:3"><rect class="chw" x="308" y="192" width="234" height="16" rx="2"/><text class="tw" x="314" y="205">other pages go to /setup</text></g>
+<rect class="bx" x="300" y="224" width="250" height="84" rx="2"/>
+<text class="m" x="308" y="240">CompleteGUISetup, one tx</text>
+<g class="st" style="--i:5"><rect class="cho" x="308" y="246" width="234" height="16" rx="2"/><text class="to" x="314" y="259">compare hash, constant time</text>
+<rect class="cho" x="308" y="266" width="234" height="16" rx="2"/><text class="to" x="314" y="279">not expired, no admin yet</text></g>
+<g class="st" style="--i:6"><rect class="cho" x="308" y="286" width="234" height="16" rx="2"/><text class="to" x="314" y="299">session started, cookie out</text></g>
+
+<!-- Dana -->
+<rect class="pn" x="620" y="76" width="210" height="240" rx="4"/>
+<text class="h" x="630" y="96">Dana</text>
+<rect class="bx" x="630" y="104" width="190" height="40" rx="2"/>
+<text class="m" x="638" y="120">shell on central</text>
+<text class="b" x="638" y="136">cat setup-token</text>
+<rect class="bx" x="630" y="154" width="190" height="154" rx="2"/>
+<text class="m" x="638" y="170">browser, :8443/setup</text>
+<g class="st" style="--i:3"><rect class="chw" x="638" y="178" width="174" height="16" rx="2"/><text class="tw" x="644" y="191">check fingerprint</text></g>
+<g class="st" style="--i:4"><rect class="cho" x="638" y="200" width="174" height="16" rx="2"/><text class="to" x="644" y="213">token, name, pass x2</text>
+<text class="m" x="638" y="232">+ _csrf (pre-cookie)</text></g>
+<g class="st" style="--i:6"><rect class="cho" x="638" y="244" width="174" height="16" rx="2"/><text class="to" x="644" y="257">__Host-mf_session</text>
+<rect class="cho" x="638" y="266" width="174" height="16" rx="2"/><text class="to" x="644" y="279">303 to Overview</text></g>
+
+<!-- arrows -->
+<g class="st" style="--i:1">
+<line class="ln" x1="298" y1="150" x2="232" y2="206" marker-end="url(#ah)"/>
+<circle class="bdg" cx="250" cy="190" r="11"/><text class="bt" x="250" y="194.5">1</text>
+</g>
+<g class="st" style="--i:2">
+<line class="ln" x1="298" y1="128" x2="232" y2="134" marker-end="url(#ah)"/>
+<text x="238" y="120">write</text>
+<circle class="bdg" cx="262" cy="150" r="11"/><text class="bt" x="262" y="154.5">2</text>
+</g>
+<g class="st" style="--i:3">
+<path class="lnd" d="M120,76 L120,60 L725,60 L725,74" marker-end="url(#ah)"/>
+<circle class="bdg" cx="420" cy="60" r="11"/><text class="bt" x="420" y="64.5">3</text>
+<line class="ln" x1="618" y1="192" x2="562" y2="192" marker-end="url(#ah)"/>
+<text x="574" y="184">GET</text>
+</g>
+<g class="st" style="--i:4">
+<line class="ln" x1="618" y1="238" x2="562" y2="238" marker-end="url(#ah)"/>
+<text x="570" y="230">POST</text>
+<circle class="bdg" cx="590" cy="258" r="11"/><text class="bt" x="590" y="262.5">4</text>
+</g>
+<g class="st" style="--i:5">
+<line class="ln" x1="298" y1="262" x2="232" y2="262" marker-end="url(#ah)"/>
+<circle class="bdg" cx="264" cy="282" r="11"/><text class="bt" x="264" y="286.5">5</text>
+</g>
+<g class="st" style="--i:6">
+<line class="ln" x1="562" y1="294" x2="618" y2="294" marker-end="url(#ah)"/>
+<text x="563" y="288">cookie</text>
+<circle class="bdg" cx="590" cy="312" r="11"/><text class="bt" x="590" y="316.5">6</text>
+</g>
+<circle class="dot pk" cx="0" cy="0" r="7"/>
+
+<!-- steps -->
+<text class="h" x="10" y="346">Steps</text>
+<g class="st" style="--i:1"><text x="10" y="370"><tspan class="b">1</tspan> Central starts with no admin: it makes a setup token and stores only its SHA-256 and a 24 h expiry.</text></g>
+<g class="st" style="--i:2"><text x="10" y="390"><tspan class="b">2</tspan> It writes the token to DATA/gui/setup-token (mode 0600). The log names the file, never the token.</text></g>
+<g class="st" style="--i:3"><text x="10" y="410"><tspan class="b">3</tspan> Dana reads the file, opens /setup (every page redirects there) and checks the certificate fingerprint.</text></g>
+<g class="st" style="--i:4"><text x="10" y="430"><tspan class="b">4</tspan> She sends the token, a username and the password twice, with a CSRF token from a short-lived cookie.</text></g>
+<g class="st" style="--i:5"><text x="10" y="450"><tspan class="b">5</tspan> CompleteGUISetup, one transaction: compare the hash, check expiry, insert the admin, delete the row.</text></g>
+<g class="st" style="--i:6"><text x="10" y="470"><tspan class="b">6</tspan> The token file is deleted and her first session starts (hash stored, cookie sent). /setup is now 404.</text></g>
+</svg>

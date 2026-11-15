@@ -48,6 +48,8 @@ guide they understand the whole design and code and never need to ask the author
 | `diagrams/workspace-boundary.svg` | the container boundary: what is locked down, what crosses, what cannot |
 | `diagrams/mcp-tool-call.svg` | one `exec` MCP tool call: harness → `mcp` → central → runner, with the output cap on the way back |
 | `diagrams/session-handoff.svg` | the session handoff file: hook writes `cc:<id>`, server reads it, `--resume` reattaches |
+| `diagrams/gui-setup.svg` | first-start GUI setup: setup token file → `/setup` → first session |
+| `diagrams/gui-revoke.svg` | a runner revoke from the GUI: Host, session, CSRF and typed-name checks → `Service.Lifecycle` → audit |
 
 ## Chapter files
 `README.md` (index and reading order), `glossary.md`, `01-what-is-mirafleet.md`,

@@ -13,13 +13,15 @@ with the code, a checklist for reviewing a change, and some real first tasks.
 - A review checklist and a list of small, real tasks to start with.
 - How to add support for a new agent tool (a *harness integration*) without touching the core
   ([section 11.7](#117-adding-a-harness-integration)).
+- How to add a screen to the admin GUI, and the template rules that keep it safe
+  ([section 11.8](#118-adding-a-gui-screen)).
 
 ## 11.1 The ground rules, with reasons
 
 These come from [CLAUDE.md](../../CLAUDE.md) **as of 13 Nov 2026**. If the two ever disagree,
 CLAUDE.md wins and this table should be fixed. Read the file itself too; it is short and
-binding. Status today: M1, M2, M3 (workspaces) and M5 (the MCP server and harness integrations)
-are done; next come M4 (GUI) and M6 (release). A rule without a reason gets broken the first time it is inconvenient, so here is the reason for
+binding. Status today: M1, M2, M3 (workspaces), M4 (the admin GUI) and M5 (the MCP server and
+harness integrations) are done; next comes M6 (release). A rule without a reason gets broken the first time it is inconvenient, so here is the reason for
 each.
 
 | Rule | Why |
@@ -33,6 +35,7 @@ each.
 | **Containers:** the Docker ecosystem is supported (Docker CLI, Docker Engine, Compose, `docker.io` images), never a hard dependency on Docker's commercial products. Runner workspaces (M3) use containerd through its Go client, never Docker Engine. | We want open tooling anyone can run for free. Docker Engine runs on containerd, so one client covers Docker hosts and plain containerd hosts; the workspace namespace is `mirafleet`, and `moby` (Docker's) is refused in code so the two never mix. |
 | **The runner-side actions guard is the security boundary:** argv only, no shell, regex-validated params. | Central and the agent are not trusted to decide what is safe to run. The only thing that cannot be talked around is the allowlist on the machine that executes. Every change near `internal/actions` gets the strictest review. |
 | **M3 design rule (from [M3.md](../M3.md) section 1.11, not a line of CLAUDE.md): the workspace boundary is the container, and the runner builds it.** `workspace.yaml` has no field for privileged containers, unconfined profiles or host mounts; the runner re-validates everything central sends; nothing in a workspace gets API keys. The actions guard rule above is unchanged. | A workspace runner is root-equivalent (it holds the containerd socket), so central must not be able to ask for more than the runner's own template allows. Review changes in `internal/workspace/ctrd/spec_linux.go`, `wsconfig`, `egress` and `runner/workspace.go` as strictly as `internal/actions`. |
+| **M4 design rule (from [M4.md](../M4.md) section 2.1, not a line of CLAUDE.md): the GUI is a front end of `service`, nothing more.** `internal/gui` calls `*service.Service` through the `gui.Backend` interface and never imports the store, the registry, SSH or `internal/central` (`TestGUIDeps`); it is wired only from a Linux file. Every route is behind the session check, every POST behind CSRF, and the CSP forbids inline script and style. | The GUI parses untrusted input from a browser on a port that may be open to a whole network. If a handler could reach the database it could skip the policy and the audit that every other front end goes through. Review changes in `internal/gui` (middleware, session, CSRF, templates) as strictly as `internal/actions`. |
 | **Harness-agnostic core.** The MCP server must work with no hooks. Harness-specific code lives only in `integrations/<harness>/`. | Claude Code is first, but opencode, Kilo Code and others must be able to use mirafleet. Hooks are a convenience, never a requirement, so a plain MCP client keeps all safety guarantees. |
 | **OSS stays lean.** Enterprise features (RBAC, SSO, HA, ...) are out of scope; leave interface seams only. | The open-source edition has a clear job. Seams such as `PolicyEngine`, `AuthProvider` and `Store` let enterprise builds replace pieces without forking. Do not build the enterprise piece "just in case". |
 | **Containers only for tooling.** No host `go`, brew, npm or pip for this repo; everything via `scripts/dev.sh`. | Same compiler for everyone, a clean laptop, and a habit of not running install scripts. See [chapter 9](09-dev-setup-and-testing.md#91-the-container-only-rule). |
@@ -112,8 +115,11 @@ executor, every run) and `TestM3DoneIntegration` (real containerd, `scripts/dev.
 For M5 it is `TestM5Done` (the MCP layer against a real central) together with `TestM5NoHooks` (the
 built binary with no hooks).
 
+For M4 it is `TestM4Done` (the admin GUI against a real central) together with the GUI security
+suite and the built-binary smoke test `TestGUIBinary`.
+
 For a milestone with real design choices there is a detailed file, `docs/M2.md`, `docs/M3.md`,
-`docs/M5.md`. Reading [M2.md](../M2.md) shows the shape ([M3.md](../M3.md) and
+`docs/M4.md`, `docs/M5.md`. Reading [M2.md](../M2.md) shows the shape ([M3.md](../M3.md) and
 [M5.md](../M5.md) follow it, with an extra section for the developer-guide updates):
 
 1. **Design decisions** (section 1): store, tokens, auth, protocol, admin socket, revoke, audit.
@@ -191,7 +197,8 @@ Two kinds, both described in STYLE.md:
 
 The shared diagram names are `big-picture.svg`, `runner-join.svg`, `operator-register.svg`,
 `action-run.svg`, `revoke.svg`, `framing.svg` and, since M3, `workspace-open.svg`,
-`workspace-exec.svg` and `workspace-boundary.svg`. Reuse them; add new names only for new flows,
+`workspace-exec.svg` and `workspace-boundary.svg`, and, since M4, `gui-setup.svg` and
+`gui-revoke.svg`. Reuse them; add new names only for new flows,
 and add the matching numbered list to `diagrams/README.md`.
 View your SVG in both a light and a dark browser theme, and with "reduce motion" on, before you
 commit. One more rule learned the hard way: **write a plain colour before every `var()`**, for
@@ -257,6 +264,19 @@ Copy this into your PR description and tick it honestly. Reviewers use the same 
 - [ ] A harness integration lives only under `integrations/<harness>/` and adds nothing to the
       core that only that harness needs (section 11.7).
 
+**GUI** (anything under `internal/gui`)
+
+- [ ] The new routes are registered with a literal `"METHOD /path"` through `adminMux` (or are
+      the documented exceptions: setup, login, static) so the security suite finds them.
+- [ ] Every state change is a POST that goes through `screenForm`; a destructive one has a
+      confirmation page; a success answers `Redirect` (303), not a rendered page.
+- [ ] The handler reaches data only through `gui.Backend`; no store row with secret material
+      reaches a template; runner-supplied text is shown through `inertRunnerText` or the
+      escaping templates, never as HTML.
+- [ ] The template obeys the CSP rules of section 11.8 (`TestTemplateLint*` pass), and the flow
+      works without JavaScript (`TestS16NoJSFlows` style).
+- [ ] The service method the screen calls is audited, and the audit row says `source` `gui`.
+
 **Docs**
 
 - [ ] The matching guide chapters, README quickstart and `docs/ARCHITECTURE.md` /
@@ -293,11 +313,14 @@ changes behaviour, open a short plan or issue first (section 11.2).
    is the smallest correct version; set `CI=1` so `deps_test.go` fails instead of skipping when
    `go` is missing. Teaches: the whole dev flow. Any new GitHub Action you pull in must itself be
    licence-checked.
-5. **Filters for `central audit`.** `audit.list` only supports `since_id` and `limit`; add
-   optional `fleet`, `runner` and `action` filters. This touches every layer, so it is a good
-   tour: `api.AuditListParams`, `store.Store.ListAudit` (and the conformance suite),
-   `sqlite/audit.go` (an index on `(fleet, runner)` already exists), `handleAuditList`,
-   `adminCLI.audit`, tests and chapter 10. Agree the parameter names first.
+5. **A deferred M4 finding.** The end of [M4.md](../M4.md) lists review findings (G-xx, P2 and
+   P3). For example G-38: the fleet name `new` is reserved by the GUI (it would be shadowed by
+   `/fleets/new`) but the CLI can still create it, so reserve it in `store.ValidFleetName`; or
+   G-37: show the workspaces screen's operator, session and image through `inertRunnerText` as
+   the runner page does. Check the code first, since some entries are fixed before the list is
+   updated (G-10 is fixed in the code); write the failing test first (`storetest` for a store behaviour); mark the entry. Teaches: the store contract and
+   how reviews close. (The audit filters that this list used to suggest as a task landed in M4:
+   see [chapter 7.6](07-protocols.md#76-admin-methods-local-admin-socket).)
 6. **systemd units for the M6 packages.** `runner join` already tells users the unit "ships with
    the M6 packages". Draft `mirafleet-central.service` and `mirafleet-runner.service` with a
    dedicated unprivileged user and `Restart=on-failure`, and document them in chapter 10. Teaches:
@@ -426,6 +449,62 @@ never emits `allow` (only `ask`), and why `TestM5NoHooks` runs the full flow wit
 - [ ] The shared body is copied unchanged and a test proves it.
 - [ ] The README says what works with no hooks and what was not verified.
 
+## 11.8 Adding a GUI screen
+
+The file-by-file recipe (service method, `Backend`, handler, route, template, tests) is in
+[chapter 8, "A new GUI screen"](08-code-tour.md#a-new-gui-screen-m4). This section is the part
+only a contributor needs: the **template rules**, with the reason for each. They exist because the
+GUI sends a strict Content-Security-Policy (`default-src 'none'; script-src 'self'; style-src
+'self'; ...`, no `unsafe-inline`, no `unsafe-eval`). That policy is the second wall behind output
+escaping: if some text from a runner (a host name, a label) ever reached the page unescaped, the
+browser would still refuse to run it. Break a rule below and either the browser blocks your page
+or a lint test fails. The tests that check them are `TestTemplateLintSources` and
+`TestTemplateLintRenderedPages` in `internal/gui/security_test.go`.
+
+**Checklist for a template**
+
+- [ ] **No inline script and no inline style.** No `<script>` with a body, no `<style>`, no
+      `style="..."` attribute. Put a class in `static/app.css` instead. *Why:* the CSP allows only
+      files served from our own origin, so an inline one is blocked, and a way to inject one is the
+      very hole the CSP closes.
+- [ ] **No event attributes.** No `onclick=` or any `on...=`; no `javascript:` or `js:` values.
+      *Why:* same rule, and these are the usual XSS carriers. Behaviour goes into `static/app.js`
+      (under 150 lines, no dependencies) or into an htmx attribute.
+- [ ] **Only the allowed htmx attributes:** `hx-get`, `hx-post`, `hx-target`, `hx-swap`,
+      `hx-trigger`, `hx-select`, `hx-confirm`, `hx-indicator`, `hx-headers`, `hx-disabled-elt`,
+      `hx-include`. No `hx-on...`, `hx-vars`, `data-hx-...`. *Why:* the others evaluate
+      JavaScript (`allowEval` is off, and the lint says the same thing earlier).
+- [ ] **`hx-trigger` only in the plain forms** `load`, `every Ns`, `change`, `submit`,
+      `keyup changed delay:Ns`, joined with commas; no `[...]` filters. *Why:* a filter is a
+      JavaScript expression.
+- [ ] **Every form works without JavaScript.** A form has `method="post"` and a real `action`;
+      `hx-post` is an extra on top of it, never instead. Include the hidden token with
+      `{{template "ui/csrf" .}}`. *Why:* accessibility, the text-mode browser, and the proof that
+      the server does the work (`TestS16NoJSFlows`).
+- [ ] **A fragment that is polled is registered with `mux.Passive`.** *Why:* otherwise an open tab
+      keeps the session alive forever.
+- [ ] **Untrusted text is plain template output**, which `html/template` escapes. Never
+      `template.HTML`, `template.JS` or `template.URL` outside the one vetted helper file
+      (`TestTemplateNoTrustedTypesOutsideHelper`). Long values are clipped in Go with
+      `inertRunnerText` and carry the full value in a `title`. *Why:* a runner's host name is
+      chosen by whoever controls that host.
+- [ ] **Build links with `PathEscape` / `QueryEscape`** in Go, not by pasting names into a path.
+      *Why:* a runner called `a/../b` must not become a different URL.
+- [ ] **Status is a word and a colour**, never a colour alone (use the `ui/badge` partial). The
+      colours come from [BRAND.md](../BRAND.md). *Why:* colour-blind readers, and
+      `TestS16ContrastAA` checks the contrast.
+- [ ] **A secret is shown once.** If the page shows a join token or a code, the handler renders it
+      directly with `Cache-Control: no-store` (no redirect, no history entry) and nothing later can
+      show it again. A new such page needs a design note first.
+- [ ] **A destructive action goes through a separate confirmation page** (`GET .../revoke`, then
+      `POST`), in the red dialog style, saying what it will do. The biggest ones ask for the typed
+      name too (`fleet/runner` for a runner revoke, the fleet name to turn a guard off). *Why:* a
+      mis-click on a table row must not revoke anything.
+
+If you add an asset (a font, a script), it must be vendored under `internal/gui/static`, listed in
+`static/ASSETS.md` with its licence and hash, and pass the licence rule in
+[section 11.1](#111-the-ground-rules-with-reasons); `CheckVendored` fails otherwise.
+
 ## Check your understanding
 
 1. Why does the guide say "name files and functions, not line numbers"?
@@ -444,6 +523,9 @@ never emits `allow` (only `ask`), and why `TestM5NoHooks` runs the full flow wit
 8. A teammate says "my harness has hooks, so let the server skip the guarded-fleet refusal when
    the hook has already asked the user." Why is that wrong?
 9. What is the smallest set of changes that adds support for a new harness with no hooks?
+10. You add a button with `onclick="copyToken()"` to a GUI template. What happens in the browser,
+    and which test fails first?
+11. Why may `internal/gui` not import `internal/store/sqlite` "just to read one column"?
 
 <details>
 <summary>Answers</summary>
@@ -481,5 +563,14 @@ never emits `allow` (only `ask`), and why `TestM5NoHooks` runs the full flow wit
    or command files, a copy of the shared command body plus a test that it is identical, and, if
    the harness has hooks, a hook package and one `case` in `cmd/mirafleet/mcp_hook.go`. No change to
    `internal/orch` or `internal/mcpserver`, and `TestM5NoHooks` must stay green untouched.
+10. The browser refuses to run it: the Content-Security-Policy has no `unsafe-inline`, so the
+    handler never fires (the button does nothing and the console shows a CSP violation).
+    `TestTemplateLintSources` fails first, because it scans the template source for `on...=`
+    attributes. The fix is a class on the button and a few lines in `static/app.js` (or no
+    script at all, using a normal form).
+11. The GUI handles untrusted browser input on a port that may face a network. Through `service`
+    every action is authorised, validated and audited the same way as for the CLI; a direct
+    database read would skip all three and put SQL next to HTML. `TestGUIDeps` fails the build.
+    The right move is a new `service` method, then a line in `gui.Backend`.
 
 </details>

@@ -141,3 +141,21 @@ find the same workspace after `claude --resume` (row 2).
 6. `claude --resume`: same session id, new PIDs. The hook runs again and rewrites the file for the new PID.
 7. The server reads `cc:abc` again and central answers `reused: true`: same container, same files.
 8. After `/clear` the id is new, so the next open binds a new workspace. With no hook there is no file, and the server uses a random per-process session `p:...`.
+
+## gui-setup.svg
+Caption: follow the setup token from central's start to the file, then to Dana's browser and the first session.
+1. Central starts with no admin: it makes a setup token and stores only its SHA-256 and a 24 h expiry.
+2. It writes the token to `DATA/gui/setup-token` (mode 0600). The log names the file, never the token.
+3. Dana reads the file, opens `/setup` (every page redirects there) and checks the certificate fingerprint.
+4. She sends the token, a username and the password twice, with a CSRF token from a short-lived cookie.
+5. `CompleteGUISetup`, one transaction: compare the hash, check expiry, insert the admin, delete the row.
+6. The token file is deleted and her first session starts (hash stored, cookie sent). `/setup` is now 404.
+
+## gui-revoke.svg
+Caption: count the gates before the service call; the last half is the same as `revoke.svg`.
+1. Dana types `dev/build-1` on the revoke page and submits: `POST /runners/dev/build-1/revoke`.
+2. Middleware: the Host must be allowed, the body a urlencoded form under 64 KiB (421, 415, 413).
+3. Session: the cookie's hash finds a live row of the active admin, else 303 to `/login`.
+4. CSRF: same-origin headers, then the `_csrf` token must match the cookie's key (403).
+5. The typed name must equal `dev/build-1` (422), then `Service.Lifecycle` runs with source `gui`.
+6. Same path as the CLI: tombstone, kick, cancel, one commit with the audit row. Then 303 back.
