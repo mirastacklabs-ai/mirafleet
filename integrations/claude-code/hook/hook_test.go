@@ -92,7 +92,13 @@ func TestSessionStartWritesHandoff(t *testing.T) {
 func TestSessionStartProjectFallsBackToCwd(t *testing.T) {
 	env := testEnv(t, &fakeBackend{})
 	env.ProjectDir = ""
-	run(t, "session-start", fixture(t, "session_start.json"), env)
+	var in map[string]any
+	if err := json.Unmarshal([]byte(fixture(t, "session_start.json")), &in); err != nil {
+		t.Fatal(err)
+	}
+	in["cwd"] = testProj // the fixture's POSIX cwd is not absolute on Windows
+	b, _ := json.Marshal(in)
+	run(t, "session-start", string(b), env)
 	if _, ok, _ := handoff.Read(env.StateDir, handoff.Key{PID: 4242, Project: testProj}); !ok {
 		t.Fatal("cwd fallback not used")
 	}
