@@ -2,5 +2,7 @@
 
 - [Quickstart](Quickstart)
 - [The guide](Guide)
-- [First chapter](01-First-Chapter)
 - [Glossary](Glossary)
+- [First chapter](01-First-Chapter)
+
+_Generated from `docs/` at abc1234; edit there._

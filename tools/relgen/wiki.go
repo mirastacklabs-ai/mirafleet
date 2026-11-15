@@ -84,11 +84,12 @@ func wikiSources(root string) (pages []string, diagrams []string, err error) {
 		pages = append(pages, "docs/QUICKSTART.md")
 	}
 	pages = append(pages, "docs/guide/README.md")
-	for _, c := range chapters {
-		pages = append(pages, "docs/guide/"+c)
-	}
+	// The guide's reading order puts the glossary first (chapter 0).
 	if st, err := os.Lstat(filepath.Join(guide, "glossary.md")); err == nil && st.Mode().IsRegular() {
 		pages = append(pages, "docs/guide/glossary.md")
+	}
+	for _, c := range chapters {
+		pages = append(pages, "docs/guide/"+c)
 	}
 	dents, err := os.ReadDir(filepath.Join(guide, "diagrams"))
 	if err != nil && !os.IsNotExist(err) {
@@ -139,9 +140,14 @@ func rewriteLinks(src, body string, pageOf map[string]string, diagrams map[strin
 			inFence = !inFence
 		}
 		if !inFence {
-			line = wikiLinkRE.ReplaceAllStringFunc(line, func(m string) string {
-				return "](" + fix(wikiLinkRE.FindStringSubmatch(m)[1]) + ")"
-			})
+			// Inline code spans (odd segments between backticks) are left alone.
+			segs := strings.Split(line, "`")
+			for i := 0; i < len(segs); i += 2 {
+				segs[i] = wikiLinkRE.ReplaceAllStringFunc(segs[i], func(m string) string {
+					return "](" + fix(wikiLinkRE.FindStringSubmatch(m)[1]) + ")"
+				})
+			}
+			line = strings.Join(segs, "`")
 			if m := wikiRefDefRE.FindStringSubmatch(line); m != nil {
 				line = m[1] + fix(m[2]) + line[len(m[0]):]
 			}
@@ -203,9 +209,9 @@ func buildWiki(root, commit string) (map[string][]byte, error) {
 		fmt.Fprintf(&list, "- [%s](%s)\n", p.Title, p.Name)
 	}
 	files["Home.md"] = []byte("# mirafleet\n\nClaude Code orchestrates fleets of servers through a central server.\n\n" +
-		list.String() + "\nSource and issues: " + strings.TrimSuffix(wikiBlobBase, "blob/main/") + "\n\n" +
-		"_Generated from `docs/` at " + commit + "._\n")
-	files["_Sidebar.md"] = []byte("**[Home](Home)**\n\n" + list.String())
+		list.String() + "\nSource and issues: " + strings.TrimSuffix(wikiBlobBase, "blob/main/") + "\n")
+	files["_Sidebar.md"] = []byte("**[Home](Home)**\n\n" + list.String() + "\n_Generated from `docs/` at " + commit + "; edit there._\n")
+	files["Home.md"] = append([]byte(banner), files["Home.md"]...)
 	return files, nil
 }
 

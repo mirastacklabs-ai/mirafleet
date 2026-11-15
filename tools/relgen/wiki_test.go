@@ -29,6 +29,9 @@ func TestWikiGolden(t *testing.T) {
 	}
 	for _, f := range got {
 		b, _ := os.ReadFile(filepath.Join(out, filepath.FromSlash(f)))
+		if strings.HasSuffix(f, ".md") && !strings.Contains(string(b), "enerated from `docs/` at abc1234") {
+			t.Errorf("%s: no banner", f)
+		}
 		goldenN26(t, "wiki/golden/"+f, string(b))
 	}
 }
@@ -44,6 +47,12 @@ func TestWikiLinks(t *testing.T) {
 	want := "[g](Glossary#t) ![a](diagrams/a.svg) [arch](" + wikiBlobBase + "docs/ARCHITECTURE.md) [x](https://e.com/a.md) [h](#h)"
 	if got != want {
 		t.Errorf("got %q", got)
+	}
+	// Links inside inline code spans are examples, not links.
+	code := "use `![alt](diagrams/<name>.svg)` and [g](glossary.md)"
+	got, err = rewriteLinks("docs/guide/README.md", code, pages, dia)
+	if err != nil || got != "use `![alt](diagrams/<name>.svg)` and [g](Glossary)" {
+		t.Errorf("code span: %q %v", got, err)
 	}
 	// A link that climbs out of the repository is refused, never rewritten to a path.
 	if _, err := rewriteLinks("docs/guide/README.md", "[e](../../../etc/passwd)", pages, dia); err == nil {
