@@ -207,7 +207,8 @@ container is the boundary. In the MCP tools the same story reads: `workspace_ope
 
 ## 1.4a Host mode: remote development on a VM (M7)
 
-<!-- verify: M7 status. Built on branch m7-wave-a; TestM7Done/TestM7DoneIntegration and the user smoke test (S21) were not finished when this was written. Update "built" wording after the reconciliation pass. -->
+M7 is built (steps S0 to S20 done, 15 Nov 2026) on branch `m7-wave-a`; the review and the user
+smoke test (S21) are in progress.
 
 MIRASTACK LABS built mirafleet to solve its own problem: it has spare servers and VMs sitting
 idle, and wants them to do the engineers' AI coding sessions without anyone receiving server
@@ -355,7 +356,7 @@ the admin CLI already covers the GUI's functions. Full details are in [../PLAN.m
 | **M3** Workspaces | `workspace.Executor`, containerd executor, optional OpenSandbox executor, scheduling and sticky sessions, TTL reaper, reconcile, `workspace.*` API, egress proxy | done (13 Nov 2026); see [../M3.md](../M3.md) |
 | **M5** Orchestrator | the real `mirafleet mcp` stdio MCP server (nine tools), contexts and project defaults, session handoff, Claude Code plugin and hooks, opencode and generic notes, Windows support, action discovery; see [../M5.md](../M5.md) | **built** (smoke test with real Claude Code pending) |
 | **M4** Admin GUI | web screens on central (built with htmx, a small library that updates page parts from the server) | done (15 Nov 2026; the user's browser check is pending) |
-| **M7** Remote development on a VM | workspace executor `host`; central-held credentials (encrypted at rest); SSH agent and HTTPS broker on the runner; background jobs; full output with paging; Claude Code tool parity (`read`, `edit`, `grep`, ...); upload/download; GUI Credentials page; see [../M7.md](../M7.md) | **built** on branch `m7-wave-a`; user smoke test pending <!-- verify: M7 status wording at merge time --> |
+| **M7** Remote development on a VM | workspace executor `host`; central-held credentials (encrypted at rest); SSH agent and HTTPS broker on the runner; background jobs; full output with paging; Claude Code tool parity (`read`, `edit`, `grep`, ...); upload/download; GUI Credentials page; see [../M7.md](../M7.md) | **built**; review in progress, user smoke test pending |
 | **M6** Release | CI, packages (`.deb` and `.rpm` are the install files for Debian/Ubuntu and Red Hat systems; plus a container image), signing, install script, plugin stores | **planned** |
 
 What this means for you today:

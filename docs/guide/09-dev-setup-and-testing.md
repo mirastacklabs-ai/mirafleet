@@ -1060,10 +1060,15 @@ The subtests are numbered like the checks in M7.md:
 12. Central rotation: a `rotate: gitlab_self` credential near expiry is rotated against an
     `httptest` GitLab and every assigned runner gets the new value; an unreachable GitLab is
     audited and the old value keeps working.
-<!-- verify: the file currently registers 01_credentials..03_tool_parity; steps 4-12 are being added (S17). Re-check names against internal/central/m7_done_test.go -->
+All 12 subtests exist, named `01_credentials`, `02_placement`, `03_tool_parity`, `04_bash`,
+`05_background_shells`, `06_dirs`, `07_transfer_confinement`, `08_events`, `09_hygiene`,
+`10_one_operator_per_runner`, `11_guarded_host_fleet` and `12_central_rotation`. `09_hygiene` runs
+last, because it scans everything the others produced. `ann` and `bob` are the fixture names in the
+test code.
 
-Run it alone with `scripts/dev.sh go test -race -run TestM7Done ./internal/central/`. Like
-`TestM5Done`, the steps share state, so a failing step stops the later ones (the log says so).
+Run it alone with `scripts/dev.sh go test -race -run TestM7Done ./internal/central/`. Steps 1 and 2
+build the state the others use, so if one of them fails the later steps are skipped (the log says
+so); the other steps open their own workspaces, so one failure does not hide the next.
 
 What `m7Host` cannot show: real processes, `/proc`, the broker on a real TLS connection, ownership
 by real Unix users. That is the second test's job.
@@ -1165,7 +1170,12 @@ workspace with `workspace.close`, list the directories again (they are still the
 `mf runner host prune -older-than 1s -root /tmp/work` (without `-older-than` the 30-day default finds nothing yet; this is a dry run; `-root` is the `host.root` of the runner's `workspace.yaml`) and then with `-yes`. To see what a
 real MCP client sees, point it at `mf mcp serve` as in [9.14](#914-try-it-locally-the-mcp-server-and-the-claude-code-plugin);
 the 24 tools appear in `tools/list`.
-<!-- verify: exact flags of `central fleet create -executor host`, `runner host prune -root` and the location of the state dir; try the block once in scripts/dev.sh shell before release -->
+
+The session state directory is `<state>/sessions/<slug>/`, where `<state>` is
+`$XDG_STATE_HOME/mirafleet` (default `~/.local/state/mirafleet`), and `<slug>` is the session id or
+`h_` plus a hash of it. The flags in this block match the CLI source (`fleet create -mode
+-executor`, `runner host prune -older-than -yes -root`); the block itself was not run as part of
+the docs pass.
 
 To try Git with credentials end to end you need a Git server whose host is reachable from the
 runner and a CA the VM trusts; the easiest way is to read `internal/testfake/gitlab`, which

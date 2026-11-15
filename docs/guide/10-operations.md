@@ -1709,8 +1709,9 @@ and each is assigned credentials separately.
 
 Refused with the host executor: `images`, `limits.cpus/memory/pids/tmpfs/disk`, and the
 `containerd` and `opensandbox` blocks. The file is read at runner start; restart the runner after
-an edit.
-<!-- verify: `network` is accepted but not enforced in host mode (M7.md: "use the VM's firewall"); confirm what `egress` does on a host fleet -->
+an edit. Central takes no egress rules for a host fleet either (`fleet create -executor host` with
+`-egress`, `-image`, `-images` or a resource limit is refused); `network` is accepted and stored but
+nothing in host mode enforces it, so use the VM's firewall.
 
 Where things live for the user `dev` (all 0700):
 
@@ -1719,12 +1720,10 @@ Where things live for the user `dev` (all 0700):
 | runner key, `workspace.yaml` | `~/.config/mirafleet/` |
 | session records, per-session runtime dir (`agent.sock`, `ca.pem`, `ssh_config`, `out/`, `jobs/`, `cwd`) | `~/.local/state/mirafleet/` |
 | session directories | `<host.root>/sessions/<slug>`, shared `<host.root>/work/<name>` |
-| runner audit log, credential-use log (JSONL, no values) | the runner's data directory |
+| runner audit log, including `credential.use` rows (JSONL, no values) | `audit.jsonl` in the runner's `-data` directory |
 
 `HOME` for the agent's commands is the user's real home, so tool caches (`~/.m2`,
 `~/.cache/go-build`) are shared across sessions, as on a laptop.
-<!-- verify: location of the runner-local audit and credential-use JSONL under XDG -->
-
 ### 10.11.4 Creating the credentials in GitLab
 
 Give each credential the **least** power its job needs, because a credential's limits are the limits
@@ -1769,8 +1768,8 @@ GitLab gives it; mirafleet adds no path or branch rules.
   ```
 
   All credentials are re-encrypted in one transaction; a failure leaves the old key valid. Back up
-  the new key first.
-  <!-- verify: whether central must be stopped during rekey; the CLI opens the DB directly (-data) -->
+  the new key first. Rekey is offline: it takes the data-directory lock, so it fails while central
+  is running. Stop central first, rekey, then start it with the new key.
 - **Central cannot start** ("wrong key" or "key not set"): the environment variable is missing or
   does not match the stored key check. Fix the file; do not delete credentials to get past it.
 
@@ -1802,9 +1801,7 @@ carries the recipe) and use `JAVA_TOOL_OPTIONS`.
 
 One practical consequence: if `kalyan` uses the runner after `durga`, `durga`'s directories are still
 there and readable by the same Unix user. Prune between operators if that matters to you.
-<!-- verify: the API method workspace.kill has `delete`, but the CLI `central workspace kill` has no -delete flag yet; check admin_workspace.go before release -->
-<!-- verify: `central fleet create -mode workspace -executor host` with no image flag (step 2); try it once on a real build -->
-<!-- verify: the `runner.replaced` audit row and the GUI flag (10.11.8) are decided in M7.md 3.2; confirm the action name when S11 lands -->
+<!-- verify: the `runner.replaced` row is written (action name confirmed in internal/service/events.go) but no code in internal/gui shows a flag for it; confirm the GUI flag in the browser check -->
 
 
 ### 10.11.8 Day-2

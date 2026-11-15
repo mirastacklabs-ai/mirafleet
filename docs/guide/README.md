@@ -12,9 +12,9 @@ tests, and make your first change without asking the authors.
 > server, Claude Code plugin and hooks, Windows support) is built; a smoke test with a real Claude
 > Code is still to run. M4 (the admin GUI) is done pending the user's browser check, and M7
 > (**host mode**: remote development on a VM, central-held credentials, background jobs, full
-> output, Claude Code tool parity; see [../M7.md](../M7.md)) is built on branch `m7-wave-a`, with the
-> user smoke test still to run. Next: M6 (release). Where a feature is planned, the guide says so
-> and links the milestone in [../PLAN.md](../PLAN.md). <!-- verify: status wording at merge time -->
+> output, Claude Code tool parity; see [../M7.md](../M7.md)) is built; review is in progress and the
+> user smoke test is still to run. Next: M6 (release). Where a feature is planned, the guide says so
+> and links the milestone in [../PLAN.md](../PLAN.md).
 >
 > **New in M7 (read these first if you work on host mode):** [1.4a](01-what-is-mirafleet.md#14a-host-mode-remote-development-on-a-vm-m7),
 > [2.12](02-background.md#212-host-mode-background-secrets-you-can-use-but-not-read-m7),

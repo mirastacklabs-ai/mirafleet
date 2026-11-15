@@ -255,7 +255,7 @@ channels through a **`workspace.Executor`**, the Go interface in `internal/works
 
 | Executor | Package | What it does | Default? |
 |---|---|---|---|
-| `containerd` | `internal/workspace/ctrd` (Linux only) | Runs the container itself through the containerd Go client; builds the OCI spec; reads and writes files with `os.Root`; runs the egress proxy. | yes |
+| `containerd` | `internal/workspace/ctrd` (Linux only) | Runs the container itself through the containerd Go client; builds the OCI spec; reads and writes files with `os.Root` (confined to the workspace directory; the `host` executor does not use `os.Root`, see below); runs the egress proxy. | yes |
 | `opensandbox` | `internal/workspace/osb` | Speaks HTTPS to an [OpenSandbox](02-background.md#29-containers-containerd-and-opensandbox) server on the same host, through a TLS front, with mutual TLS. No SDK. | opt-in per fleet |
 
 Beside them: `internal/workspace/wsconfig` (loads and validates `workspace.yaml`),
@@ -302,7 +302,6 @@ Facts to remember about a workspace runner:
 
 ### Host mode: the M7 runner
 
-<!-- verify: component list below follows docs/M7.md section 5 and the notes in scratchpad m7-docs-notes.md; re-check package and file names (internal/workspace/{hostx,broker,sshagent,fsops}, internal/secrets, internal/runner/{creds,events,hostops}.go, internal/service/{credentials,jobs,fsdispatch,events}.go) at reconciliation. -->
 
 M7 adds a third executor, `host`, selected by `executor: host` in `workspace.yaml`
 ([chapter 1, 1.4a](01-what-is-mirafleet.md#14a-host-mode-remote-development-on-a-vm-m7)). Everything
@@ -358,17 +357,19 @@ Facts to remember about a host runner:
   the home directory. A second runner on the same VM is a second user (`qa`), enrolled separately.
 - **Config.** `workspace.yaml` takes `executor: host` plus an optional `host:` block (`root`, `cleanup.delete_after`,
   `job_max`, `corporate_ca_file`). A host runner takes no image, no resource limits and no egress
-  list: the VM and its firewall are the boundary. <!-- verify: exact keys of the host: block in internal/workspace/wsconfig/config.go (root, cleanup.delete_after, job_max, corporate_ca_file) -->
-- **Directories.** Each session gets `<root>/sessions/<slug>` (mode `0700`; `<slug>` derives from
+  list: the VM and its firewall are the boundary.- **Directories.** Each session gets `<root>/sessions/<slug>` (mode `0700`; `<slug>` derives from
   the session id). A project may share a named directory instead: `workdir: NAME` in
   `.mirafleet.yaml` resolves to `<root>/work/<name>` (names match `^[a-z0-9][a-z0-9._-]{0,62}$`,
   host fleets only, symlinks refused). Closing a workspace stops its processes and closes its
   agent socket and broker session, but **keeps the directory**; reopening the same session
   reattaches. The runner labels workspaces `mirafleet.session` and `mirafleet.workdir`, so
   reattach is by session. A second open of a session that is still held is refused
-  (`ErrRefused`). <!-- verify: concurrent open of the same session refused (ErrRefused), host layout <root>/sessions/<slug> and <root>/work/<name>, labels, per notes (d652c77) -->
+  (`ErrRefused`). The directory is `<root>/sessions/<slug>`, or `<root>/work/<name>` for a shared workdir; the labels are
+  `mirafleet.session`, `mirafleet.workdir` and `mirafleet.credentials`. The credential scope of the
+  open is saved as `creds_scope` in the session state directory, so a re-adopted session gets the
+  same, never a wider, set.
 - **One operator at a time.** A host runner is held by the operator who has live workspaces on it.
-  Another operator's `workspace_open` gets `runner busy, in use by durga` and placement skips the
+  Another operator's `workspace_open` gets a `conflict` error, `busy: runner build-1 is in use by durga`, and placement skips the
   runner. The hold is released when the last live workspace ends. It is enforced inside the store's
   reserve transaction, with no extra table.
 - **Credentials are placed.** A fleet with credentials requested only places on a runner that holds
@@ -600,8 +601,9 @@ The boundaries, one by one:
    The line that matters is between that container and the runner host: a user namespace,
    no capabilities, a read-only root, a seccomp filter, cgroup limits and an empty network
    (or an allowlisting proxy). Chapter 5, [section 5.9](05-security.md#59-the-workspace-container-boundary),
-   covers each defence. Nothing the container does is trusted: the runner reads its files only
-   through `os.Root` and re-checks every path.
+   covers each defence. Nothing the container does is trusted: on a container fleet the runner
+   reads its files only through `os.Root` and re-checks every path. (A host-mode workspace has no
+   container; its file tools are not confined, see chapter 5, section 5.12.)
 7. **Runner host to containerd.** A runner that serves workspaces must reach the containerd
    socket, and **access to that socket is equivalent to root on the host**. A workspace runner
    is therefore a root-equivalent process: run it on a dedicated machine or VM, in its own
@@ -648,7 +650,7 @@ allowlist permits. The runner-side guard bounds the damage but cannot remove it.
 | Workspace directories | `workspace.Create` | The workspace runner | `<containerd.root>/<ws_id>`, default `/var/lib/mirafleet/ws`; root-owned `0700` | The files an agent wrote. Not secret by design: **never put credentials in a workspace**. |
 | **Secrets master key** (32 bytes) (M7) | `mirafleet central keygen` | Central host | `MIRAFLEET_SECRETS_KEY` in a `0600` environment file read by `central run` | Nobody. The database stores only a key-check value (an HMAC of a constant). If it is lost, every stored credential is lost. |
 | **Credential values** (M7) | `central credential set` or the GUI | Central, then runner memory | `credentials.ciphertext` in `mirafleet.db` (AES-256-GCM); on a host runner **in memory only**, never on disk, in env or in argv | The runner that holds the assignment. The agent can use them through the agent socket and the broker, never read them. |
-| Per-session CA, agent socket (M7) | The host runner, per session | The VM | CA key in runner memory only; `agent.sock` (`0600`) and the CA certificate `ca.pem` (public), in the session's private directory (`0700`) <!-- verify: exact location of the session state dir; docs/M7.md says $XDG_STATE_HOME/mirafleet/sessions/<sid>/, while the code (hostx.SessionDir, runner.SessionHooks) keeps agent.sock, ca.pem, ssh_config, out/ and jobs/ in the session directory the executor reports -->   | The agent's processes can connect to the socket and trust the CA; neither is a secret. |
+| Per-session CA, agent socket (M7) | The host runner, per session | The VM | CA key in runner memory only; `agent.sock` (`0600`) and the CA certificate `ca.pem` (public), in the session's private directory (`0700`) The session state directory is `<state>/sessions/<slug>/` (`$XDG_STATE_HOME/mirafleet/sessions/<slug>/`); it also holds `ssh_config`, `out/`, `jobs/` and `creds_scope`.  | The agent's processes can connect to the socket and trust the CA; neither is a secret. |
 | Host runner state (M7) | `runner join` as the runner's user | The VM | `$XDG_CONFIG_HOME/mirafleet` (config, enrolment key), `$XDG_STATE_HOME/mirafleet` (sessions, job logs, outputs, local audit) | The enrolment key is readable by the same OS user (an accepted gap, [5.12](05-security.md#512-host-mode-and-credentials-m7)). |
 | **The agent's AI API key** | The operator | The operator's laptop only | Environment of Claude Code | Never sent to central, never to a runner, never into a workspace. The env denylist (`*_API_KEY`, `ANTHROPIC_*`, ...) refuses to forward such names. |
 

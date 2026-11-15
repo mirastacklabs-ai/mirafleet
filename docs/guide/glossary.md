@@ -449,7 +449,7 @@ scripts (`MIRAFLEET_CTR=nerdctl` on a Linux host with containerd). See [chapter 
 ## O
 
 **One operator per runner.** A host runner is held by the operator with live workspaces on it; another
-operator gets `runner busy, in use by <name>` until the last one ends. See [flow 24](04-flows.md#24-open-a-host-workspace).
+operator gets a `conflict` error, `busy: runner NAME is in use by OP`, until the last one ends. See [flow 24](04-flows.md#24-open-a-host-workspace).
 
 **Operator.** A registered person: in practice, one Ed25519 key on one machine (durga's laptop)
 that central knows by a name such as `durga`. Operators use fleets; they do not manage central.
@@ -474,7 +474,8 @@ front. Its API key lives on the runner host only. See [../M3.md](../M3.md) and
 
 **os.Root.** A Go 1.24 standard-library type: a directory handle through which every file
 operation stays inside that directory, even across symlinks and `..`. The containerd executor
-uses one per workspace for `read_file` and `write_file`. See
+uses one per workspace for `read_file` and `write_file`. The `host` executor does not (its file
+tools are not confined). See
 [chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
 
 **Output cap.** The limit on stdout plus stderr that `exec`, `run_action` and text `read_file`

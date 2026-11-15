@@ -443,7 +443,8 @@ so the op travels the whole path from the model to `fsops`.
 
 1. `internal/workspace/fsops`: implement the operation as a pure function on `FS` with a golden test
    under `testdata/`. Return `*fsops.Error` kinds (`ErrNotFound`, `ErrRefused`, ...), not raw `os`
-   errors. Never follow a path out of the root; use the `os.Root` methods.
+   errors. The host-mode tools are not confined: absolute paths work anywhere the OS user can reach, so
+   do not add a path check that pretends otherwise. (`os.Root` is for the container executor.)
 2. `internal/transport/devws.go`: add the op constant to `FSOps`, list its allowed fields in
    `fsAllowed` (a field not listed for the op is `bad_request`, which is how strictness is kept), and
    add it to `FSMutating` if it changes files (that is what makes a guarded fleet demand `confirm`).

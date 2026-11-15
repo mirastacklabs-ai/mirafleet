@@ -1419,7 +1419,7 @@ sequenceDiagram
   participant Srv as central api@ channel
   participant Svc as service.WriteWorkspaceFile
   participant Run as build-1
-  participant FS as workspace dir (os.Root)
+  participant FS as workspace dir (os.Root, container executor)
 
   Op->>Srv: request frame {workspace, path, length, sha256}
   Op->>Srv: body frame (length bytes)
@@ -1430,7 +1430,7 @@ sequenceDiagram
   Svc->>Svc: SHA-256 of body must equal sha256 (constant time)
   Svc->>Svc: audit start row (path, bytes, sha256)
   Svc->>Run: workspace@ channel: request, then length raw bytes, CloseWrite
-  Run->>FS: write (temp file and rename when truncating), confined by os.Root
+  Run->>FS: write (temp file and rename when truncating), confined by os.Root (container executor)
   Run-->>Svc: result {size}
   Svc-->>Op: {size}
 ```
@@ -1453,8 +1453,10 @@ sequenceDiagram
 5. A `start` row (path, byte count, sha256, **never the content**) is written, then central sends
    the runner the request followed by exactly `length` raw bytes and `CloseWrite`. The runner
    refuses a mismatch.
-6. The executor writes through `os.Root` opened on the workspace directory, so a symlink planted
-   by the agent cannot lead outside it. With `truncate` it writes a temp file and renames it. New
+6. The container executor writes through `os.Root` opened on the workspace directory, so a symlink
+   planted by the agent cannot lead outside it. (The `host` executor has no container: it writes
+   with plain OS calls below the session directory and the OS user's permissions are the
+   boundary.) With `truncate` it writes a temp file and renames it. New
    files are chowned to the container's mapped uid. A **soft** disk quota is checked before the write
    (over quota refuses; [section 5.9](05-security.md#59-the-workspace-container-boundary) explains
    why it is only "soft").
@@ -1464,7 +1466,8 @@ sequenceDiagram
 1. The request has `workspace`, `path`, `offset?` and `limit?`. There is no request body, so
    nothing special is deferred.
 2. After the same gates, central writes a `start` row (path, offset, limit) and asks the runner.
-3. The runner opens the file through `os.Root` with `O_NOFOLLOW` and `O_NONBLOCK`, then checks with
+3. The container executor opens the file through `os.Root` (the host executor: plain OS calls from the
+   session directory) with `O_NOFOLLOW` and `O_NONBLOCK`, then checks with
    `fstat` that it is a regular file (a FIFO or a device would hang the runner), and replies with
    a result frame followed by the raw bytes.
 4. Central **buffers** the bytes (at most 1 MiB), checks that their count matches the runner's
@@ -1889,23 +1892,25 @@ sequenceDiagram
    Claude to use only the mirafleet tools for this project.
 2. **Central checks the fleet.** It is the same ownership and policy path as flow 12. A host fleet
    must be in workspace mode with executor `host`. Asking for credentials on any other fleet is a
-   `bad request`. <!-- verify: credentials on a non-host fleet = bad request (service.requireHostFleet) -->
+   `bad request` ("credentials need a host fleet"), and so is a `workdir`.
 3. **Placement filters by credentials.** `FilterRunnersByCredentials` keeps only runners whose
    effective set holds *every* requested credential. `ResolveCredentials` turns "all" into the
    concrete list. A request can **narrow** the set but never widen it: naming a credential the
    runner does not hold fails, and so does naming one nobody assigned.
 4. **One operator at a time.** Inside the store's reserve transaction, central counts live
    workspaces (`opening`, `open`, `closing`) of *other* operators on that runner. If there is any,
-   the open is refused with `runner busy, in use by kalyan`, and placement had already skipped such
+   the open is refused with code `conflict` and `busy: runner NAME is in use by kalyan`, and placement had already skipped such
    runners if another was free. No table is added: it is a count over `workspaces`. The hold ends
    when the holder's last live workspace is closed, reaped, expired, killed, or `lost`.
 5. **The create request.** Central sends `workspace@mirafleet` `create` with labels. The runner
    (never central) decides the directory.
 6. **The runner creates a directory, not a container.** `hostx.Manager.OpenFor` makes
    `<root>/sessions/<slug>` (mode `0700`), or, when the label `mirafleet.workdir` carries a name that
-   matches `^[a-z0-9][a-z0-9._-]{0,62}$`, `<root>/work/<name>`. Symlinks are refused. If the same
-   session is already held by a live handle the open is refused (`ErrRefused`).
-   <!-- verify: ErrRefused on concurrent open of the same session; slug derivation of the session id -->
+   matches `^[a-z0-9][a-z0-9._-]{0,62}$`, `<root>/work/<name>`. Symlinks are refused. `<slug>` is the
+   session id when it is a short safe name, else `h_` plus a hash of it (`hostx.Slug`), because ids
+   such as `cc:<uuid>` are not safe directory names. The runner labels the workspace with
+   `mirafleet.session` (the orchestrator's session id), so reopening the session reattaches. If the
+   same session is already open on that runner the open is refused (`ErrRefused`).
 7. **Tools get their secrets-without-secrets.** The runner starts the session's ssh-agent on
    `agent.sock`, a broker session with a per-session CA, writes `ssh_config` and `ca.pem`, and hands
    the executor the environment (`SSH_AUTH_SOCK`, `GIT_SSH_COMMAND`, `HTTPS_PROXY`,
@@ -1936,8 +1941,7 @@ again, with its files, even after a runner restart.
    *same session id* as the label `mirafleet.session`, so `hostx.Manager.OpenFor` maps it to the
    *same slug* and finds the existing directory. Their checkout, build caches and
    uncommitted edits are there. Credentials are loaded fresh from the runner's current set, not from
-   anything saved. <!-- verify: reopen of a closed session reattaches the same directory; notes say host layout <root>/sessions/<slug> and label mirafleet.session (d652c77) -->
-4. With `workdir: shared-app` in `.mirafleet.yaml`, two sessions (or two different Claude sessions
+   anything saved.4. With `workdir: shared-app` in `.mirafleet.yaml`, two sessions (or two different Claude sessions
    of the same operator) share `<root>/work/shared-app`.
 5. `workspace_list` shows the directories with their size and last use, including ones with no
    live workspace.
@@ -1994,15 +1998,12 @@ sequenceDiagram
    **not** persist.
 3. **The directory does persist.** A wrapper reports the final `pwd` on an extra descriptor; the
    runner saves it per session, and the result carries it as `Cwd`. The next call starts there. This
-   mimics Claude Code's own Bash tool. <!-- verify: cwd persistence via fd 3 wrapper and the Cwd result field -->
-4. **Everything is saved.** While the command runs, the runner tees stdout and stderr into
+   mimics Claude Code's own Bash tool.4. **Everything is saved.** While the command runs, the runner tees stdout and stderr into
    `out/<request_id>` in the session's state directory. The last 32 such files are kept, each at most
    64 MiB (`hostx.KeepOutputs`, `hostx.MaxOutputFile`).
 5. **Never a silent cut.** The reply holds as much text as fits (a budget of about 32 KiB of JSON
    text per stream) and always carries `stdout_bytes`, `stderr_bytes`, `truncated` (with how many
-   bytes were omitted from the head and the tail) and a `ref`. The text itself says how to page.
-   <!-- verify: inline budget 32 KiB per stream (hostx.inlineBudget) versus docs/M7.md wording "truncated{head, tail, omitted}"; result fields Ref/StdoutBytes/StderrBytes/Omitted/Truncated/Cwd -->
-6. **Paging.** `read_output{ref, offset, limit, tail_lines, grep}` reads the saved file: a byte
+   bytes were omitted from the head and the tail) and a `ref`. The text itself says how to page.6. **Paging.** `read_output{ref, offset, limit, tail_lines, grep}` reads the saved file: a byte
    `offset` and `limit` (at most 1 MiB), the last N lines, or only lines matching an RE2 regular
    expression. It returns `next_offset` to continue. Paging a 5 MiB build log from offset 0 in
    chunks returns exactly the original bytes.
@@ -2025,8 +2026,10 @@ output to files, and is polled, tailed or killed later.
    `shell_id`.
 2. **Where output goes.** The shim writes `stdout`, `stderr` and `status.json` under
    `jobs/<id>/` in the session's state directory. The files belong to the agent's own user, so they
-   are informational: the agent could edit them. Each stream is capped at 256 MiB (the first 1 MiB
-   plus a rotating tail). <!-- verify: log cap 256 MiB per stream (head 1 MiB + rotating tail), 8 shells per session, job_max default 12h <= 24h in hostx/job_linux.go -->
+   are informational: the agent could edit them. Each stream is capped at 256 MiB
+   (`hostx.MaxJobStream`): the shim checks the file sizes about every poll and, when one passes the
+   cap, kills the job and records it as canceled with the message "job killed: output exceeded the
+   per-stream cap". Nothing is rotated or dropped before that.
 3. **Limits.** At most 8 background shells per session; a maximum duration per fleet (default 12
    hours, at most 24). When it passes, the group is killed.
 4. **Polling.** `bash_output{shell_id, filter?}` returns the output since the **previous**
@@ -2112,8 +2115,7 @@ expiry dates are admin-only.
 - *Audit:* every use is logged in the runner's local JSONL file and counted. Counts are sent to central
   as `events` batches (per session, credential, host and status, in 60-second windows; at most 128
   events or 64 KiB per batch). Central writes audit rows `credential.use` with source `runner`; a
-  flood becomes an `events.dropped` row. <!-- verify: events@mirafleet batch limits (transport.MaxBatchEvents/MaxBatchBytes) and the source "runner" audit rows -->
-
+  flood becomes an `events.dropped` row.
 **E. Rotate.** Three ways, from least to most automatic.
 1. *Manual:* aarvee runs `credential set` (or uses the GUI replace form) with the new value, which
    goes through step C. Every running session uses it from its next connection.
@@ -2125,8 +2127,8 @@ expiry dates are admin-only.
    `self_rotate` scope), stores the new sealed value **in the same transaction as its audit row**,
    then pushes it to every assigned runner. It needs central to reach GitLab over HTTPS (system
    certificates plus the file named by `MIRAFLEET_CORPORATE_CA_FILE`). If GitLab is unreachable,
-   the failure is audited (`credential.rotate_failed`), shown in the GUI, and the old token keeps
-   working until it expires; rotation then is manual. <!-- verify: audit action names credential.rotate / credential.rotate_failed (GUI flash ids exist; confirm the audit action strings in service/credentials.go) -->
+   the failure is audited (a `credential.rotate` row with outcome `error`), shown in the GUI, and the
+   old token keeps working until it expires; rotation then is manual.
 
 **What can go wrong:** the runner is offline when the value changes (it receives the whole set on
 reconnect); the wrong or missing `MIRAFLEET_SECRETS_KEY` (central refuses to start when credentials exist but the key is missing or wrong;
@@ -2150,12 +2152,18 @@ as lost.
    writes a `runner.replaced` audit row, and the GUI flags the runner) and sends `creds_sync`
    (flow 28 C). Only now do the secrets exist in the new process's memory.
 4. **Re-adopt sessions.** The executor reads its session records (`hostx.Manager.OpenSessions`):
-   sessions whose `open` flag was left set are re-attached. The runner rebuilds each session's
-   agent socket, broker session and environment from the freshly delivered credentials.
-5. **Re-adopt jobs.** For each job directory, the executor reads `status.json` (the pid and the
-   process **start time**, so a reused pid is not mistaken for the job) and checks the process is still
-   the same one. A live one is `running` again; one that ended while the runner was down is read from
-   its exit status file. <!-- verify: re-adoption by status.json pid + start time (hostx/job_linux.go) -->
+   sessions whose `open` flag was left set are re-attached. The runner then re-wires their
+   credentials (`devMgr.adopt`, called once with the adopted workspaces at start): for each session it
+   reads the `creds_scope` file that the original open saved in the session state directory
+   (`<state>/sessions/<slug>/`) and rebuilds the agent socket, broker session and environment with
+   **that same, never wider** set. Until `creds_sync` has delivered the values the session has no
+   secrets, and a session whose `creds_scope` file is missing or unreadable gets **no** credentials
+   rather than all of them (the next open fixes it).
+5. **Re-adopt jobs.** For each job directory, the executor reads `status.json`, which records the
+   supervisor's pid and its process **start time**, so a reused pid is not mistaken for the job. A
+   job whose supervisor is still the same process stays `running`; one recorded as `running` whose
+   supervisor is gone is reported `lost`, and one that finished while the runner was down keeps the
+   state and exit code the supervisor wrote.
 6. **Reconcile.** Central's reconcile (flow 17) compares its `open` rows with the runner's
    list; sessions the runner re-adopted stay `open`, so Durga's `bash_output` simply continues.
    A session the runner cannot find becomes `lost`.
@@ -2244,7 +2252,7 @@ as lost.
 | Argument with a wrong case (`Confirm`) or an unknown name | `bad_request`: "unknown or mis-cased argument ..." | The handler never runs (flow 19, chapter 5). |
 | Harness closes stdin | The server exits 0 within 5 s | In-flight calls are cancelled; the workspace stays `open` until `idle_ttl` (flow 21). |
 | SessionEnd for `prompt_input_exit`, `resume` or `other` | Nothing visible | The workspace is kept for a possible `--resume` (flow 22). |
-| `workspace_open` on a host runner another operator holds (M7) | `conflict`: "runner busy, in use by kalyan" | A `denied` audit row; placement had skipped held runners if another was free (flow 24). |
+| `workspace_open` on a host runner another operator holds (M7) | `conflict`: "busy: runner NAME is in use by kalyan" | A `denied` audit row; placement had skipped held runners if another was free (flow 24). |
 | Requested credential not held by any runner of the fleet (M7) | `unavailable`, naming no value | Nothing is created (flow 24). |
 | `bash` output too long for the reply (M7) | The text plus `stdout_bytes`, `stderr_bytes`, `truncated` and a `ref` | The full output is on the VM; `read_output` pages it (flow 26). |
 | Runner restarted while a job runs (M7) | `bash_output` continues | The job survives and is re-adopted (flow 29). |

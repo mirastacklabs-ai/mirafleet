@@ -1416,9 +1416,8 @@ Everything below follows the rules of the rest of this chapter: strict v1 envelo
 keys, size limits, body frames for bytes. The new DTOs are in `internal/api/devws.go` and
 `internal/transport/devws.go`.
 
-> Status: the types and the MCP tools exist; central's dispatch for `workspace.fs`, `job_*`,
-> `output_read` and `credential.*` is the last piece being wired when this was written.
-<!-- verify: dispatch of workspace.fs / job_* / output_read / credential.* on central is landing in S17; re-check the method table and error codes against internal/central and internal/service -->
+> Status: built. The types, the MCP tools and central's dispatch for `workspace.fs`, `job_*`,
+> `output_read` (`internal/central/dispatch.go`) and the `credential.*` admin methods exist.
 
 ### The 24 tools
 
@@ -1472,9 +1471,7 @@ What is worth knowing:
   request), the same pattern as `workspace.write_file` in section 7.3.
 - **`read` returns images as MCP image content** (png, jpg, gif, webp, up to 5 MiB) and describes
   other binary files (size, type, SHA-256) instead of dumping them. Text is numbered; long lines
-  are clipped; `.ipynb` is rendered as cells with outputs.
-  <!-- verify: exact image types and size limit; fsops read.go is the source of truth -->
-- **`grep` uses `rg` when it is on the runner's `PATH`, else a Go implementation** with the same
+  are clipped; `.ipynb` is rendered as cells with outputs.- **`grep` uses `rg` when it is on the runner's `PATH`, else a Go implementation** with the same
   options (RE2, so no look-around). The result shape is the same either way. Hidden files are
   searched; `.git` is never entered; `.gitignore`, `.ignore` and `.rgignore` are honoured.
 - **`upload` and `download` are the only tools that touch the Mac's disk**, and they are confined to
@@ -1486,9 +1483,7 @@ What is worth knowing:
   denies local `Bash`, `Read`, `Write`, `Edit`, `MultiEdit`, `Grep`, `Glob`, `LS` and
   `NotebookEdit` when `.mirafleet.yaml` says `remote: true`, with a reason naming the remote tool.
   The MCP server works without the hook; the hook only stops the model from picking the wrong tool
-  ([chapter 11](11-contributing.md#117-adding-a-harness-integration)).
-  <!-- verify: hook behaviour and wording; S15 owns integrations/claude-code -->
-- **Remote text is neutralised.** Every tool result and error passes `neutralize` in
+  ([chapter 11](11-contributing.md#117-adding-a-harness-integration)).- **Remote text is neutralised.** Every tool result and error passes `neutralize` in
   `internal/mcpserver/server.go`, which breaks harness control tags such as `<system-reminder>` so
   output from a remote file or command cannot pose as an instruction. `fsops` notices to the model
   are plain `[Warning: ...]` text for the same reason.
@@ -1543,11 +1538,9 @@ Other additive changes:
   four fields, no value) and `busy` (running background jobs; a workspace with one is "in use" and is
   not reaped as idle).
 - A host runner is held by one operator at a time: `workspace.open` by another operator is refused
-  with `conflict`, message `runner busy, in use by durga`, and placement skips held runners. The
+  with `conflict`, message `busy: runner build-1 is in use by durga`, and placement skips held runners. The
   hold ends when that operator's last live workspace there is closed, reaped, expired, killed or
   lost.
-  <!-- verify: error code is conflict in service/workspace_sched.go; M7.md wrote "busy:" -->
-
 ### Credentials on the wire
 
 Credentials are **admin only**: they exist on the local admin socket (and in the GUI), never on
@@ -1588,11 +1581,10 @@ floods, an `events.dropped` row records what was dropped.
 - `workspace_open` on a host fleet with a session that is already open elsewhere on the same runner
   is `ErrRefused` on the runner ("already open here"); two terminals cannot drive one directory.
 - File tools, jobs and credentials are for host fleets: M7 does not extend container mode.
-  <!-- verify: M7.md says the new tools return `unsupported` on container fleets; check the exact error code once S17 lands -->
+  On a container fleet they answer `bad_request` ("only host-mode fleets support this"), not
+  `unsupported`.
 - Foreground `bash` on a container fleet still works (it is `exec` with a shell), but there is no
-  `ref` and no persisted cwd.
-  <!-- verify: behaviour of bash on container fleets -->
-- A job status `lost` means the runner could not find the job's process (for example after a VM reboot).
+  `ref` and no persisted cwd.- A job status `lost` means the runner could not find the job's process (for example after a VM reboot).
 
 Hosts, ports and tokens in this section are examples; no real secret appears anywhere in the
 guide.

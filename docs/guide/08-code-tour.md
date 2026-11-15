@@ -1364,10 +1364,14 @@ Two design rules are worth understanding:
 - **Close never deletes.** A developer expects `git status` to be the same tomorrow. Deleting is
   explicit (`delete: true`, `prune`, or the 30-day sweep).
 
-The file tools are rooted at the session directory (or the `workdir`) through `os.Root`
-(`fsops.Open`), so `..` and symlinks that leave the directory are refused by the kernel-checked
-resolver, not by string tests. Bash is not confined: it can reach whatever the user can.
-<!-- verify: docs/M7.md §3.7 says file tools reach everything the user can see (absolute paths); the code roots them at the session dir via os.Root. Confirm which is the decided behaviour -->
+The file tools are **not** confined (as built, `fsops/root.go`, `osRoot`: plain OS calls). They run
+as the runner's OS user, which is the boundary, as with local Claude Code. An absolute path works
+anywhere that user can read or write; a relative path resolves from the session directory (or the
+`workdir`, `fsops.Open`). Paths in results are shown relative inside that start directory and
+absolute outside it; Grep and Glob echo the path in the form the caller gave. Anything that is not
+a regular file (FIFO, device, socket) is refused before and after open, with `O_NONBLOCK`, so a
+planted FIFO cannot hang the runner. Bash is not confined either. `os.Root` is used only by the
+container executor (`ctrd/files_linux.go`).
 
 ### `internal/workspace/fsops`: the file tools as a pure library
 
@@ -1459,7 +1463,7 @@ and receive its assigned secrets. M7 accepts this gap (a better answer needs a s
 hardware key, which is enterprise scope) and records a `runner.replaced` audit row when a newer
 connection takes over, which the GUI flags. Root on the VM can read anything. See
 [chapter 5](05-security.md).
-<!-- verify: runner.replaced audit row and GUI flag are described in M7.md §3.2; confirm the exact audit action name when S11 handlers land -->
+<!-- verify: the audit row is `runner.replaced` (internal/service/events.go, called from internal/central/roles.go); no code in internal/gui shows a flag for it yet, so the GUI flag is unconfirmed -->
 
 ## 8.12 Follow one `bash` call (M7)
 

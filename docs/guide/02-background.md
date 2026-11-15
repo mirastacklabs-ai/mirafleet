@@ -510,7 +510,8 @@ it. Go 1.24 added **`os.Root`**: you open a directory as a root, and every later
 through it is confined to it, even through symlinks and `..`. The executor opens each
 workspace directory as an `os.Root`, so nothing outside `/workspace` is reachable
 (`internal/workspace/ctrd/files_linux.go`). It also checks that the file is a regular file, so a
-FIFO (a pipe in a file) cannot hang the runner.
+FIFO (a pipe in a file) cannot hang the runner. This is the container executor only: the M7
+host-mode file tools are deliberately not confined (see chapter 5, section 5.12).
 
 ### The workspace life cycle
 
@@ -681,7 +682,6 @@ anything. Locking it to the central's own user is what makes "admin" mean someth
 
 ## 2.12 Host mode background: secrets you can use but not read (M7)
 
-<!-- verify: section 2.12 describes M7 as decided in docs/M7.md; check names (session-bind@openssh.com, PR_SET_DUMPABLE, NameConstraints, AES-256-GCM) against internal/workspace/{sshagent,hostx,broker} and internal/secrets at reconciliation. -->
 
 Host mode ([chapter 1, section 1.4a](01-what-is-mirafleet.md#14a-host-mode-remote-development-on-a-vm-m7))
 runs the agent's commands directly on a VM, with no container wall. The agent also has to
@@ -852,7 +852,7 @@ components; [chapter 5.12](05-security.md#512-host-mode-and-credentials-m7) atta
 6. With a user namespace, "root" inside is mapped to an unprivileged host id, so an escape lands
    as a nobody. But the container still shares the host kernel, so a kernel bug is a way out;
    a VM-like runtime (gVisor, Kata) is needed to remove that risk.
-7. The executor reads files through `os.Root`, which confines every path (symlinks and `..`
+7. The containerd executor reads files through `os.Root`, which confines every path (symlinks and `..`
    included) to the workspace directory. The link cannot leave `/workspace`.
 8. You cannot read the key from it, but anyone who can reach its socket can ask it to sign. The
    mirafleet agent answers only `List` and `Sign`, signs only SSH user-authentication requests for the

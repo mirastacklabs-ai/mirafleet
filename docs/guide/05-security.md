@@ -1169,7 +1169,9 @@ carries its own password.
 
 **5.12.10 File tools are bounded.** `fsops` refuses FIFOs and devices (a planted FIFO would hang
 the runner), writes atomically, bounds `grep` (100,000 files, 256 MiB, 30 s), and never enters
-`.git`. The Mac-side `upload` and `download` are confined to the local project directory through
+`.git`. The VM-side file tools are not confined to the session directory (absolute paths work
+anywhere the runner's OS user can reach; the OS permissions and the VM are the boundary). The
+Mac-side `upload` and `download` are confined to the local project directory through
 `os.OpenRoot` and refuse `.git/`, `.claude/`, `.mirafleet.yaml`, `.env*`, `*.pem`, `*.key`, `id_*`,
 `.npmrc`, `.netrc`, with a 64 MiB limit.
 

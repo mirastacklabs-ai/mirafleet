@@ -891,7 +891,9 @@ they take, so it need not guess names. For that, an actions-mode runner now adds
 
 ## 6.17 Host mode and credentials: migration 0004 (M7)
 
-<!-- verify: column lists below were read from internal/store/sqlite/migrations/0004_devws.sql in the m7-wave-a worktree. docs/M7.md section 4.1 lists slightly different columns (meta JSON / updated_at; the migration has fingerprint, rotated_at, expires_at). The migration is right; re-check at reconciliation if the file changes. -->
+The column lists below follow `internal/store/sqlite/migrations/0004_devws.sql`, which
+[docs/M7.md section 4.1](../M7.md) now matches (`fingerprint`, `rotated_at` and `expires_at` are
+columns; there is no `updated_at` on `credentials`).
 
 Migration 0004 (schema version 4; `0003_gui.sql` was M4's admin accounts, sessions and two audit
 indexes) is M7's only schema change. It adds three tables and **rebuilds** one. As always it is
@@ -990,11 +992,11 @@ The `audit` table gets no new column. New values appear in `action` and `source`
 
 | Action | Source | When |
 |---|---|---|
-| `credential.set`, `credential.delete`, `credential.assign`, `credential.unassign`, `credential.rotate` | admin (`cli` or `gui`) | Admin changes. The row names the credential and the runner or fleet; the value is never recorded. <!-- verify: exact action strings written by service.SetCredential/DeleteCredential/AssignCredential/UnassignCredential/RotateCredential --> |
-| `credential.rotate_failed` | `system` | Self-rotation could not reach GitLab or was refused; the old value keeps working. <!-- verify: this action string and its source --> |
+| `credential.set`, `credential.delete`, `credential.assign`, `credential.unassign`, `credential.rotate` | admin (`cli` or `gui`) | Admin changes. The row names the credential and the runner or fleet; the value is never recorded. The action string is the API method name. |
+| `credential.rotate` with outcome `error` | admin, or `system` for the scheduled rotation | Self-rotation could not reach GitLab, was refused, or the new value could not be stored; the message says why and the old value keeps working. There is no separate `credential.rotate_failed` audit action (that name exists only as a GUI flash id). |
 | `credential.use` | `runner` | An aggregated usage event from a runner: session, credential name, host, outcome, with a count (60-second windows). |
 | `events.dropped` | `runner` | A runner's event batch exceeded the caps; the row carries the count of lost events. |
-| `runner.replaced` | `system` | A runner's new connection replaced a live one. The GUI flags the runner. <!-- verify: source value of runner.replaced rows --> |
+| `runner.replaced` | `runner` | A runner's new connection replaced a live one (written by `service.RunnerReplaced`, actor kind `runner`). The GUI flags the runner. <!-- verify: no code in internal/gui reads this row yet, so the GUI flag is unconfirmed --> |
 | `secrets.keycheck` | `system` | The secrets key was checked or first recorded at start-up. |
 | `workspace.fs`, `workspace.job_start`, `workspace.job_status`, `workspace.job_tail`, `workspace.job_cancel`, `workspace.output_read` | `api` | The host-mode operations of flows 26 and 27. `workspace.fs` records op, paths, sizes and the SHA-256 of what was written, never content. |
 | `workspace.kill` (with delete) | admin | An admin kill that also deletes the session directory. |
