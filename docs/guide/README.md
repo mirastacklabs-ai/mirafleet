@@ -12,10 +12,10 @@ tests, and make your first change without asking the authors.
 > server, Claude Code plugin and hooks, Windows support) is built, and M4 (the admin GUI) is
 > done. A smoke test of M5 with a real Claude Code is still to run. M6 (release and
 > distribution: packages, image, Compose, install scripts, npm, Homebrew, signed checksums, the
-> quickstart and the threat model) is built in the repository; the first release, `v0.6.0`, is
-> not published yet. To try mirafleet, follow the [quickstart](../QUICKSTART.md). This guide is
-> also published on the project wiki (generated from `docs/`; edit the files here).
-> <!-- verify: add the wiki link once the wiki is published (docs/M6.md section 8, P7/P8) -->
+> quickstart and the threat model) is built in the repository; the first release is `v0.6.0`.
+> To try mirafleet, follow the [quickstart](../QUICKSTART.md). This guide is
+> also published on the [project wiki](https://github.com/mirastacklabs-ai/mirafleet/wiki)
+> (generated from `docs/`; edit the files here).
 > M7 (**host mode**: remote development on a VM, central-held credentials, background jobs, full
 > output, Claude Code tool parity; see [../M7.md](../M7.md)) is built; the review is done,
 > hardening is in progress and the user smoke test is still to run.

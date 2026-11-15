@@ -3,14 +3,13 @@
 Let an AI coding agent drive fleets of servers through one central server, the way a CI server
 drives GitLab runners. Works with Claude Code first, and with any MCP-capable harness.
 
-> **Status:** release candidate for v0.6.0 (milestones M1 to M7 built; M6 is the release
-> work). Pre-1.0: the protocol and CLI can still change between minor versions. Read the
+> **Status:** v0.6.0, the first release (milestones M1 to M7 are built). Pre-1.0: the protocol and CLI can still change between minor versions. Read the
 > [threat model](docs/THREAT-MODEL.md) before you point it at anything important.
 
 - Quickstart (a fresh Linux VM plus your laptop): [docs/QUICKSTART.md](docs/QUICKSTART.md)
 - Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Plan: [docs/PLAN.md](docs/PLAN.md)
 - Threat model: [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) · Security policy: [SECURITY.md](SECURITY.md)
-- Developer guide: [docs/guide/](docs/guide/README.md)
+- Developer guide: [docs/guide/](docs/guide/README.md) · also on the [wiki](https://github.com/mirastacklabs-ai/mirafleet/wiki)
 
 ## What it is
 
@@ -35,6 +34,7 @@ connection, HTTPS to your GitLab, only if you turn on GitLab token self-rotation
 One binary, `mirafleet`, runs as `central`, `runner` or `mcp`. Central and runners are Linux only;
 the orchestrator side also runs on macOS and Windows (amd64 and arm64). Pick one channel per
 machine. Versions below are `0.6.0`; replace them with the release you want.
+Pre-releases (`-rc.N`) are not published to Homebrew or the MCP Registry, and go to npm dist-tag `next`.
 
 | Where | Channel | Command |
 |---|---|---|
@@ -44,7 +44,7 @@ machine. Versions below are `0.6.0`; replace them with the release you want.
 | macOS, Linux | Homebrew | `brew install mirastacklabs-ai/tap/mirafleet` |
 | macOS, Linux | Script | `curl -fsSL https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.sh \| sh` |
 | Windows | Script (PowerShell 5.1 or 7, no admin) | `irm https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.ps1 \| iex` |
-| Any OS with Node 18+ | npm / npx | `npx -y @mirastacklabs/mirafleet@0.6.0 mcp -project-dir .` |
+| Any OS with Node 18+ | npm / npx (`@mirastacklabs/mirafleet`) | `npx -y @mirastacklabs/mirafleet@0.6.0 mcp -project-dir .` |
 | Claude Code | Marketplace plugin (the binary must be on `PATH` too) | `/plugin marketplace add mirastacklabs-ai/mirafleet`, then `/plugin install mirafleet@mirastacklabs` |
 | Anywhere | Archive | `mirafleet_0.6.0_<os>_<arch>.tar.gz` (`.zip` on Windows) |
 | Go developers | `go install` | `go install github.com/mirastacklabs-ai/mirafleet/cmd/mirafleet@v0.6.0` |

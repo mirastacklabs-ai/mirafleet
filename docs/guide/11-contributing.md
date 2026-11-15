@@ -557,7 +557,8 @@ the order and the approvals, not the commands.
 2. `scripts/dev.sh go run ./tools/relgen bump X.Y.Z` in a PR, merged. `relgen check` passes.
 3. A human pushes the tag `vX.Y.Z-rc.1` (rehearsal), then `vX.Y.Z`. `release.yml` runs `verify`,
    `build`, `draft`, `publish-release`, `image`, `npm`, `brew` and `mcp-registry`
-   (see the picture below).
+   (see the picture below). `npm` only stages the seven packages; a maintainer approves them on
+   npmjs.com with 2FA, and `mcp-registry` runs after they are live.
 4. A human approves each publishing job in the GitHub `release` environment, in order, checking
    the draft first. Post-publish checks follow: signature, provenance, both image digests,
    `brew install`, `npx` on three OSes, Compose from the published image.
