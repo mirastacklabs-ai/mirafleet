@@ -114,6 +114,7 @@ if [ -z "$version" ]; then
 		"https://github.com/$REPO/releases/latest") || die "cannot resolve the latest release"
 	version=${final##*/}
 fi
+case "$version" in *[!0-9A-Za-z.+-]*) die "invalid version" ;; esac
 printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z.-]+)?$' ||
 	die "invalid version: $version"
 [ -n "$base" ] || base="https://github.com/$REPO/releases/download/$version"
@@ -132,11 +133,9 @@ fetch "$base/checksums.txt" "$tmp/checksums.txt"
 
 if [ "$need_sig" -eq 1 ] || command -v cosign >/dev/null 2>&1; then
 	command -v cosign >/dev/null 2>&1 || die "--verify-signature needs cosign on PATH"
-	fetch "$base/checksums.txt.sig" "$tmp/checksums.txt.sig"
-	fetch "$base/checksums.txt.pem" "$tmp/checksums.txt.pem"
+	fetch "$base/checksums.txt.sigstore.json" "$tmp/checksums.txt.sigstore.json"
 	cosign verify-blob \
-		--certificate "$tmp/checksums.txt.pem" \
-		--signature "$tmp/checksums.txt.sig" \
+		--bundle "$tmp/checksums.txt.sigstore.json" \
 		--certificate-identity-regexp "$IDENTITY_RE" \
 		--certificate-oidc-issuer "$OIDC_ISSUER" \
 		"$tmp/checksums.txt" >/dev/null 2>&1 || die "cosign signature verification of checksums.txt FAILED"

@@ -57,7 +57,7 @@ if (-not $Version) {
     $Version = ($resp.Headers['Location'] -split '/')[-1]
     $resp.Close()
 }
-if ($Version -notmatch '^v\d+\.\d+\.\d+([-+.][0-9A-Za-z.-]+)?$') { Fail "invalid version: $Version" }
+if ($Version -notmatch '^v\d+\.\d+\.\d+([-+.][0-9A-Za-z.-]+)?\z') { Fail "invalid version: $Version" }
 if (-not $base) { $base = "https://github.com/$Repo/releases/download/$Version" }
 
 if (-not $InstallDir) { $InstallDir = Join-Path $env:LocalAppData 'Programs\mirafleet' }
@@ -72,9 +72,8 @@ try {
     $cosign = Get-Command cosign -ErrorAction SilentlyContinue
     if ($VerifySignature -and -not $cosign) { Fail '-VerifySignature needs cosign on PATH' }
     if ($cosign) {
-        Get-File "$base/checksums.txt.sig" "$tmp\checksums.txt.sig"
-        Get-File "$base/checksums.txt.pem" "$tmp\checksums.txt.pem"
-        & $cosign.Source verify-blob --certificate "$tmp\checksums.txt.pem" --signature "$tmp\checksums.txt.sig" `
+        Get-File "$base/checksums.txt.sigstore.json" "$tmp\checksums.txt.sigstore.json"
+        & $cosign.Source verify-blob --bundle "$tmp\checksums.txt.sigstore.json" `
             --certificate-identity-regexp $IdentityRe --certificate-oidc-issuer $OidcIssuer "$tmp\checksums.txt" *> $null
         if ($LASTEXITCODE -ne 0) { Fail 'cosign signature verification of checksums.txt FAILED' }
         Write-Host 'cosign signature of checksums.txt verified'

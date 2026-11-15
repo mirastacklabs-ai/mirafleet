@@ -65,8 +65,7 @@ chmod +x "$W/mirafleet"
 tar -czf "$W/www/$ARCHIVE" -C "$W" mirafleet
 good=$(sha256sum "$W/www/$ARCHIVE" | awk '{print $1}')
 printf '%s  %s\n' "$good" "$ARCHIVE" >"$W/www/checksums.txt"
-printf 'sig-by: https://github.com/mirastacklabs-ai/mirafleet/.github/workflows/release.yml@refs/tags/v9.9.9\n' >"$W/www/checksums.txt.sig"
-echo cert >"$W/www/checksums.txt.pem"
+printf 'sig-by: https://github.com/mirastacklabs-ai/mirafleet/.github/workflows/release.yml@refs/tags/v9.9.9\n' >"$W/www/checksums.txt.sigstore.json"
 
 run_install() { # DIR [ARGS...] ; env MIRAFLEET_INSTALL_BASE_URL set by caller
 	d=$1
@@ -101,13 +100,15 @@ shift
 sig="" re="" iss=""
 while [ $# -gt 0 ]; do
 	case "$1" in
-	--signature) sig=$2; shift 2 ;;
+	--bundle) sig=$2; shift 2 ;;
 	--certificate-identity-regexp) re=$2; shift 2 ;;
 	--certificate-oidc-issuer) iss=$2; shift 2 ;;
 	*) shift ;;
 	esac
 done
 [ "$iss" = "https://token.actions.githubusercontent.com" ] || exit 1
+# must be given the published bundle name (what goreleaser uploads)
+[ "$(basename "$sig")" = checksums.txt.sigstore.json ] || exit 1
 ident=$(sed -n 's/^sig-by: //p' "$sig")
 printf '%s\n' "$ident" | grep -Eq "$re"
 CS
@@ -115,9 +116,9 @@ chmod +x "$W/bin/cosign"
 OLDPATH=$PATH
 PATH="$W/bin:$PATH"
 if run_install "$W/d6"; then ok "cosign present, right identity installs"; else bad "right identity"; cat "$W/out"; fi
-printf 'sig-by: https://github.com/evil/mirafleet/.github/workflows/release.yml@refs/tags/v9.9.9\n' >"$W/www/checksums.txt.sig"
+printf 'sig-by: https://github.com/evil/mirafleet/.github/workflows/release.yml@refs/tags/v9.9.9\n' >"$W/www/checksums.txt.sigstore.json"
 if run_install "$W/d7"; then bad "wrong identity installed"; elif [ ! -e "$W/d7/mirafleet" ] && grep -q FAILED "$W/out"; then ok "wrong cosign identity refused"; else bad "wrong identity wrong failure"; cat "$W/out"; fi
-printf 'sig-by: https://github.com/mirastacklabs-ai/mirafleet/.github/workflows/other.yml@refs/heads/main\n' >"$W/www/checksums.txt.sig"
+printf 'sig-by: https://github.com/mirastacklabs-ai/mirafleet/.github/workflows/other.yml@refs/heads/main\n' >"$W/www/checksums.txt.sigstore.json"
 if run_install "$W/d8"; then bad "wrong workflow installed"; else ok "wrong workflow refused"; fi
 PATH=$OLDPATH
 

@@ -76,8 +76,7 @@ $good = (Get-FileHash -Algorithm SHA256 "$W\www\$archive").Hash.ToLower()
 function Set-Sums([string]$h, [string]$name) { Set-Content -Path "$W\www\checksums.txt" -Value "$h  $name" }
 Set-Sums $good $archive
 $goodIdent = 'https://github.com/mirastacklabs-ai/mirafleet/.github/workflows/release.yml@refs/tags/v9.9.9'
-Set-Content -Path "$W\www\checksums.txt.sig" -Value "sig-by: $goodIdent"
-Set-Content -Path "$W\www\checksums.txt.pem" -Value 'cert'
+Set-Content -Path "$W\www\checksums.txt.sigstore.json" -Value "sig-by: $goodIdent"
 
 # Run install.ps1 in a child shell so a thrown failure becomes an exit code; returns @(code, output).
 $shell = (Get-Process -Id $PID).Path
@@ -111,7 +110,11 @@ if ($r[0] -ne 0 -and -not (Exe "$W\d5") -and $r[1] -match 'cosign') { Ok '-Verif
 $stub = "$W\bin\cosign.ps1"
 Set-Content -Path $stub -Value @'
 param([Parameter(ValueFromRemainingArguments=$true)]$a)
-$sig = $a[[array]::IndexOf($a, '--signature') + 1]
+$bi = [array]::IndexOf($a, '--bundle')
+if ($bi -lt 0) { exit 1 }
+$sig = $a[$bi + 1]
+# must be given the published bundle name (what goreleaser uploads)
+if ((Split-Path -Leaf $sig) -ne 'checksums.txt.sigstore.json') { exit 1 }
 $re = $a[[array]::IndexOf($a, '--certificate-identity-regexp') + 1]
 $iss = $a[[array]::IndexOf($a, '--certificate-oidc-issuer') + 1]
 if ($iss -ne 'https://token.actions.githubusercontent.com') { exit 1 }
@@ -129,7 +132,7 @@ $oldPath = $env:PATH
 $env:PATH = "$W\bin$sep$env:PATH"
 $r = Run-Install "$W\d6"
 if ($r[0] -eq 0 -and (Exe "$W\d6")) { Ok 'cosign present, right identity installs' } else { Bad 'right identity'; Write-Host $r[1] }
-Set-Content -Path "$W\www\checksums.txt.sig" -Value 'sig-by: https://github.com/evil/mirafleet/.github/workflows/release.yml@refs/tags/v9.9.9'
+Set-Content -Path "$W\www\checksums.txt.sigstore.json" -Value 'sig-by: https://github.com/evil/mirafleet/.github/workflows/release.yml@refs/tags/v9.9.9'
 $r = Run-Install "$W\d7"
 if ($r[0] -ne 0 -and -not (Exe "$W\d7") -and $r[1] -match 'FAILED') { Ok 'wrong cosign identity refused' } else { Bad 'wrong identity'; Write-Host $r[1] }
 $env:PATH = $oldPath
