@@ -16,6 +16,7 @@ $script:fail = 0
 function Ok([string]$m) { Write-Host "ok   $m" }
 function Bad([string]$m) { Write-Host "FAIL $m"; $script:fail = 1 }
 
+Write-Host 'setup: compiling the test server'
 Add-Type -TypeDefinition @'
 #pragma warning disable SYSLIB0057 // X509Certificate2 ctor: X509CertificateLoader does not exist before .NET 9
 using System; using System.IO; using System.Net; using System.Net.Sockets; using System.Net.Security;
@@ -39,6 +40,7 @@ public static class TestServer {
   static void Serve(TcpClient c) {
     try {
       using (c) using (var s = new SslStream(c.GetStream(), false)) {
+        c.ReceiveTimeout = 15000; c.SendTimeout = 15000; s.ReadTimeout = 15000; s.WriteTimeout = 15000;
         s.AuthenticateAsServer(cert, false, System.Security.Authentication.SslProtocols.Tls12, false);
         var sb = new StringBuilder(); int b;
         while (!sb.ToString().EndsWith("\r\n\r\n") && (b = s.ReadByte()) >= 0) sb.Append((char)b);
@@ -48,17 +50,21 @@ public static class TestServer {
         var h = Encoding.ASCII.GetBytes("HTTP/1.1 " + status + "\r\nContent-Length: " + body.Length + "\r\nConnection: close\r\n\r\n");
         s.Write(h, 0, h.Length); s.Write(body, 0, body.Length); s.Flush();
       }
-    } catch { }
+    } catch (Exception e) { Console.Error.WriteLine("TestServer: " + e.GetType().Name + ": " + e.Message); }
   }
 }
 '@
+Write-Host 'setup: starting the test server'
 $cert = [TestServer]::Start("$W\www")
 $certFile = "$W\cert.pem"
 [IO.File]::WriteAllText($certFile, [TestServer]::CertPem)
 $isWin = ($PSVersionTable.PSEdition -eq 'Desktop') -or $IsWindows
 if ($isWin) {
+    # CurrentUser\Root pops a modal confirmation dialog (hangs a headless runner); the CI runner is
+    # an administrator, so trust the throwaway cert in LocalMachine\Root, which never prompts.
+    Write-Host 'setup: trusting the test cert in LocalMachine\Root'
     $pub = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, $cert.RawData)
-    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store 'Root', 'CurrentUser'
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store 'Root', 'LocalMachine'
     $store.Open('ReadWrite'); $store.Add($pub); $store.Close()
 } else {
     $env:SSL_CERT_FILE = $certFile
@@ -81,9 +87,26 @@ Set-Content -Path "$W\www\checksums.txt.sigstore.json" -Value "sig-by: $goodIden
 
 # Run install.ps1 in a child shell so a thrown failure becomes an exit code; returns @(code, output).
 $shell = (Get-Process -Id $PID).Path
+$script:n = 0
 function Run-Install([string]$dir, [string[]]$extra = @()) {
-    $out = & $shell -NoProfile -ExecutionPolicy Bypass -File $Install -Version $V -InstallDir $dir @extra 2>&1 | Out-String
-    return @($LASTEXITCODE, $out)
+    $script:n++
+    Write-Host "case $($script:n): install into $(Split-Path -Leaf $dir) $($extra -join ' ')"
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $shell
+    foreach ($a in @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $Install, '-Version', $V, '-InstallDir', $dir) + $extra) { $psi.ArgumentList.Add($a) }
+    $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = $true
+    $psi.UseShellExecute = $false
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $p.StandardInput.Close()
+    $so = $p.StandardOutput.ReadToEndAsync(); $se = $p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit(90000)) {
+        $p.Kill($true)
+        Write-Host "case $($script:n): TIMEOUT after 90s, killed"
+        $script:fail = 1
+        return @(124, "TIMEOUT`n")
+    }
+    $p.WaitForExit()
+    return @($p.ExitCode, ($so.Result + $se.Result))
 }
 function Exe([string]$dir) { Test-Path (Join-Path $dir 'mirafleet.exe') }
 

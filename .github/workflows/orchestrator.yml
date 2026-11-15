@@ -72,6 +72,7 @@ jobs:
       - name: install.ps1 test (local HTTPS server, stand-in cosign)
         if: runner.os == 'Windows'
         shell: pwsh
+        timeout-minutes: 8
         run: ./scripts/release/installtest.ps1
       - name: brew style on the rendered formula
         if: runner.os == 'macOS'
