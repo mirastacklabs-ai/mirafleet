@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/orch"
@@ -399,11 +400,22 @@ func (s *wsState) readOutput(ctx context.Context, req Request) (any, error) {
 	}
 	var sc scrub
 	out := readOutputOut{Offset: r.Offset, Size: r.Size, EOF: r.EOF, Lines: r.Lines, Workspace: sel.id, Where: whereOf(sel.t)}
+	paging := a.Grep == "" && a.TailLines == 0
+	content := r.Content
+	if paging {
+		// The runner counts raw bytes but the cap counts JSON-encoded size (a newline costs 2):
+		// trim the page to what fits, so next_offset resumes exactly where the page ended.
+		if n := fitPrefix(content, int(budget)); n < len(content) {
+			content = content[:n]
+			r.EOF = false
+			out.EOF = false
+		}
+	}
 	var omitted int
-	out.Content, omitted = sc.capped(r.Content, int(budget))
+	out.Content, omitted = sc.capped(content, int(budget))
 	out.OmittedBytes = int64(omitted)
-	if a.Grep == "" && a.TailLines == 0 && !r.EOF && len(r.Content) > 0 {
-		out.NextOffset = r.Offset + int64(len(r.Content))
+	if paging && !r.EOF && len(content) > 0 {
+		out.NextOffset = r.Offset + int64(len(content))
 		out.Note = fmt.Sprintf("more output: call read_output again with offset %d", out.NextOffset)
 	}
 	if omitted > 0 {
@@ -411,4 +423,29 @@ func (s *wsState) readOutput(ctx context.Context, req Request) (any, error) {
 	}
 	out.Warnings = sc.warnings()
 	return out, nil
+}
+
+// fitPrefix is the length of the longest prefix of s (cut on a rune boundary) whose scrubbed,
+// JSON-encoded size is at most budget.
+func fitPrefix(s string, budget int) int {
+	fits := func(n int) bool {
+		var sc scrub
+		return orch.EncodedCost(sc.text(s[:n])) <= budget
+	}
+	if fits(len(s)) {
+		return len(s)
+	}
+	lo, hi := 0, len(s) // fits(lo) holds (empty), fits(hi) does not
+	for hi-lo > 1 {
+		mid := (lo + hi) / 2
+		if fits(mid) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	for lo > 0 && !utf8.RuneStart(s[lo]) {
+		lo--
+	}
+	return lo
 }

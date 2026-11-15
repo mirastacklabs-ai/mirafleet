@@ -313,9 +313,9 @@ func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src S
 	}
 
 	preq := placementReq{fleet: fleet, cfg: cfg, guarded: f.Confirm && !host, labels: labels, image: image}
-	heldBy := ""
+	heldBy, heldRunner := "", ""
 	if host { // one operator per runner: skip runners another operator holds
-		preq.busyBy = &heldBy
+		preq.busyBy, preq.busyRunner = &heldBy, &heldRunner
 		if preq.held, err = s.heldRunners(ctx, fleet, p.ID); err != nil {
 			return store.Workspace{}, false, s.fail("place workspace", err)
 		}
@@ -348,7 +348,7 @@ func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src S
 		}
 	}
 	if len(cands) == 0 && heldBy != "" {
-		return store.Workspace{}, false, s.refuseBusy(ctx, p, src, fleet, session, rid, heldBy)
+		return store.Workspace{}, false, s.refuseBusy(ctx, p, src, fleet, session, rid, heldRunner, heldBy)
 	}
 	spec := buildSpec(cfg, image, specLabels, f.Confirm && !host)
 	specJSON, err := json.Marshal(spec)
@@ -383,7 +383,7 @@ func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src S
 		}
 		var held *store.HeldError
 		if errors.As(err, &held) { // lost the race to another operator (the store is the authority)
-			heldBy = held.Operator
+			heldBy, heldRunner = held.Operator, c.runner.Name
 			continue
 		}
 		if err != nil {
@@ -457,7 +457,7 @@ func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src S
 		return store.Workspace{}, false, retErr
 	}
 	if heldBy != "" {
-		return store.Workspace{}, false, s.refuseBusy(ctx, p, src, fleet, session, rid, heldBy)
+		return store.Workspace{}, false, s.refuseBusy(ctx, p, src, fleet, session, rid, heldRunner, heldBy)
 	}
 	return store.Workspace{}, false, api.Errorf(api.CodeUnavailable, "no runner can take this workspace right now")
 }

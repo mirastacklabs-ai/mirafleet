@@ -669,3 +669,33 @@ func TestOpenSSHThroughSessionAgent(t *testing.T) {
 		t.Fatalf("an unpinned host key must be refused:\n%s", out)
 	}
 }
+
+// A runner restart keeps the executor's workspaces: the adopted sessions are wired again once
+// central's creds_sync arrives, with the same narrowed set (docs/M7.md 3.5 Q6, 4.2).
+func TestRestartRewiresAdoptedSessions(t *testing.T) {
+	h, ex := hostHarness(t)
+	k := newTestKey(t)
+	kh, _ := hostKeyLine(t, "ssh.test")
+	creds := []transport.CredSecret{tokenCred(decoyToken, "git.test"), sshCred(k, kh, "ssh.test")}
+	h.sync(1, creds...)
+	narrow := createReq(workspace.NewID())
+	narrow.Spec.Labels = map[string]string{LabelCredentials: "deploy"}
+	h.want(narrow, nil, transport.CodeOK)
+	all := h.create()
+	nid := workspace.ID(narrow.ID)
+
+	// "Restart": a new runner on the same executor; the process lost its wiring and its env.
+	ex.SetSessionEnv(nid, nil)
+	ex.SetSessionEnv(all, nil)
+	h2 := newHarness(t, wsYAML, ex, nil)
+	h2.sync(1, creds...)
+
+	env := ex.SessionEnv(nid)
+	if env["SSH_AUTH_SOCK"] == "" || env["HTTPS_PROXY"] != "" {
+		t.Fatalf("adopted narrowed session: %v", env)
+	}
+	env = ex.SessionEnv(all)
+	if env["SSH_AUTH_SOCK"] == "" || env["HTTPS_PROXY"] == "" {
+		t.Fatalf("adopted unrestricted session: %v", env)
+	}
+}

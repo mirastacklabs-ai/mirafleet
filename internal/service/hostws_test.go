@@ -362,7 +362,7 @@ func TestRunnerHeldByOneOperator(t *testing.T) {
 		t.Fatalf("same operator, second session: %v", err)
 	}
 	_, _, err = e.svc.OpenWorkspace(e.ctx, bob, SourceAPI, "vm", "b1", "", nil, "")
-	if c := code(t, err); c != api.CodeConflict || err.(*api.Error).Message != "runner busy, in use by ann" {
+	if c := code(t, err); c != api.CodeConflict || !busyMsg(err, "ann") {
 		t.Fatalf("bob: %v", err)
 	}
 	if rows := e.wsAudit(api.MethodWorkspaceOpen); rows[len(rows)-1].Outcome != OutcomeDenied {
@@ -396,9 +396,20 @@ func TestRunnerHeldByOneOperator(t *testing.T) {
 	}
 	// And ann is now the one refused.
 	_, _, err = e.svc.OpenWorkspace(e.ctx, ann, SourceAPI, "vm", "s9", "", nil, "")
-	if err == nil || err.(*api.Error).Message != "runner busy, in use by bob" {
+	if err == nil || !busyMsg(err, "bob") {
 		t.Fatalf("ann after bob took it: %v", err)
 	}
+}
+
+// busyMsg reports whether err is the M7 busy refusal "busy: runner NAME is in use by OP" (any op
+// when op is "").
+func busyMsg(err error, op string) bool {
+	ae, ok := err.(*api.Error)
+	if !ok || !strings.HasPrefix(ae.Message, "busy: runner ") {
+		return false
+	}
+	i := strings.Index(ae.Message, " is in use by ")
+	return i > 0 && (op == "" || ae.Message[i+len(" is in use by "):] == op)
 }
 
 func TestConcurrentOpensOnOneHostRunner(t *testing.T) {
@@ -420,7 +431,7 @@ func TestConcurrentOpensOnOneHostRunner(t *testing.T) {
 	for _, err := range errs {
 		if err == nil {
 			won++
-		} else if !strings.HasPrefix(err.(*api.Error).Message, "runner busy, in use by ") {
+		} else if !busyMsg(err, "") {
 			t.Errorf("loser: %v", err)
 		}
 	}

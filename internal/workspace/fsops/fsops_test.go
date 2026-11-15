@@ -396,8 +396,8 @@ func TestLSAndStat(t *testing.T) {
 	golden(t, "ls", strings.ReplaceAll(r.Text, dir, "<root>"))
 	_, err = f.LS("notes.txt", nil)
 	mustNot(t, err, ErrInvalid, "is not a directory")
-	_, err = f.LS("../x", nil)
-	mustNot(t, err, ErrRefused, "outside the root")
+	_, err = f.LS("../x-does-not-exist", nil)
+	mustNot(t, err, ErrNotFound, "does not exist")
 
 	in, err := f.Stat("src")
 	if err != nil || in.Type != "dir" {
@@ -423,7 +423,48 @@ func TestLSTruncates(t *testing.T) {
 	}
 }
 
-func TestEscapesRefused(t *testing.T) {
+// The tools reach everything the OS user can (docs/M7.md §3.7): absolute paths anywhere, "..",
+// and symlinks that leave the start directory. Special files stay refused.
+func TestReachesOutside(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	f, dir := newFS(t)
+	outside := t.TempDir()
+	sec := filepath.Join(outside, "secret")
+	os.WriteFile(sec, []byte("s3cret"), 0o644)
+	os.Symlink(outside, filepath.Join(dir, "linkdir"))
+	os.Symlink(sec, filepath.Join(dir, "linkfile"))
+	os.Symlink("../"+filepath.Base(outside)+"/secret", filepath.Join(dir, "rel"))
+	for _, p := range []string{"linkdir/secret", "linkfile", "rel", sec} {
+		if r, err := f.Read(p, ReadOptions{}); err != nil || !strings.Contains(r.Text, "s3cret") {
+			t.Errorf("read %s: %v %v", p, r, err)
+		}
+	}
+	if _, err := f.Edit(sec, EditOp{OldString: "s3cret", NewString: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(sec); string(b) != "t" {
+		t.Errorf("edit by absolute path: %q", b)
+	}
+	if _, err := f.Write("linkfile", "via link"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(sec); string(b) != "via link" {
+		t.Errorf("%q", b)
+	}
+	if fi, _ := os.Lstat(filepath.Join(dir, "linkfile")); fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("link was replaced")
+	}
+	if _, err := f.Write(filepath.Join(outside, "new", "x.txt"), "x"); err != nil {
+		t.Error(err)
+	}
+	if _, err := f.Read("/dev/null", ReadOptions{}); !errors.Is(err, ErrRefused) {
+		t.Errorf("device: %v", err)
+	}
+}
+
+func TestSymlinkInside(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks need privileges on windows")
 	}
@@ -435,23 +476,7 @@ func TestEscapesRefused(t *testing.T) {
 	os.Symlink("../"+filepath.Base(outside)+"/secret", filepath.Join(dir, "rel"))
 	os.Symlink("notes.txt", filepath.Join(dir, "inside"))
 
-	for _, p := range []string{"../secret", "linkdir/secret", "linkfile", "rel", filepath.Join(outside, "secret"), "/etc/passwd", "a/../../x"} {
-		if _, err := f.Read(p, ReadOptions{}); !errors.Is(err, ErrRefused) {
-			t.Errorf("read %s: %v", p, err)
-		}
-		if _, err := f.Write(p, "x"); !errors.Is(err, ErrRefused) {
-			t.Errorf("write %s: %v", p, err)
-		}
-		if _, err := f.Edit(p, EditOp{OldString: "s", NewString: "t"}); !errors.Is(err, ErrRefused) {
-			t.Errorf("edit %s: %v", p, err)
-		}
-	}
-	if b, _ := os.ReadFile(filepath.Join(outside, "secret")); string(b) != "s3cret" {
-		t.Errorf("outside file changed: %q", b)
-	}
-	if _, err := os.Stat(filepath.Join(outside, "secret")); err != nil {
-		t.Error(err)
-	}
+	_ = outside
 	// A symlink inside the root works and a write goes through it, keeping the link.
 	if r, err := f.Read("inside", ReadOptions{Limit: 1}); err != nil || !strings.Contains(r.Text, "alpha") {
 		t.Errorf("%v %v", r, err)

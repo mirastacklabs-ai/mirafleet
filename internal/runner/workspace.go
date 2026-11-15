@@ -89,7 +89,8 @@ type wsState struct {
 	tomb   tombstones
 	now    func() time.Time // injectable clock (tombstone expiry)
 
-	gone func(workspace.ID) // called when a workspace was destroyed (M7: tears its credential wiring down)
+	gone  func(workspace.ID)   // called when a workspace was destroyed (M7: tears its credential wiring down)
+	adopt func([]workspace.ID) // called once with the workspaces found at start (M7: wires their credentials)
 }
 
 // goneWS tells the runner a workspace no longer exists.
@@ -165,12 +166,17 @@ func (s *wsState) seed(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var adopted []workspace.ID
 	for _, in := range infos {
 		if workspace.ValidID(in.ID) {
 			s.live[in.ID] = &wsEntry{sem: make(chan struct{}, maxExecPerWorkspace), confirmed: true}
+			adopted = append(adopted, in.ID)
 		}
 	}
 	s.seeded = true
+	if s.adopt != nil {
+		s.adopt(adopted) // M7: wire credentials for the sessions that survived a runner restart
+	}
 	return nil
 }
 

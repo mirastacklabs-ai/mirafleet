@@ -44,7 +44,7 @@ func (f *FS) LS(dir string, ignore []string) (*LSResult, error) {
 	}
 	res := &LSResult{}
 	var sb strings.Builder
-	shown := filepath.Join(f.dirs[0], rel)
+	shown := f.root.p(rel)
 	fmt.Fprintf(&sb, "- %s%c\n", shown, filepath.Separator)
 	f.walk(&sb, res, rel, "", 1, ignore)
 	res.Text = sb.String()

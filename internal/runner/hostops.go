@@ -11,6 +11,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -146,6 +147,52 @@ func (m *devMgr) open(id workspace.ID, restrict bool, names []string) error {
 	if err != nil {
 		return err
 	}
+	if err := saveScope(dir, restrict, names); err != nil {
+		return err
+	}
+	return m.wire(id, dir, restrict, names)
+}
+
+// scopeFile records, in the session's state directory, which credentials the open asked for, so
+// a runner restart wires the adopted session with the same (never wider) set.
+const scopeFile = "creds_scope"
+
+type credScope struct {
+	Restrict bool     `json:"restrict"`
+	Names    []string `json:"names,omitempty"`
+}
+
+func saveScope(dir string, restrict bool, names []string) error {
+	b, err := json.Marshal(credScope{Restrict: restrict, Names: names})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, scopeFile), b, 0o600)
+}
+
+// adopt wires the workspaces found at start (a runner restart keeps them): central's creds_sync
+// refreshes them as soon as it arrives, and until then they have no credentials. A session whose
+// scope file is missing or unreadable gets no credentials rather than all of them.
+func (m *devMgr) adopt(ids []workspace.ID) {
+	for _, id := range ids {
+		dir, err := m.hooks.SessionDir(id)
+		if err != nil {
+			m.logf("workspace %s: adopt: %v", id, err)
+			continue
+		}
+		sc := credScope{Restrict: true}
+		if b, err := os.ReadFile(filepath.Join(dir, scopeFile)); err == nil {
+			if json.Unmarshal(b, &sc) != nil {
+				sc = credScope{Restrict: true}
+			}
+		}
+		if err := m.wire(id, dir, sc.Restrict, sc.Names); err != nil {
+			m.logf("workspace %s: adopt: %v", id, err)
+		}
+	}
+}
+
+func (m *devMgr) wire(id workspace.ID, dir string, restrict bool, names []string) error {
 	m.mu.Lock()
 	s := m.sessions[id]
 	if s == nil {

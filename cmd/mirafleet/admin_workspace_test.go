@@ -188,6 +188,15 @@ func TestWorkspaceListKill(t *testing.T) {
 	if lastParams(t, f, api.MethodWorkspaceKill)["id"] != strings.Repeat("a", 32) {
 		t.Errorf("kill params: %+v", f.calls)
 	}
+	if v, ok := lastParams(t, f, api.MethodWorkspaceKill)["delete"]; ok && v != false {
+		t.Errorf("delete must be off by default: %+v", f.calls)
+	}
+	if err := f.cli().run([]string{"workspace", "kill", "-delete", strings.Repeat("a", 32)}); err != nil {
+		t.Fatal(err)
+	}
+	if lastParams(t, f, api.MethodWorkspaceKill)["delete"] != true {
+		t.Errorf("kill -delete params: %+v", f.calls)
+	}
 	for _, args := range [][]string{{"workspace"}, {"workspace", "kill"}, {"workspace", "kill", "a", "b"}, {"workspace", "list", "x"}, {"workspace", "nope"}} {
 		if err := (&fakeAdmin{}).cli().run(args); !errors.Is(err, errAdminUsage) {
 			t.Errorf("%v: %v", args, err)

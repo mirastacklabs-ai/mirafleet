@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"regexp"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/opconf"
 	"github.com/mirastacklabs-ai/mirafleet/internal/orch"
 )
 
@@ -358,7 +360,11 @@ func (s *wsState) pick(ctx context.Context, contextArg, fleetArg, wsArg string, 
 	if !found { // fail closed: an unknown fleet might be guarded
 		return selection{}, &Error{Code: api.CodeNotFound, Message: "no such fleet in this context"}
 	}
-	r, err := s.b.WorkspaceOpen(ctx, t.Context, api.WorkspaceOpenParams{Fleet: t.Fleet, Session: session})
+	wd, perr := s.projectWorkdir()
+	if perr != nil {
+		return selection{}, perr
+	}
+	r, err := s.b.WorkspaceOpen(ctx, t.Context, api.WorkspaceOpenParams{Fleet: t.Fleet, Session: session, Workdir: wd})
 	if err != nil {
 		return selection{}, guardedRewrite(toolError(err), t)
 	}
@@ -464,8 +470,12 @@ func (s *wsState) open(ctx context.Context, req Request) (any, error) {
 		return nil, lerr
 	}
 	defer unlock()
+	wd, perr := s.projectWorkdir()
+	if perr != nil {
+		return nil, perr
+	}
 	r, err := s.b.WorkspaceOpen(ctx, t.Context, api.WorkspaceOpenParams{
-		Fleet: t.Fleet, Session: session, Image: a.Image, Labels: a.Labels,
+		Fleet: t.Fleet, Session: session, Image: a.Image, Labels: a.Labels, Workdir: wd,
 		Confirm:     a.Confirm, // verbatim: never defaulted or cached
 		Credentials: a.Creds,
 	})
@@ -847,4 +857,21 @@ func (s *wsState) close(ctx context.Context, req Request) (any, error) {
 		state = "closed"
 	}
 	return closeOut{State: state, Workspace: sel.id, Where: whereOf(sel.t)}, nil
+}
+
+// projectWorkdir is the `workdir:` of the project's .mirafleet.yaml (docs/M7.md §3.4, §3.8): the
+// shared directory name sent with workspace_open. The file is re-read at every open; an invalid
+// one is an error, never silently ignored. `remote: true` needs no wire field: it only steers the
+// plugin and hook.
+func (s *wsState) projectWorkdir() (string, error) {
+	dir, err := s.projectDir()
+	if err != nil {
+		return "", nil // no project directory: no project file
+	}
+	home, _ := os.UserHomeDir()
+	p, _, perr := opconf.LoadProject(dir, home)
+	if perr != nil {
+		return "", badRequest("the project file .mirafleet.yaml is invalid")
+	}
+	return p.Workdir, nil
 }

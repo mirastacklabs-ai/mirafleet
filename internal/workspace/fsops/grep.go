@@ -28,15 +28,16 @@ type GrepOptions struct {
 	Type        string // ripgrep type name, see GrepTypeNames
 	Mode        string // content, files_with_matches (default) or count
 	IgnoreCase  bool
-	LineNumbers bool // content mode: prefix matched lines with the line number
-	After       int  // -A
-	Before      int  // -B
-	Context     int  // -C, applies to whichever of After or Before is zero
-	Multiline   bool // the pattern may span lines and . matches newline
-	HeadLimit   int  // most output items (lines, files or counts); 0 is unlimited up to the output cap
-	Offset      int  // items skipped before HeadLimit applies
-	Hidden      bool // search dot files and directories (.git never)
-	NoIgnore    bool // do not honour ignore files
+	LineNumbers bool   // content mode: prefix matched lines with the line number
+	After       int    // -A
+	Before      int    // -B
+	Context     int    // -C, applies to whichever of After or Before is zero
+	Multiline   bool   // the pattern may span lines and . matches newline
+	HeadLimit   int    // most output items (lines, files or counts); 0 is unlimited up to the output cap
+	Offset      int    // items skipped before HeadLimit applies
+	Hidden      bool   // search dot files and directories (.git never)
+	NoIgnore    bool   // do not honour ignore files
+	Display     string // prefix of every path in the result (the caller rooted the search below the path the user gave)
 	Limits      SearchLimits
 }
 
@@ -280,13 +281,13 @@ func (g *grepRun) searchFile(rel string) error {
 	}
 	switch g.spec.mode {
 	case GrepFilesWithMatches:
-		g.res.Files = append(g.res.Files, rel)
-		if g.count(len(rel)) {
+		g.res.Files = append(g.res.Files, g.opt.Display+rel)
+		if g.count(len(g.opt.Display + rel)) {
 			return errStopWalk
 		}
 	case GrepCount:
-		g.res.Counts = append(g.res.Counts, FileCount{Path: rel, Count: len(matched)})
-		if g.count(len(rel) + 8) {
+		g.res.Counts = append(g.res.Counts, FileCount{Path: g.opt.Display + rel, Count: len(matched)})
+		if g.count(len(g.opt.Display+rel) + 8) {
 			return errStopWalk
 		}
 	default:
@@ -334,7 +335,7 @@ func (g *grepRun) emitContent(rel string, text func(int) []byte, nl int, matched
 			if isMatch[n] {
 				sep = ":"
 			}
-			line := rel + sep
+			line := g.opt.Display + rel + sep
 			if g.opt.LineNumbers {
 				line += strconv.Itoa(n) + sep
 			}

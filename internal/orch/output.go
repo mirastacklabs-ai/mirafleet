@@ -219,3 +219,6 @@ func fit(s string, c, alloc int) (string, int) {
 	omitted := tStart - hEnd
 	return s[:hEnd] + markerFor(omitted) + s[tStart:], omitted
 }
+
+// EncodedCost is the worst-case JSON-encoded size of s (see jsonCost), the unit CapOutput counts.
+func EncodedCost(s string) int { return cost(s) }

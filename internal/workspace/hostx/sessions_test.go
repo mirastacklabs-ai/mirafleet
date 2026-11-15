@@ -111,45 +111,29 @@ func TestConfinement(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	// File tools reach what the OS user can see (docs/M7.md §3.7): links, "..", absolute paths.
 	for _, op := range []transport.FSOp{
 		{Op: transport.FSRead, Path: "link"},
 		{Op: transport.FSRead, Path: "dirlink/secret.txt"},
-		{Op: transport.FSRead, Path: "../secret.txt"},
-		{Op: transport.FSRead, Path: "a/../../secret.txt"},
 		{Op: transport.FSRead, Path: secret},
-		{Op: transport.FSEdit, Path: "link", OldString: "TOP", NewString: "X"},
-		{Op: transport.FSEdit, Path: "dirlink/secret.txt", OldString: "TOP", NewString: "X"},
-		{Op: transport.FSLS, Path: "dirlink"},
-		{Op: transport.FSLS, Path: ".."},
+		{Op: transport.FSLS, Path: base},
 	} {
-		res, _, err := s.Do(ctx, op, nil)
-		if err == nil {
-			// LS of a symlinked dir may list the entry itself, but never its contents.
-			if ls, ok := res.(*fsops.LSResult); ok && !strings.Contains(ls.Text, "secret.txt") {
-				continue
-			}
-			t.Errorf("%+v succeeded: %+v", op, res)
+		if _, _, err := s.Do(ctx, op, nil); err != nil {
+			t.Errorf("%+v: %v", op, err)
 		}
 	}
-	// A write through the symlink must not change the target.
-	body := "pwned"
-	sum := sha256.Sum256([]byte(body))
-	s.Do(ctx, transport.FSOp{Op: transport.FSWrite, Path: "dirlink/new.txt", Length: 5, SHA256: hex.EncodeToString(sum[:])}, []byte(body))
-	s.Do(ctx, transport.FSOp{Op: transport.FSWrite, Path: "link", Length: 5, SHA256: hex.EncodeToString(sum[:])}, []byte(body))
-	if b, _ := os.ReadFile(secret); string(b) != "TOPSECRET\n" {
-		t.Fatalf("secret changed: %q", b)
-	}
-	if _, err := os.Stat(filepath.Join(base, "new.txt")); err == nil {
-		t.Fatal("write escaped through a directory symlink")
-	}
-	// Search never follows the links either.
+	// Search walks only real files below the path (symlinks are not followed), absolute path included.
 	res, _, err := s.Do(ctx, transport.FSOp{Op: transport.FSGrep, Pattern: "TOPSECRET"}, nil)
 	if err != nil || len(res.(fsops.GrepResult).Files) != 0 {
 		t.Fatalf("grep: %+v %v", res, err)
 	}
-	gl, _, err := s.Do(ctx, transport.FSOp{Op: transport.FSGlob, Pattern: "**/*.txt"}, nil)
-	if err != nil || len(gl.(fsops.GlobResult).Paths) != 0 {
-		t.Fatalf("glob: %+v %v", gl, err)
+	res, _, err = s.Do(ctx, transport.FSOp{Op: transport.FSGrep, Pattern: "TOPSECRET", Path: base}, nil)
+	if err != nil || !strings.Contains(strings.Join(res.(fsops.GrepResult).Files, ","), secret) {
+		t.Fatalf("grep abs: %+v %v", res, err)
+	}
+	gl, _, err := s.Do(ctx, transport.FSOp{Op: transport.FSGlob, Pattern: "*.txt", Path: base}, nil)
+	if err != nil || !strings.Contains(strings.Join(gl.(fsops.GlobResult).Paths, ","), secret) {
+		t.Fatalf("glob abs: %+v %v", gl, err)
 	}
 	// A symlink planted in place of the session dir is refused on reattach.
 	m2, _, _ := newMgr(t, nil)
@@ -185,8 +169,8 @@ func TestWorkdir(t *testing.T) {
 	if err != nil || !strings.Contains(res.(*fsops.ReadResult).Text, "package x") {
 		t.Fatalf("%v %v", res, err)
 	}
-	if _, _, err := s.Do(ctx, transport.FSOp{Op: transport.FSRead, Path: "../outside"}, nil); err == nil {
-		t.Fatal("escape from workdir")
+	if _, _, err := s.Do(ctx, transport.FSOp{Op: transport.FSRead, Path: "../outside"}, nil); err != nil {
+		t.Fatalf("the OS user can read outside the workdir: %v", err)
 	}
 	s.Close()
 	if err := m.Delete("w"); err != nil {

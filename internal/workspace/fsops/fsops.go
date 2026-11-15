@@ -2,8 +2,9 @@
 // Stat) as a pure Go library rooted at a directory. It follows Claude Code's local tool
 // semantics and error messages closely.
 //
-// The root is an os.Root: ".." and symlinks that leave the directory are refused by the kernel
-// checked resolver, never by string tests alone. Anything that is not a regular file (FIFO,
+// The tools reach everything the OS user can see (docs/M7.md §3.7, parity with local Claude
+// Code): an absolute path works anywhere, a relative one is taken from the directory the FS was
+// opened on; the OS permissions are the boundary. Anything that is not a regular file (FIFO,
 // device, socket) is refused before and after open, and opens are non-blocking where the OS has
 // that flag, so a planted FIFO cannot hang the caller. The package has no OS specific behaviour
 // other than that one open flag.
@@ -53,14 +54,14 @@ const (
 	defaultFileMode = 0o644
 )
 
-// FS is a set of file tools rooted at one directory.
+// FS is a set of file tools whose relative paths start at one directory.
 type FS struct {
-	root *os.Root
-	dirs []string // the root as given and with symlinks resolved; absolute paths under either are accepted
+	root osRoot
+	dirs []string // the directory as given and with symlinks resolved; absolute paths under either are shown relative
 	opt  Options
 }
 
-// Open roots the tools at dir, which must exist.
+// Open starts the tools at dir, which must exist.
 func Open(dir string, opt Options) (*FS, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -70,9 +71,10 @@ func Open(dir string, opt Options) (*FS, error) {
 	if err != nil {
 		return nil, err
 	}
-	root, err := os.OpenRoot(real)
-	if err != nil {
+	if fi, err := os.Stat(real); err != nil {
 		return nil, err
+	} else if !fi.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", dir)
 	}
 	if opt.MaxFile <= 0 {
 		opt.MaxFile = defaultMaxFile
@@ -84,13 +86,14 @@ func Open(dir string, opt Options) (*FS, error) {
 	if abs != real {
 		dirs = append(dirs, abs)
 	}
-	return &FS{root: root, dirs: dirs, opt: opt}, nil
+	return &FS{root: osRoot{cwd: real}, dirs: dirs, opt: opt}, nil
 }
 
-// Close releases the root.
+// Close releases the FS.
 func (f *FS) Close() error { return f.root.Close() }
 
-// rel turns a caller path (relative to the root, or absolute under it) into a root-relative path.
+// rel cleans a caller path. A path inside the start directory comes back relative to it (".." is
+// resolved lexically); any other comes back absolute. Relative names start at the directory.
 func (f *FS) rel(p string) (string, error) {
 	if p == "" {
 		return "", fail(ErrInvalid, "file_path is required")
@@ -98,20 +101,16 @@ func (f *FS) rel(p string) (string, error) {
 	if strings.ContainsRune(p, 0) {
 		return "", fail(ErrInvalid, "path contains a NUL byte")
 	}
-	if filepath.IsAbs(p) {
-		c := filepath.Clean(p)
-		for _, d := range f.dirs {
-			if r, err := filepath.Rel(d, c); err == nil && filepath.IsLocal(r) {
-				return r, nil
-			}
+	c := filepath.Clean(p)
+	if !filepath.IsAbs(c) {
+		c = filepath.Join(f.dirs[0], c)
+	}
+	for _, d := range f.dirs {
+		if r, err := filepath.Rel(d, c); err == nil && filepath.IsLocal(r) {
+			return r, nil
 		}
-		return "", fail(ErrRefused, "%s is outside the root directory", p)
 	}
-	r := filepath.Clean(p)
-	if !filepath.IsLocal(r) {
-		return "", fail(ErrRefused, "%s is outside the root directory", p)
-	}
-	return r, nil
+	return c, nil
 }
 
 // mapErr turns an OS error into a tool error.
@@ -133,8 +132,8 @@ func mapErr(rel string, err error) error {
 	return fmt.Errorf("%s: %w", rel, err)
 }
 
-// target follows symlinks of the final element inside the root (os.Root resolves them for
-// reads, but a rename would replace the link itself). A dangling link yields its target.
+// target follows symlinks of the final element (the OS resolves them for reads, but a rename
+// would replace the link itself). A dangling link yields its target.
 func (f *FS) target(rel string) (string, error) {
 	for range 16 {
 		fi, err := f.root.Lstat(rel)
@@ -151,15 +150,11 @@ func (f *FS) target(rel string) (string, error) {
 		if err != nil {
 			return "", mapErr(rel, err)
 		}
-		if filepath.IsAbs(t) {
-			if rel, err = f.rel(t); err != nil {
-				return "", err
-			}
-			continue
+		if !filepath.IsAbs(t) {
+			t = filepath.Join(filepath.Dir(f.root.p(rel)), t)
 		}
-		rel = filepath.Join(filepath.Dir(rel), t)
-		if !filepath.IsLocal(rel) {
-			return "", fail(ErrRefused, "symlink target %s escapes the root directory", t)
+		if rel, err = f.rel(t); err != nil {
+			return "", err
 		}
 	}
 	return "", fail(ErrRefused, "%s: too many levels of symbolic links", rel)

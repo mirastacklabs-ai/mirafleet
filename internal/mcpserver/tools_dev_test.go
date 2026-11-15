@@ -634,12 +634,15 @@ func TestDevReadOutputPaging(t *testing.T) {
 	if _, has := v["next_offset"]; has || v["lines"] != float64(2) {
 		t.Fatalf("%v", v)
 	}
-	// A runner page larger than the cap is cut and says so.
+	// A runner page larger than the cap is trimmed to what fits, not cut: next_offset resumes
+	// exactly at the end of the shown content (docs/M7.md 3.6).
 	r.f.OutputReadFn = func(context.Context, string, api.OutputReadParams) (*api.OutputReadResult, error) {
 		return &api.OutputReadResult{Content: strings.Repeat("y", 5000), Size: 5000, EOF: true}, nil
 	}
 	v = r.mustCall(t, "read_output", `{"ref":"req-1"}`)
-	if v["omitted_bytes"].(float64) < 4000 || !strings.Contains(v["note"].(string), "cut") {
+	shown := v["content"].(string)
+	if _, cut := v["omitted_bytes"]; cut || v["eof"] == true || len(shown) != 400 ||
+		int(v["next_offset"].(float64)) != len(shown) {
 		t.Fatalf("%v", v)
 	}
 }

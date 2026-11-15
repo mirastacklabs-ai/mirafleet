@@ -16,6 +16,7 @@ type GlobOptions struct {
 	Hidden   bool   // ignored: Glob always includes dot files and directories, like Claude Code (.git is never searched)
 	NoIgnore bool   // do not honour .gitignore, .ignore and .rgignore
 	Limit    int    // most paths returned (default 1000)
+	Display  string // prefix of every returned path (the caller rooted the search below the path the user gave)
 	Limits   SearchLimits
 }
 
@@ -93,7 +94,7 @@ func Glob(ctx context.Context, root *os.Root, o GlobOptions) (GlobResult, error)
 		reason = ReasonHeadLimit
 	}
 	for _, h := range hits {
-		res.Paths = append(res.Paths, h.rel)
+		res.Paths = append(res.Paths, o.Display+h.rel)
 	}
 	if reason != "" {
 		res.Truncated = true

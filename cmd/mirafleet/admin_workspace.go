@@ -280,6 +280,7 @@ func (c *adminCLI) workspaceList(args []string) error {
 
 func (c *adminCLI) workspaceKill(args []string) error {
 	fs, data := c.flags("workspace kill")
+	del := fs.Bool("delete", false, "also delete the session directory (host fleets)")
 	pos, err := adminParse(fs, args)
 	if err != nil {
 		return err
@@ -288,7 +289,7 @@ func (c *adminCLI) workspaceKill(args []string) error {
 		return err
 	}
 	var res api.WorkspaceKillResult
-	if err := c.call(adminSock(*data), api.MethodWorkspaceKill, api.WorkspaceKillParams{ID: pos[0]}, &res); err != nil {
+	if err := c.call(adminSock(*data), api.MethodWorkspaceKill, api.WorkspaceKillParams{ID: pos[0], Delete: *del}, &res); err != nil {
 		return err
 	}
 	if res.State == "closing" {

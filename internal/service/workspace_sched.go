@@ -36,8 +36,9 @@ type placementReq struct {
 
 	// Host fleets (M7): held maps runner id to the operator whose live workspaces hold it; those
 	// runners are skipped and the first holder met is stored in *busyBy (for the busy refusal).
-	held   map[int64]string
-	busyBy *string
+	held       map[int64]string
+	busyBy     *string
+	busyRunner *string // name of that runner
 }
 
 // hostImage is the placeholder image of a host-fleet workspace row and spec (host mode has no
@@ -62,8 +63,8 @@ func (s *Service) heldRunners(ctx context.Context, fleet string, opID int64) (ma
 }
 
 // errRunnerBusy is the refusal for a host runner in use by another operator.
-func errRunnerBusy(operator string) error {
-	return api.Errorf(api.CodeConflict, "runner busy, in use by %s", operator)
+func errRunnerBusy(runner, operator string) error {
+	return api.Errorf(api.CodeConflict, "busy: runner %s is in use by %s", runner, operator)
 }
 
 // candidates returns the runners that can take the request, best first: most free slots, with a
@@ -102,6 +103,9 @@ func (s *Service) candidates(ctx context.Context, req placementReq) ([]candidate
 		if who, ok := req.held[si.ID]; ok {
 			if req.busyBy != nil && *req.busyBy == "" {
 				*req.busyBy = who
+				if req.busyRunner != nil {
+					*req.busyRunner = r.Name
+				}
 			}
 			continue
 		}
@@ -209,9 +213,9 @@ func egressRule(e string) transport.EgressRule {
 }
 
 // refuseBusy audits (denied) and returns the busy refusal naming the holding operator.
-func (s *Service) refuseBusy(ctx context.Context, p auth.Principal, src Source, fleet, session, rid, holder string) error {
+func (s *Service) refuseBusy(ctx context.Context, p auth.Principal, src Source, fleet, session, rid, runner, holder string) error {
 	den := s.wsEvent(p, src, api.MethodWorkspaceOpen, fleet, "", "", rid)
-	den.Subject, den.Outcome, den.Message = session, OutcomeDenied, "runner busy, in use by "+holder
+	den.Subject, den.Outcome, den.Message = session, OutcomeDenied, "busy: runner "+runner+" is in use by "+holder
 	s.recordBestEffort(ctx, den)
-	return errRunnerBusy(holder)
+	return errRunnerBusy(runner, holder)
 }

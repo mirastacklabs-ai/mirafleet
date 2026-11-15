@@ -38,16 +38,17 @@ type FilesOptions struct {
 	FS     fsops.Options
 }
 
-// Files runs the file tools in-process, confined to one directory (the session dir or workdir).
+// Files runs the file tools in-process. Relative paths start at one directory (the session dir
+// or workdir); absolute paths reach everything the OS user can see (docs/M7.md §3.7).
 type Files struct {
 	dir  string
 	fs   *fsops.FS
-	root *os.Root
+	root *os.Root // upload/download only (workspace.Executor ReadFile/WriteFile): confined to dir
 	rg   string
 	opt  FilesOptions
 }
 
-// OpenFiles roots the tools at dir, which must exist.
+// OpenFiles starts the tools at dir, which must exist.
 func OpenFiles(dir string, opt FilesOptions) (*Files, error) {
 	f, err := fsops.Open(dir, opt.FS)
 	if err != nil {
@@ -73,13 +74,13 @@ func OpenFiles(dir string, opt FilesOptions) (*Files, error) {
 	return &Files{dir: real, fs: f, root: root, rg: rg, opt: opt}, nil
 }
 
-// Close releases the roots.
+// Close releases the tools.
 func (f *Files) Close() error {
 	f.fs.Close()
 	return f.root.Close()
 }
 
-// Dir is the resolved directory the tools are confined to.
+// Dir is the resolved directory relative paths start at.
 func (f *Files) Dir() string { return f.dir }
 
 // UsesRg reports whether grep delegates to ripgrep.
@@ -105,8 +106,12 @@ func (f *Files) Do(ctx context.Context, op transport.FSOp, body []byte) (any, er
 		}
 		res, err := f.fs.Write(op.Path, string(body))
 		if err == nil && res.Created && op.Mode != 0 {
-			// The file was just created by this process, inside the root.
-			_ = f.root.Chmod(res.Path, os.FileMode(op.Mode&0o777))
+			// The file was just created by this process.
+			p := res.Path
+			if !filepath.IsAbs(p) {
+				p = filepath.Join(f.dir, p)
+			}
+			_ = os.Chmod(p, os.FileMode(op.Mode&0o777))
 		}
 		return res, err
 	case transport.FSEdit:
@@ -126,7 +131,15 @@ func (f *Files) Do(ctx context.Context, op transport.FSOp, body []byte) (any, er
 			Context: op.Context, Multiline: op.Multiline, HeadLimit: op.HeadLimit,
 		})
 	case transport.FSGlob:
-		return fsops.Glob(ctx, f.root, fsops.GlobOptions{Pattern: op.Pattern, Path: op.Path, Limits: f.opt.Limits})
+		root, start, display, err := f.searchTarget(op.Path)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		if start != "" {
+			return nil, fmt.Errorf("%w: glob path %s is not a directory", fsops.ErrInvalid, op.Path)
+		}
+		return fsops.Glob(ctx, root, fsops.GlobOptions{Pattern: op.Pattern, Display: display, Limits: f.opt.Limits})
 	case transport.FSLS:
 		return f.fs.LS(op.Path, op.Ignore)
 	case transport.FSStat:
@@ -148,20 +161,68 @@ func (f *Files) Grep(ctx context.Context, o fsops.GrepOptions) (fsops.GrepResult
 			}
 		}
 	}
-	return fsops.Grep(ctx, f.root, o)
+	root, start, display, err := f.searchTarget(o.Path)
+	if err != nil {
+		return fsops.GrepResult{}, err
+	}
+	defer root.Close()
+	o.Path, o.Display = start, display
+	return fsops.Grep(ctx, root, o)
 }
 
-// rgSafe is false when the search path is (or leads through) a symlink out of the root: rg
-// follows a symlink given as an argument, the Go engine does not.
+// rgSafe is false when the search path is a symlink or has a backslash: rg follows a symlink
+// given as an argument, the Go engine does not, and the two must answer alike.
 func (f *Files) rgSafe(p string) bool {
 	if p == "" || p == "." {
 		return true
 	}
-	if filepath.IsAbs(p) || strings.Contains(p, "\\") {
+	if strings.Contains(p, "\\") {
 		return false
 	}
-	fi, err := f.root.Lstat(filepath.Clean(p))
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(f.dir, p)
+	}
+	fi, err := os.Lstat(filepath.Clean(p))
 	return err == nil && fi.Mode()&os.ModeSymlink == 0
+}
+
+// searchTarget resolves a search path (absolute, or relative to the start directory) for the Go
+// engines, which walk below an os.Root. A directory becomes the root (start ""); a file becomes
+// its parent as the root and its name as start. display is the prefix that turns the engines'
+// root-relative paths back into paths in the form the caller gave. The caller closes root.
+func (f *Files) searchTarget(p string) (root *os.Root, start, display string, err error) {
+	if strings.ContainsRune(p, 0) {
+		return nil, "", "", fmt.Errorf("%w: path contains a NUL byte", fsops.ErrInvalid)
+	}
+	abs := p
+	switch {
+	case p == "":
+		abs = f.dir
+	case !filepath.IsAbs(p):
+		abs = filepath.Join(f.dir, p)
+	}
+	abs = filepath.Clean(abs)
+	fi, serr := os.Stat(abs)
+	if serr != nil {
+		if os.IsNotExist(serr) {
+			return nil, "", "", &fsops.Error{Kind: fsops.ErrNotFound, Msg: "Path does not exist: " + p}
+		}
+		return nil, "", "", &fsops.Error{Kind: fsops.ErrRefused, Msg: p + ": " + serr.Error()}
+	}
+	shown := filepath.Clean(p)
+	base := abs
+	if !fi.IsDir() {
+		base, start = filepath.Dir(abs), filepath.Base(abs)
+		shown = filepath.Dir(shown)
+	}
+	if p != "" && shown != "." {
+		display = strings.TrimSuffix(shown, "/") + "/"
+	}
+	root, err = os.OpenRoot(base)
+	if err != nil {
+		return nil, "", "", &fsops.Error{Kind: fsops.ErrRefused, Msg: p + ": " + err.Error()}
+	}
+	return root, start, display, nil
 }
 
 func clip(s string) string {

@@ -106,6 +106,7 @@ func New(cfg Config) *Runner {
 		if hooks, ok := cfg.Workspace.(SessionHooks); ok && devCapable(cfg.Workspace) {
 			r.dev = newDevMgr(r, hooks)
 			r.ws.gone = r.dev.close
+			r.ws.adopt = r.dev.adopt
 		}
 		var hb transport.Heartbeat
 		r.fillHeartbeat(&hb)
