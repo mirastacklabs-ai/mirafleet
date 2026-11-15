@@ -18,6 +18,8 @@ Milestones: [docs/PLAN.md](docs/PLAN.md). Developer guide (for new engineers):
   Apache-2.0, MIT, MIT-0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD. Never GPL, LGPL, AGPL, MPL, SSPL, BUSL
   or other copyleft/source-available. `scripts/dev.sh licenses` enforces this with `go-licenses` (CI from M6).
   Exception: font files may be SIL OFL-1.1 (shipped with their licence text, never sold alone).
+  Dev/CI tools that only run in containers or CI and are never bundled or shipped (e.g. shellcheck,
+  the npm CLI, systemd-analyze) may carry any OSI-approved licence.
 - Branding: follow [docs/BRAND.md](docs/BRAND.md) for the GUI, CLI colours, docs and store assets.
 - Containers: the Docker ecosystem is supported (Docker CLI, Docker Engine/moby, Compose, docker.io
   images). Never a hard dependency on Docker's commercial products (Docker Desktop paid tiers, Docker

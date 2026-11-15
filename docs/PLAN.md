@@ -61,8 +61,12 @@ design: [ARCHITECTURE.md](ARCHITECTURE.md#workspace-mode). The "M3 done when" sc
   a privileged containerd container on the Docker runtime).
 
 ## M4 — Admin GUI
-- `html/template` + htmx (vendored, embedded). Screens per ARCHITECTURE.md. Admin bootstrap on
-  first start. CSRF protection, secure session cookies, `127.0.0.1` default bind.
+**Status: planned (14 Nov 2026).** Detailed plan and decisions: [M4.md](M4.md).
+- `html/template` + htmx 2 (vendored, embedded). Screens per ARCHITECTURE.md. Admin bootstrap on
+  first start (setup-token file, `central gui reset-admin`). CSRF protection, secure session
+  cookies (sessions in SQLite, tokens stored hashed), TLS always on, default bind `0.0.0.0:8443`
+  with a self-signed certificate unless the operator supplies one. View and manage only: the GUI
+  cannot run actions.
 
 ## M5 — Orchestrator
 **Status: built; closing hardening and docs in progress.** Detailed plan, decisions and steps:
@@ -109,7 +113,7 @@ archives (zip + `.exe` on Windows) serve the orchestrator (`mirafleet mcp`):
 | Claude Code plugin marketplace (repo with `.claude-plugin/marketplace.json`) | `/plugin marketplace add mirastacklabs-ai/mirafleet`, then `/plugin install mirafleet` |
 | Anthropic's official plugin directory | submit once stable |
 | npm wrapper `@mirastacklabs/mirafleet` (per-platform binaries as optional dependencies, no postinstall download) | `npx -y @mirastacklabs/mirafleet mcp` in any harness's MCP config |
-| Official MCP Registry (`server.json`, pointing at the npm and OCI packages) | discovery; many directories and harness galleries sync from it |
+| Official MCP Registry (`server.json`, pointing at the npm package; see [M6.md](M6.md)) | discovery; many directories and harness galleries sync from it |
 | Harness galleries and community directories (Kilo Code / Cline MCP marketplaces, VS Code, Cursor, Smithery, Glama, PulseMCP) | per their submission process; mostly fed by the registry |
 | opencode and others without a store | copy-paste config snippet in `integrations/<harness>/README.md` |
 
