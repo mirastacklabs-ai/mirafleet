@@ -280,7 +280,9 @@ type GUISession struct {
 // AuditFilter selects audit rows for QueryAudit. Zero fields match everything. String fields
 // are exact matches on their column (Action too, unless ActionPrefix). AfterID and BeforeID are
 // keyset bounds (id > AfterID, id < BeforeID); From and To bound the time inclusively. Desc
-// orders by id descending. Limit <= 0 means 100; it is capped at 1000.
+// orders by id descending. Limit <= 0 means 100; it is capped at 1000. Desc with AfterID returns
+// the newest rows overall, not the page just after AfterID: to page toward newer rows, query
+// ascending with AfterID and reverse the result.
 type AuditFilter struct {
 	AfterID, BeforeID int64
 	From, To          time.Time
@@ -474,6 +476,10 @@ type Store interface {
 	// created=false: a live token exists, nothing was written (no audit row), err is nil.
 	// Same errors as PutGUISetup otherwise.
 	EnsureGUISetup(ctx context.Context, hash []byte, expires, now time.Time, ev AuditEvent) (created bool, err error)
+	// CheckGUISetup reports whether hash matches a live (unexpired) setup row, comparing in
+	// constant time (a dummy when the row is missing). ErrStale when it does not, ErrInvalid on a
+	// bad hash. It writes nothing; CompleteGUISetup repeats the check inside its transaction.
+	CheckGUISetup(ctx context.Context, hash []byte, now time.Time) error
 	// CompleteGUISetup, in one transaction: the setup row exists, hash matches it (constant
 	// time), it has not expired at now and no active admin exists -> insert a (Username,
 	// PwHash; generation 1, status active), delete the setup row, write ev. A missing, wrong

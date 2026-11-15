@@ -550,18 +550,26 @@ func (s *Service) reuse(ctx context.Context, p auth.Principal, src Source, w sto
 // F-43: a refusal on an existing workspace of another operator is audited as denied (requester as
 // actor, the workspace id); the caller still sees plain not_found.
 func (s *Service) ownedWorkspace(ctx context.Context, p auth.Principal, src Source, method, wsID string) (store.Workspace, error) {
-	if !workspace.ValidID(workspace.ID(wsID)) {
+	// F-47: an unknown id takes the same path as a foreign one: one denied row, plain not_found.
+	// A malformed id is never copied into the audit row (caller-controlled, unbounded).
+	deny := func(w store.Workspace, id string) (store.Workspace, error) {
+		den := s.wsEvent(p, src, method, w.Fleet, w.Runner, id, "")
+		den.Subject, den.Outcome, den.Message = w.Session, OutcomeDenied, "not found or not owner"
+		s.recordBestEffort(ctx, den)
 		return store.Workspace{}, api.Errorf(api.CodeNotFound, "not found")
 	}
+	if !workspace.ValidID(workspace.ID(wsID)) {
+		return deny(store.Workspace{}, "")
+	}
 	w, err := s.st.GetWorkspace(ctx, wsID)
+	if errors.Is(err, store.ErrNotFound) {
+		return deny(store.Workspace{}, wsID)
+	}
 	if err != nil {
 		return store.Workspace{}, s.fail("get workspace", err)
 	}
 	if w.OperatorID != p.ID {
-		den := s.wsEvent(p, src, method, w.Fleet, w.Runner, w.WsID, "")
-		den.Subject, den.Outcome, den.Message = w.Session, OutcomeDenied, "not the workspace owner"
-		s.recordBestEffort(ctx, den)
-		return store.Workspace{}, api.Errorf(api.CodeNotFound, "not found")
+		return deny(w, w.WsID)
 	}
 	return w, nil
 }

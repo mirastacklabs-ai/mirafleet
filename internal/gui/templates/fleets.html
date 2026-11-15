@@ -1,0 +1,101 @@
+{{/* Fleets screens. Page.Data is fleetsData; .Data.View picks the page body. Fragments:
+fleets/list, fleets/form (create, the 422 swap target), fleets/detail, fleets/ws-form, fleets/guard. */}}
+{{define "content"}}<div class="container">
+{{if eq .Data.View "list"}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>Fleets</h1></div><div class="actions"><a class="btn" href="/fleets/new">New fleet</a></div></header>
+{{template "fleets/list" .}}
+{{else if eq .Data.View "new"}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>New fleet</h1></div></header>
+{{template "fleets/form" .}}
+{{else if eq .Data.View "detail"}}
+{{template "fleets/detail" .}}
+{{else if eq .Data.View "wsedit"}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>Workspace settings of {{.Data.Fleet}}</h1></div></header>
+{{template "fleets/ws-form" .}}
+{{else if eq .Data.View "guard"}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>Guard of {{.Data.Fleet}}</h1></div></header>
+{{template "fleets/guard" .}}
+{{end}}
+</div>{{end}}
+
+{{define "fleets/list"}}<section class="panel" id="fleets-list" aria-label="Fleets">
+{{if .Data.Rows}}<div class="scroll"><table class="data">
+<caption class="visually-hidden">Fleets</caption>
+<thead><tr><th scope="col">Name</th><th scope="col">Mode</th><th scope="col">Guarded</th><th scope="col" class="num">Runners</th><th scope="col">Workspace</th></tr></thead>
+<tbody>{{range .Data.Rows}}<tr><td class="mono"><a href="{{.URL}}">{{.Name}}</a></td><td>{{.Mode}}</td><td>{{if .Guarded}}<span class="badge ok">Guarded</span>{{else}}<span class="badge off">Not guarded</span>{{end}}</td><td class="num">{{.Runners}}</td><td class="mono clip" title="{{.Workspace}}">{{.Workspace}}</td></tr>{{end}}</tbody>
+</table></div>
+{{else}}<div class="empty"><h3>No fleets yet</h3><p>A fleet groups the runners that share a policy. Create one, then add a join token.</p><pre class="codeblock">mirafleet central fleet create NAME</pre><p><a class="btn" href="/fleets/new">New fleet</a></p></div>{{end}}
+</section>{{end}}
+
+{{define "fleets/fields"}}{{range .}}<div class="field{{if .Err}} has-error{{end}}"><label for="f-{{.Key}}">{{.Label}}</label>
+{{if eq .Kind "select"}}{{$v := .Value}}<select id="f-{{.Key}}" name="{{.Key}}"{{if .Err}} aria-invalid="true"{{end}}>{{range .Options}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}</select>
+{{else if eq .Kind "textarea"}}<textarea id="f-{{.Key}}" name="{{.Key}}" rows="3" autocomplete="off"{{if .Err}} aria-invalid="true"{{end}}>{{.Value}}</textarea>
+{{else}}<input type="text" id="f-{{.Key}}" name="{{.Key}}" value="{{.Value}}" autocomplete="off"{{if .Err}} aria-invalid="true"{{end}}>{{end}}
+{{if .Hint}}<p class="hint">{{.Hint}}</p>{{end}}{{template "ui/field-error" .Err}}</div>{{end}}{{end}}
+
+{{define "fleets/form"}}<form class="form" id="fleet-form" method="post" action="{{.Data.Action}}" hx-post="{{.Data.Action}}" hx-target="#fleet-form" hx-swap="outerHTML">
+{{template "ui/csrf" .}}
+{{if .Data.Errs.form}}<p class="field-error" role="alert">{{.Data.Errs.form}}</p>{{end}}
+<div class="panel"><div class="panel-body stack">
+<div class="field{{if .Data.Errs.name}} has-error{{end}}"><label for="f-name">Fleet name</label><input type="text" id="f-name" name="name" value="{{.Data.Name}}" autocomplete="off" required maxlength="63"{{if .Data.Errs.name}} aria-invalid="true"{{end}}>{{template "ui/field-error" .Data.Errs.name}}</div>
+<fieldset><legend>Mode</legend>
+<div class="choice"><input type="radio" id="f-mode-actions" name="mode" value="actions"{{if ne .Data.Mode "workspace"}} checked{{end}}><label for="f-mode-actions">Actions: runners run the actions in their own actions.yaml</label></div>
+<div class="choice"><input type="radio" id="f-mode-workspace" name="mode" value="workspace"{{if eq .Data.Mode "workspace"}} checked{{end}}><label for="f-mode-workspace">Workspace: runners open sandboxed workspaces (settings below)</label></div>
+{{template "ui/field-error" .Data.Errs.mode}}</fieldset>
+<div class="choice"><input type="checkbox" id="f-guarded" name="guarded" value="1"{{if .Data.Guarded}} checked{{end}}><label for="f-guarded">Guarded: running a command needs the fleet name as confirmation</label></div>
+</div></div>
+<div class="panel"><div class="panel-head"><h2>Workspace settings</h2></div><div class="panel-body stack">
+<p class="hint">Used only in workspace mode. A blank field takes the default.</p>
+{{template "fleets/fields" .Data.Fields}}
+</div></div>
+<div class="form-actions"><button class="btn" type="submit">Create fleet</button><a class="btn btn-quiet" href="/fleets">Cancel</a></div>
+</form>{{end}}
+
+{{define "fleets/ws-form"}}<form class="form" id="ws-form" method="post" action="{{.Data.Action}}" hx-post="{{.Data.Action}}" hx-target="#ws-form" hx-swap="outerHTML">
+{{template "ui/csrf" .}}
+{{if .Data.Errs.form}}<p class="field-error" role="alert">{{.Data.Errs.form}}</p>{{end}}
+<div class="panel"><div class="panel-body stack">
+<p class="hint">Saving replaces the whole workspace configuration of this fleet. A blank field takes the default.</p>
+{{template "fleets/fields" .Data.Fields}}
+</div></div>
+<div class="form-actions"><button class="btn" type="submit">Save settings</button><a class="btn btn-quiet" href="{{.Data.FleetURL}}">Cancel</a></div>
+</form>{{end}}
+
+{{define "fleets/guard"}}{{if .Data.TurnOff}}<div class="dialog danger" role="group" aria-labelledby="guard-title" id="guard-dialog">
+<div class="dialog-head"><h2 id="guard-title">Turn the guard off for {{.Data.Fleet}}</h2></div>
+<form class="dialog-body" method="post" action="{{.Data.Action}}" hx-post="{{.Data.Action}}" hx-target="#guard-dialog" hx-swap="outerHTML">
+{{template "ui/csrf" .}}<input type="hidden" name="to" value="off">
+<ul class="effects"><li>Commands can run in this fleet without the fleet name as confirmation.</li><li>The change is recorded in the audit log.</li></ul>
+<div class="field{{if .Data.Errs.confirm}} has-error{{end}}"><label for="guard-confirm">Type <code>{{.Data.Fleet}}</code> to confirm</label><input type="text" id="guard-confirm" name="confirm" value="{{.Data.Typed}}" autocomplete="off"{{if .Data.Errs.confirm}} aria-invalid="true"{{end}}>{{template "ui/field-error" .Data.Errs.confirm}}</div>
+<div class="form-actions"><button class="btn btn-danger" type="submit">Turn guard off</button><a class="btn btn-quiet" href="{{.Data.FleetURL}}">Cancel</a></div>
+</form></div>
+{{else}}<div class="dialog" role="group" aria-labelledby="guard-title" id="guard-dialog">
+<div class="dialog-head"><h2 id="guard-title">Turn the guard on for {{.Data.Fleet}}</h2></div>
+<form class="dialog-body" method="post" action="{{.Data.Action}}">
+{{template "ui/csrf" .}}<input type="hidden" name="to" value="on">
+<ul class="effects"><li>Running a command in this fleet needs the fleet name as confirmation.</li></ul>
+<div class="form-actions"><button class="btn" type="submit">Turn guard on</button><a class="btn btn-quiet" href="{{.Data.FleetURL}}">Cancel</a></div>
+</form></div>{{end}}{{end}}
+
+{{define "fleets/detail"}}<div class="stack" id="fleet-detail">
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>{{.Data.Fleet}}</h1></div>
+<div class="actions">{{if .Data.HasWS}}<a class="btn btn-secondary" href="{{.Data.FleetURL}}/workspace">Edit workspace settings</a>{{end}}</div></header>
+
+<section class="panel" aria-labelledby="fl-sum"><div class="panel-head"><h2 id="fl-sum">Summary</h2></div>
+<div class="panel-body"><dl class="kv"><dt>Mode</dt><dd>{{.Data.Mode}}</dd><dt>Created</dt><dd>{{template "ui/time" .Data.Created}}</dd>
+<dt>Guard</dt><dd>{{if .Data.GuardOn}}<span class="badge ok">Guarded</span> <a class="btn btn-quiet btn-sm" href="{{.Data.FleetURL}}/guard">Turn off...</a>{{else}}<span class="badge off">Not guarded</span>
+<form class="row" method="post" action="{{.Data.FleetURL}}/guard">{{template "ui/csrf" .}}<input type="hidden" name="to" value="on"><button class="btn btn-secondary btn-sm" type="submit">Turn guard on</button></form>{{end}}</dd></dl></div></section>
+
+<section class="panel" aria-labelledby="fl-runners"><div class="panel-head"><h2 id="fl-runners">Runners</h2></div>
+{{if .Data.Runners}}<div class="scroll"><table class="data"><thead><tr><th scope="col">Runner</th><th scope="col">Status</th><th scope="col">Connection</th></tr></thead>
+<tbody>{{range .Data.Runners}}<tr><td class="mono"><a href="{{.URL}}">{{.Name}}</a></td><td><span class="badge {{.Kind}}">{{.Status}}</span></td><td>{{template "ui/online" .}}</td></tr>{{end}}</tbody></table></div>
+{{else}}<div class="empty"><h3>No runners in this fleet</h3><p>Create a join token, then run the join command on the machine you want to add.</p></div>{{end}}</section>
+
+<section class="panel" aria-labelledby="fl-tokens"><div class="panel-head"><h2 id="fl-tokens">Join tokens</h2><a class="btn btn-quiet btn-sm" href="/tokens">All tokens</a></div>
+{{if .Data.Tokens}}<div class="scroll"><table class="data"><thead><tr><th scope="col">Token</th><th scope="col">State</th><th scope="col" class="num">Uses</th><th scope="col">Auto-approve</th><th scope="col">Expires</th></tr></thead>
+<tbody>{{range .Data.Tokens}}<tr><td class="mono">{{.ID}}</td><td><span class="badge {{.Kind}}">{{.State}}</span></td><td class="num">{{.Uses}}</td><td>{{if .Auto}}yes{{else}}no{{end}}</td><td>{{template "ui/time" .Expires}}</td></tr>{{end}}</tbody></table></div>
+{{else}}<div class="empty"><h3>No join tokens</h3><p>Create one to let a runner join this fleet.</p><pre class="codeblock">mirafleet central token create -fleet {{.Data.Fleet}}</pre></div>{{end}}</section>
+
+{{if .Data.HasWS}}<section class="panel" aria-labelledby="fl-ws"><div class="panel-head"><h2 id="fl-ws">Workspace settings</h2><a class="btn btn-quiet btn-sm" href="{{.Data.FleetURL}}/workspace">Edit</a></div>
+<div class="panel-body"><dl class="kv">{{range .Data.WS}}<dt>{{.K}}</dt><dd class="mono">{{.V}}</dd>{{end}}</dl></div></section>{{end}}
+</div>{{end}}

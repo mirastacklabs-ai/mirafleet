@@ -1,0 +1,45 @@
+{{/* Account screen. Page.Data is AccountData; forms are plain POSTs (no JS needed). */}}
+{{define "content"}}<div class="container">
+{{template "ui/crumbs" .}}
+<div class="page-head"><h1>Account</h1></div>
+<div class="grid cols-2">
+<section class="panel" aria-labelledby="acc-pw-h"><div class="panel-head"><h2 id="acc-pw-h">Change password</h2></div>
+<div class="panel-body">
+<p class="muted">Signed in as <span class="mono">{{.Data.Username}}</span>. Changing the password signs out every other session.</p>
+{{with .Data.Errors.form}}<p class="field-error" role="alert">{{.}}</p>{{end}}
+<form class="form" method="post" action="/account/password">
+{{template "ui/csrf" .}}
+<div class="field{{if .Data.Errors.current}} has-error{{end}}"><label for="acc-cur">Current password</label><input type="password" id="acc-cur" name="current" autocomplete="current-password" required{{if .Data.Errors.current}} aria-invalid="true" aria-describedby="acc-cur-err"{{end}}>{{with .Data.Errors.current}}<div id="acc-cur-err">{{template "ui/field-error" .}}</div>{{end}}</div>
+<div class="field{{if .Data.Errors.new}} has-error{{end}}"><label for="acc-new">New password</label><input type="password" id="acc-new" name="new" autocomplete="new-password" required aria-describedby="acc-new-hint{{if .Data.Errors.new}} acc-new-err{{end}}"{{if .Data.Errors.new}} aria-invalid="true"{{end}}><p class="hint" id="acc-new-hint">At least 12 characters.</p>{{with .Data.Errors.new}}<div id="acc-new-err">{{template "ui/field-error" .}}</div>{{end}}</div>
+<div class="field{{if .Data.Errors.new2}} has-error{{end}}"><label for="acc-new2">Repeat the new password</label><input type="password" id="acc-new2" name="new2" autocomplete="new-password" required{{if .Data.Errors.new2}} aria-invalid="true" aria-describedby="acc-new2-err"{{end}}>{{with .Data.Errors.new2}}<div id="acc-new2-err">{{template "ui/field-error" .}}</div>{{end}}</div>
+<div class="form-actions"><button class="btn" type="submit">Change password</button></div>
+</form>
+</div></section>
+
+<section class="panel" aria-labelledby="acc-about-h"><div class="panel-head"><h2 id="acc-about-h">About</h2></div>
+<div class="panel-body"><dl class="kv">
+<dt>mirafleet</dt><dd class="mono">{{.Data.About.Version}}</dd>
+<dt>GUI certificate</dt><dd class="mono">{{.Data.About.CertFingerprint}}</dd>
+<dt>Certificate expires</dt><dd>{{template "ui/time" .Data.About.CertExpiry}}</dd>
+{{if .Data.About.Listen}}<dt>GUI listen address</dt><dd class="mono">{{.Data.About.Listen}}</dd>{{end}}
+{{if .Data.About.HostKeyFingerprint}}<dt>SSH host key</dt><dd class="mono">{{.Data.About.HostKeyFingerprint}}</dd>{{end}}
+{{if .Data.About.SSHAdvertise}}<dt>SSH advertise address</dt><dd class="mono">{{.Data.About.SSHAdvertise}}</dd>{{end}}
+</dl>
+{{if .Data.About.Notice}}<p class="muted">{{.Data.About.Notice}}</p>{{end}}
+</div></section>
+</div>
+
+<section class="panel" aria-labelledby="acc-sess-h"><div class="panel-head"><h2 id="acc-sess-h">Active sessions</h2>
+{{if .Data.Others}}<form method="post" action="/account/sessions/revoke-others">{{template "ui/csrf" .}}<button class="btn btn-secondary btn-sm" type="submit">Sign out all others</button></form>{{end}}</div>
+<div class="scroll"><table class="data">
+<thead><tr><th scope="col">Started</th><th scope="col">Last active</th><th scope="col">Address</th><th scope="col">Browser</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+<tbody>
+{{range .Data.Sessions}}<tr>
+<td class="nowrap">{{template "ui/time" .Created}}</td>
+<td class="nowrap">{{template "ui/time" .Active}}</td>
+<td class="mono">{{.Remote}}</td>
+<td class="clip" title="{{.Browser}}">{{.Browser}}</td>
+<td class="row-actions">{{if .Current}}<span class="badge ok">this session</span>{{else}}<form method="post" action="/account/sessions/{{.ID}}/revoke">{{template "ui/csrf" $}}<button class="btn btn-secondary btn-sm" type="submit">Sign out</button></form>{{end}}</td>
+</tr>{{end}}
+</tbody></table></div></section>
+</div>{{end}}

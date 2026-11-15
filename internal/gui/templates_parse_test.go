@@ -5,7 +5,6 @@ import (
 	"html/template"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -62,16 +61,5 @@ func TestS3TemplatesParse(t *testing.T) {
 			}
 		}
 	}
-	for _, f := range files {
-		raw, _ := os.ReadFile(f)
-		s := string(raw)
-		for _, bad := range []string{"style=\"", "style='", " onclick", " onchange", " onsubmit", " onload", "hx-on", "javascript:", "unsafe-"} {
-			if strings.Contains(s, bad) {
-				t.Errorf("%s contains %q", f, bad)
-			}
-		}
-		if strings.Contains(strings.ReplaceAll(s, "<script src=", ""), "<script") {
-			t.Errorf("%s has an inline script", f)
-		}
-	}
+	// The lint (inline script/style/handlers, htmx attributes) lives in security_test.go (S14).
 }

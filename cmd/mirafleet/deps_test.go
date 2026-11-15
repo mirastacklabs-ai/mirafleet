@@ -212,3 +212,71 @@ func TestNoM7ServerPackagesOnOrchestratorOrNonLinux(t *testing.T) {
 		}
 	}
 }
+
+const guiPkg = "github.com/mirastacklabs-ai/mirafleet/internal/gui"
+
+// forbiddenForGUI lists what internal/gui must never import (docs/M4.md 2.1): the GUI talks to
+// central only through gui.Backend (*service.Service), never to the store, registry or SSH side.
+// direct is true for its own imports; the transitive closure (through internal/service, which
+// legitimately uses exactly internal/central/registry) keeps every other one of these out too, plus
+// containerd and grpc.
+func forbiddenForGUI(pkg string, direct bool) bool {
+	const mod = "github.com/mirastacklabs-ai/mirafleet/"
+	paths := []string{"internal/store/sqlite", "internal/central", "internal/apiclient", "internal/orch", "internal/mcpserver"}
+	for _, p := range paths {
+		if pkg == mod+p || strings.HasPrefix(pkg, mod+p+"/") {
+			if !direct && pkg == mod+"internal/central/registry" {
+				continue
+			}
+			return true
+		}
+	}
+	return strings.HasPrefix(pkg, "modernc.org/") || strings.HasPrefix(pkg, "github.com/containerd/") ||
+		strings.HasPrefix(pkg, "google.golang.org/grpc")
+}
+
+// internal/gui imports only allowed packages, on linux (where it is wired) and elsewhere. The
+// positive control proves the listing saw the package and its dependencies.
+func TestGUIDeps(t *testing.T) {
+	requireGo(t)
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		for _, dep := range goListPkgs(t, goos, "amd64", "-f", `{{join .Imports "\n"}}`, "./../../internal/gui") {
+			if forbiddenForGUI(dep, true) {
+				t.Errorf("%s: internal/gui imports %s", goos, dep)
+			}
+		}
+		sawSelf, sawService := false, false
+		for _, dep := range goListPkgs(t, goos, "amd64", "-deps", "-f", "{{.ImportPath}}", "./../../internal/gui") {
+			if forbiddenForGUI(dep, false) {
+				t.Errorf("%s: internal/gui links %s", goos, dep)
+			}
+			sawSelf = sawSelf || dep == guiPkg
+			sawService = sawService || strings.HasSuffix(dep, "/internal/service")
+		}
+		if !sawSelf || !sawService {
+			t.Errorf("%s: dependency listing of internal/gui is empty or incomplete: the check proves nothing", goos)
+		}
+	}
+}
+
+// darwin and windows binaries never link internal/gui; the linux binary does (positive control:
+// central_linux.go wires it).
+func TestGUILinkedOnlyOnLinux(t *testing.T) {
+	requireGo(t)
+	linked := func(goos string) bool {
+		for _, pkg := range goDeps(t, goos) {
+			if pkg == guiPkg {
+				return true
+			}
+		}
+		return false
+	}
+	if !linked("linux") {
+		t.Fatal("linux binary does not link internal/gui: the non-linux check proves nothing")
+	}
+	for _, goos := range []string{"darwin", "windows"} {
+		if linked(goos) {
+			t.Errorf("%s binary links internal/gui", goos)
+		}
+	}
+}

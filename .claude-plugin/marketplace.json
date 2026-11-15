@@ -1,0 +1,25 @@
+{
+  "name": "mirastacklabs",
+  "owner": {
+    "name": "mirastacklabs-ai",
+    "url": "https://github.com/mirastacklabs-ai"
+  },
+  "metadata": {
+    "description": "Claude Code plugins from mirastacklabs-ai."
+  },
+  "plugins": [
+    {
+      "name": "mirafleet",
+      "description": "Orchestrate fleets of servers from Claude Code through a central mirafleet server: allowlisted actions and isolated workspaces.",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/mirastacklabs-ai/mirafleet",
+      "keywords": ["fleet", "mcp", "servers", "ops"],
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/mirastacklabs-ai/mirafleet.git",
+        "path": "integrations/claude-code",
+        "ref": "v0.5.0"
+      }
+    }
+  ]
+}

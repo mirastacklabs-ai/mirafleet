@@ -1,0 +1,13 @@
+{{/* Sign-in screen. Page.Data is LoginData {Next, Username}; the form-level error is Page.Flash. */}}
+{{define "content"}}<div class="container narrow">
+<section class="panel" aria-labelledby="login-h"><div class="panel-head"><h1 id="login-h">Sign in</h1></div>
+<div class="panel-body">
+<form class="form" method="post" action="/login">
+{{template "ui/csrf" .}}
+<input type="hidden" name="next" value="{{.Data.Next}}">
+<div class="field"><label for="login-user">Username</label><input type="text" id="login-user" name="username" value="{{.Data.Username}}" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+<div class="field"><label for="login-pw">Password</label><input type="password" id="login-pw" name="password" autocomplete="current-password" required></div>
+<div class="form-actions"><button class="btn" type="submit">Sign in</button></div>
+</form>
+</div></section>
+</div>{{end}}

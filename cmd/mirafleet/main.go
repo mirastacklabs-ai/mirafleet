@@ -59,7 +59,10 @@ func requireServerOS(what string) error {
 func usage() {
 	fmt.Fprint(os.Stderr, `usage:
   mirafleet central init [-data DIR] [-listen ADDR]
-  mirafleet central run [-data DIR] [-listen ADDR]
+  mirafleet central run [-data DIR] [-listen ADDR] [-gui-listen ADDR|off] [-gui-cert FILE -gui-key FILE]
+        [-gui-host NAME]... [-advertise HOST:PORT]     (GUI: default 0.0.0.0:8443, always TLS)
+  mirafleet central gui reset-admin     (prints a fresh GUI setup token once, ends all GUI sessions)
+  mirafleet central fleet set NAME -confirm=true|false
   mirafleet central fleet create NAME [-mode actions|workspace] [-confirm]
         [-executor containerd|opensandbox] [-image REF] [-images REF,...] [-pull POLICY]
         [-network none|egress] [-egress HOST:PORT,...] [-cpus N] [-memory 4GiB] [-pids N]
@@ -75,7 +78,9 @@ func usage() {
   mirafleet central runner approve|disable|enable|revoke FLEET/RUNNER
   mirafleet central operator code | rotate-secret | list [-json] | revoke NAME
   mirafleet central exec FLEET/RUNNER ACTION [k=v...] [-confirm FLEET]
-  mirafleet central audit [-since ID] [-limit N] [-json]
+  mirafleet central audit [-since ID] [-before ID] [-limit N] [-json] [-fleet F] [-runner R] [-actor A]
+        [-source S] [-outcome O] [-action A [-action-prefix]] [-workspace ID] [-request-id ID]
+        [-from TIME] [-to TIME]     (TIME: RFC 3339 or YYYY-MM-DD)
   (admin commands take [-data DIR], default /var/lib/mirafleet/central)
   mirafleet runner join ADDR -name NAME [-data DIR] -token -
   mirafleet runner run [-data DIR] [-actions FILE | -workspace FILE]

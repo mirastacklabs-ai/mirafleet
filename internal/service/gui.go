@@ -55,6 +55,11 @@ var (
 	// and for a lost setup race (G-07).
 	errSetupRefused = api.Errorf(api.CodeConflict, "setup is not available")
 	errNoSession    = api.Errorf(api.CodeUnauthenticated, "unauthenticated")
+
+	// ErrInvalidUsername and ErrWrongCurrentPassword are sentinels (bad_request) the GUI matches
+	// with errors.Is to put the message on the right form field.
+	ErrInvalidUsername      = api.Errorf(api.CodeBadRequest, "invalid username")
+	ErrWrongCurrentPassword = api.Errorf(api.CodeBadRequest, "current password is incorrect")
 )
 
 func tokenHash(token string) []byte {
@@ -110,6 +115,31 @@ func (s *Service) EnsureGUISetup(ctx context.Context) (token string, created boo
 	return tok, true, nil
 }
 
+// ReissueGUISetup replaces the setup token with a fresh one while no active admin exists (the
+// GUI calls it when the live token's file is gone: the raw token cannot be recovered from its
+// hash). With an admin present it returns created false and writes nothing.
+func (s *Service) ReissueGUISetup(ctx context.Context) (token string, created bool, err error) {
+	if _, err := s.st.GetGUIAdmin(ctx); err == nil {
+		return "", false, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return "", false, s.fail("load gui admin", err)
+	}
+	tok, err := newToken(SetupTokenPrefix)
+	if err != nil {
+		return "", false, s.fail("new setup token", err)
+	}
+	now := s.now()
+	ev := s.systemEvent(ActionGUISetupToken)
+	ev.Params = map[string]string{"expires": now.Add(GUISetupTTL).UTC().Format(time.RFC3339)}
+	if err := s.st.PutGUISetup(ctx, tokenHash(tok), now.Add(GUISetupTTL), now, ev); err != nil {
+		if errors.Is(err, store.ErrConflict) { // an admin appeared meanwhile
+			return "", false, nil
+		}
+		return "", false, s.fail("put gui setup", err)
+	}
+	return tok, true, nil
+}
+
 // newSession builds a session row for admin a and returns it with the raw token.
 func (s *Service) newSession(adminID, generation int64, remote, ua string) (store.GUISession, string, error) {
 	tok, err := newToken("")
@@ -127,7 +157,7 @@ func (s *Service) newSession(adminID, generation int64, remote, ua string) (stor
 // error (G-07). Returns the raw session token (for the cookie) and the admin principal.
 func (s *Service) CompleteGUISetup(ctx context.Context, remote, ua, token, username, password string) (string, auth.Principal, error) {
 	if !store.ValidOperatorName(username) {
-		return "", auth.Principal{}, badRequest("invalid username")
+		return "", auth.Principal{}, ErrInvalidUsername
 	}
 	if err := auth.ValidatePassword(password, username); err != nil {
 		return "", auth.Principal{}, badRequest("%s", err.Error())
@@ -135,11 +165,19 @@ func (s *Service) CompleteGUISetup(ctx context.Context, remote, ua, token, usern
 	if len(token) == 0 || len(token) > maxCredentialBytes {
 		return "", auth.Principal{}, errSetupRefused
 	}
+	// G-21: the token is checked (constant time) before the expensive password hash, so a guess
+	// with a wrong token costs no Argon2 run. The transaction below repeats the check.
+	now := s.now()
+	if err := s.st.CheckGUISetup(ctx, tokenHash(token), now); err != nil {
+		if errors.Is(err, store.ErrStale) || errors.Is(err, store.ErrInvalid) {
+			return "", auth.Principal{}, errSetupRefused
+		}
+		return "", auth.Principal{}, s.fail("check gui setup", err)
+	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
 		return "", auth.Principal{}, s.fail("hash password", err)
 	}
-	now := s.now()
 	ev := s.guiEvent(username, remote, ActionGUISetup)
 	ev.Subject = username
 	adm, err := s.st.CompleteGUISetup(ctx, tokenHash(token), store.GUIAdmin{Username: username, PwHash: hash}, now, ev)
@@ -286,7 +324,7 @@ func (s *Service) ChangeGUIPassword(ctx context.Context, p auth.Principal, sessi
 		return "", err
 	}
 	if len(current) > auth.MaxPasswordBytes || !auth.VerifyPassword(current, adm.PwHash) {
-		return "", badRequest("current password is incorrect")
+		return "", ErrWrongCurrentPassword
 	}
 	if err := auth.ValidatePassword(next, adm.Username); err != nil {
 		return "", badRequest("%s", err.Error())
@@ -418,4 +456,33 @@ func (s *Service) PurgeGUISessions(ctx context.Context) (int, error) {
 		return 0, s.fail("purge gui sessions", err)
 	}
 	return n, nil
+}
+
+// ActionGUILockout is the audit action written when the login limiter locks an address out.
+const ActionGUILockout = "gui.lockout"
+
+// GUISetupOpen reports whether no active GUI admin exists, i.e. whether /setup may be offered.
+// It reveals nothing else and writes nothing.
+func (s *Service) GUISetupOpen(ctx context.Context) (bool, error) {
+	_, err := s.st.GetGUIAdmin(ctx)
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, store.ErrNotFound):
+		return true, nil
+	}
+	return false, s.fail("load gui admin", err)
+}
+
+// RecordGUILockout writes one gui.lockout audit row for a client address the GUI login limiter
+// has just locked out (docs/M4.md 2.5). The caller calls it once per lockout window.
+func (s *Service) RecordGUILockout(ctx context.Context, remote string) error {
+	ev := s.systemEvent(ActionGUILockout)
+	ev.Source = string(SourceGUI)
+	ev.Remote = remote
+	ev.Outcome = OutcomeDenied
+	if _, err := s.st.RecordAudit(ctx, ev); err != nil {
+		return s.fail("record gui lockout", err)
+	}
+	return nil
 }

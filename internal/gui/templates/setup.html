@@ -1,0 +1,17 @@
+{{/* First-run setup. Page.Data is SetupData {Fingerprint, Username, Errors}. The token is never echoed. */}}
+{{define "content"}}<div class="container narrow">
+<section class="panel" aria-labelledby="setup-h"><div class="panel-head"><h1 id="setup-h">Set up mirafleet</h1></div>
+<div class="panel-body">
+<p>Create the administrator account. You need the setup token: either the one central wrote to the <span class="mono">setup-token</span> file in its data directory (central's log gives the path), or the one that <span class="mono">mirafleet central gui reset-admin</span> printed.</p>
+<p class="hint">Before you type the token, check that the certificate fingerprint in your browser is <span class="mono">{{.Data.Fingerprint}}</span>, as printed in central's log.</p>
+{{with .Data.Errors.form}}<p class="field-error" role="alert">{{.}}</p>{{end}}
+<form class="form" method="post" action="/setup">
+{{template "ui/csrf" .}}
+<div class="field{{if .Data.Errors.token}} has-error{{end}}"><label for="setup-token">Setup token</label><input type="password" id="setup-token" name="token" autocomplete="off" spellcheck="false" required{{if .Data.Errors.token}} aria-invalid="true" aria-describedby="setup-token-err"{{end}}>{{with .Data.Errors.token}}<div id="setup-token-err">{{template "ui/field-error" .}}</div>{{end}}</div>
+<div class="field{{if .Data.Errors.username}} has-error{{end}}"><label for="setup-user">Username</label><input type="text" id="setup-user" name="username" value="{{.Data.Username}}" autocomplete="username" autocapitalize="none" spellcheck="false" required aria-describedby="setup-user-hint{{if .Data.Errors.username}} setup-user-err{{end}}"{{if .Data.Errors.username}} aria-invalid="true"{{end}}><p class="hint" id="setup-user-hint">Lowercase letters, digits, dots, dashes and underscores.</p>{{with .Data.Errors.username}}<div id="setup-user-err">{{template "ui/field-error" .}}</div>{{end}}</div>
+<div class="field{{if .Data.Errors.password}} has-error{{end}}"><label for="setup-pw">Password</label><input type="password" id="setup-pw" name="password" autocomplete="new-password" required aria-describedby="setup-pw-hint{{if .Data.Errors.password}} setup-pw-err{{end}}"{{if .Data.Errors.password}} aria-invalid="true"{{end}}><p class="hint" id="setup-pw-hint">At least 12 characters. Length matters more than symbols.</p>{{with .Data.Errors.password}}<div id="setup-pw-err">{{template "ui/field-error" .}}</div>{{end}}</div>
+<div class="field{{if .Data.Errors.password2}} has-error{{end}}"><label for="setup-pw2">Repeat the password</label><input type="password" id="setup-pw2" name="password2" autocomplete="new-password" required{{if .Data.Errors.password2}} aria-invalid="true" aria-describedby="setup-pw2-err"{{end}}>{{with .Data.Errors.password2}}<div id="setup-pw2-err">{{template "ui/field-error" .}}</div>{{end}}</div>
+<div class="form-actions"><button class="btn" type="submit">Create account</button></div>
+</form>
+</div></section>
+</div>{{end}}

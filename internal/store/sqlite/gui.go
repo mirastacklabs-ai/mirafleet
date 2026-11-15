@@ -154,6 +154,29 @@ func (d *DB) putGUISetup(ctx context.Context, hash []byte, expires, now time.Tim
 	return created, nil
 }
 
+// CheckGUISetup is the read-only token check that runs before the password is hashed (G-21).
+func (d *DB) CheckGUISetup(ctx context.Context, hash []byte, now time.Time) error {
+	if err := checkHash32(hash, "setup token"); err != nil {
+		return err
+	}
+	var (
+		stored  []byte
+		expires int64
+	)
+	err := d.reader.QueryRowContext(ctx, `SELECT token_hash, expires_at FROM gui_setup WHERE id = 1`).Scan(&stored, &expires)
+	missing := errors.Is(err, sql.ErrNoRows)
+	if err != nil && !missing {
+		return err
+	}
+	if missing {
+		stored = make([]byte, 32)
+	}
+	if missing || subtle.ConstantTimeCompare(stored, hash) != 1 || now.UnixMilli() >= expires {
+		return fmt.Errorf("%w: setup token", store.ErrStale)
+	}
+	return nil
+}
+
 // CompleteGUISetup verifies the setup token and creates the first admin in one transaction.
 func (d *DB) CompleteGUISetup(ctx context.Context, hash []byte, a store.GUIAdmin, now time.Time, ev store.AuditEvent) (store.GUIAdmin, error) {
 	if err := checkHash32(hash, "setup token"); err != nil {

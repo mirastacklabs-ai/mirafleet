@@ -17,6 +17,7 @@ import (
 type Backend interface {
 	// Admin account, setup and sessions (no Source: the service uses SourceGUI itself).
 	EnsureGUISetup(ctx context.Context) (token string, created bool, err error)
+	ReissueGUISetup(ctx context.Context) (token string, created bool, err error)
 	CompleteGUISetup(ctx context.Context, remote, ua, token, username, password string) (string, auth.Principal, error)
 	GUILogin(ctx context.Context, remote, ua, username, password string) (string, auth.Principal, error)
 	GUIAuthenticate(ctx context.Context, remote, sessionToken string, passive bool) (auth.Principal, int64, error)
@@ -26,6 +27,8 @@ type Backend interface {
 	RevokeGUISession(ctx context.Context, p auth.Principal, id int64) error
 	RevokeOtherGUISessions(ctx context.Context, p auth.Principal, keepID int64) (int, error)
 	PurgeGUISessions(ctx context.Context) (int, error)
+	GUISetupOpen(ctx context.Context) (bool, error)
+	RecordGUILockout(ctx context.Context, remote string) error
 
 	// Audit.
 	ListAudit(ctx context.Context, p auth.Principal, src service.Source, f store.AuditFilter) ([]store.AuditEvent, error)

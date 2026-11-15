@@ -53,6 +53,10 @@ func loadMigrations(fsys fs.FS, dir string) ([]migration, error) {
 	return ms, nil
 }
 
+func errNewerSchema(cur, latest int) error {
+	return fmt.Errorf("database schema version %d is newer than this binary supports (%d): refusing to open; install a newer mirafleet, or restore a backup from the backups directory taken before the upgrade", cur, latest)
+}
+
 // migrate brings the database to the latest version using the writer pool, all in one
 // BEGIN IMMEDIATE transaction: the version is read inside it, so two processes starting
 // together serialise on the write lock and the second sees the first's result. Any failure
@@ -79,7 +83,7 @@ func migrate(ctx context.Context, db *sql.DB, ms []migration) (err error) {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 	if cur > len(ms) {
-		return fmt.Errorf("database schema version %d is newer than this binary supports (%d): refusing to open; upgrade mirafleet", cur, len(ms))
+		return errNewerSchema(cur, len(ms))
 	}
 	for _, m := range ms[cur:] {
 		if _, err = conn.ExecContext(ctx, m.sql); err != nil {
