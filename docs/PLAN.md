@@ -92,24 +92,26 @@ after M6. Detailed plan, decisions and steps:
 - Later, demand-driven: `integrations/kilocode/`, others. Marketplace, npm, brew in M6.
 
 ## M7 — Developer workspaces
-**Status: planning (14 Nov 2026).** Detailed plan: [M7.md](M7.md) (being written).
-Target scenario: code in a private GitLab reachable only from a build VM; the developer runs
-Claude Code on a laptop and does clone → edit → long build/test → commit → push inside a workspace
-on that VM. The model provider seeing code is accepted; the workspace runner runs on a dedicated VM.
-- Runner-held credentials the agent cannot read: git over SSH and HTTPS, private package
-  registries and image registries; scoped to allowlisted hosts, audited, rotatable.
-- SSH and other allowlisted TCP through the egress proxy; egress for guarded fleets on gVisor/Kata.
-- Persistent per-session workspace storage that survives expiry for a retention period, reattach
-  on resume, expiry warnings, explicit extend.
-- Background jobs for long builds (start, status, tail logs, cancel); full output kept with
-  paging and grep.
-- Richer MCP file tools (edit, patch, search, list, stat, move/delete, upload/download).
-- **Docker Engine executor** (open-source Docker Engine/moby; never Docker Desktop or other
-  commercial products): `executor: docker`, rootful and rootless, custom socket paths, workspaces
-  visible in `docker ps`, Docker's image store and docker.io images, same locked-down container
-  template as containerd. Podman's Docker-compatible API evaluated.
-- Acceptance: `TestM7Done` plus integration tests against a fake GitLab (HTTPS + SSH) on
-  containerd and on a real Docker Engine (`docker:dind`).
+**Status: approved (14 Nov 2026).** Detailed plan and decisions: [M7.md](M7.md).
+North star: AI inference stays on the laptop (the orchestrator); all tool calls run on the remote
+VM via central. Credentials move to central, repo code and tool calls move to the VM. Kept simple
+on purpose: residual gaps are documented and left to the enterprise edition.
+- **Host mode** (`executor: host` in workspace mode): a runner is one OS user on one VM (`dev`,
+  `qa` = separate users or VMs), enrols itself, runs as that user; one operator per runner at a
+  time; one directory per session (optional shared `workdir:`), cleaned after 30 days unused.
+- **Credentials store on central** (like GitHub/GitLab CI secrets): GUI page + CLI, write-only,
+  encrypted with `MIRAFLEET_SECRETS_KEY` (`central keygen`), assigned to runners or fleets, kept
+  in runner memory only; used via a per-session ssh-agent socket and an HTTPS broker so the agent
+  never sees them; opt-in GitLab token rotation by central; use audited.
+- **Full Claude Code tool parity on the VM**: bash (cwd kept; background shells), read, write,
+  edit, multi_edit, grep (`rg` if present), glob, ls, notebook edit, upload/download within the
+  project dir; long builds as jobs that survive runner restarts; full output with paging/grep.
+  The plugin hook blocks local tools for a `remote: true` project.
+- Dropped as over-engineering: Docker/Podman workspace executor, new gVisor/Kata work. Docker
+  adoption comes from M6 (image on Docker Hub, Compose).
+- Acceptance: `TestM7Done` plus `TestM7DoneIntegration` (two runner users against a fake GitLab
+  over HTTPS and SSH: clone, edit, long build as a job across a runner restart, commit, push,
+  decoy-secret leak scan).
 
 ## M6 — Release and distribution
 **Status: planned (14 Nov 2026).** Detailed plan: [M6.md](M6.md); M7 additions below are applied
@@ -179,8 +181,9 @@ syft are MIT or Apache-2.0).
   `TestM3DoneIntegration` and `TestIntegrationWorkspaceCLI` pass.
 - M5 (orchestrator) built: MCP server, contexts, sessions, Claude Code plugin, other harnesses,
   `TestM5Done` and `TestM5NoHooks`; closing hardening and docs in progress, not yet marked done.
-- 14 Nov 2026: M4 and M6 plans approved; M4 wave A in progress; M7 (developer workspaces, Docker
-  Engine executor) added and being planned. M5's own smoke test (S17) runs with the full-product
+- 14 Nov 2026: M4, M6 and M7 plans approved; M4 wave A pushed (`5baec1e`), wave B in progress;
+  M7 (developer workspaces: host mode, central credentials store, tool parity) added; M6 runs in
+  parallel in its own worktree where it does not depend on M4/M7. M5's own smoke test (S17) runs with the full-product
   test after M6.
 - Next: M4 (GUI), then M7 (developer workspaces), then M6 (release). Live status: [TRACKER.md](TRACKER.md).
   Central and runner are Linux only; `mcp` is cross-platform.

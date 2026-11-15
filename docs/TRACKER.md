@@ -42,10 +42,8 @@ Windows/macOS CI green → clean up.
 
 | Step | What | Owner | Status | ETA |
 |---|---|---|---|---|
-| Plan | `docs/M7.md` (lean): host mode (runner = one OS user on a VM), credentials store on central assigned to runners/fleets, full Claude Code tool parity on the VM, background jobs, full output | Opus | done (draft) | — |
-| Decide | Q1–Q4 answered; Q5–Q15 remaining | user | waiting on user | — |
-| Record | Write all decisions into M7.md | Opus | after Q15 | 15 min |
-| Build | Waves from M7.md (filled in once approved) | Sonnet + reviewers | queued | from plan |
+| Plan | `docs/M7.md` (lean): host mode (runner = one OS user on a VM), credentials store on central assigned to runners/fleets, full Claude Code tool parity on the VM, background jobs, full output | Opus | approved 14 Nov 2026 | — |
+| A–E | 5 waves, 25 step slots (M7.md §steps) | Sonnet + reviewers | queued (after M4) | ~11–12 h incl. reviews |
 
 ## M6 — Release and distribution ([M6.md](M6.md))
 
