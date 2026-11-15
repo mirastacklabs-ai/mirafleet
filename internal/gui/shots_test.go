@@ -20,6 +20,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -39,6 +40,10 @@ func TestGUIShotsServe(t *testing.T) {
 	addr := os.Getenv("MIRAFLEET_GUI_SHOTS_ADDR")
 	if addr == "" {
 		t.Skip("MIRAFLEET_GUI_SHOTS_ADDR not set (screenshot server for scripts/dev.sh gui-shots)")
+	}
+	// The served GUI carries an admin session cookie: loopback only.
+	if ap, err := netip.ParseAddrPort(addr); err != nil || !ap.Addr().IsLoopback() {
+		t.Fatalf("MIRAFLEET_GUI_SHOTS_ADDR %q must be a loopback ip:port", addr)
 	}
 	listFile := os.Getenv("MIRAFLEET_GUI_SHOTS_URLS")
 	if listFile == "" {
