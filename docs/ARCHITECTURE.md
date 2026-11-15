@@ -197,6 +197,7 @@ protection).
 |---|---|---|---|
 | `actions` | ops, typically prod | only named actions from the runner's `actions.yaml` | host shell, as the runner user |
 | `workspace` | coding, typically dev/uat | any command, inside the session's workspace container | containerd (default) or OpenSandbox (opt-in) |
+| `workspace`, executor `host` (M7) | remote development on a VM | any command and the full file-tool set, as the runner's own OS user in a per-session directory | `host`: see [Host mode](#host-mode-m7) |
 
 ### Actions mode
 
@@ -243,6 +244,7 @@ One runner-side interface (`workspace.Executor`: `Create`, `Exec`, `ReadFile`, `
 |---|---|---|
 | `containerd` | default | Go client, no Docker Engine. Its own namespace (`containerd.namespace`, required; use `mirafleet`; `k8s.io` and `moby` are refused), so it coexists with kubelet and `docker.io` hosts |
 | `opensandbox` | opt-in per fleet | node-local [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox), spoken to with stdlib HTTPS only (no SDK) |
+| `host` | M7, per fleet | no container: the runner's own OS user on a VM, in a per-session directory ([Host mode](#host-mode-m7)) |
 
 #### containerd sandbox
 
@@ -300,8 +302,8 @@ proxies fail closed. No CNI, no iptables.
   `max_age` caps the fleet max TTL and drives `runner workspace prune`.
 - **Guarded fleets** (`confirm`): `confirm == fleet name` on `open`, `exec` and `write_file`,
   and a secure runtime (gVisor/Kata) is required on both executors.
-- Repo cloning with runner-held credentials is not built; Claude clones via `exec`, so no git
-  secrets live in workspaces.
+- Repo cloning with runner-held credentials is not built for container workspaces; Claude clones
+  via `exec`, so no git secrets live in them. Host mode (M7) has central-held credentials.
 
 #### Lifecycle, ownership and placement
 
@@ -375,6 +377,94 @@ On central: `fleet create|workspace set` (executor, image, allowlist, pull, netw
 limits, TTLs, exec timeouts, `-confirm`), `workspace list`, `workspace kill ID`. On the runner
 host (no central needed, works after a revoke): `runner workspace list` and
 `runner workspace prune [-workspace FILE] [-all] [-yes]` (a dry run without `-yes`). Give each runner on a host its own `containerd.namespace`.
+
+### Host mode (M7)
+
+Design and decisions: [M7.md](M7.md). North star: AI inference stays on the operator's laptop; all
+tool calls run on a remote VM through central; credentials live on central. Host mode is a
+`workspace`-mode fleet with executor `host`; sessions, sticky open, placement, ownership, audit,
+reaper and the `workspace.*` methods are the ones above, unchanged.
+
+**The runner is one OS user on one VM.** `mirafleet runner join|run` runs as an ordinary user (XDG
+dirs: config, state, data; no root, no capabilities, refuses uid 0), and every tool call runs as
+that same user. `dev` and `qa` are separate users (each with its own runner) or separate VMs. The
+runner is hardened at start (`PR_SET_DUMPABLE 0`, no core dumps) and children get a clean
+environment (`HOME USER LOGNAME PATH LANG`, `env_allow`, and the per-session tool variables). The
+VM and its firewall are the boundary; there is no container. One operator holds a host runner at a
+time (store reserve transaction): another operator's open is refused with code `conflict` and
+message `busy: runner NAME is in use by OP`, and placement skips held runners. A fleet's guard is
+only the typed fleet-name `confirm`. `workspace.yaml`: `executor: host` and an optional `host:`
+block (`root`, `cleanup.delete_after`, `job_max`, `corporate_ca_file`).
+
+**Directories.** A session's checkout is `<root>/sessions/<slug>` (0700); a shared project
+directory (`workdir:` in `.mirafleet.yaml`, host fleets only, name `^[a-z0-9][a-z0-9._-]{0,62}$`)
+is `<root>/work/<name>`. `<root>` defaults to `$XDG_DATA_HOME/mirafleet/work`. Session state
+(sockets, CA, `ssh_config`, `out/`, `jobs/`, the persisted `creds_scope`) lives in
+`$XDG_STATE_HOME/mirafleet/sessions/<slug>/`. Close kills the session's process groups and
+closes its agent socket and broker session but keeps the directory; opening the same session
+again reattaches directory, current directory and jobs, also after a runner restart (host
+sessions are re-adopted). A second concurrent open of one session is refused. A daily sweep
+deletes directories unused for `delete_after` (default 30 days); deletion is otherwise explicit
+(`workspace_close {delete: true}`, `runner host prune`, admin `workspace kill -delete`).
+
+**Credentials.** Central stores credentials (kinds `ssh-key`, `https-token`, `registry`) in
+SQLite as AES-256-GCM ciphertext (random nonce; AAD = credential id and version). The key is
+`MIRAFLEET_SECRETS_KEY` (32 bytes, base64, from `central keygen`, read from a 0600 env file); the
+database holds only a key-check value, and central refuses to start with secrets but no or a wrong
+key. `central secrets rekey` re-encrypts everything in one transaction. Credentials are managed by
+admins only (local admin socket and the GUI Credentials page; never `api@` or MCP), values are
+write-only and never echoed or audited. Each is assigned to a runner or a whole fleet (a runner's
+set is the union). Central sends the effective set to each connected host runner on connect and
+on every change over the `creds_sync` op inside the authenticated SSH connection; the runner
+keeps values in memory only and replaces the set atomically, so an unassigned credential stops
+working at once. A session may narrow to a subset (`workspace_open credentials`, recorded as
+`creds_scope`; it never widens). Credentials on a non-host fleet are refused, and placement only
+considers runners that hold every requested credential. Rotation: a replaced value is pushed and
+used immediately; expiry is flagged 14 days ahead; opt-in `rotate: gitlab_self` has central rotate
+a GitLab token (below 7 days left) and push the new value, or audit the failure and keep the old
+value. Every use is logged on the runner and sent to central as aggregated `events@` rows.
+
+**Agent never sees a secret.** SSH keys are used through a per-session restricted agent
+(`internal/workspace/sshagent`): `List` and `Sign` only, signs only user-auth requests, with host
+binding to the credential's `known_hosts` when the client supports it; the socket is
+`<state>/sessions/<slug>/agent.sock` (0600) and `SSH_AUTH_SOCK` plus `GIT_SSH_COMMAND` point to
+it. HTTPS tokens and registry logins go through a runner-local broker (`internal/workspace/broker`):
+a loopback proxy set as `HTTPS_PROXY` with a per-session password; hosts that have no credential
+are plain CONNECT tunnels, credential hosts are terminated with a per-session CA (name-constrained
+to those hosts, key in memory) and the header is injected; registry 401 challenges are answered by
+a token exchange. The CA bundle env variables are set for common clients. Accepted OSS gaps
+(same-uid agent can use the key while a session is open, or re-enrol as the runner) are listed in
+M7.md section 4.6 and the [threat model](THREAT-MODEL.md).
+
+**Tools.** The MCP server exposes, for a host session: `bash` (default 120 s, max 10 min; the
+current directory persists, env does not), `bash_output`, `kill_shell`, `job_list`, `read_output`,
+`read`, `write`, `edit`, `multi_edit`, `grep`, `glob`, `ls`, `notebook_edit`, `upload`,
+`download`, plus `workspace_open|close|list`. File tools are the pure `internal/workspace/fsops`
+package run in the runner process as the OS user, so (as with local Claude Code) they reach
+everything that user can see: absolute paths anywhere, relative paths from the session directory
+or workdir. Results show a path relative when it is inside the start directory, absolute
+otherwise. `grep` uses `rg` when it is on the runner's `PATH`, else a Go implementation. FIFOs and
+devices are refused. `upload`/`download` stay inside the project directory on the operator side
+and refuse secret-looking names. On guarded fleets mutating tools need `confirm`.
+The operator-side protocol is `workspace.fs{op}`, `workspace.job_*` and `workspace.output_read`.
+
+**Background jobs.** `bash {run_in_background}` starts a job supervised by the hidden
+`mirafleet host-shim job` in its own process group, writing `stdout`, `stderr` and `status.json`
+under `jobs/<id>/`. At most 8 per session, a maximum duration per fleet (default 12 h, at most
+24 h), 256 MiB per stream. Jobs survive a runner restart (the unit uses `KillMode=process`) and
+the runner re-adopts them from `status.json`, pid and start time. A running job marks the
+workspace busy in the heartbeat, so the idle reaper skips it.
+
+**Full output, never a silent cut.** A foreground `bash` returns at most about 32 KiB per stream
+inline (head and tail with an omitted count) but the runner tees the complete output to
+`out/<request_id>` (last 32 files, at most 64 MiB each). Results carry `ref`, `stdout_bytes`,
+`stderr_bytes` and `omitted`; `read_output {ref | shell_id, offset, limit, tail_lines, grep}`
+pages it, and `next_offset` resumes exactly where a page stopped.
+
+**Session reattach.** The orchestrator's session id (Claude Code's) is sent as the
+`mirafleet.session` label, so a new Claude Code process, a reconnect or a runner restart lands on
+the same runner, directory, current directory and jobs. Central never decides this from state in
+the harness, only from the session id and its own workspace rows.
 
 ## Orchestrator
 

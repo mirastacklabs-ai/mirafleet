@@ -92,7 +92,7 @@ after M6. Detailed plan, decisions and steps:
 - Later, demand-driven: `integrations/kilocode/`, others. Marketplace, npm, brew in M6.
 
 ## M7 — Developer workspaces
-**Status: approved (14 Nov 2026).** Detailed plan and decisions: [M7.md](M7.md).
+**Status: built; review in progress (15 Nov 2026).** Detailed plan and decisions: [M7.md](M7.md).
 North star: AI inference stays on the laptop (the orchestrator); all tool calls run on the remote
 VM via central. Credentials move to central, repo code and tool calls move to the VM. Kept simple
 on purpose: residual gaps are documented and left to the enterprise edition.
