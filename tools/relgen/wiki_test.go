@@ -54,6 +54,11 @@ func TestWikiLinks(t *testing.T) {
 	if err != nil || got != "use `![alt](diagrams/<name>.svg)` and [g](Glossary)" {
 		t.Errorf("code span: %q %v", got, err)
 	}
+	// A code span that wraps onto the next line does not hide the links after it.
+	got, err = rewriteLinks("docs/guide/README.md", "takes `-workspace\nFILE` then [g](glossary.md)", pages, dia)
+	if err != nil || got != "takes `-workspace\nFILE` then [g](Glossary)" {
+		t.Errorf("wrapped span: %q %v", got, err)
+	}
 	// A link that climbs out of the repository is refused, never rewritten to a path.
 	if _, err := rewriteLinks("docs/guide/README.md", "[e](../../../etc/passwd)", pages, dia); err == nil {
 		t.Error("escaping link accepted")

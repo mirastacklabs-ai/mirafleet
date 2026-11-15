@@ -134,18 +134,28 @@ func rewriteLinks(src, body string, pageOf map[string]string, diagrams map[strin
 		return wikiBlobBase + resolved + frag
 	}
 	var out []string
-	inFence := false
+	inFence, inCode := false, false // inCode: an inline code span is open (it may span lines)
 	for _, line := range strings.Split(body, "\n") {
 		if strings.HasPrefix(strings.TrimLeft(line, " "), "```") || strings.HasPrefix(strings.TrimLeft(line, " "), "~~~") {
 			inFence = !inFence
+			out = append(out, line)
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			inCode = false // a span never crosses a paragraph break
 		}
 		if !inFence {
-			// Inline code spans (odd segments between backticks) are left alone.
+			// Inline code spans are left alone: segments between backticks alternate text/code.
 			segs := strings.Split(line, "`")
-			for i := 0; i < len(segs); i += 2 {
-				segs[i] = wikiLinkRE.ReplaceAllStringFunc(segs[i], func(m string) string {
-					return "](" + fix(wikiLinkRE.FindStringSubmatch(m)[1]) + ")"
-				})
+			for i := range segs {
+				if (i%2 == 0) != inCode {
+					segs[i] = wikiLinkRE.ReplaceAllStringFunc(segs[i], func(m string) string {
+						return "](" + fix(wikiLinkRE.FindStringSubmatch(m)[1]) + ")"
+					})
+				}
+			}
+			if (len(segs)-1)%2 == 1 {
+				inCode = !inCode
 			}
 			line = strings.Join(segs, "`")
 			if m := wikiRefDefRE.FindStringSubmatch(line); m != nil {
