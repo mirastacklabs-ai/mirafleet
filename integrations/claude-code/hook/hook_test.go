@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,14 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/handoff"
 )
+
+// testProj is an absolute project path on every OS (the hook refuses relative project dirs).
+var testProj = func() string {
+	if runtime.GOOS == "windows" {
+		return `C:\home\u\proj`
+	}
+	return "/home/u/proj"
+}()
 
 type fakeBackend struct {
 	mu        sync.Mutex
@@ -54,7 +63,7 @@ func fixture(t *testing.T, name string) string {
 
 func testEnv(t *testing.T, fb *fakeBackend) Env {
 	return Env{
-		StateDir: t.TempDir(), ConfigDir: t.TempDir(), ProjectDir: "/home/u/proj", PPID: 4242,
+		StateDir: t.TempDir(), ConfigDir: t.TempDir(), ProjectDir: testProj, PPID: 4242,
 		Now:          time.Now,
 		NewBackend:   func(Env) (Backend, error) { fb.newCalled = true; return fb, nil },
 		CloseTimeout: 200 * time.Millisecond,
@@ -74,7 +83,7 @@ func TestSessionStartWritesHandoff(t *testing.T) {
 	if code != 0 || out != "" {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
-	s, ok, err := handoff.Read(env.StateDir, handoff.Key{PID: 4242, Project: "/home/u/proj"})
+	s, ok, err := handoff.Read(env.StateDir, handoff.Key{PID: 4242, Project: testProj})
 	if err != nil || !ok || s != "cc:abc123-def" {
 		t.Fatalf("got %q %v %v", s, ok, err)
 	}
@@ -83,8 +92,14 @@ func TestSessionStartWritesHandoff(t *testing.T) {
 func TestSessionStartProjectFallsBackToCwd(t *testing.T) {
 	env := testEnv(t, &fakeBackend{})
 	env.ProjectDir = ""
-	run(t, "session-start", fixture(t, "session_start.json"), env)
-	if _, ok, _ := handoff.Read(env.StateDir, handoff.Key{PID: 4242, Project: "/home/u/proj"}); !ok {
+	var in map[string]any
+	if err := json.Unmarshal([]byte(fixture(t, "session_start.json")), &in); err != nil {
+		t.Fatal(err)
+	}
+	in["cwd"] = testProj // the fixture's POSIX cwd is not absolute on Windows
+	b, _ := json.Marshal(in)
+	run(t, "session-start", string(b), env)
+	if _, ok, _ := handoff.Read(env.StateDir, handoff.Key{PID: 4242, Project: testProj}); !ok {
 		t.Fatal("cwd fallback not used")
 	}
 }
@@ -97,7 +112,7 @@ func TestSessionStartInvalidIgnored(t *testing.T) {
 		if code != 0 || out != "" || errs == "" {
 			t.Fatalf("id %q: code=%d out=%q err=%q", id, code, out, errs)
 		}
-		if _, ok, _ := handoff.Read(env.StateDir, handoff.Key{PID: 4242, Project: "/home/u/proj"}); ok {
+		if _, ok, _ := handoff.Read(env.StateDir, handoff.Key{PID: 4242, Project: testProj}); ok {
 			t.Fatalf("id %q written", id)
 		}
 	}
@@ -113,7 +128,7 @@ func TestSessionEndClearClosesOnlyMatching(t *testing.T) {
 		{ID: "ws-1", Session: "cc:abc123-def"}, {ID: "ws-2", Session: "cc:other"}, {ID: "ws-3", Session: "cc:abc123-def"},
 	}}
 	env := testEnv(t, fb)
-	k := handoff.Key{PID: 4242, Project: "/home/u/proj"}
+	k := handoff.Key{PID: 4242, Project: testProj}
 	if err := handoff.Write(env.StateDir, k, "cc:abc123-def", time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +157,7 @@ func TestSessionEndOtherReasonsKeepWorkspaces(t *testing.T) {
 	for _, r := range []string{"resume", "prompt_input_exit", "other", "", "bypass_permissions_disabled"} {
 		fb := &fakeBackend{list: []api.WorkspaceInfo{{ID: "ws-1", Session: "cc:abc123-def"}}}
 		env := testEnv(t, fb)
-		k := handoff.Key{PID: 4242, Project: "/home/u/proj"}
+		k := handoff.Key{PID: 4242, Project: testProj}
 		_ = handoff.Write(env.StateDir, k, "cc:abc123-def", time.Now())
 		in := strings.Replace(fixture(t, "session_end_resume.json"), `"resume"`, `"`+r+`"`, 1)
 		code, out, _ := run(t, "session-end", in, env)
@@ -370,7 +385,7 @@ func TestPreToolUseNullAndNonObjectInput(t *testing.T) {
 func TestSessionEndKeepsNewerSessionHandoff(t *testing.T) {
 	fb := &fakeBackend{}
 	env := testEnv(t, fb)
-	k := handoff.Key{PID: 4242, Project: "/home/u/proj"}
+	k := handoff.Key{PID: 4242, Project: testProj}
 	if err := handoff.Write(env.StateDir, k, "cc:newer-session", time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +464,8 @@ func TestPreToolUseLocalToolFallsBackToCwdAndIgnoresOtherTools(t *testing.T) {
 	env := remoteEnv(t, "remote: true\n")
 	dir := env.ProjectDir
 	env.ProjectDir = ""
-	_, out, _ := run(t, "pre-tool-use", `{"cwd":"`+dir+`","tool_name":"Bash","tool_input":{}}`, env)
+	cwd, _ := json.Marshal(dir) // Windows paths need their backslashes escaped
+	_, out, _ := run(t, "pre-tool-use", `{"cwd":`+string(cwd)+`,"tool_name":"Bash","tool_input":{}}`, env)
 	if !strings.Contains(out, `"deny"`) {
 		t.Fatalf("cwd fallback: %q", out)
 	}
