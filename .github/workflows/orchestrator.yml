@@ -18,8 +18,10 @@ concurrency:
 
 env:
   # Orchestrator packages under test. Append as they land (do not list a package before it exists).
-  # Nothing is pending. ./integrations/... compares file bytes, so it relies on the LF checkouts
-  # that .gitattributes enforces (F-45); integrations/eol_test.go guards against CRLF.
+  # M7 orchestrator side is covered: transfer lives in ./internal/orch, the remote-project hook in
+  # integrations/claude-code/hook (under ./integrations/...). ./integrations/... compares file bytes,
+  # so it relies on the LF checkouts that .gitattributes enforces (F-45); integrations/eol_test.go
+  # guards against CRLF.
   PKGS: ./internal/keys/... ./internal/opconf/... ./internal/handoff/... ./internal/orch/... ./internal/mcpserver/... ./integrations/...
 
 jobs:

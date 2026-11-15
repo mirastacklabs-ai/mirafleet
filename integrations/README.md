@@ -9,6 +9,7 @@ one directory each.
 | Session handoff and `--resume` reattach | no (pass `-session`) | no (pass `-session`) | yes |
 | Close workspaces at session end | no (idle TTL reaps) | no (idle TTL reaps) | yes (SessionEnd) |
 | Confirm prompt before guarded calls | harness approval prompt | harness approval prompt | yes (PreToolUse ask) |
+| Remote projects (`remote: true`): steer to the mirafleet file and shell tools | command body and server instructions | command body and server instructions | yes, plus a PreToolUse hook that denies the local tools |
 | Slash command and aliases | DIY from the shared body | `/mirafleet`, `/openfleet` | `/mirafleet`, `/openfleet`, `/claudefleet` |
 
 Central enforces `confirm` on guarded fleets in every case.

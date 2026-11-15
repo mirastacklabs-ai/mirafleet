@@ -66,11 +66,15 @@ if ($isWin) {
     $pub = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, $cert.RawData)
     $store = New-Object System.Security.Cryptography.X509Certificates.X509Store 'Root', 'LocalMachine'
     $store.Open('ReadWrite'); $store.Add($pub); $store.Close()
+    $script:trusted = $pub
 } else {
     $env:SSL_CERT_FILE = $certFile
 }
 $env:MIRAFLEET_INSTALL_BASE_URL = "https://localhost:$([TestServer]::Port)"
 
+# Everything below runs inside try so the throwaway root is removed from LocalMachine\Root even when
+# a case throws or exits (a developer running this as admin must not keep a stray trusted root).
+try {
 $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'amd64' }
 $V = 'v9.9.9'
 $archive = "mirafleet_9.9.9_windows_$arch.zip"
@@ -164,3 +168,12 @@ $env:PATH = $oldPath
 # PATH untouched without -AddToPath is checked by reading the user PATH on Windows only.
 Remove-Item -Recurse -Force $W -ErrorAction SilentlyContinue
 if ($script:fail -eq 0) { Write-Host 'installtest.ps1: OK' } else { Write-Host 'installtest.ps1: FAIL'; exit 1 }
+} finally {
+    if ($script:trusted) {
+        try {
+            $st = New-Object System.Security.Cryptography.X509Certificates.X509Store 'Root', 'LocalMachine'
+            $st.Open('ReadWrite'); $st.Remove($script:trusted); $st.Close()
+            Write-Host 'cleanup: removed the test cert from LocalMachine\Root'
+        } catch { Write-Host "cleanup: could not remove the test cert: $_" }
+    }
+}

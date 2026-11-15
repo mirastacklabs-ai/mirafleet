@@ -33,6 +33,9 @@ No session handoff (pass `-session <name>` in `args`), no close on exit (idle TT
 approval prompt is the gate. Central still enforces `confirm` for guarded fleets.
 See [../generic/README.md](../generic/README.md) and the [matrix](../README.md).
 
+Remote projects (`remote: true` in `.mirafleet.yaml`): no hook blocks Codex's local tools, so the skill body
+and the server instructions steer it to the mirafleet `bash`, `read`, `write`, `edit` and friends.
+
 ## Docs relied on (checked 2026-11-14)
 
 - https://learn.chatgpt.com/docs/extend/mcp?surface=cli (redirect of https://developers.openai.com/codex/mcp):

@@ -41,6 +41,9 @@ MCP server entry plus a `/mirafleet` custom command. No hooks.
 No session handoff (pass `-session <name>`), no close on exit (idle TTL reaps), and Gemini's tool confirmation is the gate.
 Central still enforces `confirm` for guarded fleets. See [../generic/README.md](../generic/README.md) and the [matrix](../README.md).
 
+Remote projects (`remote: true` in `.mirafleet.yaml`): no hook blocks Gemini's local tools, so the command body
+and the server instructions steer it to the mirafleet `bash`, `read`, `write`, `edit` and friends.
+
 ## Docs relied on (checked 2026-11-14)
 
 - https://geminicli.com/docs/tools/mcp-server/: top-level `mcpServers`; stdio uses `command`, `args`, optional `env`, `cwd`, `timeout`, `trust`; files above. Use hyphens, not underscores, in server names.

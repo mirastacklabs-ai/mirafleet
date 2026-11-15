@@ -41,7 +41,7 @@ because workspace mode adds a second boundary on top of the first one rather tha
 The MCP server (M5) has [5.11](#511-prompt-injection-through-tool-output): the model is untrusted
 input, and tool output is data that may be hostile. The admin GUI (M4) has
 [5.12](#512-attacking-the-gui): a web page on a network port, attacked eight ways. Host mode and
-central-held credentials (M7, built on branch `m7-wave-a`) have
+central-held credentials (M7) have
 [5.14](#514-host-mode-and-credentials-m7).
 
 ## 5.1 Threat model in plain words

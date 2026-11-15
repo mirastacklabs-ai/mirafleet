@@ -1989,7 +1989,7 @@ Facts to hold on to before you start:
 - **More runners** means another VM or another user on the same VM (`qa`), enrolled separately and
   isolated by ordinary Unix permissions (home directories 0700).
 - **A runner serves one operator at a time.** While `durga` has an open workspace on `vm1-dev`,
-  `kalyan`'s `workspace_open` there is refused (`runner busy, in use by durga`) and placement picks
+  `kalyan`'s `workspace_open` there is refused (`conflict: busy: runner NAME is in use by durga`) and placement picks
   another runner. Any registered operator may use any runner otherwise.
 - **Containers are not involved.** There is no containerd and no root. M3's container mode is
   unchanged and still available on other fleets.
@@ -2270,7 +2270,7 @@ there and readable by the same Unix user. Prune between operators if that matter
 |---|---|---|
 | Runner exits at start: "refusing to run as root" or "capabilities" | started as root or with ambient capabilities | run as the ordinary user (`User=` or a user unit); no `AmbientCapabilities=` |
 | Runner exits: state dir not private | `~/.local/state/mirafleet` or `$HOME` is group/world-writable | `chmod 700` the directory; fix the home permissions |
-| `workspace_open`: `runner busy, in use by durga` | another operator has live workspaces there | wait for them to close or be reaped, or use another runner; an admin can `workspace kill` |
+| `workspace_open`: `conflict: busy: runner NAME is in use by durga` | another operator has live workspaces there | wait for them to close or be reaped, or use another runner; an admin can `workspace kill` |
 | `workspace_open`: no runner holds credential `gl-token` | not assigned to a runner of that fleet, or the runner has not synced yet | `credential assign`; check delivery status in `credential list`; the runner must be online |
 | `workspace_open` with `credentials` on a container fleet | credentials exist only on host fleets | use a host-mode fleet |
 | Background job stops when the runner restarts | unit has the default `KillMode` | `KillMode=process` in the unit (shipped units have it) |
@@ -2318,7 +2318,7 @@ and broker) closes the other doors. Root on the VM sees everything. The enterpri
 <summary>Answers</summary>
 
 1. Otherwise systemd kills background jobs when the runner restarts.
-2. It is refused with `runner busy, in use by durga` and placement tries other runners.
+2. It is refused with `conflict: busy: runner NAME is in use by durga` and placement tries other runners.
 3. Every stored credential is unreadable; central refuses to start rather than run without the right key. Restore the key from the backup.
 
 </details>
