@@ -10,10 +10,11 @@ One static binary (`CGO_ENABLED=0`). Dependencies kept small:
 `golang.org/x/{oauth2,sync,time}`; MIT-0 `segmentio/asm` accepted, see [M5.md](M5.md#10-dependencies)).
 CLI uses the standard library (`flag` with subcommands).
 
-**Build order (13 Nov 2026): M1 → M2 → M3 → M5 → M4 → M6.** M5 (orchestrator) comes before M4
+**Build order (14 Nov 2026): M1 → M2 → M3 → M5 → M4 → M7 → M6.** M5 (orchestrator) comes before M4
 (GUI): it is what lets Claude Code drive fleets end to end, and the admin CLI already covers the
-GUI's functions. Milestone numbers are kept as labels. Every milestone also updates the
-developer guide in [guide/](guide/README.md).
+GUI's functions. M7 (developer workspaces) comes before M6 so the first release ships it.
+Milestone numbers are kept as labels. Every milestone also updates the
+developer guide in [guide/](guide/README.md). Step-by-step status and ETAs: [TRACKER.md](TRACKER.md).
 All dependencies must meet the permissive license policy in [CLAUDE.md](../CLAUDE.md).
 
 ## M1 — Transport and actions
@@ -89,8 +90,33 @@ design: [ARCHITECTURE.md](ARCHITECTURE.md#workspace-mode). The "M3 done when" sc
   `integrations/generic/`.
 - Later, demand-driven: `integrations/kilocode/`, others. Marketplace, npm, brew in M6.
 
+## M7 — Developer workspaces
+**Status: planning (14 Nov 2026).** Detailed plan: [M7.md](M7.md) (being written).
+Target scenario: code in a private GitLab reachable only from a build VM; the developer runs
+Claude Code on a laptop and does clone → edit → long build/test → commit → push inside a workspace
+on that VM. The model provider seeing code is accepted; the workspace runner runs on a dedicated VM.
+- Runner-held credentials the agent cannot read: git over SSH and HTTPS, private package
+  registries and image registries; scoped to allowlisted hosts, audited, rotatable.
+- SSH and other allowlisted TCP through the egress proxy; egress for guarded fleets on gVisor/Kata.
+- Persistent per-session workspace storage that survives expiry for a retention period, reattach
+  on resume, expiry warnings, explicit extend.
+- Background jobs for long builds (start, status, tail logs, cancel); full output kept with
+  paging and grep.
+- Richer MCP file tools (edit, patch, search, list, stat, move/delete, upload/download).
+- **Docker Engine executor** (open-source Docker Engine/moby; never Docker Desktop or other
+  commercial products): `executor: docker`, rootful and rootless, custom socket paths, workspaces
+  visible in `docker ps`, Docker's image store and docker.io images, same locked-down container
+  template as containerd. Podman's Docker-compatible API evaluated.
+- Acceptance: `TestM7Done` plus integration tests against a fake GitLab (HTTPS + SSH) on
+  containerd and on a real Docker Engine (`docker:dind`).
+
 ## M6 — Release and distribution
+**Status: planned (14 Nov 2026).** Detailed plan: [M6.md](M6.md); M7 additions below are applied
+there once M7's plan is approved.
 - README and quickstart, LICENSE (Apache-2.0), threat-model notes.
+- Docker first-class for adoption: OCI image published to Docker Hub (`docker.io`) as well as
+  ghcr, Docker Compose files as a supported install path for central and runners, Docker-Sponsored
+  Open Source programme as an option.
 - CI (GitHub Actions): `go vet`, `go test -race`, `go-licenses check` failing on anything outside
   the permissive allowlist in CLAUDE.md, generated third-party licenses file per release.
 - One git tag drives every channel below, so all versions stay in lockstep.
@@ -103,7 +129,7 @@ archives (zip + `.exe` on Windows) serve the orchestrator (`mirafleet mcp`):
 | GitHub Releases | everyone | tarballs, checksums, SBOM, cosign keyless signatures, build provenance |
 | Homebrew tap `mirastacklabs-ai/homebrew-tap` | orchestrator users on macOS/Linux | homebrew-core later, once adoption qualifies |
 | `.deb` / `.rpm` / `.apk` (goreleaser nFPM) | runners and central | include systemd units and a `mirafleet` system user |
-| OCI image on `ghcr.io/mirastacklabs-ai/mirafleet` | central on containerd / Kubernetes | Helm chart later, on demand |
+| OCI image on `ghcr.io/mirastacklabs-ai/mirafleet` and Docker Hub (`docker.io`) | central and runners on Docker, containerd or Kubernetes | Docker Compose files ship with the release; Helm chart later, on demand |
 | `go install …/cmd/mirafleet@latest` | Go users | no extra work |
 | `install.sh` | quick start | downloads the release and verifies the checksum before installing |
 
@@ -152,5 +178,8 @@ syft are MIT or Apache-2.0).
   `TestM3DoneIntegration` and `TestIntegrationWorkspaceCLI` pass.
 - M5 (orchestrator) built: MCP server, contexts, sessions, Claude Code plugin, other harnesses,
   `TestM5Done` and `TestM5NoHooks`; closing hardening and docs in progress, not yet marked done.
-- Next: finish M5, then M4 (GUI), then M6 (release).
+- 14 Nov 2026: M4 and M6 plans approved; M4 wave A in progress; M7 (developer workspaces, Docker
+  Engine executor) added and being planned. M5's own smoke test (S17) runs with the full-product
+  test after M6.
+- Next: M4 (GUI), then M7 (developer workspaces), then M6 (release). Live status: [TRACKER.md](TRACKER.md).
   Central and runner are Linux only; `mcp` is cross-platform.
