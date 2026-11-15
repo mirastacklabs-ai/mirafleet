@@ -996,7 +996,34 @@ func (r *Runner) runWS(ctx context.Context, op *wsOp, body []byte) outcome {
 	return fail(transport.CodeBadRequest, "refused", errors.New("unknown op"))
 }
 
+// runBash runs a foreground `bash -lc` on a host executor: the executor owns the timeout and the
+// cwd, keeps the full output under Ref and fills the byte counts (the transport result has no
+// cwd field; the next command starts in it).
+func (r *Runner) runBash(ctx context.Context, bx BashExecutor, op *wsOp, command string) outcome {
+	we, err := bx.Bash(ctx, op.id, command, op.timeout, newRequestID())
+	if ctx.Err() != nil { // cancelled by central
+		return fail(transport.CodeInternal, "cancelled", ctx.Err())
+	}
+	if err != nil {
+		return failFor(ctx, err)
+	}
+	o := outcome{res: transport.WorkspaceResult{Code: transport.CodeOK, Exec: &we}, exit: we.ExitCode, audit: "ok"}
+	switch {
+	case we.TimedOut:
+		o.audit = "timeout"
+		o.res.Message = "timed out; process killed"
+	case we.ExitCode != 0:
+		o.audit = "failed"
+	}
+	return o
+}
+
 func (r *Runner) runExec(ctx context.Context, op *wsOp, body []byte) outcome {
+	if bx, ok := r.ws.ex.(BashExecutor); ok && len(body) == 0 && len(op.env) == 0 && (op.cwd == "" || op.cwd == workspace.Root) {
+		if a := op.req.Argv; len(a) == 3 && a[0] == "bash" && a[1] == "-lc" {
+			return r.runBash(ctx, bx, op, a[2])
+		}
+	}
 	xctx, cancel := context.WithTimeout(ctx, op.timeout)
 	defer cancel()
 	outC, errC := workspace.NewCapture(wsOutputBudget/2), workspace.NewCapture(wsOutputBudget/2)

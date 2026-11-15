@@ -85,7 +85,7 @@ func TestSweepAndWarning(t *testing.T) {
 		t.Fatalf("fresh warned: %q", s.Warning)
 	}
 	s.Close()
-	clk.t = clk.t.Add(8 * day) // fresh now 8 d unused
+	clk.t = clk.t.Add(8 * day)  // fresh now 8 d unused
 	clk.t = clk.t.Add(20 * day) // 28 d: inside the window
 	s, _ = m.Open("fresh", "")
 	if s.Warning == "" {

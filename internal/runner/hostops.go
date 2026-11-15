@@ -71,6 +71,15 @@ type DestroyDeleter interface {
 	DestroyDelete(ctx context.Context, id workspace.ID) error
 }
 
+// BashExecutor is implemented by the host executor: a foreground bash command run in the
+// session's persisted cwd, with the full output kept on the runner under the result's Ref
+// (docs/M7.md section 3.6). The runner uses it for `bash -lc <command>` execs with no stdin, env
+// or cwd; everything else goes through Exec. The timeout is passed separately because the
+// executor reports a timeout itself.
+type BashExecutor interface {
+	Bash(ctx context.Context, id workspace.ID, command string, timeout time.Duration, requestID string) (transport.WorkspaceExec, error)
+}
+
 // HostModer marks an executor as host mode (heartbeat feature "host").
 type HostModer interface{ HostMode() bool }
 

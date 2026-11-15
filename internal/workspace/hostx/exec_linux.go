@@ -88,9 +88,9 @@ type Engine struct {
 	env     map[string]string // filtered runner env, snapshotted at New
 
 	mu       sync.Mutex
-	cwds     map[string]string              // sid -> cwd
-	fg       map[string]map[int]struct{}    // sid -> running foreground pgids
-	sessions map[string]string              // sid -> Dir, every session seen (for Busy)
+	cwds     map[string]string           // sid -> cwd
+	fg       map[string]map[int]struct{} // sid -> running foreground pgids
+	sessions map[string]string           // sid -> Dir, every session seen (for Busy)
 }
 
 // New builds an Engine. It snapshots the allowlisted part of the runner's environment now.

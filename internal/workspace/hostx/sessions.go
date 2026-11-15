@@ -37,10 +37,10 @@ var ErrNoSession = errors.New("no such session")
 
 // SessionsConfig configures a Manager.
 type SessionsConfig struct {
-	Root        string                     // parent of the per-session dirs (default Paths.SessionsRoot())
-	StateDir    string                     // session metadata lives in StateDir/sessions
-	DeleteAfter time.Duration              // 0 selects DefaultDeleteAfter; negative never deletes
-	WarnBefore  time.Duration              // 0 selects DefaultWarnBefore
+	Root        string                      // parent of the per-session dirs (default Paths.SessionsRoot())
+	StateDir    string                      // session metadata lives in StateDir/sessions
+	DeleteAfter time.Duration               // 0 selects DefaultDeleteAfter; negative never deletes
+	WarnBefore  time.Duration               // 0 selects DefaultWarnBefore
 	Busy        func(sessionID string) bool // true while the session has a running job (set by the exec layer)
 	Files       FilesOptions
 	Now         func() time.Time
@@ -49,8 +49,8 @@ type SessionsConfig struct {
 // meta is the persisted record of one session.
 type meta struct {
 	ID       string    `json:"id"`
-	Dir      string    `json:"dir"`              // the directory the tools are confined to
-	Own      bool      `json:"own"`              // Dir is the session's own directory (deleted with it); false for a workdir
+	Dir      string    `json:"dir"` // the directory the tools are confined to
+	Own      bool      `json:"own"` // Dir is the session's own directory (deleted with it); false for a workdir
 	Created  time.Time `json:"created"`
 	LastUsed time.Time `json:"last_used"`
 	HeldPID  int       `json:"held_pid,omitempty"` // process holding a live handle

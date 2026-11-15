@@ -83,6 +83,18 @@ type wsHarness struct {
 
 func newHarness(t *testing.T, y string, ex *fake.Executor, mod func(*Config)) *wsHarness {
 	t.Helper()
+	var w workspace.Executor
+	if ex != nil {
+		w = ex
+	}
+	h := newHarnessFor(t, y, w, mod)
+	h.ex = ex
+	return h
+}
+
+// newHarnessFor drives any executor (h.ex stays nil unless the caller sets it).
+func newHarnessFor(t *testing.T, y string, ex workspace.Executor, mod func(*Config)) *wsHarness {
+	t.Helper()
 	dir := t.TempDir()
 	if _, err := keys.Generate(dir, "host", "host"); err != nil {
 		t.Fatal(err)
@@ -109,7 +121,7 @@ func newHarness(t *testing.T, y string, ex *fake.Executor, mod func(*Config)) *w
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	h := &wsHarness{t: t, hbs: make(chan transport.Heartbeat, 64), ex: ex, log: &syncBuf{}}
+	h := &wsHarness{t: t, hbs: make(chan transport.Heartbeat, 64), log: &syncBuf{}}
 	conns := make(chan ssh.Conn, 4)
 	go func() {
 		for {

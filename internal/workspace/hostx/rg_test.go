@@ -20,14 +20,14 @@ func TestRgParity(t *testing.T) {
 	}
 	dir := t.TempDir()
 	files := map[string]string{
-		"a.go":           "package a\n\nfunc Hello() {}\nfunc hello2() {}\n",
-		"sub/b.go":       "package b\nvar x = 1\n// Hello again\n",
-		"sub/c.txt":      "hello world\nsecond\nthird hello\n",
-		"sub/deep/d.go":  "package d\n",
-		"ignored/e.go":   "func Hello() {}\n",
-		".gitignore":     "ignored/\n",
-		".hidden/h.go":   "func Hello() {}\n",
-		"multi.txt":      "start\nmid\nend\n",
+		"a.go":          "package a\n\nfunc Hello() {}\nfunc hello2() {}\n",
+		"sub/b.go":      "package b\nvar x = 1\n// Hello again\n",
+		"sub/c.txt":     "hello world\nsecond\nthird hello\n",
+		"sub/deep/d.go": "package d\n",
+		"ignored/e.go":  "func Hello() {}\n",
+		".gitignore":    "ignored/\n",
+		".hidden/h.go":  "func Hello() {}\n",
+		"multi.txt":     "start\nmid\nend\n",
 	}
 	for p, c := range files {
 		full := filepath.Join(dir, p)
