@@ -68,6 +68,13 @@ func adminTable() *methodTable {
 			api.MethodWorkspaceKill:        handleWorkspaceKill,
 			api.MethodGUIResetAdmin:        handleGUIResetAdmin,
 			api.MethodFleetSetConfirm:      handleFleetSetConfirm,
+
+			api.MethodCredentialSet:      handleCredentialSet,
+			api.MethodCredentialList:     handleCredentialList,
+			api.MethodCredentialDelete:   handleCredentialDelete,
+			api.MethodCredentialAssign:   handleCredentialAssign,
+			api.MethodCredentialUnassign: handleCredentialUnassign,
+			api.MethodCredentialRotate:   handleCredentialRotate,
 		},
 		timeout: func(m string) time.Duration {
 			switch m {
@@ -75,6 +82,8 @@ func adminTable() *methodTable {
 				return 0
 			case api.MethodWorkspaceKill:
 				return wsCloseOuterTimeout
+			case api.MethodCredentialRotate:
+				return 2 * time.Minute
 			}
 			return api.ListTimeout
 		},
@@ -199,11 +208,17 @@ func (s *Server) adminConn(ctx context.Context, c net.Conn, table *methodTable) 
 	// "no more input", and the response is still written (D-06).
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go watchPeerClose(rctx, c, cancel)
+	// credential.set reads its body frame from the connection, so nothing else may read it.
+	if req.Method != api.MethodCredentialSet {
+		go watchPeerClose(rctx, c, cancel)
+	}
 
 	// checkPeer required the peer to run as our own UID.
 	cc := &callCtx{p: auth.LocalAdmin(os.Getuid()), src: table.src, svc: s.cfg.Service, st: s.cfg.Store,
 		logf: s.cfg.Logf, state: &connState{}}
+	if req.Method == api.MethodCredentialSet { // the secret follows as one body frame
+		cc.body = &callBody{r: c, closer: c}
+	}
 	if err := writeResponseTimeout(c, c, table.serve(rctx, cc, req)); err != nil {
 		s.cfg.Logf("admin socket: write response: %v", err)
 	}
