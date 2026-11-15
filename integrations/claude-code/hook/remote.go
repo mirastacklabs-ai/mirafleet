@@ -50,4 +50,3 @@ func write(stdout io.Writer, decision, reason string) {
 	b, _ := json.Marshal(o)
 	stdout.Write(append(b, '\n'))
 }
-

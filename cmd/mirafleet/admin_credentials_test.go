@@ -241,7 +241,7 @@ func TestFleetCreateHostWithCredentials(t *testing.T) {
 
 func TestFleetCredentialsFlagValidation(t *testing.T) {
 	for _, args := range [][]string{
-		{"fleet", "create", "dev", "-credentials", "gl"},                            // needs -mode workspace
+		{"fleet", "create", "dev", "-credentials", "gl"},                             // needs -mode workspace
 		{"fleet", "create", "dev", "-mode", "workspace", "-credentials", "Bad Name"}, // invalid name
 		{"fleet", "create", "dev", "-mode", "workspace", "-credentials", "a,a"},      // repeated
 	} {

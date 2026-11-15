@@ -24,6 +24,17 @@ import (
 // mcpShutdownGrace bounds orch.Close after the server stops.
 const mcpShutdownGrace = 5 * time.Second
 
+// projectOrch adds mcpserver.ProjectDirer to the Orch: the local project directory that the
+// workspace_* file tools resolve relative paths against (docs/M7.md).
+type projectOrch struct {
+	*orch.Orch
+	dir string
+}
+
+func (p projectOrch) ProjectDir() string { return p.dir }
+
+var _ mcpserver.ProjectDirer = projectOrch{}
+
 type serveOpts struct {
 	context, fleet, session, projectDir string
 }
@@ -115,10 +126,11 @@ func runServe(ctx context.Context, stop func(), args []string, in io.Reader, out
 	if err != nil {
 		return err
 	}
+	pb := projectOrch{Orch: o, dir: opts.projectDir}
 	serveErr := mcpserver.Serve(ctx, in, out, mcpserver.Config{
 		Name:    "mirafleet",
 		Version: version,
-		Tools:   append(mcpserver.ListTools(o), mcpserver.WorkspaceTools(o)...),
+		Tools:   append(mcpserver.ListTools(pb), mcpserver.WorkspaceTools(pb)...),
 		Logf:    logf,
 	})
 	stop()

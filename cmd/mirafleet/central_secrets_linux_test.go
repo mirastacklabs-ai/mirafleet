@@ -42,7 +42,7 @@ func TestKeygenFormat(t *testing.T) {
 	if !strings.Contains(err1.String(), "lost") || strings.Contains(err1.String(), m[1]) {
 		t.Fatalf("stderr must warn about losing the key and never repeat it: %q", err1.String())
 	}
-	if err := centralKeygen([]string{"x"}, &out1, &err1); err == nil ||!errors.Is(err, errAdminUsage) {
+	if err := centralKeygen([]string{"x"}, &out1, &err1); err == nil || !errors.Is(err, errAdminUsage) {
 		t.Fatalf("args: %v", err)
 	}
 }
