@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest an improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        mirafleet stays lean. Enterprise features (RBAC, SSO, HA) are out of scope for the open
+        source tree. Check [docs/PLAN.md](https://github.com/mirastacklabs-ai/mirafleet/blob/main/docs/PLAN.md)
+        first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: It needs no telemetry or unconfigured outbound connection.
+          required: true
+        - label: It needs no new dependency, or I explain why in the proposal.
+          required: false

@@ -1,0 +1,48 @@
+name: dco
+
+# Every commit in the pull request (merge commits included) must carry a Signed-off-by trailer
+# whose name and email match the commit author. No author is exempt, Dependabot included: its
+# commits must pass on their own sign-off line (see docs/M6.md, M6-D06).
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dco-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dco:
+    name: dco
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check Signed-off-by on every commit
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          fail=0
+          # --no-merges is deliberately not used: merge commits are checked too.
+          for sha in $(git rev-list "$BASE..$HEAD"); do
+            name=$(git show -s --format='%an' "$sha")
+            email=$(git show -s --format='%ae' "$sha")
+            want="Signed-off-by: ${name} <${email}>"
+            if ! git show -s --format='%B' "$sha" | grep -qxF -- "$want"; then
+              echo "::error::${sha:0:12} lacks '${want}'"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "Sign off with: git commit --amend -s --no-edit  (or: git rebase --signoff $BASE)"
+            exit 1
+          fi
+          echo "ok: every commit in $BASE..$HEAD is signed off by its author"

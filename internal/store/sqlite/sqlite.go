@@ -65,6 +65,10 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		w.Close()
 		return nil, fmt.Errorf("sqlite: open writer: %w", err)
 	}
+	if err := backupBeforeMigrate(ctx, w, path, ms, time.Now()); err != nil {
+		w.Close()
+		return nil, fmt.Errorf("sqlite: %w", err)
+	}
 	if err := migrate(ctx, w, ms); err != nil {
 		w.Close()
 		return nil, fmt.Errorf("sqlite: %w", err)

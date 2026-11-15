@@ -1,0 +1,12 @@
+{
+  "name": "io.github.mirastacklabs-ai/mirafleet",
+  "version": "0.5.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@mirastack/mirafleet",
+      "version": "0.5.0",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}
