@@ -361,7 +361,7 @@ the admin CLI already covers the GUI's functions. Full details are in [../PLAN.m
 | **M3** Workspaces | `workspace.Executor`, containerd executor, optional OpenSandbox executor, scheduling and sticky sessions, TTL reaper, reconcile, `workspace.*` API, egress proxy | done (13 Nov 2026); see [../M3.md](../M3.md) |
 | **M5** Orchestrator | the real `mirafleet mcp` stdio MCP server (nine tools), contexts and project defaults, session handoff, Claude Code plugin and hooks, opencode and generic notes, Windows support, action discovery; see [../M5.md](../M5.md) | **built** (smoke test with real Claude Code pending) |
 | **M4** Admin GUI | web screens on central (HTML pages from Go templates, with htmx, a small library that updates page parts from the server): Overview, Fleets, Runners, Join tokens, Operators, Workspaces, Audit, Account; HTTPS only, one admin account; see [../M4.md](../M4.md) | done (15 Nov 2026) |
-| **M6** Release | CI, Linux packages (`.deb`, `.rpm`, `.apk`), an OCI image, Docker Compose files, signed checksums and build provenance, install scripts, an npm wrapper, a Homebrew tap, plugin marketplace and MCP Registry entries, a quickstart, a threat model and protocol-version checks; see [../M6.md](../M6.md) and section 1.10 | **built in the repository; first release `v0.6.0` not yet published** <!-- verify: update when the v0.6.0 tag is pushed and the wiki is live --> |
+| **M6** Release | CI, Linux packages (`.deb`, `.rpm`, `.apk`), an OCI image, Docker Compose files, signed checksums and build provenance, install scripts, an npm wrapper, a Homebrew tap, plugin marketplace and MCP Registry entries, a quickstart, a threat model and protocol-version checks; see [../M6.md](../M6.md) and section 1.10 | **0.6.0 built; release pending (the `v0.6.0` tag is not pushed yet)** |
 | **M7** Remote development on a VM | workspace executor `host`; central-held credentials (encrypted at rest); SSH agent and HTTPS broker on the runner; background jobs; full output with paging; Claude Code tool parity (`read`, `edit`, `grep`, ...); upload/download; GUI Credentials page; see [../M7.md](../M7.md) | **built**; review done, hardening in progress, user smoke test pending |
 
 What this means for you today:
@@ -440,10 +440,9 @@ find it. Chapter 10 has the commands for each channel.
 
 **No telemetry.** mirafleet sends no usage data, crash reports or update checks anywhere. Its
 only network connections are the ones you configure: runners and operators to central, and, only
-if you turn on token self-rotation for a stored credential (planned, M7), central to your GitLab.
+if you turn on token self-rotation for a stored credential (`-rotate gitlab_self`, M7), central to your GitLab.
 That promise is in [SECURITY.md](../../SECURITY.md), and a review item checks that no new code
 adds an unconfigured outbound connection.
-<!-- verify: GitLab self-rotation is M7 and not yet built on this branch -->
 
 ## Check your understanding
 

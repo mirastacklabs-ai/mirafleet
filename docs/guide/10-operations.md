@@ -2252,7 +2252,6 @@ carries the recipe) and use `JAVA_TOOL_OPTIONS`.
 
 One practical consequence: if `kalyan` uses the runner after `durga`, `durga`'s directories are still
 there and readable by the same Unix user. Prune between operators if that matters to you.
-<!-- verify: the `runner.replaced` row is written (action name confirmed in internal/service/events.go) but no code in internal/gui shows a flag for it; confirm the GUI flag in the browser check -->
 
 
 ### 10.13.8 Day-2
@@ -2267,7 +2266,7 @@ there and readable by the same Unix user. Prune between operators if that matter
   aggregated `credential.use` rows with source `runner` (per session, credential, host and status
   in 60-second windows). `events.dropped` means a runner produced more than central accepts.
 - **A replaced connection**: if a second process connects as the same runner, central writes a
-  `runner.replaced` audit row and the GUI flags the runner. See "known gap" below.
+  `runner.replaced` audit row (shown on the GUI audit page; filter by action). See "known gap" below.
 - **Back up** the central data directory *and* the key, separately.
 
 ### 10.13.9 Troubleshooting

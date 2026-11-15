@@ -1344,7 +1344,7 @@ only to admins' networks. It does not change the firewall for you.
 
 ## 5.14 Host mode and credentials (M7)
 
-<!-- verify: section 5.14 is written from docs/M7.md (sections 3, 4, 4.6) and the decided-behaviour notes. Defences marked "built" were present in the m7-wave-a code when written (hostx harden_linux.go, sshagent, broker, secrets, fsops, MCP control-tag neutraliser); the enrolment-key mitigation (runner.replaced row + GUI flag) is built in internal/service/events.go; re-check every defence name and every claim in the attack table at reconciliation. -->
+<!-- verify: defence names exist in the merged code (hostx harden_linux.go, sshagent, broker, secrets, fsops, MCP control-tag neutraliser); attack-table rows 1, 2, 6, 8, 11 and 12 are not covered by the integration test and were not re-checked one by one; settle in the user smoke (S21) -->
 
 Host mode removes the container wall on purpose. The agent runs commands as a real OS user on a
 real VM, and some of those commands (`git push`) need secrets. So the question for this section is
@@ -1504,7 +1504,7 @@ Be honest about these.
    disk to reconnect. The agent, being the same user, can read it, connect to central *as that
    runner*, and receive that runner's assigned secrets. OSS accepts this (an enterprise edition can
    close it). The only mitigation: a new connection replaces the old one, which writes a
-   `runner.replaced` audit row, and the GUI flags the runner. It does not refuse, because that
+   `runner.replaced` audit row (shown on the GUI audit page). It does not refuse, because that
    would lock a legitimate runner out after a half-open connection. aarvee should watch for the row.
 4. **Use of a credential, beyond its purpose.** While a session is open, the agent can push to GitLab
    with the key's permissions and can use the token on every path. Limit this in GitLab: deploy keys
@@ -1521,7 +1521,11 @@ Be honest about these.
 10. **Container-mode comparison.** Host mode does not give you the namespaces, seccomp and cgroup limits
     of section 5.9. If you need them, use a container fleet (it has no credentials and no file tools in M7).
 
-<!-- verify: attack table rows 3, 4, 5 and 10: confirm against the integration test (m7_done_integration_linux_test.go) once it is complete: ssh-keygen -Y sign via the agent refused, unpinned host key refused, git credential fill and GIT_TRACE_CURL show nothing, FIFO refused. Row 9 (credential.* not on api@) per TestM7Done item 9. -->
+Test coverage of the table: rows 3, 4 and 5 are exercised end to end by `TestM7DoneIntegration`
+(`internal/central/m7_done_integration_linux_test.go`: `ssh-keygen -Y sign` through the agent
+refused, an unpinned SSH host key refused, `git credential fill` and `GIT_TRACE_CURL` show no
+secret); row 7 by its section 5 (isolation between runner users); row 9 by
+`internal/central/cred_handlers_test.go`; row 10 by `TestFIFORefused` in `internal/workspace/fsops`.
 
 ## Check your understanding
 
@@ -1652,7 +1656,7 @@ Be honest about these.
     signature. It also signs only user-auth requests for the credential's user.
 22. The runner has to keep its enrolment key on disk to reconnect, and the agent runs as the same
     user, so it can read the key, dial central as that runner, and receive its secrets. Accepted in
-    the open-source core; the visible traces are the `runner.replaced` audit row and the GUI flag.
+    the open-source core; the visible traces are the `runner.replaced` audit row (on the GUI audit page).
 23. The attacker must be root on the VM (or have a kernel exploit that makes them root). Host mode
     assumes a dedicated VM and does not defend against root. Container-mode fleets, and
     never putting production secrets on a shared VM, are the answer.

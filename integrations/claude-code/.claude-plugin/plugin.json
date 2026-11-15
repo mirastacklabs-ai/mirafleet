@@ -1,7 +1,7 @@
 {
   "name": "mirafleet",
   "displayName": "mirafleet",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Orchestrate fleets of servers from Claude Code through a central mirafleet server: allowlisted actions and isolated workspaces.",
   "author": {
     "name": "mirastacklabs-ai",

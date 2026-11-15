@@ -2064,7 +2064,8 @@ The registration code (Operators screen) follows the same rule for a different r
 "Show code" press is audited by `service.OperatorCode`, so the page never refreshes it by itself.
 ## Host-mode flows (M7)
 
-<!-- verify: flows 30 to 36 are written from docs/M7.md plus the decided-behaviour notes; step lists name functions that exist in the m7-wave-a worktree (hostx.Executor, hostx.Manager, runner credHolder, service.DeliverRunner, service.RotateDue/rotate, service.IngestRunnerEvents) but the end-to-end wiring (central dispatch for workspace.fs / job_* / output_read / credential.*, S17) was still being added. Re-check each step against the merged code. -->
+<!-- verify: flows 30 to 36: every named function exists in the merged code (hostx.Executor, hostx.Manager, runner credHolder, service.DeliverRunner, service.RotateDue, service.IngestRunnerEvents) and TestM7DoneIntegration exercises the path end to end, but the step-by-step order of each flow has not been re-read line by line; do that in the user smoke (S21) -->
+
 
 Flows 30 to 36 are the host-mode story (new in M7). The cast: raj owns a spare VM `vm1.example.com`
 with an ordinary user `dev` and a runner `vm1-dev` in fleet `dev` (workspace mode, executor `host`).
@@ -2369,7 +2370,7 @@ as lost.
    uid 0 and capabilities; [section 5.14](05-security.md#514-host-mode-and-credentials-m7)),
    *then* connects to central. It holds **no secrets** yet.
 3. **Reconnect and sync.** Central sees the runner connect (a newer connection replaces an older half-open one and
-   writes a `runner.replaced` audit row, and the GUI flags the runner) and sends `creds_sync`
+   writes a `runner.replaced` audit row) and sends `creds_sync`
    (flow 34 C). Only now do the secrets exist in the new process's memory.
 4. **Re-adopt sessions.** The executor reads its session records (`hostx.Manager.OpenSessions`):
    sessions whose `open` flag was left set are re-attached. The runner then re-wires their

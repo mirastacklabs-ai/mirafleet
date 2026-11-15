@@ -118,9 +118,9 @@ sudo journalctl -u mirafleet-central -n 40 --no-pager
 - the SSH **host key fingerprint** (a `SHA256:...` value);
 - the GUI URL(s) and the GUI **certificate fingerprint** (SHA-256);
 - a notice that the GUI is reachable on all interfaces (if you did not restrict it);
-- "GUI setup: no admin account yet. The one-time setup token ... is in
-  `/var/lib/mirafleet/central/gui/setup-token`" (the path, never the token).
-<!-- verify: exact journal wording and the setup-token path match M4 as merged (central_gui_linux.go) -->
+- "GUI setup: no admin account yet. The one-time setup token (valid 24h) is in
+  `/var/lib/mirafleet/central/gui/setup-token`; open the GUI URL below and paste it." (the path,
+  never the token).
 
 Admin commands run as the service user because the admin socket checks the caller's UID:
 `sudo -u mirafleet mirafleet central fleet list` should print an empty list.
@@ -228,7 +228,6 @@ in order.
    sudo -u mirafleet mirafleet central fleet create vms -mode workspace -executor host
    sudo -u mirafleet mirafleet central token create -fleet vms
    ```
-   <!-- verify: `fleet create -mode workspace -executor host` is the accepted form (admin_workspace.go flag "executor": containerd|opensandbox|host) -->
 
 3. **Join as `dev`** (no root needed from here):
 
@@ -258,7 +257,6 @@ in order.
      job_max: 12h                  # longest background job (24h at most)
    env_allow: [LANG, LC_ALL, TERM, CI, GOFLAGS, NODE_ENV]
    ```
-   <!-- verify: host: block field names and defaults (root, cleanup.delete_after, job_max) against internal/workspace/wsconfig; M7 layout is <root>/sessions/<slug> and <root>/work/<name> -->
 
 5. **Start it as a systemd user unit** (shown first because it needs no root):
 
@@ -298,7 +296,6 @@ in order.
    sudo -u mirafleet mirafleet central credential assign gitlab-ssh -runner vms/vm1-dev
    sudo -u mirafleet mirafleet central credential assign gitlab-https -runner vms/vm1-dev
    ```
-   <!-- verify: credential set/assign flags (-kind -hosts -known-hosts -auth -user -expires; assign NAME -runner fleet/runner | -fleet F) against merged admin_credentials.go; GUI /credentials page layout -->
 
    Central pushes them to the runner over the existing SSH connection; the runner keeps them in
    memory only. Optional: `-rotate gitlab_self -rotate-project PATH` lets central rotate a

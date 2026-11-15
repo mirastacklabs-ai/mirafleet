@@ -29,7 +29,6 @@ Requirements:
 - Set up a context once: `mirafleet mcp login ADDR -name NAME -code -` (see the
   [quickstart](../../docs/QUICKSTART.md) and the [developer guide](../../docs/guide/README.md)).
 - Update the plugin and the binary together: the plugin version follows the release tag.
-  <!-- verify: plugin.json and pluginVersion are 0.6.0 after relgen bump, carrying M7's skill and hook -->
 
 mirafleet sends no telemetry. The plugin and the binary talk only to the central you logged in to.
 
@@ -37,10 +36,9 @@ mirafleet sends no telemetry. The plugin and the binary talk only to the central
 
 If the project's `.mirafleet.yaml` says `remote: true`, the skill tells Claude to use only the
 mirafleet tools (`bash`, `read`, `write`, `edit`, `grep`, `glob`, ...) against the runner VM, and
-a PreToolUse hook denies the local `Bash`, `Read`, `Write`, `Edit`, `Grep` and `Glob` tools with
-a reason that names the remote tool. Without the hooks (other harnesses) the skill and the MCP
+a PreToolUse hook denies the local `Bash`, `Read`, `Write`, `Edit`, `MultiEdit`, `Grep`, `Glob`,
+`LS` and `NotebookEdit` tools with a reason that names the remote tool. Without the hooks (other harnesses) the skill and the MCP
 server instructions carry the same rule, but nothing blocks the local tools.
-<!-- verify: the skill text, the deny list and the `remote: true` hook match M7 as merged (M7.md 3.8) -->
 
 Do not use `mirafleet` and the local tools on the same remote project: the files live on the VM,
 not on your laptop.

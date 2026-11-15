@@ -909,7 +909,6 @@ licence. It is the lightweight alternative to a contributor licence agreement, a
 [chapter 11](11-contributing.md).
 ## 2.14 Host mode background: secrets you can use but not read (M7)
 
-<!-- verify: section 2.14 describes M7 as decided in docs/M7.md; check names (session-bind@openssh.com, PR_SET_DUMPABLE, NameConstraints, AES-256-GCM) against internal/workspace/{sshagent,hostx,broker} and internal/secrets at reconciliation. -->
 
 Host mode ([chapter 1, section 1.4a](01-what-is-mirafleet.md#14a-host-mode-remote-development-on-a-vm-m7))
 runs the agent's commands directly on a VM, with no container wall. The agent also has to

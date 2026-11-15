@@ -1163,7 +1163,7 @@ The `audit` table gets no new column. New values appear in `action` and `source`
 | `credential.rotate` with outcome `error` | admin, or `system` for the scheduled rotation | Self-rotation could not reach GitLab, was refused, or the new value could not be stored; the message says why and the old value keeps working. There is no separate `credential.rotate_failed` audit action (that name exists only as a GUI flash id). |
 | `credential.use` | `runner` | An aggregated usage event from a runner: session, credential name, host, outcome, with a count (60-second windows). |
 | `events.dropped` | `runner` | A runner's event batch exceeded the caps; the row carries the count of lost events. |
-| `runner.replaced` | `runner` | A runner's new connection replaced a live one (written by `service.RunnerReplaced`, actor kind `runner`). The GUI flags the runner. <!-- verify: no code in internal/gui reads this row yet, so the GUI flag is unconfirmed --> |
+| `runner.replaced` | `runner` | A runner's new connection replaced a live one (written by `service.RunnerReplaced`, actor kind `runner`). There is no separate GUI flag: the row shows on the audit page (filter by action). |
 | `secrets.keycheck` | `system` | The secrets key was checked or first recorded at start-up. |
 | `workspace.fs`, `workspace.job_start`, `workspace.job_status`, `workspace.job_tail`, `workspace.job_cancel`, `workspace.output_read` | `api` | The host-mode operations of flows 32 and 33. `workspace.fs` records op, paths, sizes and the SHA-256 of what was written, never content. |
 | `workspace.kill` (with delete) | admin | An admin kill that also deletes the session directory. |

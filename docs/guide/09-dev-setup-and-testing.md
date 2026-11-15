@@ -1212,7 +1212,10 @@ rehearsed as an `-rc.1` tag ([10.12](10-operations.md#1012-install-upgrade-and-v
 **Everything is labelled** `org.mirastacklabs.mirafleet.release=1`, so `scripts/release.sh clean`
 removes the images, containers, volumes and `dist/` that a run left behind.
 
-<!-- verify: pkgtest/e2e-systemd host-mode parts (user unit with `systemd-analyze --user`, dev and qa runners, backup-on-upgrade) are late-lane L3 and not built on m6-now -->
+`pkgtest` also runs `systemd-analyze verify` on the `mirafleet-runner@.service` template and
+`systemd-analyze --user verify` on the packaged user unit. `e2e-systemd` starts the host-mode runners
+`dev` and `qa` (two OS users with linger, the packaged user unit) and checks the backup central
+keeps when it migrates a schema-3 database on upgrade.
 
 ### The CI workflows
 

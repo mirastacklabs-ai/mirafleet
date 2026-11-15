@@ -163,11 +163,10 @@ can reconnect, and it is readable by the same user. A determined, prompt-injecte
 that key, connect to central **as that runner**, and receive the runner's assigned credentials.
 mirafleet does not prevent this in the open-source edition. It is mitigated, not closed:
 central lets a newer connection replace the old one and writes a `runner.replaced` audit row
-and flags the runner in the GUI; the blast radius is that runner's credentials, which you
+(visible in `mirafleet central audit` and on the GUI audit page); the blast radius is that runner's credentials, which you
 scoped narrowly. The enterprise edition may close it later. Until then, treat the credentials
 assigned to a host-mode runner as available to the agent that works there, and scope them to
 what you would hand that agent anyway.
-<!-- verify: the replacement audit row name `runner.replaced` and the GUI flag exist after merge (M7.md 3.2); M7 notes say duplicate-login refusal is NOT implemented - if a refusal was added, update this paragraph -->
 
 Other residual risks, all accepted and documented:
 

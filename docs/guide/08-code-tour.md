@@ -1479,14 +1479,12 @@ tool. The map of new directories:
 | `tools/relgen/` | A separate `package main` (stdlib only, never linked into `mirafleet`) that keeps release files in step with the tag and renders generated files. |
 | `scripts/release.sh`, `scripts/release/*` | The release test and build targets. Like `dev.sh`, every step runs in a digest-pinned container. |
 | `.goreleaser.yaml` | The build, archive, package, checksum, SBOM and signing recipe. |
-| `packaging/` | What goes inside the Linux packages: `systemd/` units, `env/` files, `scripts/` (maintainer scripts), `examples/`, `oci/Dockerfile`. |
+| `packaging/` | What goes inside the Linux packages: `systemd/` units (the system units, the `mirafleet-runner@.service` template for host mode, and `systemd/user/mirafleet-runner.service`), `env/` files, `scripts/` (maintainer scripts), `examples/` (`actions.yaml`, `workspace.yaml`, `workspace-host.yaml`), `oci/Dockerfile`. |
 | `deploy/compose/` | The Compose files (`central/`, `runner/`, `lab/`). |
 | `npm/` | Templates for the npm wrapper and platform packages. |
 | `scripts/install.sh`, `scripts/install.ps1` | The curl-style installers. |
 | `internal/protover/` | The protocol-level rule ([section 7.15](07-protocols.md#715-protocol-levels-and-version-skew-m6)). |
 | `.github/workflows/` | `gate.yml` and `ci.yml` (checks), `orchestrator.yml` (Windows, macOS), `dco.yml`, `release.yml` (publishing). |
-
-<!-- verify: late-lane host-mode files (user unit, mirafleet-runner@.service, workspace-host.yaml) are M7's and absent on m6-now; add them to packaging/ rows once L3 lands -->
 
 ### `tools/relgen`
 
@@ -1735,9 +1733,8 @@ The runner's own enrolment key must stay on disk so the runner can reconnect, an
 as the same user, so a determined agent could read that key, connect to central as this runner
 and receive its assigned secrets. M7 accepts this gap (a better answer needs a second user or a
 hardware key, which is enterprise scope) and records a `runner.replaced` audit row when a newer
-connection takes over, which the GUI flags. Root on the VM can read anything. See
-[chapter 5](05-security.md).
-<!-- verify: the audit row is `runner.replaced` (internal/service/events.go, called from internal/central/roles.go); no code in internal/gui shows a flag for it yet, so the GUI flag is unconfirmed -->
+connection takes over (the GUI audit page shows it; there is no separate flag). Root on the VM can
+read anything. See [chapter 5](05-security.md).
 
 ## 8.14 Follow one `bash` call (M7)
 

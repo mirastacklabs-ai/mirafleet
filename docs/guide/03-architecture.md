@@ -729,7 +729,7 @@ allowlist permits. The runner-side guard bounds the damage but cannot remove it.
 | Workspace directories | `workspace.Create` | The workspace runner | `<containerd.root>/<ws_id>`, default `/var/lib/mirafleet/ws`; root-owned `0700` | The files an agent wrote. Not secret by design: **never put credentials in a workspace**. |
 | **Secrets master key** (32 bytes) (M7) | `mirafleet central keygen` | Central host | `MIRAFLEET_SECRETS_KEY` in a `0600` environment file read by `central run` | Nobody. The database stores only a key-check value (an HMAC of a constant). If it is lost, every stored credential is lost. |
 | **Credential values** (M7) | `central credential set` or the GUI | Central, then runner memory | `credentials.ciphertext` in `mirafleet.db` (AES-256-GCM); on a host runner **in memory only**, never on disk, in env or in argv | The runner that holds the assignment. The agent can use them through the agent socket and the broker, never read them. |
-| Per-session CA, agent socket (M7) | The host runner, per session | The VM | CA key in runner memory only; `agent.sock` (`0600`) and the CA certificate `ca.pem` (public), in the session's private directory (`0700`) <!-- verify: exact location of the session state dir; docs/M7.md says $XDG_STATE_HOME/mirafleet/sessions/<sid>/, while the code (hostx.SessionDir, runner.SessionHooks) keeps agent.sock, ca.pem, ssh_config, out/ and jobs/ in the session directory the executor reports -->   | The agent's processes can connect to the socket and trust the CA; neither is a secret. |
+| Per-session CA, agent socket (M7) | The host runner, per session | The VM | CA key in runner memory only; `agent.sock` (`0600`) and the CA certificate `ca.pem` (public), in the session's private directory (`0700`: `<host root>/sessions/<slug>`, or the named workdir under `<host root>/work/`; it also holds `ssh_config`, `out/` and `jobs/`) | The agent's processes can connect to the socket and trust the CA; neither is a secret. |
 | Host runner state (M7) | `runner join` as the runner's user | The VM | `$XDG_CONFIG_HOME/mirafleet` (config, enrolment key), `$XDG_STATE_HOME/mirafleet` (sessions, job logs, outputs, local audit) | The enrolment key is readable by the same OS user (an accepted gap, [5.14](05-security.md#514-host-mode-and-credentials-m7)). |
 | **The agent's AI API key** | The operator | The operator's laptop only | Environment of Claude Code | Never sent to central, never to a runner, never into a workspace. The env denylist (`*_API_KEY`, `ANTHROPIC_*`, ...) refuses to forward such names. |
 
@@ -868,8 +868,6 @@ operator laptop just runs `mirafleet mcp` when a harness starts it.*
 | runner, container workspaces | `mirafleet-runner-workspace.service`, runs as root, `After=containerd.service` | not supported (needs host containerd) | none |
 | runner, host mode (M7) | a user unit and a `mirafleet-runner@.service` template, one OS user per runner | not supported (needs a real OS user) | none |
 | `mirafleet mcp` | the binary is in the package too | the image is not used for this | Homebrew, `install.sh`, `install.ps1`, npm, archive, plugin marketplace |
-
-<!-- verify: host-mode units (M7) are decided in docs/M6.md section 2.5 but not yet packaged on this branch -->
 
 Four facts that connect back to the architecture:
 
