@@ -216,6 +216,7 @@ gui-shots)
 	SHOTS_IMAGE="${MIRAFLEET_SHOTS_IMAGE:-docker.io/chromedp/headless-shell@sha256:830fa77e0602cb42e5cb2cbd9237ba27b649ad69d5fb82b54713aac8b7ab4f29}"
 	out="${1:-dist/gui-shots}"
 	case "$out" in /*) ;; *) out="$ROOT/$out" ;; esac
+	case "$out" in */..|*/../*) echo "output directory must not contain .." >&2; exit 2 ;; esac
 	case "$out" in "$ROOT"/*) rel="${out#"$ROOT"/}" ;; *) echo "output directory must be inside the repository" >&2; exit 2 ;; esac
 	mkdir -p "$out"
 	rm -f "$out"/*.png "$out/urls.txt"
@@ -227,7 +228,9 @@ gui-shots)
 		-e MIRAFLEET_GUI_SHOTS_OUT=/out -e MIRAFLEET_GUI_SHOTS_CHROME=/headless-shell/headless-shell \
 		--entrypoint /out/gui.test "$SHOTS_IMAGE" -test.run '^TestGUIShotsServe$' -test.v -test.timeout 8m
 	rm -f "$out/gui.test"
-	echo "screenshots: $(ls "$out" | grep -c '\.png$') in $out"
+	n=0
+	for f in "$out"/*.png; do [ -e "$f" ] && n=$((n + 1)); done
+	echo "screenshots: $n in $out"
 	;;
 go) run rw 'exec go "$@"' "$@" ;;
 *)
