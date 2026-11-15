@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -31,10 +32,31 @@ func TestGrandchildHoldingPipes(t *testing.T) {
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 	deadline := time.Now().Add(3 * time.Second)
-	for syscall.Kill(pid, 0) == nil {
+	for alive(pid) {
 		if time.Now().After(deadline) {
 			t.Fatalf("grandchild %d outlived the action", pid)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// alive reports whether pid is a live process. A zombie (state Z/X, e.g. under a PID 1 that
+// does not reap orphans) counts as dead; kill(pid, 0) alone succeeds on zombies.
+func alive(pid int) bool {
+	if syscall.Kill(pid, 0) != nil {
+		return false
+	}
+	if runtime.GOOS != "linux" {
+		return true
+	}
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false
+	}
+	s := string(b)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 || i+2 >= len(s) {
+		return true
+	}
+	return s[i+2] != 'Z' && s[i+2] != 'X'
 }
