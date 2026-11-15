@@ -1,9 +1,9 @@
 # Glossary
 
 Every term used in the mirafleet guide and code, alphabetical. Each entry has a short plain
-definition and a link to the chapter that explains it properly. Examples use the Acme running
+definition and a link to the chapter that explains it properly. Examples use the MIRASTACK LABS running
 example (central `central.example.com:2222`, fleets `dev` and `prod`, runners `build-1` and
-`db-1`, operators `alice` and `bob`).
+`db-1`, operators `durga` and `kalyan`).
 
 Jump to: [A](#a) [B](#b) [C](#c) [D](#d) [E](#e) [F](#f) [G](#g) [H](#h) [I](#i) [J](#j)
 [K](#k) [L](#l) [M](#m) [N](#n) [O](#o) [P](#p) [R](#r) [S](#s) [T](#t) [U](#u) [W](#w) [Y](#y)
@@ -42,7 +42,7 @@ the machine being protected and is the security boundary. See [chapter 5](05-sec
 
 **Actions guard.** See [guard](#g).
 
-**Admin.** The person (in our examples, Dana) or, later, the GUI that manages central: creates
+**Admin.** The person (in our examples, aarvee) or, later, the GUI that manages central: creates
 fleets and tokens, approves and revokes runners, reads the registration code. Admin work happens
 only on central. The admin is not an operator. See [chapter 10](10-operations.md).
 
@@ -451,10 +451,10 @@ scripts (`MIRAFLEET_CTR=nerdctl` on a Linux host with containerd). See [chapter 
 **One operator per runner.** A host runner is held by the operator with live workspaces on it; another
 operator gets `runner busy, in use by <name>` until the last one ends. See [flow 24](04-flows.md#24-open-a-host-workspace).
 
-**Operator.** A registered person: in practice, one Ed25519 key on one machine (alice's laptop)
-that central knows by a name such as `alice`. Operators use fleets; they do not manage central.
-Acme's operators: `alice`, `bob`. They connect with SSH user `operator`, which is a role label
-shared by all of them; it is not the same thing as the operator named `alice`. See
+**Operator.** A registered person: in practice, one Ed25519 key on one machine (durga's laptop)
+that central knows by a name such as `durga`. Operators use fleets; they do not manage central.
+MIRASTACK LABS's operators: `durga`, `kalyan`. They connect with SSH user `operator`, which is a role label
+shared by all of them; it is not the same thing as the operator named `durga`. See
 [chapter 3](03-architecture.md).
 
 **Orchestrator.** The agent side of the system as a whole: Claude Code plus its plugin plus

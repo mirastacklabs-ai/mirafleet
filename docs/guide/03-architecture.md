@@ -34,16 +34,16 @@ who is allowed to talk to whom, and where every secret lives. The next chapter,
 
 ## The running example
 
-Everything in this guide uses the same fictional company, **Acme**:
+Everything in this guide uses the same fictional company, **MIRASTACK LABS**:
 
 - Central runs on `central.example.com:2222`.
 - There are two fleets: `dev` and `prod`.
 - Runners are `build-1` (in `dev`) and `db-1` (in `prod`).
-- Operators (a person's registered key and machine, driven by a person or an AI agent) are `alice`
-  and `bob`.
-- **Dana** is the admin. She has a shell on the central host and runs `mirafleet central ...` there.
-- For workspace mode: Dana creates `dev` as a **workspace** fleet (with `build-1` as a workspace
-  runner), and alice's Claude Code opens a workspace on it, runs `go test` and reads and writes
+- Operators (a person's registered key and machine, driven by a person or an AI agent) are `durga`
+  and `kalyan`.
+- **aarvee** is the admin, with a shell on the central host and runs `mirafleet central ...` there.
+- For workspace mode: aarvee creates `dev` as a **workspace** fleet (with `build-1` as a workspace
+  runner), and durga's Claude Code opens a workspace on it, runs `go test` and reads and writes
   files ([chapter 1](01-what-is-mirafleet.md#the-workspace-running-example)). `prod` stays an
   actions fleet, with `db-1` and the `tail-logs` action.
 
@@ -60,7 +60,7 @@ runner or an operator's laptop.*
 4. Runners dial OUT to central (user `runner`). Nothing listens on a runner.
 5. Central sends work back down that same connection: an `exec@` channel (actions fleet) or a
    `workspace@` channel (workspace fleet, where the runner drives containerd locally).
-6. Dana runs the admin CLI on central. It uses a local unix socket, never the network.
+6. aarvee runs the admin CLI on central. It uses a local unix socket, never the network.
 
 ### In detail
 
@@ -368,7 +368,7 @@ Facts to remember about a host runner:
   reattach is by session. A second open of a session that is still held is refused
   (`ErrRefused`). <!-- verify: concurrent open of the same session refused (ErrRefused), host layout <root>/sessions/<slug> and <root>/work/<name>, labels, per notes (d652c77) -->
 - **One operator at a time.** A host runner is held by the operator who has live workspaces on it.
-  Another operator's `workspace_open` gets `runner busy, in use by alice` and placement skips the
+  Another operator's `workspace_open` gets `runner busy, in use by durga` and placement skips the
   runner. The hold is released when the last live workspace ends. It is enforced inside the store's
   reserve transaction, with no extra table.
 - **Credentials are placed.** A fleet with credentials requested only places on a runner that holds
@@ -472,15 +472,15 @@ text written by an attacker on a remote machine.*
 | `internal/tokens` | Formats of join tokens (`mfj1.`) and registration codes (`mfr1.`), the host-key hash and the registration-code HMAC. Used by both central (to make and check) and the clients (to parse). |
 | `internal/keys` | Generating and loading Ed25519 keys, refusing private keys that others can read, and the `known_hosts`-style pinning callback. |
 
-## Deployment at Acme
+## Deployment at MIRASTACK LABS
 
 This is where each program runs and what is listening where.
 
 ```mermaid
 flowchart TB
   subgraph LAPTOPS["Operator laptops (no listeners)"]
-    A["alice's laptop<br/>mirafleet mcp"]
-    B["bob's laptop<br/>mirafleet mcp"]
+    A["durga's laptop<br/>mirafleet mcp"]
+    B["kalyan's laptop<br/>mirafleet mcp"]
   end
 
   subgraph CH["Central host: central.example.com"]
@@ -489,7 +489,7 @@ flowchart TB
     P["mirafleet central run"]
     L1 --- P
     L2 --- P
-    ADMIN["Dana's shell on the central host<br/>mirafleet central ..."]
+    ADMIN["aarvee's shell on the central host<br/>mirafleet central ..."]
     ADMIN --> L2
   end
 
@@ -521,10 +521,10 @@ Facts to remember:
   traffic to `central.example.com:2222`. (NAT, "network address translation", is the router feature
   that lets many private machines share one public address; it lets traffic out but blocks
   unsolicited traffic in, which is exactly what a dial-out runner needs.)
-- **Operators dial out too.** `alice` and `bob` run `mirafleet` on their laptops, which connect to
+- **Operators dial out too.** `durga` and `kalyan` run `mirafleet` on their laptops, which connect to
   central and make requests.
 - **Admins act on the central host.** Lifecycle changes (approve, disable, enable, revoke), fleet
-  and token creation, registration codes and audit reading are done by Dana running
+  and token creation, registration codes and audit reading are done by aarvee running
   `mirafleet central ...` on the central host itself. They go through the admin socket, never over
   the network. See [Security](05-security.md) for why.
 - **Central needs no internet.** Only the operator side may need it (for the AI service). Central and
@@ -542,7 +542,7 @@ flowchart LR
   end
 
   subgraph OPDOM["Operator domain"]
-    OPK["operator key<br/>(alice)"]
+    OPK["operator key<br/>(durga)"]
   end
 
   subgraph CENDOM["Central domain (one trust point)"]
@@ -637,9 +637,9 @@ allowlist permits. The runner-side guard bounds the damage but cannot remove it.
 | Operator `known_hosts`, `contexts.yaml` | `mcp login` | The operator's machine | same directory | Pins central; names the centrals (contexts), default fleets and the output cap. No secrets. |
 | `.mirafleet.yaml` (project default) | The project's authors | Inside a project (often committed) | the project root | Only `fleet` and `context` names. Never an address, key or cap, so a cloned repo cannot add a central. |
 | Session handoff file | A Claude Code hook (SessionStart) | The operator's machine | `sessions/<hash>.json` in the state directory, owner-only | A session id such as `cc:<uuid>`. Not a secret: central still checks that the workspace belongs to the operator. |
-| **Join token secret** | `token create` (`tokens.NewJoinToken`) | Printed **once** to Dana, then carried by hand to the runner | Not stored in clear anywhere | Central stores only `SHA-256(secret)` in `join_tokens.secret_hash`. The runner uses the token once and never writes it to disk. |
+| **Join token secret** | `token create` (`tokens.NewJoinToken`) | Printed **once** to aarvee, then carried by hand to the runner | Not stored in clear anywhere | Central stores only `SHA-256(secret)` in `join_tokens.secret_hash`. The runner uses the token once and never writes it to disk. |
 | **Registration secret** (32 bytes) | `central init` (`InitRegistrationSecret`) | Central | `settings` table, key `registration_secret`, inside `<data>/mirafleet.db` (mode `0600`) | Nobody. Registration *codes* are derived from it every 60 seconds. Never logged, never audited. |
-| Registration code (60 s) | `central operator code` | Shown to Dana, passed to an operator | Not stored | Valid only in its own 60-second step. |
+| Registration code (60 s) | `central operator code` | Shown to aarvee, passed to an operator | Not stored | Valid only in its own 60-second step. |
 | Admin socket | `central run` | Central | `<data>/admin.sock`, mode `0600` | Same-UID processes only. |
 | Data-dir lock | `central init` / `central run` | Central | `<data>/central.lock` (`flock`) | Keeps a second central off the same directory. |
 | Runner `workspace.yaml` | The runner's admin | The runner host (workspace runners only) | `/etc/mirafleet/workspace.yaml` (`-workspace`) | Nobody else. This is the workspace-mode boundary: image allowlist, limits, network modes, env allowlist, executor settings. |
@@ -772,11 +772,11 @@ jump hosts per context.
 
 ## Check your understanding
 
-1. Which processes in Acme's deployment listen on a network port, and which do not?
+1. Which processes in MIRASTACK LABS's deployment listen on a network port, and which do not?
 2. Why can the firewall in front of `db-1` block all inbound traffic and mirafleet still work?
 3. A developer wires the admin handler for `token.create` into the operator handler map by
    mistake. Which checks would still stop an operator from creating a join token?
-4. Where is the registration secret stored, and what does `alice` actually receive when she
+4. Where is the registration secret stored, and what does `durga` actually receive when she
    registers?
 5. If central is fully compromised, what stops the attacker from running any command on `db-1`?
 6. Why can a compromised central not make `build-1` start a privileged container with the host's
@@ -800,7 +800,7 @@ jump hosts per context.
    and `action.run`. (c) `Service.CreateToken` calls `authorize(..., adminOnly=true)`, which
    requires `p.Kind == auth.KindAdmin` directly, independent of the policy.
 4. In the central database, in the `settings` table under `registration_secret`, mode `0600`.
-   Alice never receives the secret. She types or pipes a 60-second *code* derived from it and
+   Durga never receives the secret. Durga types or pipes a 60-second *code* derived from it and
    gets back the status `active`; her own private key never leaves her machine.
 5. The runner's actions guard. It only runs actions defined in the runner's own `actions.yaml`,
    as an argv list without a shell, with parameters that fully match their regex. Central cannot

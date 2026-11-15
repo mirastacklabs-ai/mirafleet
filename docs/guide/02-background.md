@@ -46,12 +46,12 @@ make new stamps, so nobody can forge yours.
 
 ```mermaid
 sequenceDiagram
-    participant A as Alice's laptop (holds private key)
-    participant C as Central (holds Alice's public key)
+    participant A as Durga's laptop (holds private key)
+    participant C as Central (holds Durga's public key)
     C->>A: "Sign this challenge (unique to this session)"
     A->>C: signature made with private key
     C->>C: check signature with stored public key
-    Note over C: valid means Alice holds the private key
+    Note over C: valid means Durga holds the private key
 ```
 
 **Ed25519** is one particular signature algorithm. It is fast, has small keys (32 bytes for the
@@ -97,7 +97,7 @@ is just one use. SSH really provides:
   impersonating the server (see [pinning](#23-host-key-pinning-versus-trust-on-first-use)).
 - **User key.** The client's key pair. The server checks the client's signature against a list
   of keys it accepts. This is "public-key authentication".
-- **SSH user.** A name the client sends, such as `alice` or `root`. In normal SSH this maps to an
+- **SSH user.** A name the client sends, such as `durga` or `root`. In normal SSH this maps to an
   operating-system account. **In mirafleet it is a role label** and never maps to an OS account:
   `runner`, `operator` or `enroll`. The role decides what the connection may do.
 - **Channel.** A numbered, bidirectional byte stream inside the connection, with a *type* string.
@@ -148,7 +148,7 @@ runners, and cheap multiplexing. See [chapter 7](07-protocols.md).
 
 ## 2.3 Host-key pinning versus trust-on-first-use
 
-Suppose Alice's first connection to `central.example.com:2222` meets a stranger instead: an
+Suppose Durga's first connection to `central.example.com:2222` meets a stranger instead: an
 attacker who intercepts the traffic and answers with *their* host key. This is a
 **man-in-the-middle** attack. How does the client know the key is central's?
 
@@ -170,7 +170,7 @@ mirafleet pins everywhere:
   reconnects keep checking the same key.
 - There is **no TOFU fallback** and no prompt, even when there is no terminal.
 
-An example with Acme: Dana generates the token on central and sends it to the `db-1` admin by a
+An example with MIRASTACK LABS: aarvee generates the token on central and sends it to the `db-1` admin by a
 channel she trusts (her password manager, say). An attacker on the network can see the traffic
 but cannot change the token, so cannot swap the host key. If the attacker presents their own key,
 `db-1` sees the hash mismatch and stops, *without handing over the secret*.
@@ -373,7 +373,7 @@ A **process group** is a set of Unix processes that can be signalled as one. The
 each action in its own group, so one kill signal stops the process and any children it started
 (a child left running would outlive its "cancelled" action).
 
-**Why revoke relies on it.** When Dana revokes `db-1` while a long action is running, three
+**Why revoke relies on it.** When aarvee revokes `db-1` while a long action is running, three
 things must happen quickly: the connection closes, the waiting `action.run` call stops, and the
 process on the runner dies. mirafleet gives each runner session its own context, and each
 `action.run` derives its context from **both** the request and the session. Revoke cancels the
@@ -759,7 +759,7 @@ clear text means that a stolen backup is a stolen company. So central stores eac
   row to another and still decrypt.
 
 The key itself, the **master key** (32 random bytes, base64), is *not* in the database. Central
-reads it from the environment variable `MIRAFLEET_SECRETS_KEY`, which Dana puts in a `0600` file
+reads it from the environment variable `MIRAFLEET_SECRETS_KEY`, which aarvee puts in a `0600` file
 and generates with `mirafleet central keygen`. The database stores only a **key-check value**
 (an HMAC of a constant, [2.4](#24-hashes-hmac-and-constant-time-comparison)), so central can notice
 at start-up "the key is missing or wrong" and refuse to start rather than quietly produce garbage.

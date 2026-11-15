@@ -248,7 +248,7 @@ single-use token produce exactly one runner (the `EnrollRaceSingleUse` test in `
 | Column | Type | Meaning |
 |---|---|---|
 | `id` | PK | `Principal.ID` for operators. |
-| `name` | `TEXT NOT NULL` | `alice`, `bob`. Unique while not revoked (index below). |
+| `name` | `TEXT NOT NULL` | `durga`, `kalyan`. Unique while not revoked (index below). |
 | `pubkey` | `BLOB NOT NULL UNIQUE` | Ed25519 key, SSH wire format. Unique over all rows: a revoked operator's key is dead. |
 | `fingerprint` | `TEXT NOT NULL` | `SHA256:...`. |
 | `status` | `TEXT`, `CHECK IN ('active','revoked')` | There is **no `pending` state**: registering with a valid code makes the operator `active` immediately. |
@@ -258,7 +258,7 @@ single-use token produce exactly one runner (the `EnrollRaceSingleUse` test in `
 CREATE UNIQUE INDEX operators_name_live ON operators (name) WHERE status <> 'revoked';
 ```
 
-Same trick as runners: a revoked `alice` frees the name, so Alice can register again from a new
+Same trick as runners: a revoked `durga` frees the name, so Durga can register again from a new
 laptop with a new key.
 
 ## 6.7 `settings`
@@ -402,7 +402,7 @@ IMMEDIATE` instead of the default `BEGIN` (which takes the lock lazily, at the f
 
 **Why `synchronous=FULL`.** In WAL mode the cheaper setting `NORMAL` does not force the log to
 disk at every commit; after a power cut the last few commits can vanish (the database stays
-consistent, but recent transactions are lost). Imagine: Dana revokes `db-1`, the CLI prints
+consistent, but recent transactions are lost). Imagine: aarvee revokes `db-1`, the CLI prints
 "revoked", then the machine loses power. With `NORMAL`, after reboot `db-1` could be `active`
 again, and the attacker we just kicked is back. `FULL` flushes on every commit, so **a revoke
 that was acknowledged survives power loss**. The price is slower writes, which is fine because
@@ -465,7 +465,7 @@ bugs and ordinary mistakes, see [chapter 5](05-security.md#510-what-mirafleet-do
 
 **Denormalised on purpose:** `fleet` and `runner` are *names as text*, not ids, and there are no
 foreign keys, so rows survive when what they describe is renamed, revoked or deleted. A reader of the
-log should not have to join five tables to learn that `alice` ran `restart-runner` on `prod/db-1`.
+log should not have to join five tables to learn that `durga` ran `restart-runner` on `prod/db-1`.
 
 ### Columns
 
@@ -494,12 +494,12 @@ on prod/db-1".
 
 ### Example rows
 
-A guarded `action.run`, as two rows. alice runs `tail-logs` on `prod/db-1` with `confirm = "prod"`:
+A guarded `action.run`, as two rows. durga runs `tail-logs` on `prod/db-1` with `confirm = "prod"`:
 
 | id | ts | source | actor_kind | actor | remote | fleet | runner | subject | action | params | outcome | exit_code | duration_ms | message | request_id |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1041 | 1794562867512 | api | operator | alice | 203.0.113.7:51514 | prod | db-1 | tail-logs | action.run | `{"lines":"200"}` | **start** | NULL | 0 | | `9f1c…e07a` |
-| 1042 | 1794562867561 | api | operator | alice | 203.0.113.7:51514 | prod | db-1 | tail-logs | action.run | NULL | **ok** | 0 | 41 | | `9f1c…e07a` |
+| 1041 | 1794562867512 | api | operator | durga | 203.0.113.7:51514 | prod | db-1 | tail-logs | action.run | `{"lines":"200"}` | **start** | NULL | 0 | | `9f1c…e07a` |
+| 1042 | 1794562867561 | api | operator | durga | 203.0.113.7:51514 | prod | db-1 | tail-logs | action.run | NULL | **ok** | 0 | 41 | | `9f1c…e07a` |
 
 (`request_id` is shortened with “…” here; both rows hold the same 32-character value.) What to notice:
 
@@ -510,7 +510,7 @@ A guarded `action.run`, as two rows. alice runs `tail-logs` on `prod/db-1` with 
 - The `confirm` string is not stored. A *missing* confirm instead produces one row, `outcome =
   denied`, `message = confirm missing or wrong`, `params = NULL`.
 
-If Dana revokes `db-1` while that action is still running, the outcome row would read instead
+If aarvee revokes `db-1` while that action is still running, the outcome row would read instead
 `outcome = cancelled`, `message = runner revoked`, `exit_code = NULL`.
 
 The revoke itself, run from the central CLI on the host as uid 1000:
@@ -773,12 +773,12 @@ actions: `workspace.open`, `workspace.exec`, `workspace.read_file`, `workspace.w
 code writes with `source = system` and `actor_kind = system`: `workspace.reap` (open to closing),
 `workspace.destroy` (closing to closed), `workspace.orphan` (a container with no row was destroyed),
 `workspace.lost`, `workspace.recover` (opening to failed) and `workspace.close_all` (the revoke
-cascade). Example, an `exec` pair (alice runs `go test ./...` on `dev/build-1`):
+cascade). Example, an `exec` pair (durga runs `go test ./...` on `dev/build-1`):
 
 | id | source | actor | action | fleet / runner | outcome | params / message | request_id |
 |---|---|---|---|---|---|---|---|
-| 2101 | api | alice | `workspace.exec` | dev / build-1 | `start` | `{"argv":"[\"go\",\"test\",\"./...\"]","cwd":"/workspace","env_names":"CI","timeout_s":"120"}` | `9f2c...` |
-| 2102 | api | alice | `workspace.exec` | dev / build-1 | `ok` | exit_code 0, duration 8140 ms | `9f2c...` |
+| 2101 | api | durga | `workspace.exec` | dev / build-1 | `start` | `{"argv":"[\"go\",\"test\",\"./...\"]","cwd":"/workspace","env_names":"CI","timeout_s":"120"}` | `9f2c...` |
+| 2102 | api | durga | `workspace.exec` | dev / build-1 | `ok` | exit_code 0, duration 8140 ms | `9f2c...` |
 
 (both rows also have the `workspace` column set to the 32-hex id). Env **values** and file
 **contents** never appear.
@@ -824,7 +824,7 @@ Where the config and state directories are on each OS is in the table in
 [chapter 3](03-architecture.md#where-does-each-secret-and-key-live).
 
 **`contexts.yaml`.** A **context** is a named central the operator can talk to (not the Go
-`context` of chapter 2). Acme's version:
+`context` of chapter 2). MIRASTACK LABS's version:
 
 ```yaml
 current: acme
@@ -854,7 +854,7 @@ context: acme
 
 Only those two keys exist, and `opconf.LoadProject` is strict about them (unknown keys, a symlink,
 a non-regular file or a file over 4 KiB is an error). It deliberately has **no addresses, keys or
-caps**: a hostile repository must not be able to point alice's key at a central of its choosing.
+caps**: a hostile repository must not be able to point durga's key at a central of its choosing.
 The file is looked up from the project directory upward, stopping at the first directory that
 contains `.git` (or at the home directory), and never above home. Precedence for a call is: the
 tool argument, then the `-context` and `-fleet` flags, then `.mirafleet.yaml`, then the context's
@@ -940,11 +940,11 @@ One row per named secret.
 
 | Column | Meaning |
 |---|---|
-| `name` | Unique, chosen by Dana (`gitlab-deploy`). The only thing operators and the agent ever see, with kind, hosts and status. |
+| `name` | Unique, chosen by aarvee (`gitlab-deploy`). The only thing operators and the agent ever see, with kind, hosts and status. |
 | `kind` | `ssh-key`, `https-token` or `registry` (CHECK). |
 | `hosts` | JSON array of `host` or `host:port` (CHECK: valid JSON, an array, at least one). The hosts the credential applies to; also what the agent's pinned host list and the broker's intercept list are built from. |
 | `meta` | JSON object with the non-secret settings: SSH user, `known_hosts` lines, auth style (`basic`, `bearer`, `header` plus its name), host binding, rotation settings. Never a secret. |
-| `fingerprint` | A public fingerprint of the value, so Dana can tell which key is stored. Shown to admins only. |
+| `fingerprint` | A public fingerprint of the value, so aarvee can tell which key is stored. Shown to admins only. |
 | `nonce`, `ciphertext` | The AES-256-GCM output: a 12-byte random nonce (CHECK on length) and the sealed value. The only place the secret exists in the database. |
 | `version` | Starts at 1, grows with each replaced value. Together with `id` it is the AEAD associated data, so a ciphertext cannot be moved to another row or back to an older version. |
 | `created_at`, `rotated_at`, `expires_at` | Unix milliseconds. `rotated_at` is NULL until the first replacement; `expires_at` drives the 14-day warning and the self-rotation. |
@@ -1015,12 +1015,12 @@ ciphertext, names, hosts, assignments and audit.
    on `pubkey`?
 2. A power cut happens one second after "revoked" was printed. What guarantees the runner is still
    revoked after reboot?
-3. What does `RegisterOperator` return, and what audit row is written, if Alice registers twice
+3. What does `RegisterOperator` return, and what audit row is written, if Durga registers twice
    with the same key and name?
 4. Why are `fleet` and `runner` in the `audit` table text names and not foreign keys?
 5. You open the database with an older mirafleet binary after upgrading. What happens, and why is
    that better than letting it try?
-6. How does the database itself stop alice from holding two live workspaces for session `s1` on
+6. How does the database itself stop durga from holding two live workspaces for session `s1` on
    `dev`? And can she use `s1` again after closing?
 7. A workspace row is `closing` and its runner is offline. Does it still count against the
    runner's slots? Why is that the right choice?

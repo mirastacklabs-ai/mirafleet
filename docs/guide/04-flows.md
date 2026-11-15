@@ -4,7 +4,7 @@
 
 - The exact order of events when central starts, when a runner joins, and when a runner connects.
 - How an operator registers with the rotating code, and why two operators can use one code.
-- Every check an `action.run` passes on its way from `alice`'s laptop to `db-1`'s guard, and both
+- Every check an `action.run` passes on its way from `durga`'s laptop to `db-1`'s guard, and both
   audit rows it leaves behind.
 - What happens to work that is already running when a runner or an operator is revoked, and why the
   two revokes use opposite orders.
@@ -35,11 +35,11 @@ dead" mark), **step** (one 60-second window of the registration code).
 
 | Name | Meaning in this chapter |
 |---|---|
-| `central.example.com:2222` | Acme's central. Data dir `/var/lib/mirafleet/central`. |
+| `central.example.com:2222` | MIRASTACK LABS's central. Data dir `/var/lib/mirafleet/central`. |
 | `dev`, `prod` | Fleets. `prod` is created with `-confirm` (a guarded fleet). |
 | `build-1` (in `dev`), `db-1` (in `prod`) | Runners. |
-| `alice`, `bob` | Operators. |
-| Dana | The admin: she has a shell on the central host and runs as the same user as central. |
+| `durga`, `kalyan` | Operators. |
+| aarvee | The admin: she has a shell on the central host and runs as the same user as central. |
 
 All the admin commands below (`mirafleet central fleet create ...` and friends) are clients of the
 running central: each one connects to `<data>/admin.sock`, sends one request, prints the answer and
@@ -54,7 +54,7 @@ server that listens for everyone else.
 
 ```mermaid
 sequenceDiagram
-  participant Admin as Dana's shell
+  participant Admin as aarvee's shell
   participant main as cmd/mirafleet
   participant keys as keys
   participant sqlite as sqlite.DB
@@ -131,7 +131,7 @@ in-memory registry, so a `revoke` sent to one would never kick a runner connecte
 
 ## 2. Creating a fleet and a join token
 
-**In one sentence:** Dana asks the running central, over its local admin socket, to create the
+**In one sentence:** aarvee asks the running central, over its local admin socket, to create the
 `prod` fleet (guarded) and a join token, and central records both with an audit row.
 
 First the fleet:
@@ -226,19 +226,19 @@ password hashing, minus the slow hash: the secret is random and long, so a fast 
 **In one sentence:** a runner turns a one-time token into an enrolled but not yet trusted runner,
 refusing to talk to any central whose host key does not match the hash inside the token.
 
-Here Dana joins `build-1` to the `dev` fleet.
+Here aarvee joins `build-1` to the `dev` fleet.
 
 ![Runner join: token, enroll connection, host-key pinning, pending, approve](diagrams/runner-join.svg)
 
 *Look at where the host-key pin is checked: during the SSH handshake, before the token is sent.*
 
-1. Dana runs `token create` on central. It prints `mfj1.ID.SECRET.HASH` once (HASH pins central).
-2. Dana hands the token to the build-1 host by any channel, never through central.
+1. aarvee runs `token create` on central. It prints `mfj1.ID.SECRET.HASH` once (HASH pins central).
+2. aarvee hands the token to the build-1 host by any channel, never through central.
 3. `runner join` dials `:2222` as user `enroll`. A host key not matching HASH is refused (no TOFU).
 4. It sends one `join@mirafleet` frame: token, runner name, labels.
 5. `Store.Enroll`, one transaction: look up by ID, constant-time compare, check stale, insert.
 6. Status is `pending` (`active` only if the token auto-approves). The enroll connection closes.
-7. Dana runs `runner approve dev/build-1`: status becomes `active`.
+7. aarvee runs `runner approve dev/build-1`: status becomes `active`.
 8. The runner reconnects as user `runner` with its own key and sends heartbeats.
 
 ### In detail
@@ -442,7 +442,7 @@ registration, not reused from login.*
 
 ## 5. Approve, disable, enable
 
-**In one sentence:** Dana changes a runner's stored status, and central updates the live session to
+**In one sentence:** aarvee changes a runner's stored status, and central updates the live session to
 match, in that order.
 
 All four lifecycle operations (`approve`, `disable`, `enable`, `revoke`) go through one function,
@@ -515,25 +515,25 @@ sequenceDiagram
 
 ## 6. An operator registers with the rotating code
 
-**In one sentence:** `alice` and `bob` get access with a short-lived code that Dana reads off
-central, without Dana ever handling their keys.
+**In one sentence:** `durga` and `kalyan` get access with a short-lived code that aarvee reads off
+central, without aarvee ever handling their keys.
 
 ![Operator registration: rotating 60 s code, HMAC, two operators in one window](diagrams/operator-register.svg)
 
 *Look at the clock: the code changes every 60 seconds, and any number of operators can use the
 current one.*
 
-1. Central keeps a 32-byte secret in SQLite, never logged. Only Dana (the admin) can read codes.
+1. Central keeps a 32-byte secret in SQLite, never logged. Only aarvee (the admin) can read codes.
 2. Each 60 s window `s` (unix seconds / 60) has its own code: base32(HMAC-SHA256(secret, s)) + HASH.
-3. alice runs `mcp login` with the code Dana gave her. Central recomputes this window's code and compares.
-4. bob uses the same code in the same window and is accepted too. Codes are not single-use.
+3. durga runs `mcp login` with the code aarvee gave her. Central recomputes this window's code and compares.
+4. kalyan uses the same code in the same window and is accepted too. Codes are not single-use.
 5. The window ends. The next window `s+1` has a brand-new code.
-6. bob tries the old code in the next window: refused, with the same error as any wrong code.
+6. kalyan tries the old code in the next window: refused, with the same error as any wrong code.
 7. HASH is central's host-key hash, so the code also pins central: no TOFU at first login.
 
 ### In detail
 
-First Dana shows the code:
+First aarvee shows the code:
 
 ```mermaid
 sequenceDiagram
@@ -551,11 +551,11 @@ sequenceDiagram
 
 *Look at the audit message: it records who showed a code and when, never the code itself.*
 
-Then Dana tells alice the code out of band (chat or voice, within the window), and alice registers:
+Then aarvee tells durga the code out of band (chat or voice, within the window), and durga registers:
 
 ```mermaid
 sequenceDiagram
-  participant mcpLogin as mcpLogin (alice)
+  participant mcpLogin as mcpLogin (durga)
   participant apiclient as apiclient.Register
   participant Server as central.Server (serveEnroll)
   participant Service as service.Service
@@ -572,7 +572,7 @@ sequenceDiagram
   Service->>sqlite: RegisterOperator(name, key, audit)
   sqlite-->>Service: operator active (created or idempotent)
   Service-->>mcpLogin: {operator, status: active}
-  mcpLogin->>mcpLogin: pinHost, SaveContexts (current = alice)
+  mcpLogin->>mcpLogin: pinHost, SaveContexts (current = durga)
 ```
 
 *Look at the `VerifyCode` message: the code is derived and checked by central itself, so there is
@@ -585,9 +585,9 @@ no clock to keep in sync with the laptop.*
    step)) + `.` + the host-key hash, plus `SecondsLeft` and central's host-key fingerprint. Showing a
    code is **audited** (`operator.code`: who, when) and the audit write happens first: if it fails,
    the code is **not** returned. The code itself is never put in the audit row.
-2. Dana passes the code to `alice` in any way she likes (chat, voice). A leaked code is
+2. aarvee passes the code to `durga` in any way she likes (chat, voice). A leaked code is
    useless once its 60-second window ends.
-3. **`mcpLogin`** on Alice's laptop (`mirafleet mcp login central.example.com:2222 -name alice -code -`)
+3. **`mcpLogin`** on Durga's laptop (`mirafleet mcp login central.example.com:2222 -name durga -code -`)
    requires `-code -`, validates the address and name, refuses on Windows (the key loader fails
    closed there), reads the code from stdin, creates the config dir (`opconf.EnsureDir`, `0700`) and
    generates `operator_ed25519` if it is missing (key comment = the name).
@@ -600,7 +600,7 @@ no clock to keep in sync with the laptop.*
 6. **`tokens.VerifyCode(secret, now, body)`** recomputes the code for the *current* step and compares it
    in constant time. Previous and future steps are refused, so the window is exactly the 60 seconds
    of the step. Verification has no side effects, so **the same code verifies any number of times** in
-   its step. That is deliberate: `alice` and `bob` can both register with the code shown at 10:03:12, as
+   its step. That is deliberate: `durga` and `kalyan` can both register with the code shown at 10:03:12, as
    long as they both arrive before 10:04:00. Anything wrong (malformed, wrong host, wrong step, secret
    missing) returns the identical `errRegisterRefused` ("registration refused"), with the real
    reason in central's log.
@@ -611,10 +611,10 @@ no clock to keep in sync with the laptop.*
    repeat registration is never invisible. Conflicts: the key belongs to a revoked operator, or to a
    runner (a key may be a runner's or an operator's, never both, checked inside the transaction), or
    the name is held by a different active operator, or the key is registered under another name.
-8. **No approval step.** Only Dana, on the central host, can read the code, so having it *is* the
+8. **No approval step.** Only aarvee, on the central host, can read the code, so having it *is* the
    approval. There is no pending operator state.
 9. Back on the laptop, `pinHost` writes central's verified key into `known_hosts` (replacing any
-   older line for the same address) and `SaveContexts` records `alice -> central.example.com:2222`
+   older line for the same address) and `SaveContexts` records `durga -> central.example.com:2222`
    as the current context. Later calls (`mcp api ...`) use `apiclient.KnownHosts`, so the pin from
    registration protects every future connection.
 10. `central operator rotate-secret` replaces the secret (`PutSetting`, audited), which invalidates
@@ -635,7 +635,7 @@ given to a new key.*
 
 ## 7. `action.run`, end to end
 
-**In one sentence:** alice asks `db-1` in `prod` to tail its logs, and the request crosses every
+**In one sentence:** durga asks `db-1` in `prod` to tail its logs, and the request crosses every
 layer and every check, leaving two audit rows on central and two lines on the runner. This is the
 most important flow in the system.
 
@@ -644,7 +644,7 @@ most important flow in the system.
 *Look at the two audit rows: one written before anything runs (`start`), one after (`ok` or a
 failure outcome), both with the same `request_id`.*
 
-1. alice's agent calls `action.run` (`prod/db-1`, `tail-logs`, `lines=200`) through `mirafleet mcp`.
+1. durga's agent calls `action.run` (`prod/db-1`, `tail-logs`, `lines=200`) through `mirafleet mcp`.
 2. `mcp` sends one frame (4-byte length + JSON) on an `api@` channel. The operator method table routes it.
 3. `service.RunAction` checks policy, fleet mode, confirm "prod" (guarded fleet's name), runner active.
 4. The audit row "start" is written first. If that fails, nothing runs (fail closed).
@@ -656,7 +656,7 @@ failure outcome), both with the same `request_id`.*
 
 ### In detail
 
-The command, from alice's laptop. The diagram above shows it as an agent's call; the MCP tool
+The command, from durga's laptop. The diagram above shows it as an agent's call; the MCP tool
 `run_action` makes this same `action.run` request (flows 19 and 23 show the MCP side), and
 `mcp api` is the hand-typed way to send it. The `"confirm":"prod"` is required because `prod` is a
 guarded fleet:
@@ -669,7 +669,7 @@ Part 1: connect and authenticate.
 
 ```mermaid
 sequenceDiagram
-  participant mcpAPI as mcpAPI (alice)
+  participant mcpAPI as mcpAPI (durga)
   participant Client as apiclient.Client
   participant Server as central.Server
   participant serveOperator as serveOperator
@@ -678,11 +678,11 @@ sequenceDiagram
   mcpAPI->>Client: Dial(addr, user operator, key, KnownHosts)
   Client->>Server: SSH handshake (host key pinned, ed25519 only)
   Server->>Server: hsLimiter, HandshakeTimeout, KeyAuth (operator, not revoked)
-  Server->>serveOperator: dispatch (principal operator alice)
+  Server->>serveOperator: dispatch (principal operator durga)
   serveOperator->>sqlite: GetOperatorByID, TouchOperator (still active?)
 ```
 
-*Look at the last message: even after login, central re-checks that alice is still active.*
+*Look at the last message: even after login, central re-checks that durga is still active.*
 
 Part 2: from the channel to the "start" audit row.
 
@@ -759,7 +759,7 @@ keys as cheaply as possible.
 | 6 | Operator is *still* active | `serveOperator`: `GetOperatorByID` after `OperatorConns.add` (closes the add-after-kick window) | Connection closed |
 #### B. Protocol shape (gates 7 to 11)
 
-The connection is trusted as "alice", but the bytes she sends are not: are they the right kind of
+The connection is trusted as "durga", but the bytes she sends are not: are they the right kind of
 channel, the right size, valid JSON, and a method her kind of caller may use?
 
 | # | Gate | Where | If it fails |
@@ -797,7 +797,7 @@ central cannot change.
 
 **Why is a missing `confirm` `bad_request` but a policy failure `forbidden`?** `forbidden` means
 "you, as a caller, may not do this at all", which is a statement about who is asking. A missing or
-wrong `confirm` is different: alice is allowed to run actions, but this particular request is
+wrong `confirm` is different: durga is allowed to run actions, but this particular request is
 incomplete for a guarded fleet, which is a statement about the request. The caller can fix it by
 resending with `"confirm":"prod"`. (Both are audited, so a script that keeps forgetting is visible.)
 
@@ -827,7 +827,7 @@ resending with `"confirm":"prod"`. (Both are audited, so a script that keeps for
    precondition holds.
 8. **Start audit row** (gate 19). `RunAction` generates a 128-bit random `request_id`
    (`newRequestID`) and writes an `AuditEvent` with source `api`, actor kind `operator`, actor
-   `alice`, remote address, fleet `prod`, runner `db-1`, subject `tail-logs`, action `action.run`,
+   `durga`, remote address, fleet `prod`, runner `db-1`, subject `tail-logs`, action `action.run`,
    params `{lines: 200}` and outcome `start`. If the database cannot take this row, the action does
    not run: *no row, no exec*. Without that rule a database outage would turn into unaudited
    commands.
@@ -889,8 +889,8 @@ resending with `"confirm":"prod"`. (Both are audited, so a script that keeps for
 
 | id | action | actor | fleet/runner | subject | params | outcome | exit_code | request_id |
 |---|---|---|---|---|---|---|---|---|
-| 1041 | `action.run` | `operator` `alice` (source `api`) | `prod` / `db-1` | `tail-logs` | `{"lines":"200"}` | `start` | none | `9f1c…e07a` |
-| 1042 | `action.run` | `operator` `alice` (source `api`) | `prod` / `db-1` | `tail-logs` | none | `ok` | `0` | `9f1c…e07a` (same) |
+| 1041 | `action.run` | `operator` `durga` (source `api`) | `prod` / `db-1` | `tail-logs` | `{"lines":"200"}` | `start` | none | `9f1c…e07a` |
+| 1042 | `action.run` | `operator` `durga` (source `api`) | `prod` / `db-1` | `tail-logs` | none | `ok` | `0` | `9f1c…e07a` (same) |
 
 Rows 1041 and 1042 are not adjacent in a busy system, but `request_id` ties them together. The table is
 append-only: triggers abort any update or delete. The runner's `audit.jsonl` holds the matching pair
@@ -904,7 +904,7 @@ learned how it ended".
 
 ## 8. Revoking a runner while an action is in flight
 
-**In one sentence:** Dana revokes `dev/build-1` at the moment alice's `restart-service` is running
+**In one sentence:** aarvee revokes `dev/build-1` at the moment durga's `restart-service` is running
 on it, and the revoke must be immediate and must not leave a running process behind.
 
 ![Revoke: tombstone, kick, in-flight cancel, commit, reconnect refused](diagrams/revoke.svg)
@@ -912,7 +912,7 @@ on it, and the revoke must be immediate and must not leave a running process beh
 *Look at the order: tombstone first, kick second, commit third. At no moment can the runner
 slip back in.*
 
-1. Dana runs `central runner revoke dev/build-1`. The CLI sends `runner.lifecycle` (op `revoke`) over the admin socket.
+1. aarvee runs `central runner revoke dev/build-1`. The CLI sends `runner.lifecycle` (op `revoke`) over the admin socket.
 2. Tombstone: build-1's id goes into the registry, so no new session can slip in during the commit.
 3. Kick: the session context is cancelled and the runner's SSH connection is closed.
 4. In-flight action cancelled: the runner kills the process group; the outcome row says `cancelled`.
@@ -928,7 +928,7 @@ sequenceDiagram
   participant Service as service.Service
   participant Registry as registry.Registry
   participant Conn as runner SSH connection
-  participant RunAction as RunAction (alice's call)
+  participant RunAction as RunAction (durga's call)
   participant sqlite as sqlite.DB
 
   Note over RunAction,Registry: Registry.Exec is blocked reading the exec channel
@@ -981,7 +981,7 @@ channel on the runner, and the closed connection. Any one is enough.*
    `execOn` returns. `Exec` notices that the *caller's* context is fine but the *session's* is not, and
    returns `context.Cause(sess.ctx)`, the `*KickError`.
 5. **`RunAction`** recognises the `KickError` (`errors.As`) and writes the outcome row
-   `cancelled` with the message "runner revoked", then returns `unavailable: runner revoked` to Alice.
+   `cancelled` with the message "runner revoked", then returns `unavailable: runner revoked` to Durga.
    Her tool sees why it stopped.
 6. **On the runner**, the connection drop ends `session`; its deferred `cancel()` cancels the context
    that every `serveExec` derives from. Also, the closed channel ends the goroutine copying
@@ -1011,10 +1011,10 @@ channel on the runner, and the closed connection. Any one is enough.*
 
 ## 9. Revoking an operator
 
-**In one sentence:** Dana revokes `bob` while he has a long action running, and central commits the
+**In one sentence:** aarvee revokes `kalyan` while he has a long action running, and central commits the
 change first and only then cuts his connections.
 
-She runs `mirafleet central operator revoke bob`.
+She runs `mirafleet central operator revoke kalyan`.
 
 ```mermaid
 sequenceDiagram
@@ -1022,11 +1022,11 @@ sequenceDiagram
   participant Service as service.Service
   participant sqlite as sqlite.DB
   participant OperatorConns as central.OperatorConns
-  participant serveOperator as serveOperator (bob's connection)
+  participant serveOperator as serveOperator (kalyan's connection)
   participant RunAction as RunAction
   participant Registry as registry.Registry
 
-  adminCLI->>Service: operator.revoke {name: bob} (Dana)
+  adminCLI->>Service: operator.revoke {name: kalyan} (aarvee)
   Service->>sqlite: RevokeOperator(name, now, audit operator.revoke)
   sqlite-->>Service: operator (status revoked), committed
   Service->>OperatorConns: KickOperator(id, "operator revoked")
@@ -1035,7 +1035,7 @@ sequenceDiagram
   serveOperator->>RunAction: request ctx cancelled
   RunAction->>Registry: Exec ctx cancelled -> channel closed, runner kills process
   RunAction->>sqlite: RecordAudit (outcome cancelled, "request cancelled")
-  Note over adminCLI,Registry: Bob reconnects: KeyAuth sees status revoked, denied
+  Note over adminCLI,Registry: Kalyan reconnects: KeyAuth sees status revoked, denied
 ```
 
 *Look at the order: commit first, kick second. A revoked key can never authenticate again.*
@@ -1046,18 +1046,18 @@ sequenceDiagram
    a set of live `ssh.ServerConn` per operator id; `KickOperator` copies the set under the lock and
    closes the connections **after releasing the lock**.
 3. Closing the connection ends `sconn.Wait()` in `serveOperator`, which cancels the connection
-   context. Every `serveAPIChannel` and every `RunAction` derived from it is cancelled. For Bob's
+   context. Every `serveAPIChannel` and every `RunAction` derived from it is cancelled. For Kalyan's
    running action, `Registry.Exec`'s context ends, the exec channel closes, and the runner kills the
    process group, exactly as in flow 8, step 6.
 4. The outcome row says `cancelled`, message "request cancelled" (not "runner revoked": the runner
    is fine, the *caller* is gone).
-5. **The race.** Bob could authenticate *just before* the commit, and `OperatorConns.add` could run
+5. **The race.** Kalyan could authenticate *just before* the commit, and `OperatorConns.add` could run
    *after* the kick. Then the kick would find nothing to close. That is why `serveOperator` re-reads
    the operator by id right after `add` and closes the connection if it is no longer active. Revoke
    commits before it kicks, so either the kick or this check catches every connection.
-6. After revoke, `KeyAuth.Authenticate` (user `operator`) returns `ErrDenied` for Bob's key. If he
+6. After revoke, `KeyAuth.Authenticate` (user `operator`) returns `ErrDenied` for Kalyan's key. If he
    registers again with the same key, the store answers `conflict` (the key belongs to a revoked
-   operator). A new key under the name `bob` is allowed, because the unique index on names covers only
+   operator). A new key under the name `kalyan` is allowed, because the unique index on names covers only
    non-revoked operators.
 
 > **Why the orders differ**
@@ -1201,7 +1201,7 @@ sequenceDiagram
 
 Flows 12 to 18 are the workspace-mode story (new in M3). Here the cast is `dev` (a workspace fleet, not
 guarded), its runner `build-1` (started with `-workspace /etc/mirafleet/workspace.yaml`,
-`concurrent: 2`, containerd executor), and alice and bob. Dana created the fleet earlier:
+`concurrent: 2`, containerd executor), and durga and kalyan. aarvee created the fleet earlier:
 
 ```
 mirafleet central fleet create dev -mode workspace \
@@ -1220,7 +1220,7 @@ of a call to its outcome row.
 
 ## 12. Open a workspace
 
-**In one sentence:** alice's agent asks for a workspace on `dev`; central checks the rules,
+**In one sentence:** durga's agent asks for a workspace on `dev`; central checks the rules,
 picks the runner with the most free slots, writes a `start` audit row and a reserved
 (`opening`) database row, asks the runner to create the container, and then marks the row
 `open`.
@@ -1230,10 +1230,10 @@ picks the runner with the most free slots, writes a `start` audit row and a rese
 *Look at the order: the slot is reserved in the database before the runner is asked to build
 anything, so two simultaneous opens can never over-fill a runner.*
 
-1. alice's agent calls `workspace.open` (fleet `dev`, session `s1`) through `mirafleet mcp`.
+1. durga's agent calls `workspace.open` (fleet `dev`, session `s1`) through `mirafleet mcp`.
 2. The `api@` frame reaches `service.OpenWorkspace`: active operator, workspace-mode fleet, image on
    the allowlist, `confirm` on a guarded fleet, valid session id.
-3. Sticky reuse: a live workspace for (alice, `dev`, `s1`) is returned with `reused:true`. If its
+3. Sticky reuse: a live workspace for (durga, `dev`, `s1`) is returned with `reused:true`. If its
    runner is offline the answer is `unavailable`; a fresh workspace is never created elsewhere.
 4. Placement: active, online runners whose executor, trusted labels and image patterns fit, with
    free slots (heartbeat slots minus live rows). The most free slots wins, random tie-break.
@@ -1249,7 +1249,7 @@ The same flow as a sequence diagram, with the function names:
 
 ```mermaid
 sequenceDiagram
-  participant Op as alice (mcp api)
+  participant Op as durga (mcp api)
   participant Svc as service.OpenWorkspace
   participant DB as sqlite.DB
   participant Reg as registry.Registry
@@ -1257,7 +1257,7 @@ sequenceDiagram
   participant Ex as ctrd.Executor
 
   Op->>Svc: workspace.open {fleet dev, session s1}
-  Svc->>DB: GetFleet, GetFleetWorkspace, live rows of alice
+  Svc->>DB: GetFleet, GetFleetWorkspace, live rows of durga
   Svc->>Svc: sticky? per-operator cap? image allowed? candidates()
   Svc->>DB: ReserveWorkspace (row opening + start audit row), one transaction
   Svc->>Reg: Workspace(create, spec)
@@ -1280,10 +1280,10 @@ sequenceDiagram
    fleet's allowlist (`WorkspaceConfig.ImageAllowed`: exact references, `repo:*` or
    `repo@sha256:*`), or the call fails with `bad_request`. Without this check an agent could ask for
    any image from the internet, including one built to attack the host.
-3. **Sticky session.** Central lists alice's live workspaces. If one with the same fleet and
+3. **Sticky session.** Central lists durga's live workspaces. If one with the same fleet and
    session is `open`, `reuse` returns it with `reused: true` and writes a `reused` audit row.
    If its runner is offline the answer is `unavailable`: central **never** silently makes a fresh
-   workspace, because alice's files are on that runner. If the existing row is still `opening`,
+   workspace, because durga's files are on that runner. If the existing row is still `opening`,
    the answer is `conflict` ("workspace is still opening").
 4. **Per-operator cap.** An operator may hold at most 8 live workspaces (the service setting
    `DefaultMaxWorkspacesPerOperator`), or the call fails with `conflict`. Without it, one runaway
@@ -1315,7 +1315,7 @@ sequenceDiagram
 
 ## 13. `workspace.exec`, end to end
 
-**In one sentence:** alice's agent runs `go test ./...` inside her workspace; the command runs in the
+**In one sentence:** durga's agent runs `go test ./...` inside her workspace; the command runs in the
 container, the result comes back as one buffered answer, and two audit rows record exactly what
 ran.
 
@@ -1324,7 +1324,7 @@ ran.
 *Look at the two rows again: `start` is written before the runner is asked, the outcome after,
 and both carry the same `request_id` and the workspace id.*
 
-1. alice's agent calls `workspace.exec` (argv `go test ./...`) through `mirafleet mcp`.
+1. durga's agent calls `workspace.exec` (argv `go test ./...`) through `mirafleet mcp`.
 2. One `api@` frame arrives; the method table routes it to `service.ExecWorkspace`.
 3. Operator, ownership (`not_found` for others), state `open`, argv, cwd, env (denylist), confirm and
    timeout are checked; then the `start` audit row is written FIRST. No row, no exec.
@@ -1335,13 +1335,13 @@ and both carry the same `request_id` and the workspace id.*
 6. The command runs inside the container as an unprivileged user, with no shell. Output is captured
    head and tail, trimmed to the budget; timeout or cancel sends SIGKILL.
 7. The runner writes one result frame: exit code, stdout, stderr, `truncated`, `timed_out`.
-8. Central writes the `outcome` audit row (same `request_id`) and replies to alice.
+8. Central writes the `outcome` audit row (same `request_id`) and replies to durga.
 
 The same flow as a sequence diagram:
 
 ```mermaid
 sequenceDiagram
-  participant Op as alice (mcp api)
+  participant Op as durga (mcp api)
   participant Svc as service.ExecWorkspace
   participant DB as sqlite.DB
   participant Run as build-1 (runWS)
@@ -1363,8 +1363,8 @@ sequenceDiagram
 ```
 
 1. **Find the workspace and its owner.** `Service.wsTarget` loads the row by `ws_id`. It must
-   exist, be owned by the caller, and be `open`. For anyone else (bob, for instance) the answer
-   is the same `not_found` as for an id that does not exist, so bob cannot even learn that the
+   exist, be owned by the caller, and be `open`. For anyone else (kalyan, for instance) the answer
+   is the same `not_found` as for an id that does not exist, so kalyan cannot even learn that the
    workspace is there.
 2. **Validate the input.** `argv` is an array, at most 256 elements and 32 KiB, no NUL bytes.
    There is **no shell string** on the wire, so the audit log shows exactly what ran. `cwd` is
@@ -1396,7 +1396,7 @@ sequenceDiagram
 10. **Audit `outcome`.** Central writes the second row with the same `request_id`, the exit code,
     duration and an outcome of `ok`, `error`, `cancelled` or `timeout`, and returns
     `{exit_code, stdout, stderr, truncated, timed_out, duration_ms, request_id}`.
-11. **Cancel.** If alice's channel closes (or central shuts down, or her operator key is
+11. **Cancel.** If durga's channel closes (or central shuts down, or her operator key is
     revoked), the context is cancelled, the channel to the runner closes, and the executor kills the
     exec. One caveat: a daemonised child that double-forks can outlive an exec timeout, until the
     workspace is destroyed. The pids and memory limits bound the damage.
@@ -1415,7 +1415,7 @@ bigger size limit (or files would travel in tiny 48 KiB chunks). Instead a reque
 
 ```mermaid
 sequenceDiagram
-  participant Op as alice (mcp api -in FILE)
+  participant Op as durga (mcp api -in FILE)
   participant Srv as central api@ channel
   participant Svc as service.WriteWorkspaceFile
   participant Run as build-1
@@ -1468,7 +1468,7 @@ sequenceDiagram
    `fstat` that it is a regular file (a FIFO or a device would hang the runner), and replies with
    a result frame followed by the raw bytes.
 4. Central **buffers** the bytes (at most 1 MiB), checks that their count matches the runner's
-   `length`, and only then sends alice the JSON result (`size`, `offset`, `length`, `mode`, `eof`)
+   `length`, and only then sends durga the JSON result (`size`, `offset`, `length`, `mode`, `eof`)
    followed by one body frame. A runner that lies about the length therefore sends nothing at all.
 5. The outcome row records the path and the byte count.
 
@@ -1484,7 +1484,7 @@ and the container and directory are deleted.
 
 ```mermaid
 sequenceDiagram
-  participant Op as alice
+  participant Op as durga
   participant Svc as service.CloseWorkspace
   participant DB as sqlite.DB
   participant Run as build-1
@@ -1600,9 +1600,9 @@ their own transaction with their own audit row, with the reaper as a backstop.
 
 ## MCP flows (M5)
 
-Flows 19 to 23 are the orchestrator story (new in M5): what happens on alice's laptop between
+Flows 19 to 23 are the orchestrator story (new in M5): what happens on durga's laptop between
 her harness and central. Chapter 3 draws the [packages](03-architecture.md#operator-side);
-chapter 2 explains [MCP](02-background.md#210-mcp-and-harnesses). The cast: alice runs Claude
+chapter 2 explains [MCP](02-background.md#210-mcp-and-harnesses). The cast: durga runs Claude
 Code with the mirafleet plugin in a project that has a `.mirafleet.yaml` saying `fleet: dev`,
 and her `contexts.yaml` has one context, `acme`, pointing at `central.example.com:2222`. A
 **session** is still the client-chosen name from flow 12; here the client is Claude Code, so the
@@ -1623,7 +1623,7 @@ done their work, so the model never sees more than the cap.*
 
 1. Claude Code (the harness) sends `tools/call` `exec` with `command: "go test ./..."` as one JSON line on the stdin of `mirafleet mcp`.
 2. `mcpserver` decodes the arguments strictly: unknown, duplicate or mis-cased names are refused before any handler runs.
-3. `orch` resolves context, fleet and session, and finds or opens alice's workspace. Its guard lets only operator methods through.
+3. `orch` resolves context, fleet and session, and finds or opens durga's workspace. Its guard lets only operator methods through.
 4. One `api@` frame, method `workspace.exec`, goes to central over the pinned SSH connection.
 5. Central runs its checks, writes the `start` audit row and sends `workspace@` to the runner (flow 13).
 6. The runner runs the command in the container; exit code, stdout and stderr come back (1 MiB at most).
@@ -1663,7 +1663,7 @@ sequenceDiagram
    obviously bad request never costs a network round trip. `stdin` is text, at most 1 MiB.
 3. **Resolve the target.** `Orch.Resolve` picks the context and fleet in this order: the tool
    argument, then the `-context`/`-fleet` flags, then `.mirafleet.yaml`, then the context's
-   `default_fleet`. For alice that is `acme` and `dev` (source "project file"). A guarded fleet
+   `default_fleet`. For durga that is `acme` and `dev` (source "project file"). A guarded fleet
    that came from a default (the project file or `default_fleet`) is refused: it must be named
    explicitly (flow 23). Every result carries a `where` object naming the context and fleet and
    where each came from, because a cloned repository's `.mirafleet.yaml` can steer unqualified
@@ -1709,7 +1709,7 @@ session id, not a secret.*
 1. Claude Code starts session `abc` and runs the SessionStart hook. The hook reads `session_id` from its stdin and makes no network call.
 2. The hook writes `cc:abc` to a handoff file in the state directory, keyed by the parent PID (Claude Code) and the project directory. The file is mode 0600 in a 0700 directory.
 3. `mirafleet mcp`, another child of the same Claude Code process, re-reads the file at every workspace open.
-4. `workspace.open` carries session `cc:abc`; central opens alice's workspace or returns the one she already has.
+4. `workspace.open` carries session `cc:abc`; central opens durga's workspace or returns the one she already has.
 5. Claude Code exits. Nothing is closed: the workspace stays `open` and the 24 h idle TTL reaps it later.
 6. `claude --resume`: same session id, new PIDs. The hook runs again and rewrites the file for the new PID.
 7. The server reads `cc:abc` again and central answers `reused: true`: same container, same files.
@@ -1763,7 +1763,7 @@ the workspace alone; central's reaper deletes it later if nobody comes back.
    opens a *new* workspace, which takes another slot. The old one waits for the reaper.
 5. Flow 16's reaper moves a workspace to `closing` when it has been idle for the fleet's
    `idle_ttl` (default 24 h) and destroys it. The integration test `TestM5Done` shows the whole
-   chain: close alice's stdin, `Serve` returns within 5 seconds, the row is still `open`; a new
+   chain: close durga's stdin, `Serve` returns within 5 seconds, the row is still `open`; a new
    server with a new random session gets the other runner (`concurrent: 1`); a third gets
    `unavailable` (no slot free); advance the injected clock past the idle TTL and the reaper closes
    the first row.
@@ -1810,15 +1810,15 @@ question from the harness.
 3. `mcpserver` (`guardedRewrite`) replaces central's text with: "fleet `prod` in context `acme`
    (...) is guarded. Ask the user. Only after the user explicitly agrees, repeat the call with
    `confirm` set to the fleet name." The model is told to stop and ask.
-4. alice reads the model's question and agrees. The model repeats the call with
+4. durga reads the model's question and agrees. The model repeats the call with
    `confirm: "prod"`.
 5. **PreToolUse hook.** Before the harness runs the tool, Claude Code runs the plugin's hook with
    the tool call as JSON on stdin. The hook sees `confirm` is set and prints a decision of `ask`
    with a reason built from sanitised, clipped fields: `Guarded fleet "prod": run_action tail-logs
-   on db-1`. Claude Code shows that to alice as a permission prompt, whatever its permission mode
+   on db-1`. Claude Code shows that to durga as a permission prompt, whatever its permission mode
    is (this is checked in the smoke test; see the note below). The hook can only ever say `ask`,
    never `allow`.
-6. alice approves. `mcpserver` passes `confirm` **verbatim**: it is never filled from config,
+6. durga approves. `mcpserver` passes `confirm` **verbatim**: it is never filled from config,
    never cached, never defaulted.
 7. Central checks `confirm == "prod"`, writes the `start` audit row, and flow 7 continues.
 
@@ -1846,11 +1846,11 @@ because central refuses without `confirm`; it only changes who sees the question
 
 <!-- verify: flows 24 to 30 are written from docs/M7.md plus the decided-behaviour notes; step lists name functions that exist in the m7-wave-a worktree (hostx.Executor, hostx.Manager, runner credHolder, service.DeliverRunner, service.RotateDue/rotate, service.IngestRunnerEvents) but the end-to-end wiring (central dispatch for workspace.fs / job_* / output_read / credential.*, S17) was still being added. Re-check each step against the merged code. -->
 
-Flows 24 to 30 are the host-mode story (new in M7). The cast: Dana has a VM `vm1.example.com`
+Flows 24 to 30 are the host-mode story (new in M7). The cast: raj owns a spare VM `vm1.example.com`
 with an ordinary user `dev` and a runner `vm1-dev` in fleet `dev` (workspace mode, executor `host`).
-Acme's private GitLab, `gitlab.example.com`, is reachable only from the VM. Dana stored two
+MIRASTACK LABS's private GitLab, `gitlab.example.com`, is reachable only from the VM. aarvee stored two
 credentials on central: `gitlab-deploy` (kind `ssh-key`, host `gitlab.example.com`) and
-`gitlab-api` (kind `https-token`, host `gitlab.example.com`), and assigned both to `vm1-dev`. Alice's
+`gitlab-api` (kind `https-token`, host `gitlab.example.com`), and assigned both to `vm1-dev`. Durga's
 project has `.mirafleet.yaml` with `fleet: dev` and `remote: true`. Chapter 3 draws the
 [components](03-architecture.md#host-mode-the-m7-runner).
 
@@ -1896,7 +1896,7 @@ sequenceDiagram
    runner does not hold fails, and so does naming one nobody assigned.
 4. **One operator at a time.** Inside the store's reserve transaction, central counts live
    workspaces (`opening`, `open`, `closing`) of *other* operators on that runner. If there is any,
-   the open is refused with `runner busy, in use by bob`, and placement had already skipped such
+   the open is refused with `runner busy, in use by kalyan`, and placement had already skipped such
    runners if another was free. No table is added: it is a count over `workspaces`. The hold ends
    when the holder's last live workspace is closed, reaped, expired, killed, or `lost`.
 5. **The create request.** Central sends `workspace@mirafleet` `create` with labels. The runner
@@ -1924,12 +1924,12 @@ requested credentials (`unavailable`); `workdir` is invalid or the runner is a c
 **Summary:** closing keeps the directory, and opening the same session (or `workdir`) later finds it
 again, with its files, even after a runner restart.
 
-1. Alice closes her laptop. Claude Code exits, `SessionEnd` or the idle reaper closes the
+1. Durga closes her laptop. Claude Code exits, `SessionEnd` or the idle reaper closes the
    workspace (flows 21 and 22). `workspace_close` stops every process group of the session, closes
    the agent socket and broker session, and **keeps the directory**. The `workspaces` row becomes
    `closed`; a record of the directory (`<slug>.json`: dir, created, last used) stays in the
    runner's state.
-2. The next day Alice runs `claude --resume`. The handoff file gives the same session name
+2. The next day Durga runs `claude --resume`. The handoff file gives the same session name
    `cc:<id>` (flow 20).
 3. `workspace_open` runs flow 24 again. The sticky-session rule from flow 12 finds no live row (the
    old one is `closed`), so a new row and a new workspace id are made, but the runner receives the
@@ -2046,13 +2046,13 @@ command exits at once (`state: exited` with an exit code and the output so far).
 
 ## 28. Credential assign, delivery, use and rotation
 
-**Summary:** Dana enters a secret once; central stores it encrypted; the runner receives it in
-memory; the agent uses it without reading it; later Dana replaces it and the new value is live
+**Summary:** aarvee enters a secret once; central stores it encrypted; the runner receives it in
+memory; the agent uses it without reading it; later aarvee replaces it and the new value is live
 at once.
 
 ```mermaid
 sequenceDiagram
-  participant D as Dana (GUI / CLI)
+  participant D as aarvee (GUI / CLI)
   participant C as service.Service
   participant DB as sqlite (ciphertext)
   participant R as runner vm1-dev (memory)
@@ -2098,11 +2098,11 @@ The heartbeat reports each credential's name, kind, hosts and status (`ok`, `exp
 expiry dates are admin-only.
 
 **D. Use.**
-- *SSH:* the agent runs `git clone git@gitlab.example.com:acme/app.git`. `ssh` reads `SSH_AUTH_SOCK`
+- *SSH:* the agent runs `git clone git@gitlab.example.com:mirastack/app.git`. `ssh` reads `SSH_AUTH_SOCK`
   and asks the session's restricted agent to sign. With host binding the agent first checks that the
   server's host key is in `gitlab-deploy`'s pinned `known_hosts`; it signs only the user-auth request
   for the user `git`.
-- *HTTPS:* `git clone https://gitlab.example.com/acme/app.git` goes to the broker through
+- *HTTPS:* `git clone https://gitlab.example.com/mirastack/app.git` goes to the broker through
   `HTTPS_PROXY`. Because `gitlab.example.com` is a credential host, the broker terminates TLS with
   the per-session CA, strips whatever `Authorization` header the client sent, adds the stored one,
   and forwards over verified TLS (system certificates plus the corporate CA). Redirects are never
@@ -2115,7 +2115,7 @@ expiry dates are admin-only.
   flood becomes an `events.dropped` row. <!-- verify: events@mirafleet batch limits (transport.MaxBatchEvents/MaxBatchBytes) and the source "runner" audit rows -->
 
 **E. Rotate.** Three ways, from least to most automatic.
-1. *Manual:* Dana runs `credential set` (or uses the GUI replace form) with the new value, which
+1. *Manual:* aarvee runs `credential set` (or uses the GUI replace form) with the new value, which
    goes through step C. Every running session uses it from its next connection.
 2. *Expiry warnings:* 14 days before `expires`, the credential's status becomes `expiring` (GUI,
    heartbeat, and tool results that name the credential).
@@ -2157,7 +2157,7 @@ as lost.
    the same one. A live one is `running` again; one that ended while the runner was down is read from
    its exit status file. <!-- verify: re-adoption by status.json pid + start time (hostx/job_linux.go) -->
 6. **Reconcile.** Central's reconcile (flow 17) compares its `open` rows with the runner's
-   list; sessions the runner re-adopted stay `open`, so Alice's `bash_output` simply continues.
+   list; sessions the runner re-adopted stay `open`, so Durga's `bash_output` simply continues.
    A session the runner cannot find becomes `lost`.
 
 **What can go wrong:** the runner was down so long that central marked the workspaces `lost`
@@ -2203,7 +2203,7 @@ as lost.
 | Central restarts | Operators get errors from `mcp api` until it is back; runners show offline then online | In-flight actions end as `cancelled`; runners reconnect and re-register (flow 11). |
 | Wrong or unknown join token | `join refused` (identical for every cause) | Nothing is consumed or stored; the real reason is logged on central only (flow 3). |
 | Central presents an unexpected host key at join | Client aborts with a host-key mismatch before sending the token | The token never leaves the runner (flow 3). |
-| Registration code from the previous 60 s window | `registration refused` | Nothing stored; ask Dana for a fresh code (flow 6). |
+| Registration code from the previous 60 s window | `registration refused` | Nothing stored; ask aarvee for a fresh code (flow 6). |
 | Guarded fleet and no `confirm` | `bad_request`: fleet requires `confirm` to equal the fleet name | A `denied` audit row; nothing runs (flow 7). |
 | Runner is `pending` or `disabled` | `conflict`: "runner is pending" or "runner is disabled" | No start row, nothing runs (flows 5 and 7). |
 | Audit database cannot take the start row | `unavailable`: "audit unavailable" | Nothing runs: no row, no exec (flow 7). |
@@ -2217,7 +2217,7 @@ as lost.
 | `workspace.open` twice quickly for one session | The second gets `conflict`: "workspace is still opening" | The first create continues (flow 12). |
 | Image not in the fleet allowlist | `bad_request`: "image is not allowed by the fleet" | Nothing reserved or created (flow 12). |
 | Operator already holds 8 workspaces | `conflict`: "workspace limit reached (8)" | A `denied` audit row (flow 12). |
-| bob uses alice's workspace id | `not_found`, identical to an unknown id | Nothing leaks; no runner is contacted (flow 13). |
+| kalyan uses durga's workspace id | `not_found`, identical to an unknown id | Nothing leaks; no runner is contacted (flow 13). |
 | Forbidden env name (for example `ANTHROPIC_API_KEY`) | `bad_request` naming the variable, never its value | A refused audit row; nothing runs (flow 13). |
 | `exec` runs past its timeout | The result has `timed_out: true` and outcome `timeout` | The runner kills the exec; daemonised children survive until close (flow 13). |
 | Output bigger than 1 MiB | `truncated: true`, head and tail kept | Nothing fails; the middle is dropped (flow 13). |
@@ -2244,7 +2244,7 @@ as lost.
 | Argument with a wrong case (`Confirm`) or an unknown name | `bad_request`: "unknown or mis-cased argument ..." | The handler never runs (flow 19, chapter 5). |
 | Harness closes stdin | The server exits 0 within 5 s | In-flight calls are cancelled; the workspace stays `open` until `idle_ttl` (flow 21). |
 | SessionEnd for `prompt_input_exit`, `resume` or `other` | Nothing visible | The workspace is kept for a possible `--resume` (flow 22). |
-| `workspace_open` on a host runner another operator holds (M7) | `conflict`: "runner busy, in use by bob" | A `denied` audit row; placement had skipped held runners if another was free (flow 24). |
+| `workspace_open` on a host runner another operator holds (M7) | `conflict`: "runner busy, in use by kalyan" | A `denied` audit row; placement had skipped held runners if another was free (flow 24). |
 | Requested credential not held by any runner of the fleet (M7) | `unavailable`, naming no value | Nothing is created (flow 24). |
 | `bash` output too long for the reply (M7) | The text plus `stdout_bytes`, `stderr_bytes`, `truncated` and a `ref` | The full output is on the VM; `read_output` pages it (flow 26). |
 | Runner restarted while a job runs (M7) | `bash_output` continues | The job survives and is re-adopted (flow 29). |
@@ -2254,15 +2254,15 @@ as lost.
 
 1. In flow 3, why does it matter that the host-key pin is checked during the SSH handshake and not
    after the token is sent?
-2. `bob` registers at 10:03:59 with a code that was shown at 10:03:12. Does it work? What if he
+2. `kalyan` registers at 10:03:59 with a code that was shown at 10:03:12. Does it work? What if he
    tries at 10:04:01?
 3. In `RunAction`, why is the start audit row written before the call to `Registry.Exec`, and what
    happens if writing it fails?
 4. An admin disables `db-1` while a 5-minute action is running on it. Does the action stop? What
    about when the admin revokes `db-1` instead?
-5. After `central operator revoke bob`, Bob's laptop is still connected for a fraction of a second.
+5. After `central operator revoke kalyan`, Kalyan's laptop is still connected for a fraction of a second.
    Which two mechanisms make sure it does not stay connected?
-6. alice sends `workspace.open` for session `s1` twice. What does she get the second time, and
+6. durga sends `workspace.open` for session `s1` twice. What does she get the second time, and
    what if `build-1` went offline in between?
 7. Why does central read the body frame of `write_file` only after the policy, ownership and
    confirm checks? What would an attacker gain if it read the body first?
@@ -2272,9 +2272,9 @@ as lost.
    about the environment?
 10. The MCP `exec` tool is called while the connection to central drops. Is the call retried? Is
     a `list_fleets` call retried? Why the difference?
-11. alice quits Claude Code for lunch and comes back with `claude --resume`. What happens to her
+11. durga quits Claude Code for lunch and comes back with `claude --resume`. What happens to her
     workspace in between, and which file makes the reattach work? What changes with no hooks?
-12. The model calls `run_action` on `prod` and the hook shows alice a prompt. Which two components
+12. The model calls `run_action` on `prod` and the hook shows durga a prompt. Which two components
     would still stop a call that has no `confirm`, even with no plugin installed?
 
 <details>
@@ -2285,7 +2285,7 @@ as lost.
    the SSH host-key callback, so on a mismatch the handshake aborts and the token is never sent.
 2. At 10:03:59 it works: the code is valid for the whole step 10:03:00 to 10:03:59, and the
    same code verifies repeatedly. At 10:04:01 it is refused: `VerifyCode` only accepts the code of
-   the current step, and the step changed. Bob gets the identical "registration refused" error and
+   the current step, and the step changed. Kalyan gets the identical "registration refused" error and
    must ask the admin for the new code.
 3. The start row records intent before any side effect. If it cannot be written (database
    unavailable), `RunAction` returns `unavailable` ("audit unavailable") and nothing is executed:
@@ -2325,11 +2325,11 @@ as lost.
 12. The MCP server (it relays central's refusal and rewrites it into "ask the user") and, above
     all, central: `service` refuses a guarded fleet's call unless `confirm` equals the fleet name,
     and writes a `denied` audit row. The hook is only convenience.
-13. Alice closes a host workspace on Monday and reopens the same session on Wednesday. Which
+13. Durga closes a host workspace on Monday and reopens the same session on Wednesday. Which
     files are still there, and what is the only thing that deletes them?
 14. A 200 MiB build log scrolls past in a foreground `bash` call. What does Claude receive, and
     how can it read the error at line 41,203?
-15. Dana replaces the value of `gitlab-api`. Does `vm1-dev` need a restart? What happens to a
+15. aarvee replaces the value of `gitlab-api`. Does `vm1-dev` need a restart? What happens to a
     `git push` already in flight?
 16. The runner is restarted during a 3-minute build. Why does the build survive, and why can
     the new runner process not read the token it needs?
