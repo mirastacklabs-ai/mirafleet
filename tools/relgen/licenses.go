@@ -107,7 +107,7 @@ var (
 	modulePathR = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 	// Base names go-licenses legitimately saves: LICENSE/LICENCE/COPYING/NOTICE*, with an
 	// optional extension (LICENSE.txt, LICENSE.md, NOTICE.txt, ...).
-	licenceFileRE = regexp.MustCompile(`(?i)^(?:license|licence|copying|notice[a-z0-9_-]*)(?:\.[a-z0-9]+)?$`)
+	licenceFileRE = regexp.MustCompile(`(?i)^(?:licen[sc]e|copying|notice)[a-z0-9_-]*(?:\.(?:txt|md|markdown|rst))?$`)
 )
 
 // ignoreSet is the set of modules named by --ignore flags in a script.

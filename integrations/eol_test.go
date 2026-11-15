@@ -46,7 +46,7 @@ func TestGitattributesPresent(t *testing.T) {
 	// Vendored assets are byte-exact (SHA-pinned in ASSETS.md) and must come after the extension
 	// rules, because the last matching line wins.
 	last := bytes.LastIndex(b, []byte("*.zip binary"))
-	for _, rule := range []string{"internal/gui/static/LICENSES/** -text", "internal/gui/static/vendor/** -text"} {
+	for _, rule := range []string{"internal/gui/static/LICENSES/** -text", "internal/gui/static/vendor/** -text", "licenses/extra/** -text"} {
 		i := bytes.Index(b, []byte("\n"+rule+"\n"))
 		if i < 0 {
 			t.Errorf(".gitattributes must contain %q", rule)

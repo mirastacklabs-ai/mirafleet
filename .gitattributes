@@ -36,3 +36,5 @@ go.sum text eol=lf
 # and favicon.svg stay LF-enforced by the rules above.
 internal/gui/static/LICENSES/** -text
 internal/gui/static/vendor/** -text
+# licenses/extra holds byte copies (Oswald-OFL.txt has CRLF) that relgen compares byte-for-byte.
+licenses/extra/** -text

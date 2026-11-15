@@ -147,6 +147,7 @@ func TestLicensesRejects(t *testing.T) {
 		for name, ok := range map[string]bool{
 			"LICENSE": true, "LICENCE": true, "COPYING": true, "LICENSE.txt": true, "LICENSE.md": true,
 			"license": true, "NOTICE": true, "NOTICE.txt": true, "NOTICE-3rd-party": true,
+			"LICENSE-3RD-PARTY.md": true, "LICENSE.go": false, "NOTICE.s": false,
 			"main.go": false, "README.md": false, "licensing.go": false,
 		} {
 			if licenceFileRE.MatchString(name) != ok {
