@@ -500,6 +500,8 @@ type execOut struct {
 	Truncated    bool   `json:"truncated"`
 	OmittedBytes int    `json:"omitted_bytes"`
 	TimedOut     bool   `json:"timed_out,omitempty"`
+	Ref          string `json:"ref,omitempty"`
+	Note         string `json:"note,omitempty"`
 	Duration     string `json:"duration"`
 	Workspace    string `json:"workspace"`
 	Where        where  `json:"where"`
@@ -562,11 +564,21 @@ func (s *wsState) exec(ctx context.Context, req Request) (any, error) {
 		return nil, s.failed(ctx, sel, err)
 	}
 	c := orch.CapOutput([]byte(r.Stdout), []byte(r.Stderr), s.b.OutputCap())
-	return execOut{
+	out := execOut{
 		ExitCode: r.ExitCode, Stdout: c.Stdout, Stderr: c.Stderr,
-		Truncated: c.Truncated || r.Truncated, OmittedBytes: c.OmittedBytes, TimedOut: r.TimedOut,
+		Truncated: c.Truncated || r.Truncated || r.Omitted > 0, OmittedBytes: c.OmittedBytes + int(r.Omitted), TimedOut: r.TimedOut,
+		Ref:      r.Ref,
 		Duration: (time.Duration(r.DurationMS) * time.Millisecond).String(), Workspace: sel.id, Where: whereOf(sel.t),
-	}, nil
+	}
+	if out.Truncated {
+		out.Note = fmt.Sprintf("output was cut (%d bytes omitted)", out.OmittedBytes)
+		if r.Ref != "" {
+			out.Note += "; page the full output with read_output {\"ref\":\"" + r.Ref + "\"} (offset, limit, tail_lines, grep)"
+		} else {
+			out.Note += "; re-run with a filter such as grep or tail"
+		}
+	}
+	return out, nil
 }
 
 // ---- read_file ----

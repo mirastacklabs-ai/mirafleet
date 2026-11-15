@@ -33,6 +33,8 @@ func TestLocalPathDenyAndConfinement(t *testing.T) {
 		".ssh/config", "x/.ssh/id", ".mirafleet/key", ".aws/credentials", ".gnupg/x", "Keychains/login.keychain-db",
 		"login.keychain", "c.p12", "NUL", "con.txt", "COM1", "lpt9.log", "a/aux", "f.txt.", "f ", "f.txt:stream",
 		`sub\.env`, `.ssh\id`,
+		"GIT~1/hooks/x", "CLAUDE~1/settings.json", "MIRAFL~1.YAM", "a~b.txt", ".g" + string(rune(0x200d)) + "it/config", string(rune(0xfeff)) + ".git/x", ".cl" + string(rune(0x2060)) + "aude/s",
+		".mcp.json", ".vscode/tasks.json", ".opencode/x", "opencode.json", ".kilocode/x", ".husky/pre-commit", "sub/.MCP.json",
 	}
 	for _, n := range deny {
 		if rel, err := LocalPath(root, n); err == nil {
@@ -251,6 +253,44 @@ func TestDownloadRefusals(t *testing.T) {
 	}
 	if _, err := o.Download(context.Background(), "a", root, DownloadParams{Workspace: wsID}); err == nil {
 		t.Error("empty remote accepted")
+	}
+}
+
+func TestUploadAliasNamesRefused(t *testing.T) {
+	o, dc := devOrch(t)
+	root := t.TempDir()
+	for _, n := range []string{"GIT~1/hooks/x", ".g" + string(rune(0x200d)) + "it/config"} {
+		writeLocal(t, root, n, []byte("x"))
+		if _, err := o.Upload(context.Background(), "a", root, UploadParams{Workspace: wsID, Local: n, Remote: "r"}); err == nil {
+			t.Errorf("upload of %q accepted", n)
+		}
+	}
+	if len(dc.calls) != 0 {
+		t.Fatalf("refused uploads reached the backend: %v", dc.calls)
+	}
+}
+
+// shortReader says EOF before the whole file was sent.
+type shortReader struct{ *devConn }
+
+func (s *shortReader) CallReadBody(ctx context.Context, m string, p, res any) ([]byte, error) {
+	b, err := s.devConn.CallReadBody(ctx, m, p, res)
+	r := res.(*api.WorkspaceReadFileResult)
+	r.Size, r.EOF = int64(len(b))+5, true
+	return b, err
+}
+
+func TestDownloadShortFileRefused(t *testing.T) {
+	_, dc := devOrch(t)
+	root := t.TempDir()
+	dc.files["r"] = []byte("hello")
+	o := newOrch(t, setupOne(t), &dialer{mk: func(int) (Conn, error) { return &shortReader{dc}, nil }})
+	_, err := o.Download(context.Background(), "a", root, DownloadParams{Workspace: wsID, Remote: "r", Local: "x.bin"})
+	if err == nil || !strings.Contains(err.Error(), api.CodeUnavailable) {
+		t.Fatalf("short download accepted or wrong code: %v", err)
+	}
+	if ents, _ := os.ReadDir(root); len(ents) != 0 {
+		t.Fatalf("files left: %v", ents)
 	}
 }
 

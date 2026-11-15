@@ -240,6 +240,22 @@ func TestWSExecCapsNoisyOutput(t *testing.T) {
 	}
 }
 
+func TestWSExecSurfacesRunnerOmitted(t *testing.T) {
+	r := newWSRig(t, "dev")
+	r.f.WorkspaceExecFn = func(context.Context, string, api.WorkspaceExecParams, []byte) (*api.WorkspaceExecResult, error) {
+		return &api.WorkspaceExecResult{Stdout: "tail", Omitted: 5000, Ref: "out-1"}, nil
+	}
+	var v struct {
+		Truncated    bool
+		OmittedBytes int `json:"omitted_bytes"`
+		Ref, Note    string
+	}
+	okJSON(t, callJSON(t, r.h, "exec", `{"command":"big"}`), &v)
+	if !v.Truncated || v.OmittedBytes != 5000 || v.Ref != "out-1" || !strings.Contains(v.Note, "read_output") {
+		t.Fatalf("%+v", v)
+	}
+}
+
 func TestWSReadFilePaging(t *testing.T) {
 	r := newWSRig(t, "dev")
 	data := []byte(strings.Repeat("héllo wörld, ünï\n", 20)) // multi-byte runes everywhere

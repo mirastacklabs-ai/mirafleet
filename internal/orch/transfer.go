@@ -56,6 +56,13 @@ type TransferResult struct {
 var denyNames = map[string]bool{
 	".git": true, ".claude": true, ".ssh": true, ".gnupg": true, ".aws": true, ".mirafleet": true,
 	".mirafleet.yaml": true, ".npmrc": true, ".netrc": true, "keychains": true,
+	".mcp.json": true, ".vscode": true, ".opencode": true, "opencode.json": true, ".kilocode": true, ".husky": true,
+}
+
+// aliasRune reports invisible code points that make a name look like another one (HFS+ ignores
+// them when comparing names).
+func aliasRune(r rune) bool {
+	return (r >= 0x200B && r <= 0x200F) || (r >= 0x202A && r <= 0x202E) || (r >= 0x2060 && r <= 0x206F) || r == 0xFEFF
 }
 
 // Glob patterns for the same purpose (path.Match syntax, applied to the lowercased component).
@@ -126,7 +133,8 @@ func LocalPath(projectDir, name string) (string, error) {
 		return "", tErr(api.CodeBadRequest, "local path must name a file")
 	}
 	for _, c := range comps {
-		if strings.ContainsRune(c, ':') || strings.HasSuffix(c, ".") || strings.HasSuffix(c, " ") {
+		if strings.ContainsRune(c, ':') || strings.HasSuffix(c, ".") || strings.HasSuffix(c, " ") ||
+			strings.ContainsRune(c, '~') || strings.IndexFunc(c, aliasRune) >= 0 { // 8.3 short names, invisible aliases
 			return "", tErr(api.CodeForbidden, "local path is not allowed")
 		}
 		l := strings.ToLower(c)
@@ -315,6 +323,9 @@ func (o *Orch) Download(ctx context.Context, cname, projectDir string, p Downloa
 		}
 		off += int64(len(body))
 		if r.EOF {
+			if off != r.Size {
+				return nil, tErr(api.CodeUnavailable, "the download of %s ended early (%d of %d bytes)", p.Remote, off, r.Size)
+			}
 			break
 		}
 	}
