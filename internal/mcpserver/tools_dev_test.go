@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -681,9 +682,9 @@ func TestDevUploadDownload(t *testing.T) {
 	// Local confinement refusals come back before any workspace call, with no absolute path.
 	before := len(r.f.calls("Upload")) + len(r.f.calls("Download"))
 	for _, c := range []struct{ tool, args string }{
-		{"upload", `{"local":"../secret"}`}, {"upload", `{"local":"` + filepath.Join(proj, "..", "x") + `"}`},
+		{"upload", `{"local":"../secret"}`}, {"upload", `{"local":` + jsonQ(filepath.Join(proj, "..", "x")) + `}`},
 		{"upload", `{"local":".env"}`}, {"upload", `{"local":".git/config"}`}, {"upload", `{"local":"keys/id_ed25519"}`},
-		{"upload", `{"local":".mirafleet.yaml"}`}, {"upload", `{"local":"` + os.TempDir() + `/elsewhere"}`},
+		{"upload", `{"local":".mirafleet.yaml"}`}, {"upload", `{"local":` + jsonQ(filepath.Join(os.TempDir(), "elsewhere")) + `}`},
 		{"download", `{"remote":"x","local":"../up"}`}, {"download", `{"remote":"x","local":".npmrc"}`}, {"download", `{"remote":"x","local":".claude/settings.json"}`},
 	} {
 		res := callJSON(t, r.h, c.tool, c.args)
@@ -776,4 +777,10 @@ func TestDevResultsNameWhereTheyRan(t *testing.T) {
 			t.Errorf("%s: %v", tool, v)
 		}
 	}
+}
+
+// jsonQ quotes s as a JSON string (Windows paths contain backslashes).
+func jsonQ(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
