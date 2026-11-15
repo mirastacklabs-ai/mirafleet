@@ -646,7 +646,7 @@ func runM3Done(t *testing.T, b m3Backend) {
 	ownerByAction := map[string]int{}
 	for _, r := range ownerDenied {
 		ownerByAction[r.Action]++
-		if r.Outcome != service.OutcomeDenied || r.ActorKind != "operator" || r.Workspace != s1 || r.RequestID != "" || r.Message != "not the workspace owner" {
+		if r.Outcome != service.OutcomeDenied || r.ActorKind != "operator" || r.Workspace != s1 || r.RequestID != "" || r.Message != "not found or not owner" {
 			t.Errorf("bob's refusal row: %+v", r)
 		}
 	}

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/mirastacklabs-ai/mirafleet/security/advisories/new
+    about: Do not open a public issue for security problems. Use GitHub private vulnerability reporting.
+  - name: Security policy
+    url: https://github.com/mirastacklabs-ai/mirafleet/security/policy
+    about: Supported versions and what to expect after you report.

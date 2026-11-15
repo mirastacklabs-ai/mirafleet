@@ -18,9 +18,9 @@ concurrency:
 
 env:
   # Orchestrator packages under test. Append as they land (do not list a package before it exists).
-  # Nothing is pending. The integrations/ tests (plugin files, harness docs) are not listed: they
-  # compare file bytes and need LF checkouts (see .gitattributes) before they can run on Windows.
-  PKGS: ./internal/keys/... ./internal/opconf/... ./internal/handoff/... ./internal/orch/... ./internal/mcpserver/... ./integrations/claude-code/hook/...
+  # Nothing is pending. ./integrations/... compares file bytes, so it relies on the LF checkouts
+  # that .gitattributes enforces (F-45); integrations/eol_test.go guards against CRLF.
+  PKGS: ./internal/keys/... ./internal/opconf/... ./internal/handoff/... ./internal/orch/... ./internal/mcpserver/... ./integrations/...
 
 jobs:
   test:
@@ -43,7 +43,9 @@ jobs:
         shell: bash
         env:
           CGO_ENABLED: "0"
-        run: go vet $PKGS
+        run: |
+          read -ra targets <<< "$PKGS" # PKGS is a space-separated list; split it explicitly
+          go vet "${targets[@]}"
       - name: build (shipped config, CGO_ENABLED=0)
         shell: bash
         env:
@@ -53,9 +55,13 @@ jobs:
         shell: bash
         env:
           CGO_ENABLED: "0"
-        run: go test $PKGS
+        run: |
+          read -ra targets <<< "$PKGS" # PKGS is a space-separated list; split it explicitly
+          go test "${targets[@]}"
       - name: test -race (CGO_ENABLED=1 because the race detector needs cgo)
         shell: bash
         env:
           CGO_ENABLED: "1"
-        run: go test -race $PKGS
+        run: |
+          read -ra targets <<< "$PKGS" # PKGS is a space-separated list; split it explicitly
+          go test -race "${targets[@]}"

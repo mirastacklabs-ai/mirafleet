@@ -1,6 +1,6 @@
 module github.com/mirastacklabs-ai/mirafleet
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/containerd/containerd/v2 v2.4.2
@@ -35,7 +35,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/klauspost/compress v1.20.0 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/moby/locker v1.0.1 // indirect
