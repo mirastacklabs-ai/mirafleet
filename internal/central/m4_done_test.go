@@ -266,6 +266,7 @@ func m4Bootstrap(t *testing.T, f *m4Fixture) {
 		t.Fatalf("gui.setup audit rows: %+v", rows)
 	}
 	f.did["gui.setup"]++
+	f.did["gui.login"]++ // setup signs the admin in ("after setup")
 	f.a = b
 }
 
@@ -393,12 +394,18 @@ func m4LoginLimits(t *testing.T, f *m4Fixture) {
 	if unknown.Status != http.StatusUnauthorized || known.Status != http.StatusUnauthorized {
 		t.Fatalf("wrong logins: status %d and %d, want 401", unknown.Status, known.Status)
 	}
-	norm := func(s string) string { return m4ReqID.ReplaceAllString(m4Value.ReplaceAllString(s, `value=""`), "request ") }
+	norm := func(s string) string {
+		return m4ReqID.ReplaceAllString(m4Value.ReplaceAllString(s, `value=""`), "request ")
+	}
 	if norm(unknown.Body) != norm(known.Body) {
 		t.Error("unknown user and wrong password produce different pages")
 	}
-	// Ten consecutive failures lock the address out.
+	// Ten consecutive failures lock the address out. The rate bucket (5 attempts, 12 s refill, the
+	// setup login already took one) would answer 429 first, so a minute passes when it runs dry.
 	for i := 3; i <= 10; i++ {
+		if i == 5 || i == 10 {
+			f.clk.advance(time.Minute)
+		}
 		if r := wrong("admin"); r.Status != http.StatusUnauthorized {
 			t.Fatalf("wrong password %d: status %d, want 401", i, r.Status)
 		}
@@ -529,7 +536,7 @@ func m4JoinTokenRunner(t *testing.T, f *m4Fixture) {
 	}
 	f.joinToken, f.joinSeq = tok, created.Seq
 	f.did["token.create"]++
-	secretPart := strings.Split(tok, ".")[1]
+	secretPart := strings.Split(tok, ".")[2] // mfj1.<id>.<secret>.<host-key hash>
 
 	// Replaying the form shows no token and mints none.
 	replay := a.do("POST", "/tokens", form, nil)
@@ -786,7 +793,7 @@ func m4Workspaces(t *testing.T, f *m4Fixture) {
 	if r := a.post("/workspaces", "/workspaces/"+id+"/kill", nil); r.Status != http.StatusSeeOther || !strings.HasPrefix(r.loc(), "/workspaces") {
 		t.Fatalf("kill: status %d, Location %q", r.Status, r.loc())
 	}
-	f.did["workspace.kill"]++
+	f.did["workspace.kill"] += 2 // the service writes a start row and an ok row
 	if w, err := e.db.GetWorkspace(ctx, id); err != nil || w.State != store.WorkspaceClosed {
 		t.Fatalf("workspace after kill: %+v %v", w, err)
 	}
@@ -799,7 +806,7 @@ func m4Workspaces(t *testing.T, f *m4Fixture) {
 	if !strings.Contains(a.get("/workspaces?state=all").Body, "/workspaces/"+id+"/kill") && !strings.Contains(a.get("/workspaces?state=all").Body, id[:8]) {
 		t.Error("the closed workspace is missing from the full list")
 	}
-	if rows := f.guiRows("workspace.kill"); len(rows) != 1 || rows[0].Actor != "admin" {
+	if rows := f.guiRows("workspace.kill"); len(rows) != 2 || rows[0].Actor != "admin" || rows[0].Outcome != service.OutcomeStart || rows[1].Outcome != service.OutcomeOK {
 		t.Errorf("workspace.kill audit rows: %+v", rows)
 	}
 }
@@ -819,7 +826,7 @@ func m4Audit(t *testing.T, f *m4Fixture) {
 	f.did["gui.login"]++
 
 	// Enough GUI rows for two pages: toggle the guard of dev (on needs no name, off needs it).
-	for i := 0; i < 24; i++ {
+	for i := 0; i < 48; i++ {
 		if r := a.post("/fleets/dev/guard", "/fleets/dev/guard", url.Values{"to": {"on"}}); r.Status != http.StatusSeeOther {
 			t.Fatalf("guard on: status %d", r.Status)
 		}
@@ -1045,8 +1052,10 @@ func m4Sessions11(t *testing.T, f *m4Fixture) {
 	if m4HasSession(m4Sessions(t, f.dbPath), cookie) {
 		t.Error("the gui_sessions row survived the logout")
 	}
-	s3.at(t).post("/account", "/logout", nil)
-	f.did["gui.logout"]++
+	// s3 (and every session but the one made by the next step) is long dead from the 12 h loop.
+	if s3.at(t).alive() {
+		t.Error("s3 survived the 12 h loop; it was idle for hours")
+	}
 }
 
 // ---- 12. Restart and credential binding ----
@@ -1136,6 +1145,7 @@ func m4Restart(t *testing.T, f *m4Fixture) {
 	f.pw = m4Pass3
 	f.passwords = append(f.passwords, m4Pass3)
 	f.did["gui.setup"]++
+	f.did["gui.login"]++ // the setup signed in nb
 	x2 := f.login(t)
 	f.did["gui.login"]++
 	f.clk.advance(13 * time.Hour) // past the idle and the absolute limits of both sessions
@@ -1186,7 +1196,7 @@ func m4Hygiene(t *testing.T, f *m4Fixture) {
 	if f.joinToken == "" {
 		t.Fatal("no join token recorded")
 	}
-	secretPart := strings.Split(f.joinToken, ".")[1]
+	secretPart := strings.Split(f.joinToken, ".")[2] // mfj1.<id>.<secret>.<host-key hash>
 	for _, r := range resps {
 		if r.Seq != f.joinSeq && (strings.Contains(r.Text, f.joinToken) || strings.Contains(r.Text, secretPart)) {
 			t.Errorf("response %d (%s %s) contains the join token", r.Seq, r.Method, r.Path)
@@ -1247,7 +1257,7 @@ func m4Hygiene(t *testing.T, f *m4Fixture) {
 	// recorded as api.
 	for action, n := range f.did {
 		if got := len(f.guiRows(action)); got != n {
-			t.Errorf("audit rows %q with source gui: %d, want %d", action, got, n)
+			t.Errorf("audit rows %q with source gui: %d, want %d: %+v", action, got, n, f.guiRows(action))
 		}
 	}
 	adminActions := map[string]bool{"fleet.create": true, "fleet.set_confirm": true, "fleet.workspace_set": true, "token.create": true, "token.revoke": true,

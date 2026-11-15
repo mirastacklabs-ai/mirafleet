@@ -76,9 +76,9 @@ type Server struct {
 	// baseCancel cancels the BaseContext of every request; Shutdown and Close call it so backend
 	// calls abort before the caller closes the store. closing keeps the shut-down http.Server
 	// so Close can still force it after a timed-out Shutdown.
-	baseCancel   context.CancelFunc
-	closing      *http.Server
-	closingStop  context.CancelFunc
+	baseCancel  context.CancelFunc
+	closing     *http.Server
+	closingStop context.CancelFunc
 }
 
 var guiHostRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)

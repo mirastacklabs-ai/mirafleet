@@ -50,7 +50,7 @@ func (h *guiHarness) tokenCount() int {
 }
 
 func TestTokenShownOnceNoStore(t *testing.T) {
-	h := newRunnersHarness(t,false)
+	h := newRunnersHarness(t, false)
 	h.mkFleet("dev")
 	csrf, nonce := h.tokenForm()
 
@@ -96,7 +96,7 @@ func TestTokenShownOnceNoStore(t *testing.T) {
 }
 
 func TestTokenNonceReplayShowsNoSecondToken(t *testing.T) {
-	h := newRunnersHarness(t,false)
+	h := newRunnersHarness(t, false)
 	h.mkFleet("dev")
 	csrf, nonce := h.tokenForm()
 	first := h.c.do("POST", "/tokens", tokenValues(csrf, nonce), nil)
@@ -122,7 +122,7 @@ func TestTokenNonceReplayShowsNoSecondToken(t *testing.T) {
 }
 
 func TestTokenConcurrentDoubleSubmitMintsOne(t *testing.T) {
-	h := newRunnersHarness(t,false)
+	h := newRunnersHarness(t, false)
 	h.mkFleet("dev")
 	csrf, nonce := h.tokenForm()
 	form := tokenValues(csrf, nonce)
@@ -167,7 +167,7 @@ func TestTokenConcurrentDoubleSubmitMintsOne(t *testing.T) {
 }
 
 func TestTokenNonceChecks(t *testing.T) {
-	h := newRunnersHarness(t,false)
+	h := newRunnersHarness(t, false)
 	h.mkFleet("dev")
 	csrf, nonce := h.tokenForm()
 
@@ -215,7 +215,7 @@ func TestTokenNonceChecks(t *testing.T) {
 }
 
 func TestTokenRevokeAndFilters(t *testing.T) {
-	h := newRunnersHarness(t,false)
+	h := newRunnersHarness(t, false)
 	h.mkFleet("dev")
 	csrf, nonce := h.tokenForm()
 	h.c.do("POST", "/tokens", tokenValues(csrf, nonce), nil)

@@ -33,15 +33,6 @@ func reqFrame(t *testing.T, method string, params any) []byte {
 	return b
 }
 
-func (e *env) hasActionRow(outcome string) bool {
-	for _, ev := range e.auditRows() {
-		if ev.Action == api.MethodActionRun && ev.Outcome == outcome {
-			return true
-		}
-	}
-	return false
-}
-
 // D-05: a peer running as another UID is dropped before anything is read from it.
 func TestAdminForeignUIDRejectedBeforeAnyRead(t *testing.T) {
 	e := newEnv(t, "r1")

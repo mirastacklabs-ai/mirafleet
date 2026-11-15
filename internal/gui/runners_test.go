@@ -97,7 +97,7 @@ func (h *guiHarness) act(formPage, target string, form url.Values) *httptest.Res
 }
 
 func TestRunnerTransitionsPerStatus(t *testing.T) {
-	h := newRunnersHarness(t,false)
+	h := newRunnersHarness(t, false)
 	h.mkFleet("dev")
 	h.addRunner("dev", "r1", false, nil)
 	page := "/runners/dev/r1"
@@ -166,7 +166,7 @@ func TestRunnerTransitionsPerStatus(t *testing.T) {
 }
 
 func TestRunnerRevokeNeedsTypedRef(t *testing.T) {
-	h := newRunnersHarness(t,false)
+	h := newRunnersHarness(t, false)
 	h.mkFleet("dev")
 	h.addRunner("dev", "r1", true, nil)
 	page := "/runners/dev/r1"
@@ -214,7 +214,7 @@ func TestRunnerRevokeNeedsTypedRef(t *testing.T) {
 }
 
 func TestRunnerHostileDataIsInert(t *testing.T) {
-	h := newRunnersHarness(t,true)
+	h := newRunnersHarness(t, true)
 	h.mkFleet("dev")
 	h.addRunner("dev", "r1", true, map[string]string{
 		"<script>alert(1)</script>": "javascript:alert(1)",
@@ -252,7 +252,7 @@ func TestRunnerHostileDataIsInert(t *testing.T) {
 }
 
 func TestRunnersListFiltersAndPolling(t *testing.T) {
-	h := newRunnersHarness(t,false)
+	h := newRunnersHarness(t, false)
 	h.mkFleet("dev")
 	h.mkFleet("prod")
 	h.addRunner("dev", "run-a", false, map[string]string{"env": "dev"})
@@ -289,7 +289,7 @@ func TestRunnersListFiltersAndPolling(t *testing.T) {
 }
 
 func TestRunnersNeedAdminAndCSRF(t *testing.T) {
-	h := newRunnersHarness(t,false)
+	h := newRunnersHarness(t, false)
 	h.mkFleet("dev")
 	h.addRunner("dev", "r1", false, nil)
 

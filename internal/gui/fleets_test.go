@@ -22,7 +22,6 @@ func wsValues(extra map[string]string) url.Values {
 	return v
 }
 
-
 func TestFleetsCreateBothModes(t *testing.T) {
 	h := newAdminHarness(t)
 	wantBody(t, h.get("/fleets"), 200, "No fleets yet")

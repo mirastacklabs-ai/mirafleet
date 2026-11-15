@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/actions"
+	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 	"github.com/mirastacklabs-ai/mirafleet/internal/central/registry"
 	"github.com/mirastacklabs-ai/mirafleet/internal/gui"
@@ -413,4 +414,15 @@ func m4Encodings(secret []byte) []string {
 	return []string{string(secret), hex.EncodeToString(secret), base64.StdEncoding.EncodeToString(secret),
 		base64.RawStdEncoding.EncodeToString(secret), base64.URLEncoding.EncodeToString(secret),
 		base64.RawURLEncoding.EncodeToString(secret)}
+}
+
+// hasActionRow reports whether an action.run audit row with the outcome exists. It lives here
+// (not in a unix-only file) because TestM4Done uses it and must compile on every OS.
+func (e *env) hasActionRow(outcome string) bool {
+	for _, ev := range e.auditRows() {
+		if ev.Action == api.MethodActionRun && ev.Outcome == outcome {
+			return true
+		}
+	}
+	return false
 }
