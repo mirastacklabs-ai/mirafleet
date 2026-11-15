@@ -211,10 +211,10 @@ func TestAuditFailureRollsBackStateChange(t *testing.T) {
 	}
 
 	drop := failAuditInserts(t, d)
-	if _, err := d.CreateFleet(ctx, store.Fleet{Name: "new", Mode: store.ModeActions}, t0, ev); err == nil {
+	if _, err := d.CreateFleet(ctx, store.Fleet{Name: "fresh", Mode: store.ModeActions}, t0, ev); err == nil {
 		t.Error("CreateFleet succeeded with failing audit")
 	}
-	if _, err := d.GetFleet(ctx, "new"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := d.GetFleet(ctx, "fresh"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("fleet persisted without audit: %v", err)
 	}
 	if _, err := d.Enroll(ctx, tok.TokenID, hash[:], t0, store.Runner{Name: "r2", PubKey: []byte{2}, Fingerprint: "fp"}, ev); err == nil {
@@ -239,7 +239,7 @@ func TestAuditFailureRollsBackStateChange(t *testing.T) {
 		t.Fatalf("audit rows %d -> %d (%v)", before, after, err)
 	}
 	// Writes work again once the trigger is gone.
-	if _, err := d.CreateFleet(ctx, store.Fleet{Name: "new", Mode: store.ModeActions}, t0, ev); err != nil {
+	if _, err := d.CreateFleet(ctx, store.Fleet{Name: "fresh", Mode: store.ModeActions}, t0, ev); err != nil {
 		t.Fatalf("after drop: %v", err)
 	}
 }

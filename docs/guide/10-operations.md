@@ -19,8 +19,12 @@ to write `actions.yaml`, and a table of error messages with fixes.
 - **The orchestrator side (M5):** setting up a laptop on Linux, macOS or Windows, `mcp login`,
   contexts, the Claude Code plugin, opencode and other harnesses, and a troubleshooting table
   for the MCP server ([section 10.10](#1010-the-orchestrator-m5-set-up-and-troubleshooting)).
+- **The admin GUI (M4):** the first-start setup, where the GUI listens by default and how to
+  restrict it, certificates and fingerprints, `-gui-host`, a reverse proxy, recovery with
+  `reset-admin`, sessions, and a troubleshooting table
+  ([section 10.11](#1011-the-admin-gui-m4)).
 
-> **Status:** M1, M2, M3 and M5 are done. Next: M4 (GUI), M6 (release). There are no packages or
+> **Status:** M1 to M5 are done. Next: M6 (release). There are no packages or
 > systemd units yet (planned for M6, see [PLAN.md](../PLAN.md)); you run the binary yourself.
 > `mirafleet mcp` (no arguments) is the MCP server that Claude Code and other agents talk to;
 > `mirafleet mcp login`, `context` and `api` are the human operator tools. Where the guide shows
@@ -38,14 +42,14 @@ Acme has one central server and two fleets.
 | Central | `central.example.com`, SSH port `2222` |
 | Fleets | `dev`, `prod` |
 | Runners | `build-1` (in `dev`), `db-1` (in `prod`) |
-| Admin | Dana, who runs `mirafleet central ...` on the central host |
+| Admin | Dana, who runs `mirafleet central ...` on the central host and, since M4, can use the admin GUI at `https://central.example.com:8443` |
 | Operators | `alice`, `bob` (people or agents on laptops; registered keys, not Linux accounts) |
 
 Who runs what:
 
 | Machine | OS | Binary role | Network need |
 |---|---|---|---|
-| `central.example.com` | Linux | `mirafleet central` | accepts TCP 2222 from runners and operators |
+| `central.example.com` | Linux | `mirafleet central` | accepts TCP 2222 from runners and operators, and TCP 8443 (HTTPS) from the admin's browser; see [10.11](#1011-the-admin-gui-m4) for how to restrict 8443 |
 | `build-1`, `db-1` | Linux | `mirafleet runner` | **outbound only**: connect to central:2222; no open port |
 | alice's and bob's laptops | Linux, macOS, Windows (amd64 and arm64) | `mirafleet mcp` | outbound to central:2222 |
 
@@ -55,7 +59,8 @@ Central and runner refuse to start on other operating systems:
 **Firewall note.** Central has built-in limits (connection caps, enrol rate limits, handshake
 deadlines) but they are a backstop, not DoS protection. If central is reachable from the
 internet, put a firewall or rate limiter in front of port 2222. Better still, allow only your
-runner and laptop address ranges.
+runner and laptop address ranges. Since M4, central also listens on port **8443** (the admin
+GUI) on **all interfaces** by default. Decide on day one who may reach it (section 10.11).
 
 ## 10.2 Install and run, step by step
 
@@ -107,6 +112,10 @@ you can compare it later with what operators see. `-listen` here is only used fo
 $ mirafleet central run -listen 0.0.0.0:2222 &
 central listening on 0.0.0.0:2222, admin socket /var/lib/mirafleet/central/admin.sock
 ```
+
+Since M4 the same command also starts the admin GUI on `0.0.0.0:8443` and logs its address,
+its certificate fingerprint and a notice about the bind (section 10.11 shows the lines). If you
+do not want a GUI at all, add `-gui-listen off`.
 
 Central logs to stderr; run it under a service manager so it restarts and its log is kept. Only
 **one** central may use a data directory: a second one fails with
@@ -381,8 +390,9 @@ positional arguments. `FLEET/RUNNER` is a fleet name, a slash and a runner name.
 | Command | Flags | What it does |
 |---|---|---|
 | `central init` | `-data DIR`, `-listen ADDR` (default `0.0.0.0:2222`) | Create the data dir, host key, database and registration secret. Offline, idempotent. `-listen` only appears in the hint. |
-| `central run` | `-data DIR`, `-listen ADDR` (default `0.0.0.0:2222`) | Run central: SSH server plus admin socket, until SIGINT/SIGTERM. Takes the data-dir lock. |
+| `central run` | `-data DIR`, `-listen ADDR` (default `0.0.0.0:2222`), and the GUI flags: `-gui-listen ADDR\|off` (default `0.0.0.0:8443`), `-gui-cert FILE -gui-key FILE` (both or neither), `-gui-host NAME,...` (repeatable), `-advertise HOST:PORT` | Run central: SSH server, admin socket and (unless `-gui-listen off`) the admin GUI, until SIGINT/SIGTERM. Takes the data-dir lock. Section 10.11 explains the GUI flags. |
 | `central fleet create NAME` | `-mode actions\|workspace` (default `actions`), `-confirm`, and for workspace mode the **workspace flags** below | Create a fleet. `-confirm` makes it guarded. |
+| `central fleet set NAME` | `-confirm=BOOL` (required) | Turn a fleet's guard on or off (`-confirm=true` guards it). Audited as `fleet.set_confirm` with the old and new value. The GUI's guard toggle does the same. |
 | `central fleet workspace set NAME` | the workspace flags below (at least one) | Change a workspace fleet's config. Reads the current config, applies your flags, sends the whole result (a full replace). Existing workspaces keep the spec they were opened with. |
 | `central fleet list` | `-json` | List fleets with mode, confirm and non-revoked runner count; workspace fleets show image, network and (admin only) the full config. |
 | `central workspace list` | `-fleet F`, `-json` | List workspaces of every operator: id, fleet, runner, operator, session, state, image, last used, expires. |
@@ -400,7 +410,8 @@ positional arguments. `FLEET/RUNNER` is a fleet name, a slash and a runner name.
 | `central operator list` | `-json` | List operators (name, status, key fingerprint, last seen). |
 | `central operator revoke NAME` | | Revoke an operator and drop its live connections; in-flight actions are cancelled. |
 | `central exec FLEET/RUNNER ACTION [k=v...]` | `-confirm FLEET` | Run an action as admin and print its stdout/stderr; exits with the action's exit code. Waits up to 600 s. |
-| `central audit` | `-since ID`, `-limit N` (default 100, max 1000), `-json` | Print audit events with id greater than `-since`, oldest first. |
+| `central audit` | `-since ID`, `-before ID`, `-limit N` (default 100, max 1000), `-json`, and filters: `-fleet`, `-runner`, `-actor`, `-source` (`cli`, `api`, `gui`, `enroll`, `system`), `-outcome`, `-action` (with `-action-prefix` to match a prefix such as `gui.`), `-workspace`, `-request-id`, `-from`, `-to` (RFC 3339 or `YYYY-MM-DD`) | Print audit events with id greater than `-since`, oldest first, narrowed by the filters. |
+| `central gui reset-admin` | | Admin recovery: retires the GUI admin, ends every GUI session, prints a fresh one-time setup token on stdout (valid 24 h, shown once). Works even if no admin exists. Audited as `gui.reset_admin`. |
 
 Valid runner transitions: `pending` to `active`; `active` to and from `disabled`; any
 non-revoked state to `revoked`; `revoked` is final. Anything else answers
@@ -489,7 +500,10 @@ values up to 4 KiB, output up to 1 MiB (stdout and stderr together; `truncated: 
 |---|---|---|
 | `host_ed25519` | 0600 | central's SSH private host key. Its hash is baked into every token and code. **Back this up; losing it means every runner and operator must re-enrol.** Central refuses to start if the mode is looser than 0600. |
 | `host_ed25519.pub` | 0644 | the matching public key |
-| `mirafleet.db` | 0600 | the SQLite database: fleets, runners, tokens, operators, settings (including the registration secret) and the audit log |
+| `mirafleet.db` | 0600 | the SQLite database: fleets, runners, tokens, operators, settings (including the registration secret), the audit log and, since M4, the GUI admin (password hash), the setup token's hash and the GUI session hashes |
+| `gui/` (directory) | 0700 | M4: the GUI's own files; created at the first GUI start |
+| `gui/tls.crt`, `gui/tls.key` | 0644 / 0600 | the self-signed GUI certificate and its key (only when you did not give `-gui-cert`/`-gui-key`). Valid 2 years, regenerated when under 30 days remain or when the `-gui-host` names change |
+| `gui/setup-token` | 0600 | the one-time setup token (`mfs1....`) while no admin exists; central deletes it after setup |
 | `mirafleet.db-wal`, `mirafleet.db-shm` | 0600 | SQLite's write-ahead log and shared memory; they appear while central runs. Back up with `.db` together, or stop central first |
 | `central.lock` | 0600 | lock file held while central runs, so two centrals cannot share one directory |
 | `admin.sock` | 0600 | the local admin socket; removed on clean shutdown (a leftover one is cleaned up on next start) |
@@ -846,8 +860,10 @@ Use absolute paths, avoid shell syntax, and check the user's permissions.
 row and an outcome row with the same `request_id`, plus the operator's name. Parameters appear
 in the start row, so never design an action that takes a secret as a parameter.
 
-**Is there a GUI?** Planned for M4 ([PLAN.md](../PLAN.md)). Everything it will do is already
-available on the CLI.
+**Is there a GUI?** Yes, since M4: a web console for Dana, served by central on port 8443
+(section 10.11). It does nothing the CLI cannot do; both call the same service code, and the GUI's
+changes are in the same audit log with `source` `gui`. Use the CLI for scripts and the GUI for
+looking around and for one-off changes.
 
 ## 10.8 Day-2 operations
 
@@ -922,6 +938,19 @@ Then, to use workspaces: upgrade central first, then give the workspace hosts th
 containerd and a `workspace.yaml` (section 10.9), and create a workspace fleet. Do not try to
 turn an existing actions fleet into a workspace fleet: a fleet's mode is fixed at creation, and
 one runner serves exactly one mode.
+
+**Upgrading to M4 (migration `0003_gui.sql`).** The first start of an M4 central runs one more
+migration in one transaction:
+
+- it creates `gui_admins`, `gui_setup` and `gui_sessions` (the admin account, the pending setup
+  token and the GUI sessions; only hashes of tokens, never a token or a cookie) and two indexes on
+  `audit` (`actor` and `request_id`) so the Audit screen's filters stay fast;
+- nothing existing changes: fleets, runners, operators and the audit log are untouched, and runners
+  and operators need no new binary;
+- `PRAGMA user_version` becomes 3, and an M3 or M5 binary then refuses the database;
+- the first start also starts the GUI, so the log shows the setup-token notice and, with the default
+  bind, the all-interfaces notice (section 10.11). Add `-gui-listen off` to the service unit
+  **before** the upgrade if you do not want a GUI.
 
 ## 10.9 Workspace mode (M3)
 
@@ -1519,6 +1548,241 @@ are written below as `code: message`; on the wire they are `{"error":{"code":"..
 - You know which hooks you have (Claude Code plugin) and what you give up without them.
 - You can find your workspaces (`workspace_list`) and the audit trail (`central audit` on central).
 
+## 10.11 The admin GUI (M4)
+
+### 10.11.1 What it is, and when to use it
+
+The admin GUI is a web console that **central itself serves** to Dana's browser. It shows what
+`mirafleet central ...` shows and lets her do the same changes, with a confirmation step on every
+destructive one. It is not for agents or operators (they have no password and no way to reach it
+that matters), and it is not a second implementation: each click calls the same `service` method
+as the matching CLI command and leaves the same audit row, with `source` `gui` instead of `cli`
+([chapter 8.11](08-code-tour.md#811-follow-a-revoke-click-in-the-gui-m4)).
+
+| Screen | What Dana does there | CLI equivalent |
+|---|---|---|
+| Overview | Counts, runners waiting for approval, recent and denied audit rows; refreshes itself every 10 s | `runner list`, `audit` |
+| Fleets | Create a fleet, edit a workspace fleet's config, turn the confirm guard on or off | `fleet create`, `fleet workspace set`, `fleet set` |
+| Runners | List, filter, approve, disable, enable, revoke (type `fleet/runner` to confirm) | `runner list\|approve\|disable\|enable\|revoke` |
+| Join tokens | Create (shown once, with the `runner join` command to copy), revoke | `token create\|list\|revoke` |
+| Operators | Show the registration code, rotate the secret, revoke an operator | `operator code\|rotate-secret\|list\|revoke` |
+| Workspaces | See every operator's workspaces, kill one | `workspace list`, `workspace kill` |
+| Audit | Filter, page, export the log as CSV or JSON lines | `audit` with its filters |
+| Account | Change the password, see and end sessions, light or dark theme, the certificate fingerprint | (GUI only) |
+
+Use the CLI in scripts and over SSH; use the GUI to look around, to see what an agent did, and
+for one-off changes. Everything works without JavaScript; the scripts only add copy buttons, the
+registration-code countdown and live refresh.
+
+### 10.11.2 First start: the setup token
+
+![First start: setup token file, setup form, first session](diagrams/gui-setup.svg)
+
+*Look at: the token travels as a file on the central host, never through the log, and the
+setup page disappears once it has been used.*
+
+1. Central starts with no admin: it makes a setup token and stores only its SHA-256 and a 24 h expiry.
+2. It writes the token to `DATA/gui/setup-token` (mode 0600). The log names the file, never the token.
+3. Dana reads the file, opens `/setup` (every page redirects there) and checks the certificate fingerprint.
+4. She sends the token, a username and the password twice, with a CSRF token from a short-lived cookie.
+5. `CompleteGUISetup`, one transaction: compare the hash, check expiry, insert the admin, delete the row.
+6. The token file is deleted and her first session starts (hash stored, cookie sent). `/setup` is now 404.
+
+The first start of central prints something like this (shortened):
+
+```console
+GUI setup: no admin account yet. The one-time setup token (valid 24h) is in /var/lib/mirafleet/central/gui/setup-token; open the GUI URL below and paste it.
+GUI listening on https://localhost:8443/ https://192.0.2.10:8443/ https://central.example.com:8443/
+GUI certificate (self-signed) SHA-256 fingerprint: 3A:7F:...:C1, valid until 2028-11-15
+GUI is reachable on all interfaces (0.0.0.0:8443). To restrict it: -gui-listen 127.0.0.1:8443 (then use ssh -L), -gui-listen off, or a firewall rule for port 8443.
+Check that your browser's certificate fingerprint matches 3A:7F:...:C1 before you type the setup token or your password.
+```
+
+What Dana does:
+
+1. On the central host, as central's user: `cat /var/lib/mirafleet/central/gui/setup-token`. Anyone
+   who can read that file can become the admin, which is why the data directory is mode 0700.
+2. Open one of the logged URLs. The browser warns that the certificate is not trusted, because
+   central made it itself. Open the certificate details, compare the SHA-256 fingerprint with the
+   line in the log, and only if they match, continue.
+3. Paste the token, choose a username (lowercase letters, digits, `.`, `_`, `-`, as for an operator name) and a password of 12 to 256
+   characters. There are no composition rules; a long passphrase is best.
+4. She lands on Overview. The token file is gone and `/setup` now answers 404.
+
+**Why the fingerprint check matters.** On the first visit the browser has nothing to compare the
+certificate with. If someone on the network answered at `central.example.com:8443` before central
+did, Dana would type the setup token and then a new password into *their* page. The fingerprint in
+central's own log is the one thing they cannot fake. After the first visit, her browser remembers
+the certificate (or she imports it), and a change is a visible warning. The safest first visit is
+through an SSH tunnel (section 10.11.3, option 1), where the traffic never touches the LAN.
+
+**The token expired, or the file is gone.** The token lives 24 hours. If it ran out, or someone
+deleted the file, restart central: while no admin exists it makes a new token and writes a new
+file. Or run `mirafleet central gui reset-admin`, which prints a new token (section 10.11.7).
+
+### 10.11.3 Where it listens, and how to restrict it
+
+The default is `-gui-listen 0.0.0.0:8443`: **all network interfaces**, TLS only. That is
+deliberate: the usual admin sits at a laptop and the central server is in a rack or a cloud
+network, so a loopback-only default would make the GUI unusable until someone changed a flag. The
+cost is that anyone who can reach port 8443 sees the login page. What they can do from there:
+
+- see `/login` and try passwords (rate-limited: 5 tries a minute and a 15-minute lockout per
+  address after 10 failures; one global slow-down when a flood is detected);
+- nothing else. Every other page redirects to `/login` and shows no data, version or runner name.
+  Before the first setup, every page redirects to `/setup`, and only the setup token opens it.
+
+If your central server is on an untrusted network, tighten it. Pick one:
+
+1. **Loopback only, reach it by SSH tunnel.** Run `central run -gui-listen 127.0.0.1:8443`. From
+   her laptop, Dana runs `ssh -L 8443:127.0.0.1:8443 dana@central.example.com` and opens
+   `https://localhost:8443/`. The GUI is then not on the network at all, and `localhost` is
+   always an accepted `Host`.
+2. **Off.** `-gui-listen off` starts no listener (the log says `GUI is off (-gui-listen off)`).
+   Use the CLI only.
+3. **A firewall rule** for port 8443 that allows only the admin's address range. Do this in
+   addition if the GUI must stay reachable.
+4. **A specific interface.** `-gui-listen 10.0.0.5:8443` binds one address (for a management
+   network). `-gui-listen :8443` binds IPv4 and IPv6 on all interfaces.
+
+The Account screen repeats the bind and the notice, so you can check later what a running central
+is doing.
+
+### 10.11.4 Certificates
+
+By default central makes a **self-signed** certificate on the first GUI start: ECDSA P-256, two
+years, in `DATA/gui/tls.crt` and `tls.key` (the key mode 0600, the directory 0700). Its names are
+`localhost`, the host name of the machine (short and full), every `-gui-host` name and the IP
+addresses the machine had when it was made. It is renewed when it has under 30 days left or when
+the `-gui-host` set changes (the browser then warns again: compare the fingerprint again). The
+fingerprint is in the log on every start and on the Account screen.
+
+To use your own certificate (from your organisation's CA), give both files:
+
+```console
+$ mirafleet central run -gui-cert /etc/ssl/mirafleet/gui.crt -gui-key /etc/ssl/mirafleet/gui.key
+```
+
+The key file must be owned by central's user and not readable by group or others (mode 0600 or
+0400), or central refuses to start. Central reads the files at start only; restart it after a
+renewal. TLS 1.3 is the minimum either way; there is no plain-HTTP mode at all, because the
+cookies need the `Secure` flag and a downgrade path is a way to get it wrong.
+
+**HSTS** (a header that tells the browser "only ever use HTTPS for this name") is sent **only with
+your own certificate**. With the self-signed one it would do harm: browsers apply HSTS to a whole
+host name regardless of port, so it would also hit other services on that host, and an HSTS site
+with a certificate error has no "proceed anyway" button, which would lock Dana out.
+
+### 10.11.5 Host names (`-gui-host`) and the Host check
+
+Central answers only for **Host** values it knows, and replies `421 Unknown host name` to anything
+else, before it looks at the path. This stops DNS rebinding: a web page on `rebind.evil.example`
+whose DNS later points to central's address would make Dana's browser send requests to the GUI
+with the attacker's host name in them ([chapter 5](05-security.md)). The accepted forms:
+
+| Form | Accepted when |
+|---|---|
+| `localhost`, `127.0.0.1`, `[::1]` | always |
+| an IP address of this machine (`192.0.2.10`, a bracketed IPv6 address) | it is an address of an interface that is up (re-read every 60 s, so a DHCP change is picked up; link-local excluded) |
+| the machine's host name (`central-01` and `central-01.example.com`) | always |
+| a name from `-gui-host` (repeatable or comma-separated) | exact, case-insensitive match; no wildcards |
+| a DNS name in your `-gui-cert` certificate | exact match |
+
+Any port is accepted (tunnels and proxies change it). `0.0.0.0` is never accepted. A name that
+embeds an IP (`192-168-1-5.nip.io`) is refused unless you list it, because anyone can create such
+names. So if Dana reaches central as `central.example.com` through DNS, start it with
+`-gui-host central.example.com`; if you forget, you get the 421 page.
+
+### 10.11.6 Behind a reverse proxy
+
+Supported only as **TLS to TLS**: the proxy opens an HTTPS connection to central (it must trust
+central's certificate or be given your own) and forwards a `Host` that is on the allowlist
+(`-gui-host`). Two consequences to know:
+
+- Central **ignores `X-Forwarded-For` and similar headers** on purpose, because any client could
+  forge them. The address it logs, audits and rate-limits is the TCP peer: the proxy. So behind a
+  proxy all admin logins share one rate-limit bucket, and ten wrong passwords from anyone lock the
+  login for everyone for 15 minutes. If that bothers you, rate-limit at the proxy as well.
+- Audit rows show the proxy's address as the `remote`.
+
+### 10.11.7 Passwords, sessions and recovery
+
+- **Sessions** live in the database, so they **survive a restart of central**. A session ends after
+  30 minutes without activity or 12 hours after login, whichever comes first, and Dana can have at
+  most 16 at once (the oldest is dropped). The idle timer counts clicks, not open tabs: the
+  pages that refresh themselves every 10 s do not extend it.
+- **Changing the password** (Account screen, needs the current one) ends every other session at
+  once; the session that changed it stays. **Sign out other sessions** does the same without
+  changing the password. Both take effect on the other browser's next request.
+- **A lost password or a lost admin.** On the central host, as central's user:
+
+  ```console
+  $ mirafleet central gui reset-admin
+  mfs1.EXAMPLE_SETUP_TOKEN_NOT_REAL
+  GUI admin reset: all GUI sessions ended. Open the GUI and paste this setup token (valid 24h, shown once).
+  ```
+
+  The token goes to stdout, the note to stderr, so `$(...)` captures just the token. Every GUI
+  session ends at once and the setup page reopens; Dana chooses a username and a password again.
+  The audit log keeps the old admin's history and records `gui.reset_admin`. If you restart
+  central before using the token and no file exists, central makes a new token and writes it to
+  `gui/setup-token`. Recovery needs a shell on the central host on purpose: it can not be started
+  from the GUI or over `api@mirafleet`.
+- **A copied database file** does not give an attacker a session. The database holds only a
+  SHA-256 of each session token and an Argon2id hash of the password, and the cookie value is
+  not derivable from either ([chapter 5](05-security.md)).
+- **There is one admin account.** Several people means sharing it; audit rows then say `admin`, not
+  who. A second account or single sign-on is an enterprise feature that the OSS edition leaves a
+  seam for.
+
+### 10.11.8 Reading the audit trail
+
+Everything the GUI changes is in the same log as the CLI's, with `source` `gui`:
+
+```console
+$ mirafleet central audit -source gui -action-prefix -action runner.
+$ mirafleet central audit -source gui -action-prefix -action gui.
+```
+
+The `gui.*` actions are `gui.setup_token`, `gui.setup`, `gui.login`, `gui.logout`,
+`gui.password_change`, `gui.session_revoke`, `gui.reset_admin` (source `cli`) and `gui.lockout`
+(one row per address per lockout). `audit.export` is written before any export streams. Failed
+logins are in central's log (address, clipped username, never the password), not in the audit
+table. Changes made through the GUI show the browser's address as `remote`.
+
+The `-advertise HOST:PORT` flag sets the SSH address the GUI prints in copy-paste commands (the
+`runner join` line on a new join token, the `mcp login` line next to the registration code). If you
+leave it out the hints say `CENTRAL:2222` and you replace it by hand.
+
+### 10.11.9 Troubleshooting the GUI
+
+| What you see | What it means | What to do |
+|---|---|---|
+| Browser: "Your connection is not private" (`NET::ERR_CERT_AUTHORITY_INVALID`) at the first visit | The certificate is self-signed. | Compare the fingerprint in the browser with the one in central's log, then continue. Better: use an SSH tunnel for the first visit, or give central a real certificate (`-gui-cert`). |
+| The same warning appears again later | The certificate was regenerated (under 30 days left, or `-gui-host` changed), or you are not talking to central. | Compare the fingerprint with the log's current line. If it differs and you did not change anything, stop and ask why. |
+| `421 Unknown host name` | The address in your browser is not one the GUI answers for. | Use an address from central's start-up log, or restart central with `-gui-host YOUR.NAME`. Behind a proxy, make the proxy send an allowed `Host`. |
+| `Too many attempts. Try again in N minutes.` (status 429 with `Retry-After`) | Your address had 10 failed logins in a row, or too many in a minute; behind a proxy it may be someone else's failures. | Wait. The lockout lasts 15 minutes. It never locks the account itself. |
+| `Busy` / 503 on login | More than two password hashes in flight; the wait ran out. Argon2id is deliberately slow and memory-hungry. | Try again in a moment. Many 503s suggest a flood: look at central's log for `lockout` lines. |
+| Setup page says "Setup is not available with that token" | Wrong, expired or already used token, or you lost a race. | Read `gui/setup-token` again; if the file is gone, restart central or run `gui reset-admin`. |
+| `/setup` is 404 | An admin exists. | Sign in at `/login`. If the password is lost, `mirafleet central gui reset-admin`. |
+| Everything redirects to `/login`, or "you were signed out" | The session expired (30 min idle, 12 h), you changed the password elsewhere, or the admin was reset. | Sign in again. |
+| 403 "You are not allowed to do that" after a form | The CSRF check failed: the page was open too long after a sign-in change, or the request came from another site. | Reload the page and submit again. If it happens on a fresh page, something is rewriting `Origin` headers (a proxy). |
+| 413 or 415 | The form was over 64 KiB or not an ordinary form. | Only scripts do that; use the browser form. |
+| Nothing at all on port 8443 | `-gui-listen off`, a firewall, a loopback bind (reach it through `ssh -L`), or central did not start. | `ss -ltn` on the central host; read central's log for `GUI listening on` or `GUI is off`. |
+| Central exits at start with `gui: -gui-key ... has mode 0644; it must not be accessible to group or others (chmod 600)` (or `is owned by uid N, not by central's uid`) | The key file's mode or owner is wrong. | `chmod 600` it and make central's user the owner. |
+| Central exits with `listen tcp 0.0.0.0:8443: bind: address already in use` | Something else uses 8443. | Free it, or choose another port with `-gui-listen`. |
+| A 500 page with a request ID | A bug. The details are only in central's log. | Find the line `req=<ID>` in the log and report it. |
+
+### 10.11.10 Checklist
+
+- You know who can reach port 8443 and you chose that on purpose (default: everyone who can
+  reach the host).
+- The first visit is through an SSH tunnel or you compared the fingerprint with central's log.
+- `-gui-host` lists the names people type, and the proxy (if any) is TLS to TLS.
+- The data directory is mode 0700 and backed up as a unit; the backup holds the admin's password
+  hash, so treat it as private.
+- You tried `mirafleet central gui reset-admin` once, on a test central, before you needed it.
+
 ## Check your understanding
 
 1. Dana runs `mirafleet central fleet list` from her laptop and gets
@@ -1546,6 +1810,13 @@ are written below as `code: message`; on the wire they are `{"error":{"code":"..
     yesterday. What do you do, and why is a plain retry the wrong move?
 12. A stray line that is not JSON reaches `mirafleet mcp` on stdin and the server exits with code 1.
     Why does it exit instead of skipping the line, and who restarts it?
+13. The new admin GUI is on `0.0.0.0:8443` and Dana wants it reachable only from her own laptop.
+    Give two ways, and say why you would still check the certificate fingerprint on the first visit.
+14. Dana opens the GUI as `https://central.example.com:8443/` and gets `421 Unknown host name`,
+    while `https://192.0.2.10:8443/` (central's own address) works. What is wrong and why does
+    central care?
+15. Dana forgot the GUI password. What does she run, where, and what happens to her open browser
+    sessions and to the audit history?
 
 <details>
 <summary>Answers</summary>
@@ -1592,5 +1863,17 @@ are written below as `code: message`; on the wire they are `{"error":{"code":"..
     echoed). Skipping bad lines would hide a harness or wrapper that has lost track of the
     protocol and leave a half-working server behind. The harness that started the server
     restarts it.
+13. Bind to loopback with `-gui-listen 127.0.0.1:8443` and reach it with `ssh -L
+    8443:127.0.0.1:8443 dana@central.example.com`; or turn it off with `-gui-listen off`; or leave
+    the bind and add a firewall rule for port 8443. The self-signed certificate gives the browser
+    nothing to check on the first visit, so only the fingerprint in central's log shows that Dana
+    is talking to central and not to something on the network that answered first.
+14. The name is not on the Host allowlist; IP addresses of the machine are, names are only
+    accepted when listed. Restart central with `-gui-host central.example.com`. Central cares
+    because of DNS rebinding: a web page can make a browser send requests to central's address
+    under the attacker's own host name, and refusing every unknown name stops that.
+15. On the central host, as central's user, `mirafleet central gui reset-admin`. It prints a new
+    setup token (valid 24 h). Every GUI session ends at once, the setup page reopens, and Dana
+    chooses a username and password again. The audit history stays, with a `gui.reset_admin` row.
 
 </details>

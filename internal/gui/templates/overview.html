@@ -1,0 +1,35 @@
+{{/* Overview screen. Page.Data is overviewData. "overview/live" is the polled fragment. */}}
+{{define "content"}}<div class="container">
+<header class="page-head"><div><h1>Overview</h1></div>
+<div class="actions"><a class="btn" href="/fleets/new">New fleet</a></div></header>
+{{template "overview/live" .}}
+</div>{{end}}
+
+{{define "overview/audit"}}{{if .}}<div class="scroll"><table class="data">
+<thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">Action</th><th scope="col">Subject</th><th scope="col">Outcome</th></tr></thead>
+<tbody>{{range .}}<tr><td class="nowrap">{{template "ui/time" .Time}}</td><td class="mono clip" title="{{.Actor}}">{{.Actor}} <span class="muted">{{.Source}}</span></td><td class="mono">{{.Action}}</td><td class="mono clip" title="{{.Target}}">{{.Target}}</td><td>{{template "ui/badge" .Badge}}</td></tr>{{end}}</tbody>
+</table></div>{{end}}{{end}}
+
+{{define "overview/live"}}<div id="overview-live" class="stack" hx-get="/overview/live" hx-trigger="every 10s" hx-swap="outerHTML">
+{{with .Data}}
+<div class="grid">
+<div class="card"><span class="label">Fleets</span><span class="stat">{{.Fleets}}</span><span class="stat-note">{{.FleetsActions}} actions, {{.FleetsWorkspace}} workspace</span></div>
+<div class="card{{if .Pending}} is-attention{{end}}"><span class="label">Pending runners</span><span class="stat">{{.Pending}}</span><span class="stat-note">{{if .Pending}}<a href="/runners">{{.Pending}} waiting for approval</a>{{else}}none waiting{{end}}</span></div>
+<div class="card"><span class="label">Runners online</span><span class="stat">{{.Online}} / {{.Enrolled}}</span><span class="stat-note">{{.Active}} active, {{.Disabled}} disabled, {{.Offline}} offline</span></div>
+<div class="card"><span class="label">Live workspaces</span><span class="stat">{{.LiveWorkspaces}}</span><span class="stat-note"><a href="/workspaces">view workspaces</a></span></div>
+<div class="card"><span class="label">Join tokens usable</span><span class="stat">{{.TokensUsable}}</span><span class="stat-note"><a href="/tokens">view tokens</a></span></div>
+</div>
+
+<section class="panel" aria-labelledby="ov-pending"><div class="panel-head"><h2 id="ov-pending">Runners waiting for approval</h2><span class="updating htmx-indicator" id="ov-upd">updating</span></div>
+{{if .PendingRunners}}<div class="scroll"><table class="data"><thead><tr><th scope="col">Fleet</th><th scope="col">Runner</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+<tbody>{{range .PendingRunners}}<tr><td class="mono">{{.Fleet}}</td><td class="mono"><a href="{{.URL}}">{{.Name}}</a></td><td class="row-actions"><form method="post" action="{{.ApproveURL}}">{{template "ui/csrf" $}}<button class="btn btn-sm" type="submit">Approve</button></form></td></tr>{{end}}</tbody></table></div>
+{{else}}{{template "ui/empty" .NoPending}}{{end}}</section>
+
+<section class="panel" aria-labelledby="ov-audit"><div class="panel-head"><h2 id="ov-audit">Recent activity</h2><a class="btn btn-quiet btn-sm" href="/audit">All audit rows</a></div>
+{{if .Recent}}{{template "overview/audit" .Recent}}{{else}}{{template "ui/empty" .NoRecent}}{{end}}</section>
+
+<section class="panel" aria-labelledby="ov-denied"><div class="panel-head"><h2 id="ov-denied">Denied in the last 24 hours</h2></div>
+{{if .Denied}}{{template "overview/audit" .Denied}}{{else}}<div class="panel-body"><p class="muted">Nothing was denied.</p></div>{{end}}</section>
+<p class="muted">Updated {{template "ui/time" .Updated}}</p>
+{{end}}
+</div>{{end}}

@@ -43,8 +43,9 @@ var (
 	OperatorNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 )
 
-// ValidFleetName reports whether s is an acceptable fleet name.
-func ValidFleetName(s string) bool { return FleetNameRE.MatchString(s) }
+// ValidFleetName reports whether s is an acceptable fleet name. "new" is reserved: the GUI
+// serves /fleets/new (G-38).
+func ValidFleetName(s string) bool { return s != "new" && FleetNameRE.MatchString(s) }
 
 // ValidRunnerName reports whether s is an acceptable runner name.
 func ValidRunnerName(s string) bool { return runnerNameRE.MatchString(s) }
@@ -280,7 +281,9 @@ type GUISession struct {
 // AuditFilter selects audit rows for QueryAudit. Zero fields match everything. String fields
 // are exact matches on their column (Action too, unless ActionPrefix). AfterID and BeforeID are
 // keyset bounds (id > AfterID, id < BeforeID); From and To bound the time inclusively. Desc
-// orders by id descending. Limit <= 0 means 100; it is capped at 1000.
+// orders by id descending. Limit <= 0 means 100; it is capped at 1000. Desc with AfterID returns
+// the newest rows overall, not the page just after AfterID: to page toward newer rows, query
+// ascending with AfterID and reverse the result.
 type AuditFilter struct {
 	AfterID, BeforeID int64
 	From, To          time.Time
@@ -458,7 +461,8 @@ type Store interface {
 
 	// SetFleetConfirm sets the fleet's guard flag (confirm) and returns the fleet, atomically
 	// with ev. ErrNotFound if the fleet is unknown; ErrInvalid on a malformed name. Setting the
-	// value it already has is not an error and still writes ev.
+	// value it already has is not an error and still writes ev. The store adds the previous
+	// value to ev.Params as "from", read in the same transaction.
 	SetFleetConfirm(ctx context.Context, name string, confirm bool, now time.Time, ev AuditEvent) (Fleet, error)
 
 	// GetGUIAdmin returns the active GUI admin (PwHash included), or ErrNotFound.
@@ -472,6 +476,10 @@ type Store interface {
 	// created=false: a live token exists, nothing was written (no audit row), err is nil.
 	// Same errors as PutGUISetup otherwise.
 	EnsureGUISetup(ctx context.Context, hash []byte, expires, now time.Time, ev AuditEvent) (created bool, err error)
+	// CheckGUISetup reports whether hash matches a live (unexpired) setup row, comparing in
+	// constant time (a dummy when the row is missing). ErrStale when it does not, ErrInvalid on a
+	// bad hash. It writes nothing; CompleteGUISetup repeats the check inside its transaction.
+	CheckGUISetup(ctx context.Context, hash []byte, now time.Time) error
 	// CompleteGUISetup, in one transaction: the setup row exists, hash matches it (constant
 	// time), it has not expired at now and no active admin exists -> insert a (Username,
 	// PwHash; generation 1, status active), delete the setup row, write ev. A missing, wrong
@@ -483,8 +491,10 @@ type Store interface {
 	// admin and insert keep (AdminID and Generation are forced to the admin's and the new
 	// generation), write ev. ErrConflict on a generation mismatch; ErrNotFound if id is not the
 	// active admin; ErrInvalid on an empty hash or a bad keep. The returned GUIAdmin is the
-	// updated one.
-	SetGUIPassword(ctx context.Context, id, generation int64, hash string, keep GUISession, now time.Time, ev AuditEvent) (GUIAdmin, error)
+	// updated one. A non-zero replaceID is the session keep re-issues: it must still exist
+	// (exactly one row deleted for it) or the call is ErrConflict, so a session revoked in the
+	// meantime is not resurrected (G-18).
+	SetGUIPassword(ctx context.Context, id, generation int64, hash string, keep GUISession, replaceID int64, now time.Time, ev AuditEvent) (GUIAdmin, error)
 	// ResetGUIAdmin, in one transaction: the active admin (if any) becomes status reset, every
 	// session row is deleted, ev is written (also when there was no admin).
 	ResetGUIAdmin(ctx context.Context, now time.Time, ev AuditEvent) error

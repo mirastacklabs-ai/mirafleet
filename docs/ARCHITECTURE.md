@@ -496,14 +496,61 @@ marketplace, npm and Homebrew; until then `mirafleet` must be on PATH.
 
 ## Admin GUI
 
-Served by central on a separate HTTPS listener bound to `127.0.0.1:8443` by default. Admins reach
-it with `ssh -L` or place it behind their own reverse proxy. Built with Go `html/template` and
-htmx, with all assets embedded, so it loads nothing from the internet.
+Served by central on a separate HTTPS listener (`mirafleet central run -gui-listen ADDR`), by
+default `0.0.0.0:8443`; `-gui-listen off` disables it. Built with Go `html/template` and htmx 2,
+with every asset (fonts included) embedded, so it loads nothing from the internet. It is a second
+front end on the same `*service.Service` methods as the admin socket, in the same process, with
+source `gui`; it never touches the store or the registry. Linux only, like central. Detailed
+design: [M4.md](M4.md).
 
-Screens: **Fleets** (create, mode, default image, confirm flag), **Runners** (status, labels,
-heartbeat, approve, disable, revoke), **Join tokens** (create, revoke), **Operators**
-(current registration code, revoke), **Workspaces** (active sessions, age, kill), **Audit** (filter, export).
-One admin account, created on first start.
+- **TLS always on** (1.3 minimum). With `-gui-cert`/`-gui-key` (both or neither; the key file must
+  be 0600 and owned by central's user) it serves the operator certificate and sends HSTS. Without
+  them central generates a self-signed ECDSA P-256 certificate (2 years, renewed under 30 days
+  left) in `<data>/gui/tls.crt|tls.key` and never sends HSTS (it would remove the browser's
+  "proceed anyway" button and lock the admin out).
+- **Startup notice.** Every start logs the GUI URL, the certificate SHA-256 fingerprint and, for a
+  non-loopback bind, a warning that the GUI is reachable on all interfaces, with the ways to
+  restrict it (`-gui-listen 127.0.0.1:8443` plus `ssh -L`, `off`, or a firewall rule). The same
+  text and fingerprint are on the Account screen: compare the fingerprint in the browser before
+  typing the setup token or password.
+- **Host allowlist** (DNS-rebinding defence): the `Host` header must be `localhost`, one of this
+  machine's own interface IPs (re-read every 60 s), its host name, or a name given with
+  `-gui-host NAME,...`; anything else gets 421.
+- **Bootstrap.** With no admin account, central writes a one-time setup token (valid 24 h, only
+  its SHA-256 stored) to `<data>/gui/setup-token` (0600) and logs the path, never the token.
+  `/setup` takes the token, a username and a password (Argon2id) and is gone once an admin exists.
+  Recovery: `mirafleet central gui reset-admin` (admin socket) retires the admin and every
+  session and prints a fresh setup token once. One admin account.
+- **Sessions** live in SQLite (migration `0003_gui.sql`: `gui_admins`, `gui_setup`, `gui_sessions`,
+  plus audit indexes on `actor` and `request_id`) as SHA-256 hashes of the cookie token, so they
+  survive a restart. A session ends after 30 min idle or 12 h absolute and is bound to the admin's
+  credential generation, so a password change or reset kills the others. Cookies are `__Host-`,
+  `Secure`, `HttpOnly`, `SameSite=Strict`; state-changing routes have CSRF protection. Login is
+  rate limited per client address, with a 15 minute lockout after 10 consecutive failures.
+- **CSP.** `default-src 'none'; script-src 'self'; style-src 'self'; ... frame-ancestors 'none';
+  base-uri 'none'`: no inline script or style. Screens work without JavaScript; htmx only adds
+  live refresh.
+- **Not in the GUI:** running actions or workspace commands (view and manage only), more than one
+  admin, fleet delete.
+
+Screens: **Setup**, **Login**, **Overview**, **Fleets** (create, workspace settings, confirm flag),
+**Runners** (status, labels, heartbeat, approve, disable, enable, revoke; revoked runners can be
+listed), **Join tokens** (create, revoke), **Operators** (current registration code, rotate
+secret, revoke), **Workspaces** (active sessions, age, kill), **Audit** (filter by actor, source,
+action or prefix, fleet, runner, workspace, request ID and time range; export), **Account**
+(change password, list and revoke sessions, theme).
+
+Audit actions the GUI flows write: `gui.setup_token`, `gui.setup`, `gui.login`, `gui.logout`,
+`gui.lockout`, `gui.password_change`, `gui.session_revoke`, `gui.reset_admin` (source `cli`) and
+`audit.export` (written before the export streams). Lifecycle changes (`fleet.create`,
+`fleet.set_confirm`, `token.*`, `runner.*`, `operator.*`, `workspace.kill`) reuse the CLI actions
+with source `gui`.
+
+New admin methods, on the admin socket and the GUI service only (never `api@mirafleet` or MCP):
+`audit.list` (filtered reads), `fleet.set_confirm` and `gui.reset_admin`. CLI parity:
+`central gui reset-admin`, `central fleet set NAME -confirm=BOOL`, and filter flags on
+`central audit` (`-fleet -runner -actor -source -outcome -action [-action-prefix] -workspace
+-request-id -from -to -before`).
 
 ## Enrollment
 
@@ -532,7 +579,9 @@ Join tokens and registration codes are described under
   allowlists; a workspace runner itself is root-equivalent on its host.
 - Agent API keys never enter a workspace.
 - Runners never accept inbound network connections.
-- The GUI is not exposed publicly by default.
+- The GUI listens on all interfaces by default (`0.0.0.0:8443`), always over TLS, behind a setup
+  token, a Host allowlist, CSRF and a strict CSP. Restrict it with `-gui-listen 127.0.0.1:8443`,
+  `-gui-listen off` or a firewall rule; central logs a notice at every start.
 - Audit is written on central (fleet-wide view) and on each runner (local copy).
 - Known OSS limits: no per-fleet operator grants, central is a single trust point, one admin.
 

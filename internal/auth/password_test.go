@@ -20,13 +20,13 @@ func setParamsForTest(t *testing.T, p Params) {
 var fastParams = Params{Time: 1, Memory: 64, Threads: 1}
 
 func TestDefaultParams(t *testing.T) {
-	if DefaultParams != (Params{Time: 3, Memory: 64 * 1024, Threads: 2}) {
-		t.Fatalf("DefaultParams = %+v", DefaultParams)
+	if defaultParams != (Params{Time: 3, Memory: 64 * 1024, Threads: 2}) {
+		t.Fatalf("defaultParams = %+v", defaultParams)
 	}
-	if params != DefaultParams {
+	if params != defaultParams {
 		t.Fatalf("active params = %+v, want defaults", params)
 	}
-	got := encodePHC(DefaultParams, make([]byte, saltLen), make([]byte, keyLen))
+	got := encodePHC(defaultParams, make([]byte, saltLen), make([]byte, keyLen))
 	if !strings.HasPrefix(got, "$argon2id$v=19$m=65536,t=3,p=2$") {
 		t.Fatalf("PHC = %q", got)
 	}
@@ -107,7 +107,7 @@ func TestParseBounds(t *testing.T) {
 	const tail = "$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	ok := []string{
 		"$argon2id$v=19$m=65536,t=3,p=2" + tail,
-		"$argon2id$v=19$m=1048576,t=10,p=16" + tail,
+		"$argon2id$v=19$m=262144,t=6,p=16" + tail,
 	}
 	for _, s := range ok {
 		if _, _, _, err := parsePHC(s); err != nil {
@@ -115,8 +115,8 @@ func TestParseBounds(t *testing.T) {
 		}
 	}
 	bad := []string{
-		"$argon2id$v=19$m=1048577,t=3,p=2" + tail, // > 1 GiB
-		"$argon2id$v=19$m=65536,t=11,p=2" + tail,
+		"$argon2id$v=19$m=262145,t=3,p=2" + tail, // > 256 MiB
+		"$argon2id$v=19$m=65536,t=7,p=2" + tail,
 		"$argon2id$v=19$m=65536,t=3,p=17" + tail,
 		"$argon2id$v=19$m=65536,t=0,p=2" + tail,
 		"$argon2id$v=19$m=65536,t=3,p=0" + tail,
@@ -157,6 +157,7 @@ func TestValidatePassword(t *testing.T) {
 		{"", "admin", ErrPasswordLength},
 		{"abcdefghijk\xff", "admin", ErrPasswordUTF8},
 		{"administrator", "administrator", ErrPasswordUsername},
+		{"Administrator", "administrator", ErrPasswordUsername},
 		{"aaaaaaaaaaaa", "admin", ErrPasswordRepeat},
 		{strings.Repeat("\xc3\xa9", 6), "admin", ErrPasswordRepeat}, // 12 bytes, one rune
 		{"p\xc3\xa4ssw\xc3\xb6rd-ok", "admin", nil},

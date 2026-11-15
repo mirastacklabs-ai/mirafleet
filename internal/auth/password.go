@@ -20,14 +20,15 @@ type Params struct {
 	Threads uint8
 }
 
-// DefaultParams is the production cost (docs/M4.md §2.4): t=3, m=64 MiB, p=2.
-var DefaultParams = Params{Time: 3, Memory: 64 * 1024, Threads: 2}
+// defaultParams is the production cost (docs/M4.md §2.4): t=3, m=64 MiB, p=2. Unexported so no
+// other package can weaken it; tests use SetParamsForTest.
+var defaultParams = Params{Time: 3, Memory: 64 * 1024, Threads: 2}
 
 // Bounds enforced when parsing a stored hash, so a corrupt or planted row cannot make
 // verification allocate gigabytes or run for minutes.
 const (
-	maxMemoryKiB = 1 << 20 // 1 GiB
-	maxTime      = 10
+	maxMemoryKiB = 1 << 18 // 256 MiB
+	maxTime      = 6
 	maxThreads   = 16
 	saltLen      = 16
 	keyLen       = 32
@@ -53,7 +54,7 @@ var (
 
 // params is the cost used for new hashes and for NeedsRehash. Tests lower it; production
 // code never changes it.
-var params = DefaultParams
+var params = defaultParams
 
 // ValidatePassword applies the password rules: 12 to 256 bytes of valid UTF-8, not equal to
 // the username, not all one character. No composition rules (NIST SP 800-63B).
@@ -64,7 +65,7 @@ func ValidatePassword(password, username string) error {
 	if !utf8.ValidString(password) {
 		return ErrPasswordUTF8
 	}
-	if password == username {
+	if strings.EqualFold(password, username) {
 		return ErrPasswordUsername
 	}
 	first, _ := utf8.DecodeRuneInString(password)

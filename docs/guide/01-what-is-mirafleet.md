@@ -291,7 +291,7 @@ the admin CLI already covers the GUI's functions. Full details are in [../PLAN.m
 | **M2** Central core | SQLite store, fleets, join tokens, runner lifecycle, rotating registration codes, `api@mirafleet`, admin socket, admin CLI, `runner join`, `mcp login` / `mcp api` | done (13 Nov 2026); see [../M2.md](../M2.md) |
 | **M3** Workspaces | `workspace.Executor`, containerd executor, optional OpenSandbox executor, scheduling and sticky sessions, TTL reaper, reconcile, `workspace.*` API, egress proxy | done (13 Nov 2026); see [../M3.md](../M3.md) |
 | **M5** Orchestrator | the real `mirafleet mcp` stdio MCP server (nine tools), contexts and project defaults, session handoff, Claude Code plugin and hooks, opencode and generic notes, Windows support, action discovery; see [../M5.md](../M5.md) | **built** (smoke test with real Claude Code pending) |
-| **M4** Admin GUI | web screens on central (built with htmx, a small library that updates page parts from the server) | **planned** |
+| **M4** Admin GUI | web screens on central (HTML pages from Go templates, with htmx, a small library that updates page parts from the server): Overview, Fleets, Runners, Join tokens, Operators, Workspaces, Audit, Account; HTTPS only, one admin account; see [../M4.md](../M4.md) | done (15 Nov 2026) |
 | **M6** Release | CI, packages (`.deb` and `.rpm` are the install files for Debian/Ubuntu and Red Hat systems; plus a container image), signing, install script, plugin stores | **planned** |
 
 What this means for you today:
@@ -318,7 +318,23 @@ What this means for you today:
   handoff and an extra confirm prompt. It is built but still to be smoke-tested with a real
   Claude Code. Installing it from a plugin store arrives with M6, so for now `mirafleet` must be
   on your `PATH`.
-- There is no GUI yet. Everything the GUI will do is done with `mirafleet central ...`.
+- Central also serves an **admin GUI**: a web page at `https://central.example.com:8443`. It is
+  on by default, always HTTPS, and protected by one admin account that Dana creates on first
+  start with a one-time setup token (the story is [flow 24](04-flows.md#24-first-start-setup-of-the-gui)).
+  Its screens cover every admin command except `central exec` and `central init`: fleets
+  (including the guard switch and workspace settings), runners (approve, disable, enable,
+  revoke, and the actions each runner advertises), join tokens (shown once), operators and the
+  registration code, live workspaces (kill), the audit log (filter, export) and Dana's own
+  account. The GUI cannot run actions or workspace commands: that stays with the agent.
+
+  **GUI or CLI?** They do the same things through the same code (`internal/service`), and both
+  write the same audit rows; only the audit `source` differs (`gui` or `cli`). Use the GUI to look
+  around, to read the audit log with filters, and for one-off changes where a confirmation page
+  helps (a revoke asks you to type `prod/db-1`). Use the CLI for scripts, for automation, for
+  `central init` and `central exec`, and when you cannot reach port 8443. The CLI is also the
+  recovery path: `mirafleet central gui reset-admin` makes a new setup token if Dana forgets her
+  GUI password. See [chapter 3](03-architecture.md#the-admin-gui-m4) for how the GUI fits and
+  [chapter 5](05-security.md#512-attacking-the-gui) for how it is defended.
 
 ## 1.9 Where to go next
 

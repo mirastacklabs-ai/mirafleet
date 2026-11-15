@@ -63,7 +63,9 @@ func (c *adminCLI) run(args []string) error {
 	switch sub {
 	case "fleet":
 		return c.group(sub, rest, map[string]func([]string) error{"create": c.fleetCreate, "list": c.fleetList,
-			"workspace": c.fleetWorkspace})
+			"workspace": c.fleetWorkspace, "set": c.fleetSet})
+	case "gui":
+		return c.group(sub, rest, map[string]func([]string) error{"reset-admin": c.guiResetAdmin})
 	case "workspace":
 		return c.group(sub, rest, map[string]func([]string) error{"list": c.workspaceList, "kill": c.workspaceKill})
 	case "token":
@@ -509,6 +511,18 @@ func (c *adminCLI) audit(args []string) error {
 	since := fs.Int64("since", 0, "only events with ID greater than this")
 	limit := fs.Int("limit", 0, "maximum events (0 = server default)")
 	asJSON := fs.Bool("json", false, "print JSON")
+	before := fs.Int64("before", 0, "only events with ID less than this")
+	fleet := fs.String("fleet", "", "only this fleet")
+	runner := fs.String("runner", "", "only this runner")
+	actor := fs.String("actor", "", "only this actor")
+	source := fs.String("source", "", "only this source (cli, gui, api, ...)")
+	outcome := fs.String("outcome", "", "only this outcome")
+	action := fs.String("action", "", "only this action, e.g. runner.revoke")
+	prefix := fs.Bool("action-prefix", false, "treat -action as a prefix, e.g. -action gui. -action-prefix")
+	workspace := fs.String("workspace", "", "only this workspace ID")
+	requestID := fs.String("request-id", "", "only this request ID")
+	fromS := fs.String("from", "", "only events at or after this time (RFC 3339 or YYYY-MM-DD)")
+	toS := fs.String("to", "", "only events at or before this time (RFC 3339 or YYYY-MM-DD)")
 	pos, err := adminParse(fs, args)
 	if err != nil {
 		return err
@@ -516,11 +530,27 @@ func (c *adminCLI) audit(args []string) error {
 	if err := adminWantArgs("audit", pos, 0, "no positional arguments"); err != nil {
 		return err
 	}
-	if *since < 0 || *limit < 0 {
-		return fmt.Errorf("%w: audit: -since and -limit must not be negative", errAdminUsage)
+	if *since < 0 || *limit < 0 || *before < 0 {
+		return fmt.Errorf("%w: audit: -since, -before and -limit must not be negative", errAdminUsage)
+	}
+	if *prefix && *action == "" {
+		return fmt.Errorf("%w: audit: -action-prefix needs -action", errAdminUsage)
+	}
+	from, err := auditTime("from", *fromS)
+	if err != nil {
+		return err
+	}
+	to, err := auditTime("to", *toS)
+	if err != nil {
+		return err
+	}
+	if from != nil && to != nil && !from.Before(*to) {
+		return fmt.Errorf("%w: audit: -from must be before -to", errAdminUsage)
 	}
 	var res api.AuditListResult
-	if err := c.call(adminSock(*data), api.MethodAuditList, api.AuditListParams{SinceID: *since, Limit: *limit}, &res); err != nil {
+	if err := c.call(adminSock(*data), api.MethodAuditList, api.AuditListParams{SinceID: *since, Limit: *limit,
+		BeforeID: *before, Fleet: *fleet, Runner: *runner, Actor: *actor, Source: *source, Outcome: *outcome,
+		Action: *action, ActionPrefix: *prefix, Workspace: *workspace, RequestID: *requestID, From: from, To: to}, &res); err != nil {
 		return err
 	}
 	if *asJSON {

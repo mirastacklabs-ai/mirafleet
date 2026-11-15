@@ -15,6 +15,11 @@ and [symbols](#symbols)
 addresses. One home or server network usually owns a whole /64, so central counts IPv6 clients
 per /64, not per single address. See [chapter 2](02-background.md#28-rate-limiting-token-bucket).
 
+**`__Host-` prefix.** A cookie-name prefix that makes the browser refuse the cookie unless it is
+`Secure`, has `Path=/` and has no `Domain`, so a sibling sub-domain cannot overwrite it. The GUI's
+cookies (`__Host-mf_session`, `__Host-mf_pre`, `__Host-mf_flash`) all use it. See
+[chapter 2](02-background.md#212-web-basics-for-the-admin-gui).
+
 ## A
 
 **Action.** A named, pre-approved command that a runner may run, defined in `actions.yaml`, for
@@ -29,9 +34,19 @@ the machine being protected and is the security boundary. See [chapter 5](05-sec
 
 **Actions guard.** See [guard](#g).
 
-**Admin.** The person (in our examples, Dana) or, later, the GUI that manages central: creates
-fleets and tokens, approves and revokes runners, reads the registration code. Admin work happens
-only on central. The admin is not an operator. See [chapter 10](10-operations.md).
+**Admin.** The person (in our examples, Dana) who manages central, from the CLI on the central
+host or from the admin GUI: creates fleets and tokens, approves and revokes runners, reads the
+registration code. Admin work happens only on central. The admin is not an operator. See
+[chapter 10](10-operations.md).
+
+**Admin GUI.** The web interface served by central itself (HTTPS, default `0.0.0.0:8443`, M4).
+It calls the same `Service` as the CLI, with source `gui`, and has one admin account. See
+[chapter 3](03-architecture.md#the-admin-gui-m4) and
+[chapter 5](05-security.md#512-attacking-the-gui).
+
+**Argon2id.** A deliberately slow, memory-hungry password hash (mirafleet: 64 MiB, 3 passes, 2
+lanes). It makes guessing a stolen password hash expensive. See
+[chapter 2](02-background.md#212-web-basics-for-the-admin-gui).
 
 **Admin socket.** A Unix socket `<data>/admin.sock` on the central host. The `mirafleet central ...`
 commands talk to the running central through it. See [chapter 7](07-protocols.md) and
@@ -103,6 +118,15 @@ types: `api@mirafleet`, `exec@mirafleet`, `join@mirafleet`, `register@mirafleet`
 `confirm` string equal to the fleet's name (such as `"prod"`). It is a typed second check, not a
 boolean. See [chapter 5](05-security.md).
 
+**CSRF (cross-site request forgery).** An attack where a page on another site makes the admin's
+browser send a request (with the admin's cookie) to central. The GUI refuses it with a `SameSite`
+cookie, a secret form token and the browser's origin headers. See
+[chapter 5](05-security.md#512-attacking-the-gui).
+
+**CSP (Content-Security-Policy).** A response header listing where a page may load scripts,
+styles and images from. The GUI's policy allows only central itself (no inline scripts), so
+injected text cannot run. See [chapter 2](02-background.md#212-web-basics-for-the-admin-gui).
+
 **Constant-time comparison.** Comparing two secrets in time that does not depend on how many
 bytes match, to avoid timing attacks. See
 [chapter 2](02-background.md#24-hashes-hmac-and-constant-time-comparison).
@@ -166,6 +190,11 @@ new work. `enable` reverses it. See [chapter 6](06-data-model.md).
 **DTO (data transfer object).** A plain struct that only carries data across a boundary (for
 example the JSON shape of an API reply), with no logic. See [chapter 3](03-architecture.md).
 
+**DNS rebinding.** A trick where an attacker's host name first points at the attacker, then at an
+address inside your network, so the browser lets the attacker's script talk to your server. The
+GUI's Host allowlist defeats it, because the `Host` header carries the attacker's name. See
+[chapter 5](05-security.md#512-attacking-the-gui).
+
 **Domain separation.** Putting a fixed label (`mirafleet-register-v1`) into a hash or HMAC input so
 the result cannot be reused for another purpose. See
 [chapter 2](02-background.md#24-hashes-hmac-and-constant-time-comparison).
@@ -228,6 +257,10 @@ service code. See [chapter 3](03-architecture.md).
 **Fingerprint.** A short hash of a public key (like `SHA256:...`) used to name and compare keys.
 Stored beside each key. See [chapter 2](02-background.md#21-public-key-cryptography-and-ed25519).
 
+**Fragment (HTML fragment).** A piece of a page, such as one table, that the server renders so
+htmx can swap it into the page. The GUI's handler produces the full page or just the fragment
+from the same data. See [chapter 2](02-background.md#212-web-basics-for-the-admin-gui).
+
 **Fleet.** A named group of runners and the unit of isolation: `dev`, `prod`. A runner belongs to
 exactly one fleet; each fleet has a mode (`actions` or `workspace`). See
 [chapter 6](06-data-model.md).
@@ -239,6 +272,10 @@ JSON. See [chapter 7](07-protocols.md).
 
 **goroutine.** A lightweight concurrent function in Go, started with `go f()`. Thousands can run
 at once; a context tells them when to stop. See [chapter 2](02-background.md#27-go-context-cancellation).
+
+**Generation (credential generation).** A number on the GUI admin (`gui_admins.generation`) that
+goes up whenever the credentials change. Each session stores the number it was created under and
+dies when the two differ. See [chapter 6](06-data-model.md#617-the-gui-tables-migration-0003).
 
 **Guard (actions guard).** The code in `internal/actions` on the runner that checks an action
 name and its parameters against `actions.yaml`, then runs it without a shell. This is the
@@ -252,6 +289,15 @@ See [chapter 5, 5.3.7](05-security.md#537-guarded-fleets-confirm-must-equal-the-
 [flow 23](04-flows.md#23-a-guarded-call-and-the-confirm-prompt).
 
 ## H
+
+**HSTS (HTTP Strict-Transport-Security).** A header telling a browser to use only HTTPS for a
+host name and to hide the "proceed anyway" button on certificate errors. Central sends it only
+with an operator certificate, never with the self-signed one. See
+[chapter 5](05-security.md#512-attacking-the-gui).
+
+**htmx.** A small JavaScript library (vendored in the binary) that lets HTML elements fetch a URL
+and swap the answer into the page. The GUI uses it only to enhance plain forms. See
+[chapter 2](02-background.md#212-web-basics-for-the-admin-gui).
 
 **Harness.** The program that hosts an AI agent loop and connects it to tools: Claude Code,
 opencode, Kilo Code. It launches MCP servers, shows tool results to the model, and asks the human
@@ -316,6 +362,10 @@ use by default, 24 h lifetime, maximum 30 days. Central stores only a SHA-256 of
 [chapter 7](07-protocols.md).
 
 ## K
+
+**Keyset paging.** Paging through rows by "the next N rows after id X" instead of "skip M rows".
+The GUI's Audit screen uses it, so a page costs the same however deep you go. See
+[chapter 6](06-data-model.md#617-the-gui-tables-migration-0003).
 
 **Kick.** Closing a live connection from central's side (as part of revoke or operator revoke).
 See [chapter 4](04-flows.md).
@@ -409,6 +459,10 @@ dials in to a runner. See [chapter 1](01-what-is-mirafleet.md#12-what-mirafleet-
 
 ## P
 
+**PRG (post, redirect, get).** After a form `POST` the server answers with a redirect to a normal
+page, so refreshing the browser does not send the form again. Every GUI action does this, except
+the two pages that show a secret once. See [chapter 2](02-background.md#212-web-basics-for-the-admin-gui).
+
 **Partial index.** A database index that covers only rows matching a condition (for example only
 non-revoked keys), so it can enforce "unique among live rows". See [chapter 6](06-data-model.md).
 
@@ -497,6 +551,18 @@ actions. See [chapter 1](01-what-is-mirafleet.md#13-the-three-roles).
 
 ## S
 
+**Same-origin policy.** The browser rule that a page may read responses only from its own origin
+(scheme + host + port). It does not stop a page from *sending* requests, which is why CSRF
+defences exist. See [chapter 2](02-background.md#212-web-basics-for-the-admin-gui).
+
+**Session cookie (GUI).** The cookie `__Host-mf_session` holding a random 256-bit token. Central
+keeps only its SHA-256 hash in `gui_sessions`. Flags: `Secure`, `HttpOnly`, `SameSite=Strict`. See
+[flow 25](04-flows.md#25-login-and-the-first-request-after-it).
+
+**Setup token.** The one-time secret (`mfs1.…`, valid 24 hours) that lets Dana create the GUI admin
+on first start. Central stores its hash and leaves the token in `<data>/gui/setup-token`; it is
+deleted after use. See [flow 24](04-flows.md#24-first-start-setup-of-the-gui).
+
 **Seam (interface seam).** A Go interface left in the OSS code so an enterprise feature can plug
 in later: `Store`, `AuthProvider`, `PolicyEngine`, `AuditSink`. See
 [chapter 8](08-code-tour.md).
@@ -542,14 +608,14 @@ server. Handshake and enroll time limits defend against it. See [chapter 5](05-s
 
 **source.** Which front end a call came from, recorded in the audit row: `cli` (admin socket),
 `api` (operator), `enroll` (join or register), `system` (central itself: the workspace reaper,
-reconcile and revoke cascades); `gui` is reserved for M4. See [chapter 6](06-data-model.md).
+reconcile and revoke cascades) and `gui` (the admin GUI). See [chapter 6](06-data-model.md).
 
 **Symlink.** A file that points to another path. Opening a key file through a symlink could be
 steered to a different file, so key loading refuses symlinks (`O_NOFOLLOW`). See
 [chapter 4](04-flows.md).
 
-**Service (`internal/service`).** The single code path used by CLI, API and (later) GUI and MCP
-for every operation. See [chapter 3](03-architecture.md).
+**Service (`internal/service`).** The single code path used by the CLI, the API, the admin GUI and
+MCP for every operation. See [chapter 3](03-architecture.md).
 
 **Session context.** The Go context tied to one runner connection; cancelling it kicks the
 runner and stops its work. See [chapter 2](02-background.md#27-go-context-cancellation).

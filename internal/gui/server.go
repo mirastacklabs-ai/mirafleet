@@ -30,6 +30,10 @@ type Config struct {
 	KeyFile  string   //
 	GUIHosts []string // -gui-host names that the Host allowlist and the certificate accept
 
+	// Shown in the Account screen's About section when non-empty.
+	HostKeyFingerprint string // central's SSH host-key fingerprint
+	SSHAdvertise       string // the SSH advertise address
+
 	Now         func() time.Time       // default time.Now
 	Hostname    func() (string, error) // default os.Hostname
 	Interfaces  InterfaceLister        // default SystemInterfaces
@@ -60,14 +64,37 @@ type Server struct {
 	// pages) for every page including error pages. S7 sets it. It is not called for 421 and 503.
 	PageDefaults func(r *http.Request, pg *Page)
 
+	auth   *authState // login limiter, hash semaphore, CSRF checker, setup state (handlers_auth.go)
+	nonces nonceSet   // used join-token form nonces (handlers_tokens.go)
+
 	mu     sync.Mutex
 	srv    *http.Server
 	ln     net.Listener
 	stop   chan struct{}
 	notice string
+
+	// baseCancel cancels the BaseContext of every request; Shutdown and Close call it so backend
+	// calls abort before the caller closes the store. closing keeps the shut-down http.Server
+	// so Close can still force it after a timed-out Shutdown.
+	baseCancel  context.CancelFunc
+	closing     *http.Server
+	closingStop context.CancelFunc
 }
 
 var guiHostRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
+
+// CheckHostName validates a -gui-host value: a DNS-style name, not an IP address. The command
+// line calls it at parse time.
+func CheckHostName(h string) error {
+	h = normHost(h)
+	if _, err := netip.ParseAddr(h); err == nil {
+		return fmt.Errorf("gui: -gui-host %q is an IP address; list names (this machine's own addresses are always accepted)", h)
+	}
+	if !guiHostRE.MatchString(h) {
+		return fmt.Errorf("gui: -gui-host %q is not a valid host name", h)
+	}
+	return nil
+}
 
 // New validates cfg, loads or creates the certificate, parses the templates and builds the
 // handler. It does not listen; see Start.
@@ -112,11 +139,8 @@ func New(cfg Config) (*Server, error) {
 		if h == "" {
 			continue
 		}
-		if _, err := netip.ParseAddr(h); err == nil {
-			return nil, fmt.Errorf("gui: -gui-host %q is an IP address; list names (this machine's own addresses are always accepted)", h)
-		}
-		if !guiHostRE.MatchString(h) {
-			return nil, fmt.Errorf("gui: -gui-host %q is not a valid host name", h)
+		if err := CheckHostName(h); err != nil {
+			return nil, err
 		}
 		guiHosts = append(guiHosts, h)
 	}
@@ -140,7 +164,11 @@ func New(cfg Config) (*Server, error) {
 			return nil, err
 		}
 		s.hsts = true
-		dns = append(dns, s.cert.DNSNames...)
+		for _, n := range s.cert.DNSNames {
+			if !strings.HasPrefix(n, "*") { // a wildcard SAN is not a Host name to allow (G-23)
+				dns = append(dns, n)
+			}
+		}
 	} else {
 		if cfg.DataDir == "" {
 			return nil, errors.New("gui: a data directory is required for the self-signed certificate")
@@ -220,8 +248,11 @@ func (s *Server) Start() error {
 		return fmt.Errorf("gui: listen %s: %w", s.cfg.Listen, err)
 	}
 	s.ln = ln
+	baseCtx, baseCancel := context.WithCancel(context.Background())
+	s.baseCancel = baseCancel
 	s.srv = &http.Server{
 		Handler:           s.handler,
+		BaseContext:       func(net.Listener) context.Context { return baseCtx },
 		TLSConfig:         s.TLSConfig(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -260,6 +291,13 @@ func (s *Server) Start() error {
 			s.logf("gui: serve: %v", err)
 		}
 	}()
+	// Housekeeping: purge expired GUI sessions now and every PurgeInterval until Shutdown/Close.
+	if s.cfg.Backend != nil {
+		StartPurge(baseCtx, s.now, func(ctx context.Context, _ time.Time) error {
+			_, err := s.cfg.Backend.PurgeGUISessions(ctx)
+			return err
+		}, func(err error) { s.logf("gui: purge sessions: %v", err) })
+	}
 	go func() {
 		t := time.NewTicker(s.cfg.HostRefresh)
 		defer t.Stop()
@@ -272,7 +310,39 @@ func (s *Server) Start() error {
 			}
 		}
 	}()
+	// Certificate expiry: warn at start and then once a day while running (G-23, G-24).
+	s.warnCertExpiry()
+	go func() {
+		t := time.NewTicker(CertCheckInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				s.warnCertExpiry()
+			case <-stop:
+				return
+			}
+		}
+	}()
 	return nil
+}
+
+// Certificate expiry warning window and check interval.
+const (
+	CertWarnWithin    = 30 * 24 * time.Hour
+	CertCheckInterval = 24 * time.Hour
+)
+
+// warnCertExpiry logs a warning when the served certificate expires within CertWarnWithin (or
+// already has). A self-signed certificate is renewed at the next start of central.
+func (s *Server) warnCertExpiry() {
+	left := s.cert.NotAfter.Sub(s.now())
+	switch {
+	case left <= 0:
+		s.logf("gui: WARNING the GUI certificate expired on %s; browsers will refuse it", s.cert.NotAfter.UTC().Format("2006-01-02"))
+	case left < CertWarnWithin:
+		s.logf("gui: WARNING the GUI certificate expires on %s (%d days); renew it", s.cert.NotAfter.UTC().Format("2006-01-02"), int(left/(24*time.Hour)))
+	}
 }
 
 // dedupe returns names without duplicates and without the empty string, keeping the first
@@ -294,12 +364,41 @@ func dedupe(names []string) []string {
 // Shutdown stops accepting, drains requests until ctx ends, and stops the address refresh.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
-	srv, stop := s.srv, s.stop
-	s.srv, s.stop = nil, nil
+	srv, stop, cancel := s.srv, s.stop, s.baseCancel
+	s.closing, s.closingStop = srv, cancel
+	s.srv, s.stop, s.baseCancel = nil, nil, nil
 	s.mu.Unlock()
 	if srv == nil {
 		return nil
 	}
 	close(stop)
-	return srv.Shutdown(ctx)
+	err := srv.Shutdown(ctx)
+	if err == nil {
+		cancel() // all requests are done; release the base context
+	}
+	return err
+}
+
+// Close stops the server at once: it cancels the context of every in-flight request (so backend
+// calls abort) and closes all connections. Call it when Shutdown timed out. Safe after Shutdown
+// and when not started. It does not wait for handlers to return: a handler still unwinding
+// may find the store closed, which only turns its answer into an error (G-31).
+func (s *Server) Close() error {
+	s.mu.Lock()
+	srv, stop, cancel := s.srv, s.stop, s.baseCancel
+	if srv == nil {
+		srv, cancel = s.closing, s.closingStop
+	}
+	s.srv, s.stop, s.baseCancel, s.closing, s.closingStop = nil, nil, nil, nil, nil
+	s.mu.Unlock()
+	if stop != nil {
+		close(stop)
+	}
+	if cancel != nil {
+		cancel()
+	}
+	if srv == nil {
+		return nil
+	}
+	return srv.Close()
 }

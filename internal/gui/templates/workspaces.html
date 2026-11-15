@@ -1,0 +1,40 @@
+{{/* Workspaces screen. Page.Data is workspacesData. Fragments: workspaces/list (the polled table,
+passive route /workspaces/live), workspaces/kill (confirmation dialog). */}}
+{{define "content"}}<div class="container">
+{{if eq .Data.View "list"}}
+<header class="page-head"><div><h1>Workspaces</h1></div></header>
+<div class="stack">
+<form class="filters" method="get" action="/workspaces">
+<div class="field"><label for="ws-fleet">Fleet</label><select id="ws-fleet" name="fleet"><option value="">All fleets</option>{{$f := .Data.Fleet}}{{range .Data.Fleets}}<option value="{{.}}"{{if eq . $f}} selected{{end}}>{{.}}</option>{{end}}</select></div>
+<div class="field"><label for="ws-state">State</label><select id="ws-state" name="state"><option value="live"{{if eq .Data.State "live"}} selected{{end}}>Live</option><option value="all"{{if eq .Data.State "all"}} selected{{end}}>All</option></select></div>
+<button class="btn btn-secondary" type="submit">Filter</button>
+</form>
+{{template "workspaces/list" .}}
+</div>
+{{else}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>Kill workspace {{.Data.Row.ShortID}}</h1></div></header>
+{{template "workspaces/kill" .}}
+{{end}}
+</div>{{end}}
+
+{{define "workspaces/list"}}<div id="ws-live" class="stack" hx-get="{{.Data.LiveURL}}" hx-trigger="every 10s" hx-swap="outerHTML">
+{{with .Data}}<section class="panel" aria-labelledby="ws-title">
+<div class="panel-head"><h2 id="ws-title">Workspaces</h2><span class="updating htmx-indicator" id="ws-upd">updating</span></div>
+{{if .Rows}}<div class="scroll"><table class="data">
+<caption class="visually-hidden">Workspaces</caption>
+<thead><tr><th scope="col">Id</th><th scope="col">Fleet</th><th scope="col">Runner</th><th scope="col">Operator</th><th scope="col">Session</th><th scope="col">Image</th><th scope="col">State</th><th scope="col">Created</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col">Age</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+<tbody>{{range .Rows}}<tr><td class="mono" title="{{.ID}}">{{.ShortID}}</td><td class="mono">{{.Fleet}}</td><td class="mono clip" title="{{.Runner}}">{{.Runner}}</td><td class="mono clip" title="{{.Operator}}">{{.Operator}}</td><td class="mono clip" title="{{.Session}}">{{.Session}}</td><td class="mono clip" title="{{.Image}}">{{.Image}}</td><td>{{template "ui/badge" .State}}</td><td class="nowrap">{{template "ui/time" .Created}}</td><td class="nowrap">{{template "ui/time" .LastUsed}}</td><td class="nowrap">{{template "ui/time" .Expires}}</td><td class="nowrap">{{.Age}}</td><td class="row-actions">{{if .CanKill}}<a class="btn btn-danger btn-sm" href="{{.KillURL}}">Kill</a>{{end}}</td></tr>{{end}}</tbody>
+</table></div>
+{{else}}{{template "ui/empty" .Empty}}{{end}}
+</section>
+<p class="muted">Updated {{template "ui/time" .Updated}}</p>{{end}}
+</div>{{end}}
+
+{{define "workspaces/kill"}}<div class="dialog danger" role="group" aria-labelledby="kill-title" id="ws-dialog">
+<div class="dialog-head"><h2 id="kill-title">Kill workspace {{.Data.Row.ShortID}}</h2></div>
+<form class="dialog-body" method="post" action="{{.Data.Action}}">
+{{template "ui/csrf" .}}
+<dl class="kv"><dt>Id</dt><dd class="mono">{{.Data.Row.ID}}</dd><dt>Fleet</dt><dd class="mono">{{.Data.Row.Fleet}}</dd><dt>Runner</dt><dd class="mono">{{.Data.Row.Runner}}</dd><dt>Operator</dt><dd class="mono">{{.Data.Row.Operator}}</dd><dt>State</dt><dd>{{template "ui/badge" .Data.Row.State}}</dd></dl>
+<ul class="effects"><li>The workspace is destroyed on its runner and its files are lost.</li><li>If the runner is offline the workspace becomes closing and the reaper finishes it later.</li><li>The kill is recorded in the audit log.</li></ul>
+<div class="form-actions"><button class="btn btn-danger" type="submit">Kill workspace</button><a class="btn btn-quiet" href="{{.Data.CancelURL}}">Cancel</a></div>
+</form></div>{{end}}

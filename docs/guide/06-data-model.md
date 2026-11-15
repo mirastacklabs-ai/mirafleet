@@ -16,15 +16,19 @@
 - That M5 changed **no schema**, and which local files it added on the operator's machine
   (`contexts.yaml`, `.mirafleet.yaml`, the session handoff file) plus the heartbeat `actions`
   field (section 6.16).
+- The three GUI tables of migration 0003 (`gui_admins`, `gui_setup`, `gui_sessions`), why they
+  hold only hashes, the two new audit indexes, the `gui.*` and `audit.export` audit actions and
+  the filtered audit read (section 6.17).
 
 Each new database word is explained where it first appears, and the main ones are also in the
 [glossary](glossary.md). Quick versions: a **transaction** is a group of changes that all
 happen or none do; a **foreign key** is a column that must point at a row in another table; a
-**tombstone** (here) is an in-memory "this id is dead" marker. M1, M2 and M3 are done (13 Nov
-2026) and M5 is built; sections 6.1 to 6.14 describe the M2 schema and [section 6.15](#615-the-workspace-tables-migration-0002)
+**tombstone** (here) is an in-memory "this id is dead" marker. M1, M2, M3 and M4 are done and M5
+is built; sections 6.1 to 6.14 describe the M2 schema and [section 6.15](#615-the-workspace-tables-migration-0002)
 adds what M3 brought (two tables, one audit column, one state machine). M5 changed no schema:
 [section 6.16](#616-local-files-on-the-operators-machine-and-heartbeat-actions-m5-no-schema-change)
-lists the local files and the heartbeat field it added. The code lives in `internal/store` (the interface, pure Go with no SQL)
+lists the local files and the heartbeat field it added. M4 (the admin GUI) added migration 0003:
+[section 6.17](#617-the-gui-tables-migration-0003). The code lives in `internal/store` (the interface, pure Go with no SQL)
 and `internal/store/sqlite` (the implementation). Central is the only component with a
 database; runners keep a small local JSON-lines audit file and a `runner.yaml`, nothing more.
 
@@ -128,7 +132,8 @@ erDiagram
 `audit` is deliberately disconnected so history outlives what it describes.* (This picture is the
 M2 schema. The two workspace tables, `fleet_workspace` and `workspaces`, and the extra `audit`
 column `workspace` come from migration 0002 and have their own diagram in
-[6.15](#615-the-workspace-tables-migration-0002).)
+[6.15](#615-the-workspace-tables-migration-0002). The three GUI tables of migration 0003 have
+theirs in [6.17](#617-the-gui-tables-migration-0003).)
 
 What the three words in brackets mean. They say what the database does when someone deletes the
 row a foreign key points at (the "parent"):
@@ -415,7 +420,7 @@ exclusive lock that the busy handler does not always wait for. `pingRetry` retri
 ## 6.10 Migrations
 
 Schema changes are **embedded SQL files** `internal/store/sqlite/migrations/NNNN_name.sql`
-(`0001_init.sql` and `0002_workspaces.sql` today), applied by `migrate` in `migrate.go`.
+(`0001_init.sql`, `0002_workspaces.sql` and `0003_gui.sql` today), applied by `migrate` in `migrate.go`.
 
 - **Forward-only.** There are no "down" migrations. Rolling back means restoring a backup.
 - **Versioned with `PRAGMA user_version`**, an integer stored in the database header. After
@@ -435,14 +440,20 @@ Schema changes are **embedded SQL files** `internal/store/sqlite/migrations/NNNN
   statement. That is safe because it is an `int` parsed from a file name that was just validated,
   never user input.
 
-To add a column later: create `0003_add_something.sql`, write plain `ALTER TABLE ...`, and add a
-test in `storetest`. Never edit `0001_init.sql` or `0002_workspaces.sql` after they have shipped.
+To add a column later: create `0004_add_something.sql`, write plain `ALTER TABLE ...`, and add a
+test in `storetest`. Never edit `0001_init.sql`, `0002_workspaces.sql` or `0003_gui.sql` after
+they have shipped.
 
 **Migration 0002 in short** (M3, schema version 2): it creates `fleet_workspace` and `workspaces`
 with their indexes and adds the column `audit.workspace` with its index. Upgrading is automatic: the
 first `central run` of the new binary applies it in the same single transaction as any other
 migration, and an *older* binary then refuses to open the database (version 2 is newer than it
 knows). Take a backup of `mirafleet.db` before upgrading, because there is no "down".
+
+**Migration 0003 in short** (M4, schema version 3): it creates `gui_admins`, `gui_setup` and
+`gui_sessions` and two new `audit` indexes (`audit_actor`, `audit_request`). Same rules: automatic
+on the first `central run` of the new binary, in the one migration transaction, and an older
+binary then refuses to open the database. See [6.17](#617-the-gui-tables-migration-0003).
 
 ## 6.11 The audit table
 
@@ -470,7 +481,7 @@ log should not have to join five tables to learn that `alice` ran `restart-runne
 |---|---|---|
 | `id` | AUTOINCREMENT PK | Monotonic. `audit.list` pages by `since_id`; a SIEM exporter can tail it. |
 | `ts` | `INTEGER NOT NULL` | Unix ms when the event happened (injected clock `Service.now`). |
-| `source` | `TEXT` | Which **front end** (the door the request came through): `cli` (admin socket), `api` (operator API), `enroll`, and `gui` (planned, M4). `system` is used by the workspace reaper, reconcile and revoke cascades (M3): events nobody asked for. |
+| `source` | `TEXT` | Which **front end** (the door the request came through): `cli` (admin socket), `api` (operator API), `enroll`, and `gui` (the admin GUI, since M4: the actor is the GUI username and `remote` its TCP peer). `system` is used by the workspace reaper, reconcile and revoke cascades (M3): events nobody asked for. |
 | `actor_kind` | `TEXT` | The principal's kind. Values actually written today: `admin` (the local CLI), `operator` (the API), `enroll` (a peer joining or registering) and `system` (workspace housekeeping, with actor `reaper` or `revoke`). `runner` is a principal kind too but a runner has no API, so it never appears. |
 | `actor` | `TEXT` | Name of the actor. For the local admin it is `uid:<n>`; for an enrolling peer it is empty (the enrollee has no name yet). |
 | `remote` | `TEXT` | Source address (`host:port`) of an SSH peer, or `local` for the admin socket. |
@@ -487,7 +498,9 @@ log should not have to join five tables to learn that `alice` ran `restart-runne
 | `workspace` | `TEXT NOT NULL DEFAULT ''` | Added by migration 0002: the 32-hex `ws_id` the event concerns, or empty. Indexed (`audit_workspace`, only for non-empty values). |
 
 Indexes: `audit_ts (ts)` for time range queries; `audit_fleet_runner (fleet, runner)` for "show me everything
-on prod/db-1".
+on prod/db-1"; and, from migration 0003, `audit_actor (actor)` for "everything alice did" and
+`audit_request (request_id)` (only non-empty values) for "both rows of this request". The GUI's
+Audit screen filters on exactly these columns ([6.17](#617-the-gui-tables-migration-0003)).
 
 ### Example rows
 
@@ -529,6 +542,7 @@ This row was written in the **same transaction** as `UPDATE runners SET status =
 | registration secret created and rotated; **a code being shown** (never its value) | Heartbeats and `last_seen_at` writes |
 | every `action.run` (start plus outcome); denied calls and refused confirms | Forbidden methods attempted on `api@` (these go to the log) |
 | successful joins and registrations | |
+| GUI setup token made (`gui.setup_token`, never the token), setup done (`gui.setup`), login (`gui.login`), logout, password change, a session signed out, `gui.reset_admin`, `gui.lockout` (one row per locked-out address and window), `audit.export`, `fleet.set_confirm` | Failed GUI logins (logged with the address and the username length only) |
 | every `workspace.*` call, `list` included (start plus outcome for open, exec, read, write, close); refusals; reaper, reconcile and cascade changes (source `system`) | File contents, env values, and an exec's output (only names, paths, byte counts and SHA-256) |
 
 ## 6.12 File safety
@@ -886,6 +900,111 @@ they take, so it need not guess names. For that, an actions-mode runner now adds
   `actions.yaml` is still the security boundary (chapter 5, 5.2), and a runner that lied about its
   list would only mislead the model, whose call the guard would still refuse.
 
+## 6.17 The GUI tables (migration 0003)
+
+Migration `internal/store/sqlite/migrations/0003_gui.sql` (M4, schema version 3) adds three tables
+for the admin GUI. The rule behind all three: **store only hashes of secrets**. A copy of the
+database must not contain a working password, setup token or session cookie.
+
+```mermaid
+erDiagram
+    gui_admins ||--o{ gui_sessions : "admin_id (CASCADE)"
+
+    gui_admins {
+        integer id PK
+        text username
+        text pw_hash "Argon2id PHC string"
+        integer generation "starts at 1, bumped on a credential change"
+        text status "active or reset"
+        integer created_at "unix ms"
+        integer updated_at "unix ms"
+    }
+    gui_setup {
+        integer id PK "always 1: one row at most"
+        blob token_hash "SHA-256, 32 bytes"
+        integer expires_at "unix ms, 24 h after creation"
+        integer created_at "unix ms"
+    }
+    gui_sessions {
+        integer id PK
+        blob token_hash UK "SHA-256 of the cookie, 32 bytes"
+        integer admin_id FK
+        integer generation "the admin's generation at login"
+        integer created_at "unix ms"
+        integer last_active_at "unix ms"
+        integer expires_at "unix ms, absolute (created + 12 h)"
+        text remote "TCP peer ip:port"
+        text user_agent "clipped to 128 bytes"
+    }
+```
+
+*Look at: `gui_setup` has no foreign key and at most one row. A session points at an admin and
+disappears with it.*
+
+**`gui_admins`.** One account, `username` and `pw_hash` (the whole Argon2id string:
+`$argon2id$v=19$m=65536,t=3,p=2$<salt>$<hash>`, so cost parameters and salt travel with it and
+can be raised later). A partial unique index, `gui_admins_one_active ON (status) WHERE status =
+'active'`, lets the database itself refuse a second active admin. `status` is `active` or
+`reset`: `central gui reset-admin` changes the old row to `reset` (kept as history), and the next
+setup inserts a new active row. `generation` is the **credential generation**: it goes up when the
+password changes. A session is valid only while its copy equals the admin's number (flow 27).
+
+**`gui_setup`.** `id` is fixed to 1 by a `CHECK`, so there is at most one setup token at a time.
+`token_hash` is the SHA-256 of the `mfs1.` token; the clear text exists only in
+`<data>/gui/setup-token`. `CompleteGUISetup` compares in constant time, checks `expires_at`, inserts
+the admin and deletes this row in one transaction (flow 24).
+
+**`gui_sessions`.** `token_hash` is the SHA-256 of the cookie value (unique, indexed by that
+unique constraint); the cookie has 256 random bits, so a fast hash is enough here, unlike the
+password. `last_active_at` is updated at most once a minute; `expires_at` is the absolute
+12-hour limit. `remote` and `user_agent` only fill the Account screen's session list. Indexes
+`gui_sessions_admin (admin_id)` and `gui_sessions_expires (expires_at)` serve the lookups and the
+purge. The server keeps at most 16 rows per admin, deleting the oldest.
+
+**Two audit indexes** in the same migration: `audit_actor (actor)` and `audit_request (request_id)
+WHERE request_id <> ''`. Nothing else about `audit` changes.
+
+**GUI audit rows.** A login looks like this (compare 6.11's examples):
+
+| id | ts | source | actor_kind | actor | remote | fleet | runner | subject | action | params | outcome | exit_code | duration_ms | message | request_id |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1051 | 1794563980001 | gui | admin | dana | 198.51.100.20:50711 | | | | gui.login | NULL | ok | NULL | 0 | | |
+| 1052 | 1794564012330 | gui | admin | dana | 198.51.100.20:50711 | dev | build-1 | dev/build-1 | runner.revoke | `{"from":"active","to":"revoked"}` | ok | NULL | 0 | runner revoked | |
+
+Row 1052 is the same row a CLI revoke writes, except `source` is `gui` and the actor is `dana`
+with her browser's address instead of `uid:1000` and `local`.
+
+**Audit actions added in M4** (`internal/service/gui.go`, `audit.go`): `gui.setup_token` (source
+`system`), `gui.setup`, `gui.login`, `gui.logout`, `gui.password_change`, `gui.session_revoke`,
+`gui.reset_admin` (source `cli`), `gui.lockout` (source `gui`, outcome `denied`, one row per
+address and lockout window), `audit.export` (written *before* an export streams, with the filter
+as params) and `fleet.set_confirm` (`from` and `to` of the guard flag, from the GUI or from
+`central fleet set NAME -confirm=BOOL`). Failed logins are deliberately not audited: they are
+logged, so an attacker cannot fill the table.
+
+**New store methods.** `internal/store/store.go`, implemented in `internal/store/sqlite/gui.go`,
+all following 6.13 (a mutator takes `now` and its `AuditEvent` and commits both together):
+
+| Method | Contract |
+|---|---|
+| `GetGUIAdmin` | The active admin, or `ErrNotFound`. |
+| `PutGUISetup`, `EnsureGUISetup`, `CheckGUISetup` | Store a new setup token's hash (`ErrConflict` if an active admin exists); store one only if none is live; check a hash without writing. |
+| `CompleteGUISetup(hash, admin, now, ev)` | One transaction: row present, constant-time compare, not expired, no active admin; then insert the admin and delete the row. Wrong, expired or missing: `ErrStale`. Admin already there: `ErrConflict`. |
+| `SetGUIPassword(id, generation, hash, keep, ...)` | Compare-and-swap on `generation`, bump it, delete the admin's other sessions and insert the re-issued current one. `ErrConflict` on a mismatch. |
+| `ResetGUIAdmin` | Active admin becomes `reset`; every session row is deleted. |
+| `CreateGUISession`, `GetGUISession`, `TouchGUISession` | Insert (evicting the oldest beyond 16); read a session joined to its **active** admin (`ErrNotFound` otherwise); update `last_active_at` (not audited). |
+| `DeleteGUISession`, `DeleteOtherGUISessions`, `ListGUISessions`, `PurgeGUISessions` | Sign out one or all others (only the admin's own rows); list for the Account screen (no hashes); housekeeping delete of expired, idle and stale-generation rows (not audited). |
+| `QueryAudit(filter)` | The filtered, keyset-paged audit read below. `ListAudit(sinceID, limit)` is `QueryAudit` with only `AfterID` and `Limit`. |
+| `SetFleetConfirm(name, confirm, now, ev)` | Sets the guard flag of one fleet atomically with `ev`. |
+
+**The filtered audit read.** `store.AuditFilter` holds optional exact matches (`Fleet`, `Runner`,
+`Actor`, `Source`, `Outcome`, `Workspace`, `RequestID`, `Action`), a time range, `AfterID` /
+`BeforeID`, an `ActionPrefix` switch (so `runner.` matches every runner action), `Desc` and
+`Limit` (default 100, cap 1000). The SQL is built from fixed fragments with bound parameters only
+(a prefix is escaped for `LIKE`). **Keyset paging** means "give me the next 50 rows after id N":
+the GUI's Older and Newer links carry an id, not an offset, so a page costs the same however deep
+you go and no row is skipped or repeated while new rows arrive.
+
 ## Check your understanding
 
 1. Why does `runners` have a *partial* unique index on `(fleet_id, name)` but a plain `UNIQUE`
@@ -906,6 +1025,10 @@ they take, so it need not guess names. For that, an actions-mode runner now adds
    needed a database migration, and where does each live?
 10. A cloned repository contains a `.mirafleet.yaml` with `fleet: prod`. Why can it neither add a
     new central nor silently run commands on `prod`?
+11. A copy of `mirafleet.db` leaks. Why can the attacker not use `gui_sessions` to act as Dana,
+    and why does `gui_admins` still deserve protection?
+12. Dana changes her GUI password. Which column makes every other session invalid, and what does
+    the database guarantee about the number of active admins?
 
 <details>
 <summary>Answers</summary>
@@ -940,6 +1063,14 @@ they take, so it need not guess names. For that, an actions-mode runner now adds
     address or key, and an unknown context is `not_found`. A guarded fleet taken from a project
     default is refused: it must be named explicitly and confirmed, and central refuses without the
     exact `confirm`.
+11. `gui_sessions` holds only `SHA-256(cookie)`, and a cookie has 256 random bits, so the hash
+    cannot be reversed and nothing stored can be sent as a cookie (the CSRF key is not stored
+    either). `gui_admins.pw_hash` is still a target: with enough computing power an attacker can
+    try to crack the Argon2id hash offline, which is why the data directory is `0700` and the
+    password must be 12 characters or more.
+12. `gui_admins.generation`: the change bumps it, and a session whose `generation` differs fails
+    in `GUIAuthenticate` (the other session rows are also deleted in the same transaction). The
+    partial unique index `gui_admins_one_active` guarantees at most one `active` admin.
 
 </details>
 
@@ -1008,5 +1139,14 @@ Reference table for `internal/store/store.go`. Read the rules and the error tabl
 |---|---|
 | `RecordAudit(ev)` | Appends one row (its own transaction), returns the new id. Used for events with no state change: exec start and outcome rows, denials, re-registrations, "code shown". |
 | `ListAudit(sinceID, limit)` | Rows with `id > sinceID`, ascending; `limit <= 0` means 100 and the cap is 1000. Reads from the reader pool. |
+| `QueryAudit(filter)` | (M4) Filtered, keyset-paged read; see [6.17](#617-the-gui-tables-migration-0003). `ListAudit` is the special case with only `AfterID` and `Limit`. |
+
+**Admin GUI** (migration 0003; full contracts in [6.17](#617-the-gui-tables-migration-0003))
+
+| Method | Contract |
+|---|---|
+| `GetGUIAdmin`, `PutGUISetup`, `EnsureGUISetup`, `CheckGUISetup`, `CompleteGUISetup`, `SetGUIPassword`, `ResetGUIAdmin` | The single admin account, the one-time setup token and the credential generation. Hashes only. |
+| `CreateGUISession`, `GetGUISession`, `TouchGUISession`, `DeleteGUISession`, `DeleteOtherGUISessions`, `ListGUISessions`, `PurgeGUISessions` | Browser sessions, stored as `SHA-256(token)`. |
+| `SetFleetConfirm` | The guard flag of one fleet, atomically with its audit row. |
 
 **Housekeeping:** `Close()` closes both pools; later calls fail.

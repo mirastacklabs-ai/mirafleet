@@ -1,0 +1,86 @@
+{{/* Runners screens. Page.Data is runnersData; .Data.View picks the page body (list, detail, revoke).
+Fragments: runners/live (the polled list), runners/detail, runners/revoke. Runner-reported text is
+already made inert in Go (inertRunnerText) and is only ever printed as text here. */}}
+{{define "content"}}<div class="container">
+{{if eq .Data.View "list"}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>Runners</h1></div><div class="actions"><a class="btn btn-secondary" href="/tokens/new">New join token</a></div></header>
+<section class="panel" aria-label="Runners">
+<form class="filters" method="get" action="/runners">
+<div class="field"><label for="f-fleet">Fleet</label><select id="f-fleet" name="fleet"><option value="">All fleets</option>{{$ff := .Data.FFleet}}{{range .Data.Fleets}}<option value="{{.}}"{{if eq . $ff}} selected{{end}}>{{.}}</option>{{end}}</select></div>
+<div class="field"><label for="f-status">Status</label><select id="f-status" name="status"><option value="">Any</option><option value="pending"{{if eq .Data.FStatus "pending"}} selected{{end}}>Pending</option><option value="active"{{if eq .Data.FStatus "active"}} selected{{end}}>Active</option><option value="disabled"{{if eq .Data.FStatus "disabled"}} selected{{end}}>Disabled</option><option value="revoked"{{if eq .Data.FStatus "revoked"}} selected{{end}}>Revoked</option></select></div>
+<div class="field"><label for="f-online">Connection</label><select id="f-online" name="online"><option value="">Any</option><option value="yes"{{if eq .Data.FOnline "yes"}} selected{{end}}>Online</option><option value="no"{{if eq .Data.FOnline "no"}} selected{{end}}>Offline</option></select></div>
+<div class="choice"><input type="checkbox" id="f-revoked" name="revoked" value="1"{{if .Data.ShowRevoked}} checked{{end}}><label for="f-revoked">Show revoked</label></div>
+<div class="form-actions"><button class="btn btn-secondary btn-sm" type="submit">Filter</button><a class="btn btn-quiet btn-sm" href="/runners">Reset</a></div>
+</form>
+{{template "runners/live" .}}
+</section>
+{{else if eq .Data.View "detail"}}
+{{template "runners/detail" .}}
+{{else if eq .Data.View "revoke"}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>Revoke {{.Data.Ref}}</h1></div></header>
+{{template "runners/revoke" .}}
+{{end}}
+</div>{{end}}
+
+{{define "runners/live"}}<div id="runners-live" hx-get="{{.Data.LiveURL}}" hx-trigger="every 10s" hx-swap="outerHTML">
+{{with .Data}}{{if .Rows}}<div class="scroll"><table class="data">
+<caption class="visually-hidden">Runners</caption>
+<thead><tr><th scope="col">Fleet</th><th scope="col">Runner</th><th scope="col">Status</th><th scope="col">Connection</th><th scope="col">Labels</th><th scope="col">Executor</th><th scope="col" class="num">Free / slots</th><th scope="col">Version</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+<tbody>{{range .Rows}}<tr><td class="mono">{{.Fleet}}</td><td class="mono"><a href="{{.URL}}">{{.Name}}</a></td><td><span class="badge {{.Kind}}">{{.Status}}</span></td><td>{{template "ui/online" .}}</td>
+<td>{{range .Labels}}<span class="chip" title="{{.}}">{{.}}</span> {{end}}</td><td class="mono">{{.Executor}}</td><td class="num mono">{{.Slots}}</td><td class="mono">{{.Version}}</td>
+<td class="row-actions">{{$u := .URL}}{{range .Ops}}<form method="post" action="{{$u}}/{{.Op}}">{{template "ui/csrf" $}}<input type="hidden" name="back" value="list"><button class="btn btn-secondary btn-sm" type="submit">{{.Label}}</button></form> {{end}}{{if .CanRevoke}}<a class="btn btn-quiet btn-sm" href="{{.RevokeURL}}">Revoke...</a>{{end}}</td></tr>{{end}}</tbody>
+</table></div>
+{{else if .NoMatch}}<div class="empty"><h3>No runners match</h3><p>Change or reset the filters.</p></div>
+{{else}}{{template "ui/empty" .Empty}}{{end}}
+<p class="muted">Updated {{template "ui/time" .Updated}}</p>
+{{end}}
+</div>{{end}}
+
+{{define "runners/detail"}}{{with .Data.D}}<div class="stack" id="runner-detail">
+<header class="page-head"><div>{{template "ui/crumbs" $}}<h1>{{.Fleet}}/{{.Name}}</h1></div>
+<div class="actions">{{$u := .URL}}{{range .Ops}}<form method="post" action="{{$u}}/{{.Op}}">{{template "ui/csrf" $}}<input type="hidden" name="back" value="detail"><button class="btn btn-secondary" type="submit">{{.Label}}</button></form>{{end}}{{if .CanRevoke}}<a class="btn btn-danger" href="{{.RevokeURL}}">Revoke...</a>{{end}}</div></header>
+
+<section class="panel" aria-labelledby="rn-id"><div class="panel-head"><h2 id="rn-id">Identity</h2></div>
+<div class="panel-body"><dl class="kv">
+<dt>Status</dt><dd><span class="badge {{.Kind}}">{{.Status}}</span> {{template "ui/online" .}}</dd>
+<dt>Fingerprint</dt><dd class="mono">{{.Fingerprint}}</dd>
+<dt>Joined</dt><dd>{{template "ui/time" .Joined}}</dd>
+<dt>Last seen</dt><dd>{{template "ui/time" .LastSeen}}</dd>
+<dt>Join token</dt><dd class="mono">{{.Token}}</dd>
+{{if .Executor}}<dt>Executor</dt><dd class="mono">{{.Executor}}</dd><dt>Free / total slots</dt><dd class="mono">{{.Slots}}</dd>{{end}}
+</dl></div></section>
+
+<div class="grid cols-2">
+<section class="panel" aria-labelledby="rn-trusted"><div class="panel-head"><h2 id="rn-trusted">Trusted labels</h2></div>
+<div class="panel-body"><p class="hint">Set by the join token. Policy can rely on these.</p>
+{{if .Labels}}<dl class="kv">{{range .Labels}}<dt class="mono">{{.K}}</dt><dd class="mono">{{.V}}</dd>{{end}}</dl>{{else}}<p class="muted">None.</p>{{end}}</div></section>
+<section class="panel" aria-labelledby="rn-info"><div class="panel-head"><h2 id="rn-info">Reported by the runner</h2></div>
+<div class="panel-body"><p class="hint">Informational: the runner sends this in its heartbeat and it is not verified.</p>
+{{if .Info}}<dl class="kv">{{range .Info}}<dt class="mono">{{.K}}</dt><dd class="mono">{{.V}}</dd>{{end}}</dl>{{else}}<p class="muted">Nothing reported yet.</p>{{end}}</div></section>
+</div>
+
+<section class="panel" aria-labelledby="rn-actions"><div class="panel-head"><h2 id="rn-actions">Advertised actions</h2></div>
+<div class="panel-body"><p class="hint">Informational: the runner's actions.yaml decides what can run.</p></div>
+{{if .Actions}}<div class="scroll"><table class="data"><thead><tr><th scope="col">Action</th><th scope="col">Parameter</th><th scope="col">Pattern</th><th scope="col">Default</th></tr></thead>
+<tbody>{{range .Actions}}{{$n := .Name}}{{if .Params}}{{range .Params}}<tr><td class="mono">{{$n}}</td><td class="mono">{{.Name}}</td><td class="mono clip" title="{{.Pattern}}">{{.Pattern}}</td><td class="mono">{{if .Required}}<span class="muted">required</span>{{else}}{{.Default}}{{end}}</td></tr>{{end}}{{else}}<tr><td class="mono">{{$n}}</td><td colspan="3" class="muted">no parameters</td></tr>{{end}}{{end}}</tbody></table></div>
+{{else}}<div class="panel-body"><p class="muted">No actions advertised.</p></div>{{end}}</section>
+
+<section class="panel" aria-labelledby="rn-ws"><div class="panel-head"><h2 id="rn-ws">Workspaces on this runner</h2></div>
+{{if .Workspaces}}<div class="scroll"><table class="data"><thead><tr><th scope="col">Workspace</th><th scope="col">Operator</th><th scope="col">Image</th><th scope="col">State</th></tr></thead>
+<tbody>{{range .Workspaces}}<tr><td class="mono">{{.ID}}</td><td class="mono">{{.Operator}}</td><td class="mono clip" title="{{.Image}}">{{.Image}}</td><td>{{.State}}</td></tr>{{end}}</tbody></table></div>
+{{else}}<div class="panel-body"><p class="muted">None.</p></div>{{end}}</section>
+
+<section class="panel" aria-labelledby="rn-audit"><div class="panel-head"><h2 id="rn-audit">Recent audit rows</h2><a class="btn btn-quiet btn-sm" href="/audit?fleet={{.Fleet}}&amp;runner={{.Name}}">All</a></div>
+{{if .Audit}}<div class="scroll"><table class="data"><thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">Action</th><th scope="col">Outcome</th></tr></thead>
+<tbody>{{range .Audit}}<tr><td class="nowrap">{{template "ui/time" .Time}}</td><td class="mono clip" title="{{.Actor}}">{{.Actor}} <span class="muted">{{.Source}}</span></td><td class="mono">{{.Action}}</td><td>{{template "ui/badge" .Badge}}</td></tr>{{end}}</tbody></table></div>
+{{else}}<div class="panel-body"><p class="muted">No audit rows.</p></div>{{end}}</section>
+</div>{{end}}{{end}}
+
+{{define "runners/revoke"}}<div class="dialog danger" role="group" aria-labelledby="rv-title" id="revoke-dialog">
+<div class="dialog-head"><h2 id="rv-title">Revoke runner {{.Data.Ref}}</h2></div>
+<form class="dialog-body" method="post" action="{{.Data.ActionURL}}">
+{{template "ui/csrf" .}}<input type="hidden" name="back" value="{{.Data.Back}}">
+<ul class="effects"><li>Its connection is closed and it cannot reconnect.</li><li>Work in flight on it is cancelled.</li><li>Its workspaces are closed.</li><li>Its key can never enrol again. This cannot be undone.</li></ul>
+<div class="field{{if .Data.Err}} has-error{{end}}"><label for="rv-confirm">Type <code>{{.Data.Ref}}</code> to confirm</label><input type="text" id="rv-confirm" name="confirm" value="{{.Data.Typed}}" autocomplete="off"{{if .Data.Err}} aria-invalid="true"{{end}}>{{template "ui/field-error" .Data.Err}}</div>
+<div class="form-actions"><button class="btn btn-danger" type="submit">Revoke runner</button><a class="btn btn-quiet" href="{{.Data.DetailURL}}">Cancel</a></div>
+</form></div>{{end}}
