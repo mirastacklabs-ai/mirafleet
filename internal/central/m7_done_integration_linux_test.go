@@ -577,9 +577,6 @@ func TestM7DoneIntegration(t *testing.T) {
 	if so := devRun("echo SOCK=$SSH_AUTH_SOCK PROXY=${HTTPS_PROXY:+set}"); !strings.Contains(so, "SOCK=/") || !strings.Contains(so, "PROXY=set") {
 		t.Fatalf("after a runner restart the adopted session has no credential wiring: %q", so)
 	}
-	// Known P2: pre-restart usage events live in runner memory and are lost on restart. A second
-	// pull after the restart makes sure central's audit has a registry row to check in point 6.
-	devRun("curl -sS -o /dev/null -H 'Accept: application/vnd.oci.image.manifest.v1+json' https://registry.gitlab.test/v2/acme/app/manifests/1.0")
 	devRun("cd app-ssh && git -c user.name=dev -c user.email=dev@x.test commit -qam 'edit over ssh' && git push -q origin HEAD:refs/heads/from-ssh")
 	devRun("cd app-https && echo https >> README.md && git -c user.name=dev -c user.email=dev@x.test commit -qam 'edit over https' && git push -q origin HEAD:refs/heads/from-https")
 	refs := fake.Refs(t, "acme/app")

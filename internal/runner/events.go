@@ -6,8 +6,13 @@ package runner
 // are dropped and counted; the next batch reports the count (central writes events.dropped).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -37,6 +42,9 @@ type eventAgg struct {
 	maxKeys int
 	pending map[evKey]int64
 	dropped int64
+
+	spool     string // spool file ("" = memory only), see persist
+	lastSpool []byte // what the spool file holds (persist goroutine only)
 }
 
 func newEventAgg() *eventAgg {
@@ -196,6 +204,104 @@ func (r *Runner) runEvents(ctx context.Context, client *ssh.Client) {
 				ch = nil
 				break
 			}
+		}
+	}
+}
+
+// Spool (H-21): the unsent table is written to Config.EventSpool every eventSpoolEvery and on a
+// graceful stop, and loaded at start, so a restart or a crash loses at most one interval. It is
+// at-least-once: events sent in the last interval before a crash are sent again. The file holds
+// no secrets (counts per credential name, host and status), mode 0600, replaced atomically.
+
+var eventSpoolEvery = 5 * time.Second
+
+type spoolFile struct {
+	Events  []transport.Event `json:"events,omitempty"`
+	Dropped int64             `json:"dropped,omitempty"`
+}
+
+func (a *eventAgg) snapshot() []byte {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.pending) == 0 && a.dropped == 0 {
+		return nil
+	}
+	sf := spoolFile{Dropped: a.dropped}
+	for k, n := range a.pending {
+		ws := int(a.window / time.Second)
+		sf.Events = append(sf.Events, transport.Event{Type: transport.EventCredentialUse, Session: k.session,
+			Credential: k.cred, Host: k.host, Status: k.status, Count: n, WindowMs: k.windowMs, WindowS: max(ws, 1)})
+	}
+	sort.Slice(sf.Events, func(i, j int) bool { // stable bytes, so an unchanged table is not rewritten
+		x, y := sf.Events[i], sf.Events[j]
+		return fmt.Sprint(x.WindowMs, x.Session, x.Credential, x.Host, x.Status) < fmt.Sprint(y.WindowMs, y.Session, y.Credential, y.Host, y.Status)
+	})
+	b, _ := json.Marshal(sf)
+	return b
+}
+
+// persist writes the table to the spool file when it changed since the last write; an empty
+// table removes the file.
+func (a *eventAgg) persist() {
+	if a.spool == "" {
+		return
+	}
+	b := a.snapshot()
+	if bytes.Equal(b, a.lastSpool) {
+		return
+	}
+	var err error
+	if b == nil {
+		if err = os.Remove(a.spool); errors.Is(err, fs.ErrNotExist) {
+			err = nil
+		}
+	} else {
+		tmp := a.spool + ".tmp"
+		if err = os.WriteFile(tmp, b, 0o600); err == nil {
+			err = os.Rename(tmp, a.spool)
+		}
+	}
+	if err == nil {
+		a.lastSpool = b
+	}
+}
+
+// loadSpool merges a previous run's spool into the table. Entries central would refuse are
+// dropped here so they cannot block the queue.
+func (a *eventAgg) loadSpool(path string) {
+	a.spool = path
+	if a.spool == "" {
+		return
+	}
+	raw, err := os.ReadFile(a.spool)
+	if err != nil {
+		return
+	}
+	a.lastSpool = raw // so an empty or unusable table replaces/removes the file
+	var sf spoolFile
+	if json.Unmarshal(raw, &sf) != nil {
+		return
+	}
+	var ok []transport.Event
+	for _, ev := range sf.Events {
+		if (&transport.EventBatch{Events: []transport.Event{ev}}).Validate() == nil {
+			ok = append(ok, ev)
+		}
+	}
+	a.requeue([]*transport.EventBatch{{Events: ok, Dropped: max(sf.Dropped, 0)}})
+}
+
+// runSpool persists the table until ctx ends, then once more.
+func (a *eventAgg) runSpool(ctx context.Context) {
+	t := time.NewTicker(eventSpoolEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			a.persist()
+			return
+		case <-t.C:
+			a.persist()
 		}
 	}
 }

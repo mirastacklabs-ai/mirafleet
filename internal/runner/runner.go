@@ -40,9 +40,12 @@ type Config struct {
 	// CorporateCA (optional PEM) is added to the system roots the credential broker verifies
 	// upstream servers against (host mode, docs/M7.md 4.4).
 	CorporateCA []byte
-	Version     string
-	Audit       *audit.Writer
-	Logf        func(format string, args ...any)
+	// EventSpool (optional) is a file where unsent usage events are kept across a restart or a
+	// crash (docs/M7.md 4.5). Empty: events live in memory only.
+	EventSpool string
+	Version    string
+	Audit      *audit.Writer
+	Logf       func(format string, args ...any)
 
 	HeartbeatEvery time.Duration // default 15s
 	// HeartbeatTimeout is how long to wait for central's heartbeat reply before dropping the
@@ -105,6 +108,7 @@ func New(cfg Config) *Runner {
 		r.ws = newWSState(cfg.Workspace, cfg.WorkspaceConfig)
 		if hooks, ok := cfg.Workspace.(SessionHooks); ok && devCapable(cfg.Workspace) {
 			r.dev = newDevMgr(r, hooks)
+			r.dev.events.loadSpool(cfg.EventSpool)
 			r.ws.gone = r.dev.close
 			r.ws.adopt = r.dev.adopt
 		}
@@ -130,7 +134,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	go func() { defer close(sampler); r.runDiskSampler(sctx) }()
 	defer func() { stopSampler(); <-sampler }()
 	if r.dev != nil {
-		defer r.dev.closeAll() // sockets and proxies go with the runner; secrets were memory only
+		spooled := make(chan struct{})
+		go func() { defer close(spooled); r.dev.events.runSpool(sctx) }()
+		defer func() { stopSampler(); <-spooled }() // after the senders stopped: the last write
+		defer r.dev.closeAll()                      // sockets and proxies go with the runner; secrets were memory only
 	}
 	backoff := r.cfg.BackoffMin
 	for ctx.Err() == nil {
