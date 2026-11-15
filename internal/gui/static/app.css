@@ -371,6 +371,7 @@ html.js .js-only { display: inline-flex; }
 .htmx-indicator { opacity: 0; transition: opacity 150ms ease-in; }
 .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
 .progress { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 200; background: var(--signal); }
+.scroll + p.muted, .scroll + .updating { margin: 0; padding: 10px 16px; }
 .updating { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
 
 /* ---- Styleguide only ---- */
@@ -397,6 +398,14 @@ html.js .js-only { display: inline-flex; }
   .copy-row { flex-direction: column; }
   .pager { flex-direction: column; }
   .stat { font-size: 1.8rem; }
+  /* 16px fields: iOS zooms the page on focus below that. */
+  input[type="text"], input[type="password"], input[type="search"], input[type="number"], input[type="datetime-local"], input[type="date"],
+  select, textarea { font-size: 16px; }
+  .page-head .actions .btn, .form-actions .btn, .btn-group .btn { flex: 1 1 auto; }
+  .dialog-head { padding: 14px 14px 0; }
+  .dialog-body { padding: 8px 14px 16px; }
+  .panel-body, .filters, .pager { padding-left: 12px; padding-right: 12px; }
+  .empty { padding: 24px 12px; }
 }
 @media (max-width: 400px) {
   :root { --gutter: 12px; }
