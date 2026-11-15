@@ -58,8 +58,10 @@ maintainer's explicit go-ahead.
 1. `main` is green: required checks, and the slow CI jobs (`integration`, `dist`, `e2e-systemd`)
    on the commit you will tag. `release.yml` re-checks this and stops if any is missing or red.
 2. `scripts/release.sh m6check` is green locally (or its steps ran in CI).
-3. The version bump is merged: `scripts/dev.sh go run ./tools/relgen bump X.Y.Z`, committed on a
-   branch, merged by PR (section 4). `relgen check vX.Y.Z` must pass; the workflow runs it again.
+3. The version bump to the exact tag is merged: `scripts/dev.sh go run ./tools/relgen bump X.Y.Z`
+   (`X.Y.Z-rc.N` for a rehearsal tag), committed on a branch, merged by PR (section 4).
+   `relgen check vX.Y.Z[-rc.N]` must pass; the workflow's `verify` job runs it again and stops on a
+   mismatch. A tag that failed `verify` is never moved: bump to the next rc and tag that.
 4. The accounts in section 2 exist (P1).
 
 **Rehearsal: `v0.6.0-rc.1`**
@@ -78,7 +80,7 @@ maintainer's explicit go-ahead.
    `cosign verify` on both image names and compare the digests; `npx -y @mirastacklabs/mirafleet@0.6.0-rc.1 version`.
 
 **Release: `v0.6.0`**
-10. Fix anything the rehearsal found, merge it, bump if needed.
+10. Fix anything the rehearsal found, merge it, and merge `relgen bump X.Y.Z` (step 3).
 11. **yes** Tag and push `v0.6.0` (P4), same commands as step 5.
 12. **yes** Approve the jobs in order (P5): `draft`, `publish-release`, `image`, `npm`, `brew`,
     `mcp-registry`. The registry version is effectively permanent.

@@ -717,7 +717,9 @@ func TestDuplicateRunnerNameRefused(t *testing.T) {
 
 func TestSameKeyReconnectReplacesSession(t *testing.T) {
 	e := newEnv(t, "r1")
-	e.startRunner("r1")
+	// Two raw connections, not startRunner: a real runner reconnects when it is replaced and
+	// could replace the second connection before its heartbeat reply (EOF flake).
+	e.rawRunner("r1", nil)
 	e.waitOnline("r1")
 	old := e.session("r1")
 	e.rawRunner("r1", nil) // same key, second connection
