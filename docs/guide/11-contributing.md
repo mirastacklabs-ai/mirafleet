@@ -161,8 +161,8 @@ Practical rules (the full list is in [STYLE.md](STYLE.md)):
    `service.RunAction`), never line numbers. If the guide and the code disagree, the code is
    right: fix the guide.
 2. Say "planned" for anything not built yet, and link the milestone.
-3. Use the running example: Acme, `central.example.com:2222`, fleets `dev` and `prod`, runners
-   `build-1` and `db-1`, operators `alice` and `bob`. Never real hostnames, people or secrets.
+3. Use the running example: MIRASTACK LABS, `central.example.com:2222`, fleets `dev` and `prod`, runners
+   `build-1` and `db-1`, operators `durga` and `kalyan`. Never real hostnames, people or secrets.
 4. Explain a term the first time it appears and link [glossary.md](glossary.md). Add new terms
    there.
 5. Each chapter starts with "What you will learn" and ends with "Check your understanding"

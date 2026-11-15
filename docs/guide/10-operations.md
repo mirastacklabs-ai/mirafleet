@@ -1,7 +1,7 @@
 # 10. Operations
 
 This chapter is for the person who installs and looks after a mirafleet deployment. It gives a
-complete walk-through for Acme, a reference for every command, the files each machine keeps, how
+complete walk-through for MIRASTACK LABS, a reference for every command, the files each machine keeps, how
 to write `actions.yaml`, and a table of error messages with fixes.
 
 ## What you will learn
@@ -40,15 +40,15 @@ to write `actions.yaml`, and a table of error messages with fixes.
 
 ## 10.1 The cast
 
-Acme has one central server and two fleets.
+MIRASTACK LABS has one central server and two fleets.
 
 | Thing | Name |
 |---|---|
 | Central | `central.example.com`, SSH port `2222` |
 | Fleets | `dev`, `prod` |
 | Runners | `build-1` (in `dev`), `db-1` (in `prod`) |
-| Admin | Dana, who runs `mirafleet central ...` on the central host and, since M4, can use the admin GUI at `https://central.example.com:8443` |
-| Operators | `alice`, `bob` (people or agents on laptops; registered keys, not Linux accounts) |
+| Admin | aarvee, who runs `mirafleet central ...` on the central host and, since M4, can use the admin GUI at `https://central.example.com:8443` |
+| Operators | `durga`, `kalyan` (people or agents on laptops; registered keys, not Linux accounts) |
 
 Who runs what:
 
@@ -56,7 +56,7 @@ Who runs what:
 |---|---|---|---|
 | `central.example.com` | Linux | `mirafleet central` | accepts TCP 2222 from runners and operators, and TCP 8443 (HTTPS) from the admin's browser; see [10.11](#1011-the-admin-gui-m4) for how to restrict 8443 |
 | `build-1`, `db-1` | Linux | `mirafleet runner` | **outbound only**: connect to central:2222; no open port |
-| alice's and bob's laptops | Linux, macOS, Windows (amd64 and arm64) | `mirafleet mcp` | outbound to central:2222 |
+| durga's and kalyan's laptops | Linux, macOS, Windows (amd64 and arm64) | `mirafleet mcp` | outbound to central:2222 |
 
 Central and runner refuse to start on other operating systems:
 `mirafleet: mirafleet central is supported on linux only (current: darwin)`.
@@ -275,23 +275,23 @@ host key:  SHA256:Qm9ndXNFeGFtcGxlRmluZ2VycHJpbnRPbmx5Rm9yRG9jcw
 
 The code changes every 60 seconds, so it is only useful for a short time; it is derived from the
 registration secret and the clock. Any number of operators may use one code within its window.
-Dana hands it to alice over a channel she trusts (a call, a chat to the person). The `host key` line is
+aarvee hands it to durga over a channel they trust (a call, a chat to the person). The `host key` line is
 the fingerprint of central's key, so the person can double-check out of band.
 
 ### Step 10: register the operator (`mcp login`)
 
-On alice's laptop:
+On durga's laptop:
 
 ```console
-$ echo "$REGISTRATION_CODE" | mirafleet mcp login central.example.com:2222 -name alice -code -
-registered operator "alice" (active); context "alice" -> central.example.com:2222 is now current
-config: /home/alice/.config/mirafleet
+$ echo "$REGISTRATION_CODE" | mirafleet mcp login central.example.com:2222 -name durga -code -
+registered operator "durga" (active); context "durga" -> central.example.com:2222 is now current
+config: /home/durga/.config/mirafleet
 ```
 
-This generates alice's key pair (first time only), connects with the host key pinned from the
-code, registers her public key under the name `alice`, saves central's key into `known_hosts`
-and records a **context** (name plus address) in `contexts.yaml`. bob does the same with
-`-name bob`. There is no approval step for operators: a valid code is the approval.
+This generates durga's key pair (first time only), connects with the host key pinned from the
+code, registers durga's public key under the name `durga`, saves central's key into `known_hosts`
+and records a **context** (name plus address) in `contexts.yaml`. kalyan does the same with
+`-name kalyan`. There is no approval step for operators: a valid code is the approval.
 
 ### Step 11: use it (`mcp api`)
 
@@ -335,8 +335,8 @@ $ mirafleet mcp api action.run '{"fleet":"dev","runner":"build-1","action":"hell
 ```
 
 Now the guarded `prod` fleet. Suppose `db-1` joined `prod` the same way as `build-1` joined
-`dev` (steps 4 to 7), its `actions.yaml` has a `tail-logs` action (see 10.5), and bob has
-registered like alice. `prod` was created with `-confirm`, so every call must carry
+`dev` (steps 4 to 7), its `actions.yaml` has a `tail-logs` action (see 10.5), and kalyan has
+registered like durga. `prod` was created with `-confirm`, so every call must carry
 `"confirm":"prod"`:
 
 ```console
@@ -359,13 +359,13 @@ them. Claude Code (and other agents) call the same methods through **MCP tools**
 
 ### Step 12: look at the audit log
 
-Dana looks at what bob's `tail-logs` call left behind:
+aarvee looks at what kalyan's `tail-logs` call left behind:
 
 ```console
 $ mirafleet central audit -since 1040 -limit 2
 ID    TIME                  SOURCE  ACTOR         ACTION      TARGET     OUTCOME  MESSAGE
-1041  2026-11-13T10:20:01Z  api     operator:bob  action.run  prod/db-1  start
-1042  2026-11-13T10:20:01Z  api     operator:bob  action.run  prod/db-1  ok
+1041  2026-11-13T10:20:01Z  api     operator:kalyan  action.run  prod/db-1  start
+1042  2026-11-13T10:20:01Z  api     operator:kalyan  action.run  prod/db-1  ok
 ```
 
 (The message column is empty for these rows. Both rows carry the same `request_id`,
@@ -724,7 +724,7 @@ central log. The tables are grouped by where you are when it goes wrong.
 | `conflict: conflict` (on login) | The name is held by another operator, or this key already belongs to a runner or a revoked operator. | Choose another name; revoked operators must use a new key (delete the config dir). |
 | `this data directory has already joined a central (runner.yaml exists); use a fresh -data directory` | `runner join` ran twice. | Use a new `-data`, or delete the old directory if you really want to start over. |
 | `host key does not match the pinned key (server presented SHA256:...)` | During join/login: the server's key is not the one in your token/code. Could be the wrong address, a rebuilt central, or an attack. | Do not continue. Verify the address and the fingerprint (`central operator code` prints it). |
-| `invalid name "Alice" (lowercase letters, digits, . _ -; max 63)` | Name rules. | Use a lowercase name. |
+| `invalid name "durga" (lowercase letters, digits, . _ -; max 63)` | Name rules. | Use a lowercase name. |
 | `central address "central.example.com": ... missing port in address` | The address needs a port. | `central.example.com:2222` |
 
 ### Starting and running a runner
@@ -845,7 +845,7 @@ reusable, revoked keys are not).
 Every outstanding code dies. Operators that already registered keep working (they authenticate
 with their keys, not the code). To remove an operator, `central operator revoke NAME`.
 
-**An operator's laptop was stolen.** Dana runs `central operator revoke NAME` straight away. It closes the
+**An operator's laptop was stolen.** aarvee runs `central operator revoke NAME` straight away. It closes the
 live connection and cancels any running action. The thief cannot use the key afterwards.
 
 **How do I back up central?** See section 10.8.
@@ -865,7 +865,7 @@ Use absolute paths, avoid shell syntax, and check the user's permissions.
 row and an outcome row with the same `request_id`, plus the operator's name. Parameters appear
 in the start row, so never design an action that takes a secret as a parameter.
 
-**Is there a GUI?** Yes, since M4: a web console for Dana, served by central on port 8443
+**Is there a GUI?** Yes, since M4: a web console for aarvee, served by central on port 8443
 (section 10.11). It does nothing the CLI cannot do; both call the same service code, and the GUI's
 changes are in the same audit log with `source` `gui`. Use the CLI for scripts and the GUI for
 looking around and for one-off changes.
@@ -977,12 +977,12 @@ stays on the operator's laptop; only commands and file bytes cross
 5. cgroup limits: CPU, memory with swap equal to memory, pids; a soft disk quota on `/workspace`.
 6. What crosses: argv, allow-listed env and file bytes in; exit code, output and file bytes out.
 7. What cannot: host mounts, devices, the containerd socket, API keys, host networking.
-8. The LLM API key and the SSH key stay on alice's laptop; the agent never runs in the container.
+8. The LLM API key and the SSH key stay on durga's laptop; the agent never runs in the container.
 
 ### 10.9.1 What you are setting up
 
 - **A workspace fleet** on central (`fleet create -mode workspace`): the image allowlist, limits,
-  network mode and lifetimes, set by Dana. Alice cannot change them.
+  network mode and lifetimes, set by aarvee. durga cannot change them.
 - **A workspace runner** per host: `mirafleet runner run -workspace /etc/mirafleet/workspace.yaml`.
   The runner's file is a second, independent policy. The **effective policy is the intersection**
   of fleet and runner: the runner builds the whole container spec itself from a fixed template and
@@ -1019,7 +1019,7 @@ unconfined profiles or host mounts: they cannot be configured.
 executor: containerd
 concurrent: 4
 max_age: 168h
-images: ["docker.io/library/golang@sha256:*", "ghcr.io/acme/dev@sha256:*"]
+images: ["docker.io/library/golang@sha256:*", "ghcr.io/mirastack/dev@sha256:*"]
 limits: {cpus: 4, memory: 8GiB, pids: 2048, tmpfs: 1GiB, disk: 20GiB, max_file: 64MiB, exec_max: 1h}
 network: [none, egress]
 env_allow: [LANG, LC_ALL, TERM, CI, GOFLAGS, NODE_ENV]
@@ -1143,13 +1143,13 @@ every start) holds the only host directories a workspace can touch:
 
 ### 10.9.5 Step by step: a containerd workspace fleet
 
-For Acme: central is running ([10.2](#102-install-and-run-step-by-step)); Dana adds a **new** fleet
+For MIRASTACK LABS: central is running ([10.2](#102-install-and-run-step-by-step)); aarvee adds a **new** fleet
 (a fleet's mode is fixed at creation, so on the central of the earlier walkthrough, where `dev` is an
 actions fleet, pick another name such as `dev2`). Everything below the first command runs on the
 **runner host**, as root, on a dedicated machine.
 
 ```bash
-# On central (as Dana): a workspace fleet. Digest-pinned image, no network, modest limits.
+# On central (as aarvee): a workspace fleet. Digest-pinned image, no network, modest limits.
 IMG=docker.io/library/golang@sha256:<64 hex digits you verified>
 mirafleet central fleet create dev -mode workspace -executor containerd \
   -image "$IMG" -images 'docker.io/library/golang@sha256:*' \
@@ -1377,30 +1377,30 @@ Nothing is installed on central or the runners for M5: a laptop is just another 
 
 ### 10.10.2 Log in, per OS
 
-Get a fresh code from Dana (Step 9: `mirafleet central operator code`; it lives 60 seconds and
-any number of operators can use one), then, on alice's laptop:
+Get a fresh code from aarvee (Step 9: `mirafleet central operator code`; it lives 60 seconds and
+any number of operators can use one), then, on durga's laptop:
 
 ```console
-$ echo "$CODE" | mirafleet mcp login central.example.com:2222 -name alice -code -
-registered operator "alice" (active); context "alice" -> central.example.com:2222 is now current
-config: /Users/alice/Library/Application Support/mirafleet
+$ echo "$CODE" | mirafleet mcp login central.example.com:2222 -name durga -code -
+registered operator "durga" (active); context "durga" -> central.example.com:2222 is now current
+config: /Users/durga/Library/Application Support/mirafleet
 ```
 
 On Windows, pipe the code in the same way (for example `$code | mirafleet mcp login
-central.example.com:2222 -name alice -code -` in PowerShell). The code is **never** a command-line
+central.example.com:2222 -name durga -code -` in PowerShell). The code is **never** a command-line
 argument: it would be visible in the process list and the shell history. The output's last line
 names the config directory; the table in section 10.4 lists the default for each OS. Check:
 
 ```console
 $ mirafleet mcp context list
-* alice	central.example.com:2222	default_fleet=-
+* durga	central.example.com:2222	default_fleet=-
 ```
 
 On Windows the first login creates `%LocalAppData%\mirafleet` with the protected permission list
 described in section 10.4. If the key's permissions are wrong later (someone copied the folder,
 a backup tool reset the permissions), the server will say it cannot use the key. Do not loosen
 anything; run `mirafleet mcp login` again after deleting the config directory if you need a new
-identity (the old one stays registered until Dana revokes it).
+identity (the old one stays registered until aarvee revokes it).
 
 ### 10.10.3 Contexts and project defaults
 
@@ -1525,8 +1525,8 @@ are written below as `code: message`; on the wire they are `{"error":{"code":"..
 | The harness shows the server as failed, or the tools are missing; Claude Code `/mcp` shows `plugin:mirafleet:mirafleet` failed | **`PATH`.** The harness started `mirafleet` and the system could not find it. A harness started from a desktop icon, an IDE or a service does not inherit your shell's `PATH`. On Windows it must be a real `mirafleet.exe`, not a `.cmd`/`.bat` wrapper. | `which mirafleet` (`where mirafleet` on Windows) in the same kind of environment; put the binary in a system-wide directory, or start the harness from a shell where it resolves. |
 | Tool error `unavailable: not set up: run `mirafleet mcp login ...`` | **Not set up.** No context, no key, an empty `known_hosts`, or the config directory cannot be found (no `%LocalAppData%`, no home). The server still starts and lists its tools. | `mirafleet mcp context list`. If empty, log in (10.10.2). If it lists contexts, the harness may run with another user or `MIRAFLEET_CONFIG_DIR` than your shell: compare. |
 | `unauthenticated: the operator key cannot be used: run `mirafleet mcp login ...`` | The key file is unreadable or its permissions are wrong (mode wider than 0600, or on Windows an owner or permission list that is not private). Detail is on stderr. | Fix who can read the file (`chmod 600`); on Windows, do not edit the list by hand, re-create the config directory. |
-| `unauthenticated: central rejected the operator key: run `mirafleet mcp login ...`` | Central does not know this key: your operator was revoked, you never registered, or Dana replaced central's database. | Ask Dana to check `central operator list`. A revoked operator needs a new key (delete the config directory and log in again). |
-| `unavailable: central's host key does not match the pinned key; the server may have been rebuilt or intercepted` | **Host-key pinning.** The key central presented is not the one saved in `known_hosts` at login. Either central was rebuilt (a new `central init` creates a new key), or someone is in the middle. No request was sent. mirafleet never trusts a new key automatically. | Do not just retry. Ask Dana for central's fingerprint (it is printed by `central operator code`, "host key") and compare. If the rebuild is expected, log in again with a fresh code: it replaces the pinned line for that address. |
+| `unauthenticated: central rejected the operator key: run `mirafleet mcp login ...`` | Central does not know this key: your operator was revoked, you never registered, or aarvee replaced central's database. | Ask aarvee to check `central operator list`. A revoked operator needs a new key (delete the config directory and log in again). |
+| `unavailable: central's host key does not match the pinned key; the server may have been rebuilt or intercepted` | **Host-key pinning.** The key central presented is not the one saved in `known_hosts` at login. Either central was rebuilt (a new `central init` creates a new key), or someone is in the middle. No request was sent. mirafleet never trusts a new key automatically. | Do not just retry. Ask aarvee for central's fingerprint (it is printed by `central operator code`, "host key") and compare. If the rebuild is expected, log in again with a fresh code: it replaces the pinned line for that address. |
 | `unavailable: cannot reach central` (one context) | **A dead context.** Wrong address, central down, firewall, or no network. Other contexts still work: `list_fleets` shows the dead one as an entry in `errors[]` and the rest as normal. | `mirafleet mcp context list` (is the address right?), check central is running and reachable on its port. `mirafleet mcp context remove NAME` drops a context you no longer use; `context use NAME` changes the current one. |
 | `bad_request: no context selected: pass `context` (one of a, b) or run `mirafleet mcp context use NAME`` | Several contexts and none is current, none given by flag or project file. | `mirafleet mcp context use NAME`. |
 | `not_found: unknown context "x" (known: ...)` | A flag, the project file or the model named a context you do not have. | Fix `.mirafleet.yaml` or the `-context` flag. |
@@ -1557,14 +1557,14 @@ are written below as `code: message`; on the wire they are `{"error":{"code":"..
 
 ### 10.11.1 What it is, and when to use it
 
-The admin GUI is a web console that **central itself serves** to Dana's browser. It shows what
-`mirafleet central ...` shows and lets her do the same changes, with a confirmation step on every
+The admin GUI is a web console that **central itself serves** to aarvee's browser. It shows what
+`mirafleet central ...` shows and lets aarvee do the same changes, with a confirmation step on every
 destructive one. It is not for agents or operators (they have no password and no way to reach it
 that matters), and it is not a second implementation: each click calls the same `service` method
 as the matching CLI command and leaves the same audit row, with `source` `gui` instead of `cli`
 ([chapter 8.11](08-code-tour.md#811-follow-a-revoke-click-in-the-gui-m4)).
 
-| Screen | What Dana does there | CLI equivalent |
+| Screen | What aarvee does there | CLI equivalent |
 |---|---|---|
 | Overview | Counts, runners waiting for approval, recent and denied audit rows; refreshes itself every 10 s | `runner list`, `audit` |
 | Fleets | Create a fleet, edit a workspace fleet's config, turn the confirm guard on or off | `fleet create`, `fleet workspace set`, `fleet set` |
@@ -1588,10 +1588,10 @@ setup page disappears once it has been used.*
 
 1. Central starts with no admin: it makes a setup token and stores only its SHA-256 and a 24 h expiry.
 2. It writes the token to `DATA/gui/setup-token` (mode 0600). The log names the file, never the token.
-3. Dana reads the file, opens `/setup` (every page redirects there) and checks the certificate fingerprint.
-4. She sends the token, a username and the password twice, with a CSRF token from a short-lived cookie.
+3. aarvee reads the file, opens `/setup` (every page redirects there) and checks the certificate fingerprint.
+4. aarvee sends the token, a username and the password twice, with a CSRF token from a short-lived cookie.
 5. `CompleteGUISetup`, one transaction: compare the hash, check expiry, insert the admin, delete the row.
-6. The token file is deleted and her first session starts (hash stored, cookie sent). `/setup` is now 404.
+6. The token file is deleted and aarvee's first session starts (hash stored, cookie sent). `/setup` is now 404.
 
 The first start of central prints something like this (shortened):
 
@@ -1603,7 +1603,7 @@ GUI is reachable on all interfaces (0.0.0.0:8443). To restrict it: -gui-listen 1
 Check that your browser's certificate fingerprint matches 3A:7F:...:C1 before you type the setup token or your password.
 ```
 
-What Dana does:
+What aarvee does:
 
 1. On the central host, as central's user: `cat /var/lib/mirafleet/central/gui/setup-token`. Anyone
    who can read that file can become the admin, which is why the data directory is mode 0700.
@@ -1612,13 +1612,13 @@ What Dana does:
    line in the log, and only if they match, continue.
 3. Paste the token, choose a username (lowercase letters, digits, `.`, `_`, `-`, as for an operator name) and a password of 12 to 256
    characters. There are no composition rules; a long passphrase is best.
-4. She lands on Overview. The token file is gone and `/setup` now answers 404.
+4. aarvee lands on Overview. The token file is gone and `/setup` now answers 404.
 
 **Why the fingerprint check matters.** On the first visit the browser has nothing to compare the
 certificate with. If someone on the network answered at `central.example.com:8443` before central
-did, Dana would type the setup token and then a new password into *their* page. The fingerprint in
-central's own log is the one thing they cannot fake. After the first visit, her browser remembers
-the certificate (or she imports it), and a change is a visible warning. The safest first visit is
+did, aarvee would type the setup token and then a new password into *their* page. The fingerprint in
+central's own log is the one thing they cannot fake. After the first visit, the browser remembers
+the certificate (or aarvee imports it), and a change is a visible warning. The safest first visit is
 through an SSH tunnel (section 10.11.3, option 1), where the traffic never touches the LAN.
 
 **The token expired, or the file is gone.** The token lives 24 hours. If it ran out, or someone
@@ -1640,7 +1640,7 @@ cost is that anyone who can reach port 8443 sees the login page. What they can d
 If your central server is on an untrusted network, tighten it. Pick one:
 
 1. **Loopback only, reach it by SSH tunnel.** Run `central run -gui-listen 127.0.0.1:8443`. From
-   her laptop, Dana runs `ssh -L 8443:127.0.0.1:8443 dana@central.example.com` and opens
+   a laptop, aarvee runs `ssh -L 8443:127.0.0.1:8443 aarvee@central.example.com` and opens
    `https://localhost:8443/`. The GUI is then not on the network at all, and `localhost` is
    always an accepted `Host`.
 2. **Off.** `-gui-listen off` starts no listener (the log says `GUI is off (-gui-listen off)`).
@@ -1676,13 +1676,13 @@ cookies need the `Secure` flag and a downgrade path is a way to get it wrong.
 **HSTS** (a header that tells the browser "only ever use HTTPS for this name") is sent **only with
 your own certificate**. With the self-signed one it would do harm: browsers apply HSTS to a whole
 host name regardless of port, so it would also hit other services on that host, and an HSTS site
-with a certificate error has no "proceed anyway" button, which would lock Dana out.
+with a certificate error has no "proceed anyway" button, which would lock aarvee out.
 
 ### 10.11.5 Host names (`-gui-host`) and the Host check
 
 Central answers only for **Host** values it knows, and replies `421 Unknown host name` to anything
 else, before it looks at the path. This stops DNS rebinding: a web page on `rebind.evil.example`
-whose DNS later points to central's address would make Dana's browser send requests to the GUI
+whose DNS later points to central's address would make aarvee's browser send requests to the GUI
 with the attacker's host name in them ([chapter 5](05-security.md)). The accepted forms:
 
 | Form | Accepted when |
@@ -1695,7 +1695,7 @@ with the attacker's host name in them ([chapter 5](05-security.md)). The accepte
 
 Any port is accepted (tunnels and proxies change it). `0.0.0.0` is never accepted. A name that
 embeds an IP (`192-168-1-5.nip.io`) is refused unless you list it, because anyone can create such
-names. So if Dana reaches central as `central.example.com` through DNS, start it with
+names. So if aarvee reaches central as `central.example.com` through DNS, start it with
 `-gui-host central.example.com`; if you forget, you get the 421 page.
 
 ### 10.11.6 Behind a reverse proxy
@@ -1713,7 +1713,7 @@ central's certificate or be given your own) and forwards a `Host` that is on the
 ### 10.11.7 Passwords, sessions and recovery
 
 - **Sessions** live in the database, so they **survive a restart of central**. A session ends after
-  30 minutes without activity or 12 hours after login, whichever comes first, and Dana can have at
+  30 minutes without activity or 12 hours after login, whichever comes first, and aarvee can have at
   most 16 at once (the oldest is dropped). The idle timer counts clicks, not open tabs: the
   pages that refresh themselves every 10 s do not extend it.
 - **Changing the password** (Account screen, needs the current one) ends every other session at
@@ -1728,7 +1728,7 @@ central's certificate or be given your own) and forwards a `Host` that is on the
   ```
 
   The token goes to stdout, the note to stderr, so `$(...)` captures just the token. Every GUI
-  session ends at once and the setup page reopens; Dana chooses a username and a password again.
+  session ends at once and the setup page reopens; aarvee chooses a username and a password again.
   The audit log keeps the old admin's history and records `gui.reset_admin`. If you restart
   central before using the token and no file exists, central makes a new token and writes it to
   `gui/setup-token`. Recovery needs a shell on the central host on purpose: it can not be started
@@ -1966,37 +1966,37 @@ the install-script binary, `npm` needs nothing installed. Compose: see 10.12.4.
 
 ## Check your understanding
 
-1. Dana runs `mirafleet central fleet list` from her laptop and gets
-   `command not found` or a socket error. Why can she not administer central from her laptop,
+1. aarvee runs `mirafleet central fleet list` from a laptop and gets
+   `command not found` or a socket error. Why can aarvee not administer central from a laptop,
    and what is the right way?
-2. You edit `/etc/mirafleet/actions.yaml` on `build-1` and add an action. alice still gets
+2. You edit `/etc/mirafleet/actions.yaml` on `build-1` and add an action. durga still gets
    `refused: unknown action`. What did you forget?
 3. A join fails with `unauthenticated: join refused`. Name three possible causes, and say why
    the message does not tell you which one it is.
-4. `central operator code` shows `valid for: 7s`. alice pastes it, but her `mcp login` takes
-   10 seconds to start. Will it work? Does bob need his own code?
+4. `central operator code` shows `valid for: 7s`. durga pastes it, but durga's `mcp login` takes
+   10 seconds to start. Will it work? Does kalyan need a separate code?
 5. Why is a pattern like `.*` on a path parameter dangerous even though there is no shell?
 6. A workspace runner refuses to start with `userns: required is not supported on this host`. Is
    setting `userns: off` the fix? What do you give up, and what are the alternatives?
-7. alice's `workspace.open` returns `unavailable: the runner holding this session's workspace is
+7. durga's `workspace.open` returns `unavailable: the runner holding this session's workspace is
    offline`. Why does central not simply create a fresh workspace on another runner, and what
-   can Dana do if the runner is gone for good?
+   can aarvee do if the runner is gone for good?
 8. You revoke runner `build-1`. Its three workspaces show `lost`, and `docker ps`-style tools
    still show containers on the host. Why, and what do you run?
-9. A fleet allows image `golang@sha256:*` but alice gets `refused by runner: image not allowed
+9. A fleet allows image `golang@sha256:*` but durga gets `refused by runner: image not allowed
    on this runner`. Where do you look?
 10. Claude Code starts, but `/mcp` shows `plugin:mirafleet:mirafleet` failed. What do you check
     first, and why can the same laptop work from a terminal and fail from a desktop launcher?
-11. alice's agent reports "central's host key does not match the pinned key". Dana rebuilt central
+11. durga's agent reports "central's host key does not match the pinned key". aarvee rebuilt central
     yesterday. What do you do, and why is a plain retry the wrong move?
 12. A stray line that is not JSON reaches `mirafleet mcp` on stdin and the server exits with code 1.
     Why does it exit instead of skipping the line, and who restarts it?
-13. The new admin GUI is on `0.0.0.0:8443` and Dana wants it reachable only from her own laptop.
+13. The new admin GUI is on `0.0.0.0:8443` and aarvee wants it reachable only from one laptop.
     Give two ways, and say why you would still check the certificate fingerprint on the first visit.
-14. Dana opens the GUI as `https://central.example.com:8443/` and gets `421 Unknown host name`,
+14. aarvee opens the GUI as `https://central.example.com:8443/` and gets `421 Unknown host name`,
     while `https://192.0.2.10:8443/` (central's own address) works. What is wrong and why does
     central care?
-15. Dana forgot the GUI password. What does she run, where, and what happens to her open browser
+15. aarvee forgot the GUI password. What does aarvee run, where, and what happens to the open browser
     sessions and to the audit history?
 16. aarvee upgrades central and the new version cannot start: the log says the pre-migration backup
     failed. Does the old database survive? What does aarvee check?
@@ -2012,7 +2012,7 @@ the install-script binary, `npm` needs nothing installed. Compose: see 10.12.4.
 
 1. Administration is only possible through the local admin socket on the central host, by the
    same Unix user that runs central; laptops are operators and can only call the four operator
-   methods. Dana must log in to the central host (for example over her normal SSH access) and
+   methods. aarvee must log in to the central host (for example over normal SSH access) and
    run the command as central's user.
 2. Restart the runner. `actions.yaml` is read once at start (`runner run`). Also check that the
    action is in the file of *that* runner: each runner has its own allowlist.
@@ -2020,7 +2020,7 @@ the install-script binary, `npm` needs nothing installed. Compose: see 10.12.4.
    central. The message is identical on purpose so that someone probing with guessed tokens cannot
    learn which ids exist or how close a guess was. The real reason is in central's log.
 4. No: get a fresh code. The code is checked against the **current** 60 s window at the moment
-   central receives the request, so by then it has expired. bob does not need his own: any
+   central receives the request, so by then it has expired. kalyan does not need a separate one: any
    number of operators can use one code in its window.
 5. There is no shell, but the program still interprets the value. With `.*` a caller can pass any
    path (`/etc/shadow`, `../..`) or, if the program takes options, a value that changes its
@@ -2032,8 +2032,8 @@ the install-script binary, `npm` needs nothing installed. Compose: see 10.12.4.
    consciously. Better: a newer kernel and containerd 2.x, or a different host. The runner never
    falls back by itself.
 7. The files live on the offline runner; a fresh workspace elsewhere would silently lose them and
-   the agent would not know. Dana can `central workspace kill ID` (the row goes `closing`, then
-   `closed` or `lost`), after which alice can open a new workspace, or bring the runner back.
+   the agent would not know. aarvee can `central workspace kill ID` (the row goes `closing`, then
+   `closed` or `lost`), after which durga can open a new workspace, or bring the runner back.
 8. A revoked runner never reconnects, so central cannot ask it to destroy anything and marks the
    rows `lost`. On that host, as root: `mirafleet runner workspace prune -all -yes -data DIR
    -workspace FILE` (it talks to containerd directly).
@@ -2053,16 +2053,16 @@ the install-script binary, `npm` needs nothing installed. Compose: see 10.12.4.
     protocol and leave a half-working server behind. The harness that started the server
     restarts it.
 13. Bind to loopback with `-gui-listen 127.0.0.1:8443` and reach it with `ssh -L
-    8443:127.0.0.1:8443 dana@central.example.com`; or turn it off with `-gui-listen off`; or leave
+    8443:127.0.0.1:8443 aarvee@central.example.com`; or turn it off with `-gui-listen off`; or leave
     the bind and add a firewall rule for port 8443. The self-signed certificate gives the browser
-    nothing to check on the first visit, so only the fingerprint in central's log shows that Dana
+    nothing to check on the first visit, so only the fingerprint in central's log shows that aarvee
     is talking to central and not to something on the network that answered first.
 14. The name is not on the Host allowlist; IP addresses of the machine are, names are only
     accepted when listed. Restart central with `-gui-host central.example.com`. Central cares
     because of DNS rebinding: a web page can make a browser send requests to central's address
     under the attacker's own host name, and refusing every unknown name stops that.
 15. On the central host, as central's user, `mirafleet central gui reset-admin`. It prints a new
-    setup token (valid 24 h). Every GUI session ends at once, the setup page reopens, and Dana
+    setup token (valid 24 h). Every GUI session ends at once, the setup page reopens, and aarvee
     chooses a username and password again. The audit history stays, with a `gui.reset_admin` row.
 16. Yes: the backup runs before any schema change and a failed backup means no migration, so the
     database is untouched. aarvee checks free disk space and that `backups/` inside the data

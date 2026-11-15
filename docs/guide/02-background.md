@@ -49,12 +49,12 @@ make new stamps, so nobody can forge yours.
 
 ```mermaid
 sequenceDiagram
-    participant A as Alice's laptop (holds private key)
-    participant C as Central (holds Alice's public key)
+    participant A as durga's laptop (holds private key)
+    participant C as Central (holds durga's public key)
     C->>A: "Sign this challenge (unique to this session)"
     A->>C: signature made with private key
     C->>C: check signature with stored public key
-    Note over C: valid means Alice holds the private key
+    Note over C: valid means durga holds the private key
 ```
 
 **Ed25519** is one particular signature algorithm. It is fast, has small keys (32 bytes for the
@@ -100,7 +100,7 @@ is just one use. SSH really provides:
   impersonating the server (see [pinning](#23-host-key-pinning-versus-trust-on-first-use)).
 - **User key.** The client's key pair. The server checks the client's signature against a list
   of keys it accepts. This is "public-key authentication".
-- **SSH user.** A name the client sends, such as `alice` or `root`. In normal SSH this maps to an
+- **SSH user.** A name the client sends, such as `durga` or `root`. In normal SSH this maps to an
   operating-system account. **In mirafleet it is a role label** and never maps to an OS account:
   `runner`, `operator` or `enroll`. The role decides what the connection may do.
 - **Channel.** A numbered, bidirectional byte stream inside the connection, with a *type* string.
@@ -151,7 +151,7 @@ runners, and cheap multiplexing. See [chapter 7](07-protocols.md).
 
 ## 2.3 Host-key pinning versus trust-on-first-use
 
-Suppose Alice's first connection to `central.example.com:2222` meets a stranger instead: an
+Suppose durga's first connection to `central.example.com:2222` meets a stranger instead: an
 attacker who intercepts the traffic and answers with *their* host key. This is a
 **man-in-the-middle** attack. How does the client know the key is central's?
 
@@ -173,8 +173,8 @@ mirafleet pins everywhere:
   reconnects keep checking the same key.
 - There is **no TOFU fallback** and no prompt, even when there is no terminal.
 
-An example with Acme: Dana generates the token on central and sends it to the `db-1` admin by a
-channel she trusts (her password manager, say). An attacker on the network can see the traffic
+An example with MIRASTACK LABS: aarvee generates the token on central and sends it to the `db-1` admin by a
+channel they trust (a password manager, say). An attacker on the network can see the traffic
 but cannot change the token, so cannot swap the host key. If the attacker presents their own key,
 `db-1` sees the hash mismatch and stops, *without handing over the secret*.
 
@@ -376,7 +376,7 @@ A **process group** is a set of Unix processes that can be signalled as one. The
 each action in its own group, so one kill signal stops the process and any children it started
 (a child left running would outlive its "cancelled" action).
 
-**Why revoke relies on it.** When Dana revokes `db-1` while a long action is running, three
+**Why revoke relies on it.** When aarvee revokes `db-1` while a long action is running, three
 things must happen quickly: the connection closes, the waiting `action.run` call stops, and the
 process on the runner dies. mirafleet gives each runner session its own context, and each
 `action.run` derives its context from **both** the request and the session. Revoke cancels the
@@ -708,7 +708,7 @@ the browser trusts. Central usually has no such signature, because it lives on a
 with no public name. So by default it makes a **self-signed certificate**: it vouches for itself.
 A browser warns about that, because anyone could have made such a certificate. The **fingerprint**
 is the SHA-256 hash of the certificate (section 2.4): a short value you can compare by eye.
-Dana reads the fingerprint in central's log, compares it with the one her browser shows and only
+aarvee reads the fingerprint in central's log, compares it with the one the browser shows and only
 then clicks "proceed". This is the same idea as the host-key check in section 2.3, done by a
 human. An admin who owns a real certificate passes `-gui-cert` and `-gui-key` instead.
 
@@ -729,8 +729,8 @@ a working cookie. Cookie flags matter:
 
 An **origin** is scheme + host + port (`https://central.example.com:8443`). The **same-origin
 policy** stops a page from one origin reading data from another. It does *not* stop a page from
-*sending* a request: a hostile page can make Dana's browser POST to central, and the browser adds
-her cookie. That is **CSRF** (cross-site request forgery). Defences: `SameSite` cookies, a
+*sending* a request: a hostile page can make aarvee's browser POST to central, and the browser adds
+aarvee's cookie. That is **CSRF** (cross-site request forgery). Defences: `SameSite` cookies, a
 secret **CSRF token** in every form that a foreign page cannot know, and checking the
 `Origin` / `Sec-Fetch-Site` headers the browser sends.
 
@@ -923,7 +923,7 @@ licence. It is the lightweight alternative to a contributor licence agreement, a
 7. An attacker in a workspace creates a symlink `/workspace/x -> /etc/shadow`. What stops
    `workspace.read_file` from returning the host's file?
 8. A page on `evil.example` contains a hidden form that POSTs to `central.example.com:8443`.
-   Dana's browser holds a valid session cookie. Name two things that stop the request from
+   aarvee's browser holds a valid session cookie. Name two things that stop the request from
    working.
 9. Why is SHA-256 a poor way to store a password, and what does Argon2id do differently?
 10. An attacker swaps both a release archive and `checksums.txt` on a mirror. Which check still

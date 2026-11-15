@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 492" width="840" height="492" role="img" aria-labelledby="t d">
 <title id="t">First-start GUI setup</title>
-<desc id="d">Central starts with no GUI admin and makes a setup token. It stores only the token's SHA-256 and a 24 hour expiry in SQLite and writes the token to a file with mode 0600. Dana reads the file on the central host, opens the setup page and checks the certificate fingerprint. She submits the token, a username and a password. One transaction compares the hash, checks the expiry, inserts the admin and deletes the setup row. The token file is deleted and her first session starts.</desc>
+<desc id="d">Central starts with no GUI admin and makes a setup token. It stores only the token's SHA-256 and a 24 hour expiry in SQLite and writes the token to a file with mode 0600. aarvee reads the file on the central host, opens the setup page and checks the certificate fingerprint. aarvee submits the token, a username and a password. One transaction compares the hash, checks the expiry, inserts the admin and deletes the setup row. The token file is deleted and aarvee's first session starts.</desc>
 <style>
 :root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
 @media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
@@ -68,9 +68,9 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <rect class="cho" x="308" y="266" width="234" height="16" rx="2"/><text class="to" x="314" y="279">not expired, no admin yet</text></g>
 <g class="st" style="--i:6"><rect class="cho" x="308" y="286" width="234" height="16" rx="2"/><text class="to" x="314" y="299">session started, cookie out</text></g>
 
-<!-- Dana -->
+<!-- aarvee -->
 <rect class="pn" x="620" y="76" width="210" height="240" rx="4"/>
-<text class="h" x="630" y="96">Dana</text>
+<text class="h" x="630" y="96">aarvee</text>
 <rect class="bx" x="630" y="104" width="190" height="40" rx="2"/>
 <text class="m" x="638" y="120">shell on central</text>
 <text class="b" x="638" y="136">cat setup-token</text>
@@ -118,8 +118,8 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <text class="h" x="10" y="346">Steps</text>
 <g class="st" style="--i:1"><text x="10" y="370"><tspan class="b">1</tspan> Central starts with no admin: it makes a setup token and stores only its SHA-256 and a 24 h expiry.</text></g>
 <g class="st" style="--i:2"><text x="10" y="390"><tspan class="b">2</tspan> It writes the token to DATA/gui/setup-token (mode 0600). The log names the file, never the token.</text></g>
-<g class="st" style="--i:3"><text x="10" y="410"><tspan class="b">3</tspan> Dana reads the file, opens /setup (every page redirects there) and checks the certificate fingerprint.</text></g>
-<g class="st" style="--i:4"><text x="10" y="430"><tspan class="b">4</tspan> She sends the token, a username and the password twice, with a CSRF token from a short-lived cookie.</text></g>
+<g class="st" style="--i:3"><text x="10" y="410"><tspan class="b">3</tspan> aarvee reads the file, opens /setup (every page redirects there) and checks the certificate fingerprint.</text></g>
+<g class="st" style="--i:4"><text x="10" y="430"><tspan class="b">4</tspan> aarvee sends the token, a username and the password twice, with a CSRF token from a short-lived cookie.</text></g>
 <g class="st" style="--i:5"><text x="10" y="450"><tspan class="b">5</tspan> CompleteGUISetup, one transaction: compare the hash, check expiry, insert the admin, delete the row.</text></g>
-<g class="st" style="--i:6"><text x="10" y="470"><tspan class="b">6</tspan> The token file is deleted and her first session starts (hash stored, cookie sent). /setup is now 404.</text></g>
+<g class="st" style="--i:6"><text x="10" y="470"><tspan class="b">6</tspan> The token file is deleted and aarvee's first session starts (hash stored, cookie sent). /setup is now 404.</text></g>
 </svg>

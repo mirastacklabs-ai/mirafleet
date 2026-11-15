@@ -36,16 +36,18 @@ who is allowed to talk to whom, and where every secret lives. The next chapter,
 
 ## The running example
 
-Everything in this guide uses the same fictional company, **Acme**:
+Everything in this guide uses the same fictional company, **MIRASTACK LABS**:
 
 - Central runs on `central.example.com:2222`.
 - There are two fleets: `dev` and `prod`.
 - Runners are `build-1` (in `dev`) and `db-1` (in `prod`).
-- Operators (a person's registered key and machine, driven by a person or an AI agent) are `alice`
-  and `bob`.
-- **Dana** is the admin. She has a shell on the central host and runs `mirafleet central ...` there.
-- For workspace mode: Dana creates `dev` as a **workspace** fleet (with `build-1` as a workspace
-  runner), and alice's Claude Code opens a workspace on it, runs `go test` and reads and writes
+- Operators (a person's registered key and machine, driven by a person or an AI agent) are `durga`
+  and `kalyan`.
+- **aarvee** is the admin, with a shell on the central host, and runs `mirafleet central ...` there.
+  `raj` owns the spare servers and enrols them as runners. `sid` is the newest engineer, and the
+  reader of this guide.
+- For workspace mode: aarvee creates `dev` as a **workspace** fleet (with `build-1` as a workspace
+  runner), and durga's Claude Code opens a workspace on it, runs `go test` and reads and writes
   files ([chapter 1](01-what-is-mirafleet.md#the-workspace-running-example)). `prod` stays an
   actions fleet, with `db-1` and the `tail-logs` action.
 
@@ -62,7 +64,7 @@ runner or an operator's laptop.*
 4. Runners dial OUT to central (user `runner`). Nothing listens on a runner.
 5. Central sends work back down that same connection: an `exec@` channel (actions fleet) or a
    `workspace@` channel (workspace fleet, where the runner drives containerd locally).
-6. Dana runs the admin CLI on central. It uses a local unix socket, never the network.
+6. aarvee runs the admin CLI on central. It uses a local unix socket, never the network.
 
 ### In detail
 
@@ -191,7 +193,7 @@ is the only component with a view of the whole fleet. Its parts:
 | **Dispatch** | `internal/central/dispatch.go` (`methodTable`) | Turns a request such as `action.run` into a handler call. A method that is not in the table for this front end is refused, whoever asks. |
 | **Admin socket** | `internal/central/admin_unix.go` (`ServeAdmin`, `adminConn`), `adminclient.go` (`AdminCall`) | A Unix socket (a file that processes on the same machine connect to, instead of a network port) at `<data>/admin.sock` (mode `0600`). Same framing and the same dispatcher as the operator API, but with the `admin` principal. It exists so admin commands can reach the live connections (revoke has to kick a connected runner). |
 | **Service** | `internal/service` (`Service`) | The one place where business rules live: check policy, validate input, change state, write audit, map errors to wire errors. The SSH server, the admin socket and the GUI all call it. |
-| **Admin GUI** | `internal/gui` (`Server`), wired by `cmd/mirafleet/central_gui_linux.go` (`startGUI`) | An HTTPS server inside the central process. Renders HTML pages for Dana, handles login, sessions and CSRF, and turns each click into a `service` call with source `gui`. Details in [The admin GUI](#the-admin-gui-m4) below. |
+| **Admin GUI** | `internal/gui` (`Server`), wired by `cmd/mirafleet/central_gui_linux.go` (`startGUI`) | An HTTPS server inside the central process. Renders HTML pages for aarvee, handles login, sessions and CSRF, and turns each click into a `service` call with source `gui`. Details in [The admin GUI](#the-admin-gui-m4) below. |
 | **Policy** | `internal/policy` (`TablePolicy`) | A small fixed table: who may do what. Denies by default. |
 | **Registry** | `internal/central/registry` (`Registry`, `Session`) | In-memory list of runners that are connected *right now*: their SSH connection, last heartbeat (the runner's "I am alive" message), live status, tombstones (in-memory "this runner id is dead" marks) for revoked runners, and (from the heartbeat) the runner's slots, executor and secure runtime. It is also how central runs an action (`exec@`) or a workspace operation (`workspace@`) on a runner. |
 | **Store** | `internal/store` (interface), `internal/store/sqlite` (`DB`) | Persistence. The interface offers domain-level operations (`Enroll`, `SetRunnerStatus`, ...), each atomic and each writing its audit row in the same transaction. SQL stays inside `sqlite`. |
@@ -380,13 +382,13 @@ text written by an attacker on a remote machine.*
 
 ### The admin GUI (M4)
 
-The admin GUI is a web front end for Dana. It lives **inside the central process**: not a second
+The admin GUI is a web front end for aarvee. It lives **inside the central process**: not a second
 program, not a separate service. `mirafleet central run` starts it unless you pass
 `-gui-listen off`.
 
 ```mermaid
 flowchart LR
-  BR["Dana's browser"]
+  BR["aarvee's browser"]
   GUI["internal/gui<br/>Server: Host check, headers,<br/>session, CSRF, handlers, templates"]
   BE["gui.Backend<br/>(narrow interface)"]
   SVC["internal/service<br/>Service"]
@@ -422,7 +424,7 @@ How it fits:
   neither) it serves your certificate. Otherwise it generates a self-signed one on first start
   under `<data>/gui/` and logs its fingerprint. Every start logs the URL, the fingerprint and,
   for a bind that is not loopback, a notice on how to restrict it.
-- **Why all interfaces by default?** So Dana can open it from her laptop without extra steps. The
+- **Why all interfaces by default?** So aarvee can open it from a laptop without extra steps. The
   price is that anyone on the network can reach the login page; chapter 5 section 5.12 shows why
   that is acceptable (and how to restrict it: `-gui-listen 127.0.0.1:8443` with `ssh -L`).
 - **Host allowlist.** Before any routing, `Server.buildHandler` checks the `Host` header against
@@ -449,15 +451,15 @@ route match, `requireAdmin` (session lookup through `service.GUIAuthenticate`), 
 | `internal/tokens` | Formats of join tokens (`mfj1.`) and registration codes (`mfr1.`), the host-key hash and the registration-code HMAC. Used by both central (to make and check) and the clients (to parse). |
 | `internal/keys` | Generating and loading Ed25519 keys, refusing private keys that others can read, and the `known_hosts`-style pinning callback. |
 
-## Deployment at Acme
+## Deployment at MIRASTACK LABS
 
 This is where each program runs and what is listening where.
 
 ```mermaid
 flowchart TB
   subgraph LAPTOPS["Operator laptops (no listeners)"]
-    A["alice's laptop<br/>mirafleet mcp"]
-    B["bob's laptop<br/>mirafleet mcp"]
+    A["durga's laptop<br/>mirafleet mcp"]
+    B["kalyan's laptop<br/>mirafleet mcp"]
   end
 
   subgraph CH["Central host: central.example.com"]
@@ -468,9 +470,9 @@ flowchart TB
     L1 --- P
     L2 --- P
     L3 --- P
-    ADMIN["Dana's shell on the central host<br/>mirafleet central ..."]
+    ADMIN["aarvee's shell on the central host<br/>mirafleet central ..."]
     ADMIN --> L2
-    BROWSER["Dana's browser<br/>(any machine that can reach 8443)"]
+    BROWSER["aarvee's browser<br/>(any machine that can reach 8443)"]
     BROWSER --> L3
   end
 
@@ -503,10 +505,10 @@ Facts to remember:
   traffic to `central.example.com:2222`. (NAT, "network address translation", is the router feature
   that lets many private machines share one public address; it lets traffic out but blocks
   unsolicited traffic in, which is exactly what a dial-out runner needs.)
-- **Operators dial out too.** `alice` and `bob` run `mirafleet` on their laptops, which connect to
+- **Operators dial out too.** `durga` and `kalyan` run `mirafleet` on their laptops, which connect to
   central and make requests.
 - **Admins act on the central host.** Lifecycle changes (approve, disable, enable, revoke), fleet
-  and token creation, registration codes and audit reading are done by Dana running
+  and token creation, registration codes and audit reading are done by aarvee running
   `mirafleet central ...` on the central host itself. They go through the admin socket, never over
   the network. See [Security](05-security.md) for why. The admin GUI is the one exception to
   "never over the network": it is a web page, so it needs its own defences (login, sessions,
@@ -527,7 +529,7 @@ flowchart LR
   end
 
   subgraph OPDOM["Operator domain"]
-    OPK["operator key<br/>(alice)"]
+    OPK["operator key<br/>(durga)"]
   end
 
   subgraph CENDOM["Central domain (one trust point)"]
@@ -622,14 +624,14 @@ allowlist permits. The runner-side guard bounds the damage but cannot remove it.
 | Operator `known_hosts`, `contexts.yaml` | `mcp login` | The operator's machine | same directory | Pins central; names the centrals (contexts), default fleets and the output cap. No secrets. |
 | `.mirafleet.yaml` (project default) | The project's authors | Inside a project (often committed) | the project root | Only `fleet` and `context` names. Never an address, key or cap, so a cloned repo cannot add a central. |
 | Session handoff file | A Claude Code hook (SessionStart) | The operator's machine | `sessions/<hash>.json` in the state directory, owner-only | A session id such as `cc:<uuid>`. Not a secret: central still checks that the workspace belongs to the operator. |
-| **Join token secret** | `token create` (`tokens.NewJoinToken`) | Printed **once** to Dana, then carried by hand to the runner | Not stored in clear anywhere | Central stores only `SHA-256(secret)` in `join_tokens.secret_hash`. The runner uses the token once and never writes it to disk. |
+| **Join token secret** | `token create` (`tokens.NewJoinToken`) | Printed **once** to aarvee, then carried by hand to the runner | Not stored in clear anywhere | Central stores only `SHA-256(secret)` in `join_tokens.secret_hash`. The runner uses the token once and never writes it to disk. |
 | **Registration secret** (32 bytes) | `central init` (`InitRegistrationSecret`) | Central | `settings` table, key `registration_secret`, inside `<data>/mirafleet.db` (mode `0600`) | Nobody. Registration *codes* are derived from it every 60 seconds. Never logged, never audited. |
-| Registration code (60 s) | `central operator code` | Shown to Dana, passed to an operator | Not stored | Valid only in its own 60-second step. |
+| Registration code (60 s) | `central operator code` | Shown to aarvee, passed to an operator | Not stored | Valid only in its own 60-second step. |
 | Admin socket | `central run` | Central | `<data>/admin.sock`, mode `0600` | Same-UID processes only. |
-| **GUI TLS key and certificate** | `central run` (first GUI start), unless Dana passes `-gui-cert` / `-gui-key` | Central | `<data>/gui/tls.key` (`0600`) and `tls.crt`, in a `0700` directory | Nobody. The certificate's fingerprint is logged and shown on the Account screen so Dana can check it. |
-| **GUI setup token** | `service.EnsureGUISetup` (first start, or `central gui reset-admin`) | Central | Hash in table `gui_setup`; the clear token only in `<data>/gui/setup-token` (`0600`), deleted after setup | Dana, who reads the file. Never logged, never audited. Single use, valid 24 h. |
+| **GUI TLS key and certificate** | `central run` (first GUI start), unless aarvee passes `-gui-cert` / `-gui-key` | Central | `<data>/gui/tls.key` (`0600`) and `tls.crt`, in a `0700` directory | Nobody. The certificate's fingerprint is logged and shown on the Account screen so aarvee can check it. |
+| **GUI setup token** | `service.EnsureGUISetup` (first start, or `central gui reset-admin`) | Central | Hash in table `gui_setup`; the clear token only in `<data>/gui/setup-token` (`0600`), deleted after setup | aarvee, who reads the file. Never logged, never audited. Single use, valid 24 h. |
 | **GUI admin password hash** | The setup form or the Account screen | Central | `gui_admins.pw_hash`, an Argon2id string | Nobody. The password itself is never stored. |
-| **GUI session token** | `service.GUILogin` / `CompleteGUISetup` | Dana's browser only | Cookie `__Host-mf_session`; central stores only `SHA-256(token)` in `gui_sessions.token_hash` | Nobody. A copy of the database cannot be turned back into a cookie. |
+| **GUI session token** | `service.GUILogin` / `CompleteGUISetup` | aarvee's browser only | Cookie `__Host-mf_session`; central stores only `SHA-256(token)` in `gui_sessions.token_hash` | Nobody. A copy of the database cannot be turned back into a cookie. |
 | Data-dir lock | `central init` / `central run` | Central | `<data>/central.lock` (`flock`) | Keeps a second central off the same directory. |
 | Runner `workspace.yaml` | The runner's admin | The runner host (workspace runners only) | `/etc/mirafleet/workspace.yaml` (`-workspace`) | Nobody else. This is the workspace-mode boundary: image allowlist, limits, network modes, env allowlist, executor settings. |
 | **OpenSandbox API key** | The runner's admin (OpenSandbox's own key) | The runner host only | The file named by `opensandbox.api_key_file` in `workspace.yaml`; must be mode `0600` or `0400` and owned by the runner's user | Never in env or argv, never logged, never passed into a sandbox. The runner refuses to start if the file is missing or loose. |
@@ -831,19 +833,19 @@ jump hosts per context.
 
 ## Check your understanding
 
-1. Which processes in Acme's deployment listen on a network port, and which do not?
+1. Which processes in MIRASTACK LABS's deployment listen on a network port, and which do not?
 2. Why can the firewall in front of `db-1` block all inbound traffic and mirafleet still work?
 3. A developer wires the admin handler for `token.create` into the operator handler map by
    mistake. Which checks would still stop an operator from creating a join token?
-4. Where is the registration secret stored, and what does `alice` actually receive when she
-   registers?
+4. Where is the registration secret stored, and what does `durga` actually receive when
+   registering?
 5. If central is fully compromised, what stops the attacker from running any command on `db-1`?
 6. Why can a compromised central not make `build-1` start a privileged container with the host's
    `/etc` mounted? And why must the `build-1` host still be treated as sensitive?
 7. A runner is started with both `-actions` and `-workspace`. What happens, and why?
 8. Which package is the only one allowed to call `internal/apiclient`, and what does it refuse
    to send? Why is the model on the MCP side treated as untrusted input?
-9. Dana revokes `prod/db-1` from the GUI. Which code path runs, and how does the audit row show
+9. aarvee revokes `prod/db-1` from the GUI. Which code path runs, and how does the audit row show
    that it came from the GUI?
 
 <details>
@@ -862,8 +864,8 @@ jump hosts per context.
    and `action.run`. (c) `Service.CreateToken` calls `authorize(..., adminOnly=true)`, which
    requires `p.Kind == auth.KindAdmin` directly, independent of the policy.
 4. In the central database, in the `settings` table under `registration_secret`, mode `0600`.
-   Alice never receives the secret. She types or pipes a 60-second *code* derived from it and
-   gets back the status `active`; her own private key never leaves her machine.
+   durga never receives the secret. durga types or pipes a 60-second *code* derived from it and
+   gets back the status `active`; durga's own private key never leaves the laptop.
 5. The runner's actions guard. It only runs actions defined in the runner's own `actions.yaml`,
    as an argv list without a shell, with parameters that fully match their regex. Central cannot
    change that file.

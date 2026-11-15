@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 632" width="840" height="632" role="img" aria-labelledby="t d">
 <title id="t">One workspace.exec through every layer</title>
-<desc id="d">alice's agent sends workspace.exec on an api@ channel. service.ExecWorkspace checks the operator, ownership, workspace state, argv, cwd, env and confirm, then writes the start audit row before anything runs. registry.Workspace opens a workspace@mirafleet channel to the runner. The runner re-validates the request against its own workspace.yaml, runs the command inside the container as an unprivileged user, and returns one result frame. Central writes the outcome audit row with the same request id and replies to alice.</desc>
+<desc id="d">durga's agent sends workspace.exec on an api@ channel. service.ExecWorkspace checks the operator, ownership, workspace state, argv, cwd, env and confirm, then writes the start audit row before anything runs. registry.Workspace opens a workspace@mirafleet channel to the runner. The runner re-validates the request against its own workspace.yaml, runs the command inside the container as an unprivileged user, and returns one result frame. Central writes the outcome audit row with the same request id and replies to durga.</desc>
 <style>
 :root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
 @media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
@@ -38,7 +38,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- row A -->
 <rect class="pn" x="10" y="60" width="130" height="150" rx="4"/>
-<text class="h" x="20" y="80">alice</text>
+<text class="h" x="20" y="80">durga</text>
 <text x="20" y="102">Claude Code</text>
 <text class="m" x="20" y="120">mirafleet mcp</text>
 <text class="b" x="20" y="146">workspace.exec</text>
@@ -118,12 +118,12 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- steps -->
 <text class="h" x="10" y="454">Steps</text>
-<g class="st" style="--i:1"><text x="10" y="478"><tspan class="b">1</tspan> alice's agent calls workspace.exec (argv go test ./...) through mirafleet mcp.</text></g>
+<g class="st" style="--i:1"><text x="10" y="478"><tspan class="b">1</tspan> durga's agent calls workspace.exec (argv go test ./...) through mirafleet mcp.</text></g>
 <g class="st" style="--i:2"><text x="10" y="498"><tspan class="b">2</tspan> One api@ frame arrives; the method table routes it to service.ExecWorkspace.</text></g>
 <g class="st" style="--i:3"><text x="10" y="518"><tspan class="b">3</tspan> Checks pass, then the "start" audit row is written FIRST. No row, no exec (fail closed).</text></g>
 <g class="st" style="--i:4"><text x="10" y="538"><tspan class="b">4</tspan> registry.Workspace opens a workspace@mirafleet channel; the op travels as JSON open data.</text></g>
 <g class="st" style="--i:5"><text x="10" y="558"><tspan class="b">5</tspan> The runner re-validates argv, cwd, env and timeout itself. Central is not trusted.</text></g>
 <g class="st" style="--i:6"><text x="10" y="578"><tspan class="b">6</tspan> The command runs inside the container as uid 1000. Output is captured, trimmed to the budget.</text></g>
 <g class="st" style="--i:7"><text x="10" y="598"><tspan class="b">7</tspan> The runner writes one result frame: exit code, stdout, stderr, truncated, timed_out.</text></g>
-<g class="st" style="--i:8"><text x="10" y="618"><tspan class="b">8</tspan> Central writes the "outcome" row and replies to alice.</text></g>
+<g class="st" style="--i:8"><text x="10" y="618"><tspan class="b">8</tspan> Central writes the "outcome" row and replies to durga.</text></g>
 </svg>

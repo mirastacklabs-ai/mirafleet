@@ -1,9 +1,9 @@
 # Glossary
 
 Every term used in the mirafleet guide and code, alphabetical. Each entry has a short plain
-definition and a link to the chapter that explains it properly. Examples use the Acme running
+definition and a link to the chapter that explains it properly. Examples use the MIRASTACK LABS running
 example (central `central.example.com:2222`, fleets `dev` and `prod`, runners `build-1` and
-`db-1`, operators `alice` and `bob`).
+`db-1`, operators `durga` and `kalyan`).
 
 Jump to: [A](#a) [B](#b) [C](#c) [D](#d) [E](#e) [F](#f) [G](#g) [H](#h) [I](#i) [J](#j)
 [K](#k) [L](#l) [M](#m) [N](#n) [O](#o) [P](#p) [R](#r) [S](#s) [T](#t) [U](#u) [W](#w) [Y](#y)
@@ -34,7 +34,7 @@ the machine being protected and is the security boundary. See [chapter 5](05-sec
 
 **Actions guard.** See [guard](#g).
 
-**Admin.** The person (in our examples, Dana) who manages central, from the CLI on the central
+**Admin.** The person (in our examples, aarvee) who manages central, from the CLI on the central
 host or from the admin GUI: creates fleets and tokens, approves and revokes runners, reads the
 registration code. Admin work happens only on central. The admin is not an operator. See
 [chapter 10](10-operations.md).
@@ -470,10 +470,10 @@ organisation can publish under it. See
 
 ## O
 
-**Operator.** A registered person: in practice, one Ed25519 key on one machine (alice's laptop)
-that central knows by a name such as `alice`. Operators use fleets; they do not manage central.
-Acme's operators: `alice`, `bob`. They connect with SSH user `operator`, which is a role label
-shared by all of them; it is not the same thing as the operator named `alice`. See
+**Operator.** A registered person: in practice, one Ed25519 key on one machine (durga's laptop)
+that central knows by a name such as `durga`. Operators use fleets; they do not manage central.
+MIRASTACK LABS's operators: `durga`, `kalyan`. They connect with SSH user `operator`, which is a role label
+shared by all of them; it is not the same thing as the operator named `durga`. See
 [chapter 3](03-architecture.md).
 
 **Orchestrator.** The agent side of the system as a whole: Claude Code plus its plugin plus
@@ -633,7 +633,7 @@ defences exist. See [chapter 2](02-background.md#212-web-basics-for-the-admin-gu
 keeps only its SHA-256 hash in `gui_sessions`. Flags: `Secure`, `HttpOnly`, `SameSite=Strict`. See
 [flow 25](04-flows.md#25-login-and-the-first-request-after-it).
 
-**Setup token.** The one-time secret (`mfs1.…`, valid 24 hours) that lets Dana create the GUI admin
+**Setup token.** The one-time secret (`mfs1.…`, valid 24 hours) that lets aarvee create the GUI admin
 on first start. Central stores its hash and leaves the token in `<data>/gui/setup-token`; it is
 deleted after use. See [flow 24](04-flows.md#24-first-start-setup-of-the-gui).
 

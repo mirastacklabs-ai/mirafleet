@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 600" width="840" height="600" role="img" aria-labelledby="t d">
 <title id="t">workspace.open: placement, sticky reuse, reserve, create</title>
-<desc id="d">alice's agent calls workspace.open for fleet dev and session s1. The service checks the operator, fleet mode, image allowlist and confirm, then looks for a live workspace of the same session (sticky reuse). Otherwise it picks the runner with the most free slots, reserves a row in one transaction with a start audit row, asks the runner to create the container over workspace@mirafleet, then marks the row open and writes the outcome audit row.</desc>
+<desc id="d">durga's agent calls workspace.open for fleet dev and session s1. The service checks the operator, fleet mode, image allowlist and confirm, then looks for a live workspace of the same session (sticky reuse). Otherwise it picks the runner with the most free slots, reserves a row in one transaction with a start audit row, asks the runner to create the container over workspace@mirafleet, then marks the row open and writes the outcome audit row.</desc>
 <style>
 :root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
 @media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
@@ -40,7 +40,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- row A -->
 <rect class="pn" x="10" y="60" width="130" height="130" rx="4"/>
-<text class="h" x="20" y="80">alice</text>
+<text class="h" x="20" y="80">durga</text>
 <text x="20" y="102">Claude Code</text>
 <text class="m" x="20" y="120">mirafleet mcp</text>
 <text class="b" x="20" y="146">workspace.open</text>
@@ -57,7 +57,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <rect class="pn" x="500" y="60" width="330" height="130" rx="4"/>
 <text class="h" x="510" y="80">Store (SQLite)</text>
 <text x="510" y="102">unique index: one live row</text>
-<text class="m" x="510" y="120">per (alice, dev, s1)</text>
+<text class="m" x="510" y="120">per (durga, dev, s1)</text>
 <g class="st" style="--i:5"><rect class="chw" x="510" y="132" width="86" height="24" rx="2"/><text class="tw" x="518" y="149">opening</text></g>
 <g class="st" style="--i:8"><rect class="cho" x="606" y="132" width="60" height="24" rx="2"/><text class="to" x="614" y="149">open</text></g>
 <g class="st" style="--i:5"><rect class="chw" x="510" y="160" width="86" height="24" rx="2"/><text class="tw" x="518" y="177">start</text></g>
@@ -120,9 +120,9 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- steps -->
 <text class="h" x="10" y="424">Steps</text>
-<g class="st" style="--i:1"><text x="10" y="448"><tspan class="b">1</tspan> alice's agent calls workspace.open (fleet dev, session s1) through mirafleet mcp.</text></g>
+<g class="st" style="--i:1"><text x="10" y="448"><tspan class="b">1</tspan> durga's agent calls workspace.open (fleet dev, session s1) through mirafleet mcp.</text></g>
 <g class="st" style="--i:2"><text x="10" y="468"><tspan class="b">2</tspan> The api@ frame reaches service.OpenWorkspace: operator, fleet mode, image, confirm, session.</text></g>
-<g class="st" style="--i:3"><text x="10" y="488"><tspan class="b">3</tspan> Sticky: a live (alice, dev, s1) row comes back reused:true; its runner offline = unavailable.</text></g>
+<g class="st" style="--i:3"><text x="10" y="488"><tspan class="b">3</tspan> Sticky: a live (durga, dev, s1) row comes back reused:true; its runner offline = unavailable.</text></g>
 <g class="st" style="--i:4"><text x="10" y="508"><tspan class="b">4</tspan> Placement: active online runners fitting executor, labels and image; the most free slots wins.</text></g>
 <g class="st" style="--i:5"><text x="10" y="528"><tspan class="b">5</tspan> ReserveWorkspace recounts slots in one transaction, inserts "opening" and the start audit row.</text></g>
 <g class="st" style="--i:6"><text x="10" y="548"><tspan class="b">6</tspan> Full or busy: try the next runner (3 tries). Otherwise send op "create" on workspace@mirafleet.</text></g>

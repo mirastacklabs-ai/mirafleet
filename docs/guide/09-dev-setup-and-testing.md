@@ -396,13 +396,13 @@ M3's "done when" sentence in [M3.md](../M3.md) is one scenario, written **once**
 In order, the scenario:
 
 1. **Set-up.** An injected clock; fleet `dev` in workspace mode with an image allowlist; operators
-   alice and bob; two runners with `concurrent: 1` and *different trusted labels* (`zone=a`,
+   durga and kalyan; two runners with `concurrent: 1` and *different trusted labels* (`zone=a`,
    `zone=b`; the runners also claim a lying label in their heartbeat, which must be ignored).
-2. **Placement and sticky.** alice opens session `s1` with label `zone=a` and lands on the matching
+2. **Placement and sticky.** durga opens session `s1` with label `zone=a` and lands on the matching
    runner; opening `s1` again returns the same workspace with `reused: true` and creates **no** second
    container.
-3. **Ownership.** bob's `exec`, `read_file`, `write_file` and `close` on alice's workspace all get
-   `not_found`; his `workspace.list` is empty; alice's row is untouched.
+3. **Ownership.** kalyan's `exec`, `read_file`, `write_file` and `close` on durga's workspace all get
+   `not_found`; kalyan's `workspace.list` is empty; durga's row is untouched.
 4. **Inside the workspace.** `id -u` is not 0; writing under `/etc` fails (read-only rootfs; in the
    real run the message says "read-only"); a 1.5 MiB file round-trips in 512 KiB chunks with a
    matching SHA-256; a symlink to a host path cannot be read through `read_file`; a network dial
@@ -414,9 +414,9 @@ In order, the scenario:
    start another over the same store: the row persists, runners reconnect, the session is still sticky.
 7. **Reaper.** Move the injected clock past the idle TTL: the untouched `s2` is destroyed (container
    and directory gone, row `closed`); `s1`, used just now, stays.
-8. **Revoke.** Revoking alice closes her workspaces (the next reaper sweep destroys the container;
-   the row is `closed`, with a `workspace.close_all` audit row); bob's workspace on the other runner
-   is untouched. Then revoking runner `rb` marks bob's workspace there **`lost`** (not `closed`:
+8. **Revoke.** Revoking durga closes durga's workspaces (the next reaper sweep destroys the container;
+   the row is `closed`, with a `workspace.close_all` audit row); kalyan's workspace on the other runner
+   is untouched. Then revoking runner `rb` marks kalyan's workspace there **`lost`** (not `closed`:
    central can no longer reach that host, so it cannot prove the container is gone; a
    `workspace.lost` audit row says so). The containers of a revoked runner stay on its host until
    someone runs `mirafleet runner workspace prune` there (chapter 10).
@@ -443,7 +443,7 @@ files, [chapter 8](08-code-tour.md#87-build-tags-and-why).) Time is an injected 
 `TestM2Done`, so the idle reaper is tested without sleeping. The set-up is: fleet `dev` (workspace
 mode, runners `build-1` and `build-2`) and a guarded actions fleet `prod` (runner `db-1` with
 `tail-logs` and a `noisy` action that prints 200 KiB with colour codes); two operators with their
-own config directories (alice and bob); a project directory whose `.mirafleet.yaml` says
+own config directories (durga and kalyan); a project directory whose `.mirafleet.yaml` says
 `fleet: dev`; a second live context and a dead one; and *only decoy secrets*
 (`ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY`) in the servers' environment. Then, as subtests:
 
@@ -461,20 +461,20 @@ own config directories (alice and bob); a project directory whose `.mirafleet.ya
    in any create spec or exec request; `env: {ANTHROPIC_API_KEY: ...}` is refused.
 5. `06_files`: a 1.5 MiB `write_file` becomes two chunks; paged `read_file` calls reassemble to the
    same SHA-256; a default `read_file` is capped.
-6. `07_ownership`: bob using alice's workspace id with `exec`, `read_file` and `workspace_close`
+6. `07_ownership`: kalyan using durga's workspace id with `exec`, `read_file` and `workspace_close`
    gets `not_found` (the same answer as for an id that does not exist), and central writes
    exactly one `denied` audit row for each refusal.
 7. `08_mode_mismatch`: `workspace_open` on the actions fleet and `run_action` on the workspace
    fleet are `conflict`.
 8. `09_cancel`: `notifications/cancelled` for a long `exec` cancels the exec on the runner, and
    the audit outcome is `cancelled`.
-9. `10_idle_on_exit`: closing alice's stdin makes `Serve` return within 5 s and leaves her row
+9. `10_idle_on_exit`: closing durga's stdin makes `Serve` return within 5 s and leaves durga's row
    `open`; a new server gets the other runner; a third gets `unavailable` (both slots used);
    advancing the injected clock past the idle TTL makes the reaper close the first row.
 10. `11_reattach`: two servers started with the same `-session s1`: the second `workspace_open`
     says `reused: true` (no hook involved).
 11. `12_hygiene`: every call that reached central has a start row and an outcome row; no admin
-    method appears in alice's audit; no result contains the config directory, a key fingerprint or
+    method appears in durga's audit; no result contains the config directory, a key fingerprint or
     a decoy value.
 
 Because the servers speak the real protocol and use the real `orch`, a bug in any layer between the
@@ -555,9 +555,9 @@ the last:
 7. `07_revoke_cascade`: with a long `action.run` in flight on `db-1`, a revoke with the wrong typed
    name is refused; with the right one the action ends `cancelled` and the reconnect is refused:
    the same outcome as `TestM2Done`, now started from a browser.
-8. `08_operators`: Show code writes an `operator.code` row without the code in it; alice registers
-   with it; Rotate secret kills the old code; Revoke drops alice's connection.
-9. `09_workspaces`: bob's workspace is listed and Kill makes the fake executor see the destroy.
+8. `08_operators`: Show code writes an `operator.code` row without the code in it; durga registers
+   with it; Rotate secret kills the old code; Revoke drops durga's connection.
+9. `09_workspaces`: kalyan's workspace is listed and Kill makes the fake executor see the destroy.
 10. `10_audit`: filters by source, fleet and action prefix; paging both ways; the CSV export has a
     header, neutralises a `=cmd` cell and is preceded by an `audit.export` row; JSONL parses.
 11. `11_sessions`: a polled (passive) fragment does not extend the idle timer; 31 minutes later the
@@ -853,15 +853,15 @@ mf central runner approve dev/build-1 -data /tmp/c
 mf central runner list -data /tmp/c      # dev/build-1  active  true
 ```
 
-**6. Register an operator, `alice`.** `operator code` prints three labelled lines
+**6. Register an operator, `durga`.** `operator code` prints three labelled lines
 (`code:`, `valid for:`, `host key:`); `sed` keeps only the value after `code:`. The code is only
 valid for its 60-second window, so use it straight away. A separate config directory plays the
-part of alice's laptop:
+part of durga's laptop:
 
 ```bash
 CODE=$(mf central operator code -data /tmp/c | sed -n 's/^code: *//p')
 export MIRAFLEET_CONFIG_DIR=/tmp/op1
-printf '%s\n' "$CODE" | mf mcp login 127.0.0.1:2222 -name alice -code -
+printf '%s\n' "$CODE" | mf mcp login 127.0.0.1:2222 -name durga -code -
 ```
 
 **7. Use it as the operator.** These are the calls an agent would make:
@@ -965,12 +965,12 @@ If the runner exits at start, its message names the failed rule (user namespaces
 `root` not 0700 and root-owned, a forbidden namespace, ...); see
 [10.6](10-operations.md#106-troubleshooting).
 
-**4. Register alice and use the workspace.**
+**4. Register durga and use the workspace.**
 
 ```bash
 CODE=$(mf central operator code -data /tmp/c | sed -n 's/^code: *//p')
 export MIRAFLEET_CONFIG_DIR=/tmp/op1
-printf '%s\n' "$CODE" | mf mcp login 127.0.0.1:2222 -name alice -code -
+printf '%s\n' "$CODE" | mf mcp login 127.0.0.1:2222 -name durga -code -
 
 mf mcp api workspace.open '{"fleet":"dev","session":"s1"}'            # note the id
 WS=<the id from the reply>
@@ -992,7 +992,7 @@ mf mcp api workspace.exec "{\"workspace\":\"$WS\",\"argv\":[\"env\"],\"env\":{\"
 mf mcp api workspace.write_file "{\"workspace\":\"$WS\",\"path\":\"../etc/evil\"}" -in /tmp/hello.txt        # refused
 ```
 
-**6. Look from the other side.** Dana lists and kills; the audit log shows start and outcome rows
+**6. Look from the other side.** aarvee lists and kills; the audit log shows start and outcome rows
 with the workspace column; the runner host shows the container and its directory:
 
 ```bash

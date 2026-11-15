@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 572" width="840" height="572" role="img" aria-labelledby="t d">
 <title id="t">Operator registration: a code that changes every 60 seconds</title>
-<desc id="d">Three 60 second windows each have a different code made by HMAC-SHA256 of a secret and the window number. alice and bob register in the first window with the same code. bob tries the old code in the next window and is refused. The code also carries the host-key hash that pins central.</desc>
+<desc id="d">Three 60 second windows each have a different code made by HMAC-SHA256 of a secret and the window number. durga and kalyan register in the first window with the same code. kalyan tries the old code in the next window and is refused. The code also carries the host-key hash that pins central.</desc>
 <style>
 :root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
 @media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
@@ -59,17 +59,17 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <!-- attempts -->
 <g class="st" style="--i:3">
 <rect class="cok" x="20" y="210" width="242" height="28" rx="2"/>
-<text class="tok" x="30" y="229">alice  code 7QH3  OK</text>
+<text class="tok" x="30" y="229">durga  code 7QH3  OK</text>
 <circle class="bdg" cx="246" cy="224" r="11"/><text class="bt" x="246" y="228.5">3</text>
 </g>
 <g class="st" style="--i:4">
 <rect class="cok" x="20" y="246" width="242" height="28" rx="2"/>
-<text class="tok" x="30" y="265">bob    code 7QH3  OK</text>
+<text class="tok" x="30" y="265">kalyan    code 7QH3  OK</text>
 <circle class="bdg" cx="246" cy="260" r="11"/><text class="bt" x="246" y="264.5">4</text>
 </g>
 <g class="st" style="--i:6">
 <rect class="cbad" x="294" y="210" width="242" height="28" rx="2"/>
-<text class="tbad" x="304" y="229">bob    code 7QH3  REFUSED</text>
+<text class="tbad" x="304" y="229">kalyan    code 7QH3  REFUSED</text>
 <circle class="bdg" cx="520" cy="224" r="11"/><text class="bt" x="520" y="228.5">6</text>
 </g>
 <text class="m" x="22" y="292">same window, same code: both accepted</text>
@@ -89,11 +89,11 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- steps -->
 <text class="h" x="10" y="410">Steps</text>
-<g class="st" style="--i:1"><text x="10" y="434"><tspan class="b">1</tspan> Central keeps a 32-byte secret in SQLite, never logged. Only Dana (the admin) can read codes.</text></g>
+<g class="st" style="--i:1"><text x="10" y="434"><tspan class="b">1</tspan> Central keeps a 32-byte secret in SQLite, never logged. Only aarvee (the admin) can read codes.</text></g>
 <g class="st" style="--i:2"><text x="10" y="454"><tspan class="b">2</tspan> Each 60 s window s (unix seconds / 60) has its own code: base32(HMAC-SHA256(secret, s)) + HASH.</text></g>
-<g class="st" style="--i:3"><text x="10" y="474"><tspan class="b">3</tspan> alice runs mcp login with the code Dana gave her. Central recomputes this window's code and compares.</text></g>
-<g class="st" style="--i:4"><text x="10" y="494"><tspan class="b">4</tspan> bob uses the same code in the same window and is accepted too. Codes are not single-use.</text></g>
+<g class="st" style="--i:3"><text x="10" y="474"><tspan class="b">3</tspan> durga runs mcp login with the code aarvee gave durga. Central recomputes this window's code and compares.</text></g>
+<g class="st" style="--i:4"><text x="10" y="494"><tspan class="b">4</tspan> kalyan uses the same code in the same window and is accepted too. Codes are not single-use.</text></g>
 <g class="st" style="--i:5"><text x="10" y="514"><tspan class="b">5</tspan> The window ends. The next window s+1 has a brand-new code.</text></g>
-<g class="st" style="--i:6"><text x="10" y="534"><tspan class="b">6</tspan> bob tries the old code in the next window: refused, with the same error as any wrong code.</text></g>
+<g class="st" style="--i:6"><text x="10" y="534"><tspan class="b">6</tspan> kalyan tries the old code in the next window: refused, with the same error as any wrong code.</text></g>
 <g class="st" style="--i:7"><text x="10" y="554"><tspan class="b">7</tspan> HASH is central's host-key hash, so the code also pins central: no TOFU at first login.</text></g>
 </svg>

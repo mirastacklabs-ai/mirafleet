@@ -359,12 +359,12 @@ sudo -u mirafleet mirafleet central operator code
 On your laptop, send it on stdin (never in argv):
 
 ```bash
-echo 'PASTE-THE-CODE' | mirafleet mcp login central.example.com:2222 -name alice -code -
+echo 'PASTE-THE-CODE' | mirafleet mcp login central.example.com:2222 -name durga -code -
 ```
 
 ```powershell
 # Windows PowerShell
-'PASTE-THE-CODE' | mirafleet mcp login central.example.com:2222 -name alice -code -
+'PASTE-THE-CODE' | mirafleet mcp login central.example.com:2222 -name durga -code -
 ```
 
 The code carries the hash of central's host key, so your laptop pins central.
@@ -392,7 +392,7 @@ Production fleets: keep them in `actions` mode and mark them guarded
 
 **Check it worked.** In your harness, ask it to list the fleets; it calls the mirafleet tools and
 shows `dev`. The audit log (GUI **Audit**, or `mirafleet central audit`) shows `fleets.list`
-from `alice`.
+from `durga`.
 
 ## 6. Upgrade, roll back, uninstall
 

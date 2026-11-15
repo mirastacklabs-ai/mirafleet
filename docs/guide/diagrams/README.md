@@ -4,7 +4,7 @@ Animated, self-contained SVGs (CSS only, light and dark, reduced-motion safe). E
 `![alt](diagrams/<name>.svg)` and put the matching numbered list under the image. The same
 numbers are drawn in each SVG. Colours come from [../../BRAND.md](../../BRAND.md).
 
-Cast: Dana is the admin and works on the central server. alice and bob are operators.
+Cast: aarvee is the admin and works on the central server. durga and kalyan are operators.
 
 ## big-picture.svg
 Caption: look at the arrow directions; every connection points at central. Fleet dev is a
@@ -15,32 +15,32 @@ workspace fleet (containerd on the runner), fleet prod an actions fleet.
 4. Runners dial OUT to central (user `runner`). Nothing listens on a runner.
 5. Central sends work back down that same connection: an `exec@` channel (actions fleet) or a
    `workspace@` channel (workspace fleet, where the runner drives containerd locally).
-6. Dana runs the admin CLI on central. It uses a local unix socket, never the network.
+6. aarvee runs the admin CLI on central. It uses a local unix socket, never the network.
 
 ## runner-join.svg
-Caption: follow the token from Dana to the runner, then the runner to central.
-1. Dana runs `token create` on central. It prints `mfj1.ID.SECRET.HASH` once (HASH pins central).
-2. Dana hands the token to the build-1 host by any channel, never through central.
+Caption: follow the token from aarvee to the runner, then the runner to central.
+1. aarvee runs `token create` on central. It prints `mfj1.ID.SECRET.HASH` once (HASH pins central).
+2. aarvee hands the token to the build-1 host by any channel, never through central.
 3. `runner join` dials `:2222` as user `enroll`. A host key not matching HASH is refused (no TOFU).
 4. It sends one `join@mirafleet` frame: token, runner name, labels.
 5. `Store.Enroll`, one transaction: look up by ID, constant-time compare, check stale, insert.
 6. Status is `pending` (`active` only if the token auto-approves). The enroll connection closes.
-7. Dana runs `runner approve dev/build-1`: status becomes `active`.
+7. aarvee runs `runner approve dev/build-1`: status becomes `active`.
 8. The runner reconnects as user `runner` with its own key and sends heartbeats.
 
 ## operator-register.svg
 Caption: same window, same code, both accepted; next window, old code dead.
-1. Central keeps a 32-byte secret in SQLite, never logged. Only Dana (the admin) can read codes.
+1. Central keeps a 32-byte secret in SQLite, never logged. Only aarvee (the admin) can read codes.
 2. Each 60 s window `s` (unix seconds / 60) has its own code: base32(HMAC-SHA256(secret, s)) + HASH.
-3. alice runs `mcp login` with the code Dana gave her. Central recomputes this window's code and compares.
-4. bob uses the same code in the same window and is accepted too. Codes are not single-use.
+3. durga runs `mcp login` with the code aarvee gave durga. Central recomputes this window's code and compares.
+4. kalyan uses the same code in the same window and is accepted too. Codes are not single-use.
 5. The window ends. The next window `s+1` has a brand-new code.
-6. bob tries the old code in the next window: refused, with the same error as any wrong code.
+6. kalyan tries the old code in the next window: refused, with the same error as any wrong code.
 7. HASH is central's host-key hash, so the code also pins central: no TOFU at first login.
 
 ## action-run.svg
 Caption: one request down through every layer and back, with both audit rows.
-1. alice's agent calls `action.run` (`prod/db-1`, `tail-logs`, `lines=200`) through `mirafleet mcp`.
+1. durga's agent calls `action.run` (`prod/db-1`, `tail-logs`, `lines=200`) through `mirafleet mcp`.
 2. `mcp` sends one frame (4-byte length + JSON) on an `api@` channel. The operator method table routes it.
 3. `service.RunAction` checks policy, fleet mode, confirm "prod" (guarded fleet's name), runner active.
 4. The audit row "start" is written first. If that fails, nothing runs (fail closed).
@@ -52,7 +52,7 @@ Caption: one request down through every layer and back, with both audit rows.
 
 ## revoke.svg
 Caption: watch the order: tombstone and kick first, commit after, refusal last.
-1. Dana runs `central runner revoke dev/build-1`. The CLI sends `runner.lifecycle` (op `revoke`) over the admin socket.
+1. aarvee runs `central runner revoke dev/build-1`. The CLI sends `runner.lifecycle` (op `revoke`) over the admin socket.
 2. Tombstone: build-1's id goes into the registry, so no new session can slip in during the commit.
 3. Kick: the session context is cancelled and the runner's SSH connection is closed.
 4. In-flight action cancelled: the runner kills the process group; the outcome row says `cancelled`.
@@ -75,10 +75,10 @@ Example response `{"v":1,"id":"1","result":{}}` is 28 bytes; header `00 00 00 1C
 
 ## workspace-open.svg
 Caption: follow `workspace.open` from the agent to a container; note where it can stop early.
-1. alice's agent calls `workspace.open` (fleet `dev`, session `s1`) through `mirafleet mcp`.
+1. durga's agent calls `workspace.open` (fleet `dev`, session `s1`) through `mirafleet mcp`.
 2. The `api@` frame reaches `service.OpenWorkspace`: active operator, workspace-mode fleet, image on
    the allowlist, `confirm` on a guarded fleet, valid session id.
-3. Sticky reuse: a live workspace for (alice, `dev`, `s1`) is returned with `reused:true`. If its
+3. Sticky reuse: a live workspace for (durga, `dev`, `s1`) is returned with `reused:true`. If its
    runner is offline the answer is `unavailable`; a fresh workspace is never created elsewhere.
 4. Placement: active, online runners whose executor, trusted labels and image patterns fit, with
    free slots (heartbeat slots minus live rows). The most free slots wins, random tie-break.
@@ -92,7 +92,7 @@ Caption: follow `workspace.open` from the agent to a container; note where it ca
 
 ## workspace-exec.svg
 Caption: one `workspace.exec` down through every layer and back, with both audit rows.
-1. alice's agent calls `workspace.exec` (argv `go test ./...`) through `mirafleet mcp`.
+1. durga's agent calls `workspace.exec` (argv `go test ./...`) through `mirafleet mcp`.
 2. One `api@` frame arrives; the method table routes it to `service.ExecWorkspace`.
 3. Operator, ownership (`not_found` for others), state `open`, argv, cwd, env (denylist), confirm and
    timeout are checked; then the `start` audit row is written FIRST. No row, no exec.
@@ -103,7 +103,7 @@ Caption: one `workspace.exec` down through every layer and back, with both audit
 6. The command runs inside the container as an unprivileged user, with no shell. Output is captured
    head and tail, trimmed to the budget; timeout or cancel sends SIGKILL.
 7. The runner writes one result frame: exit code, stdout, stderr, `truncated`, `timed_out`.
-8. Central writes the `outcome` audit row (same `request_id`) and replies to alice.
+8. Central writes the `outcome` audit row (same `request_id`) and replies to durga.
 
 ## workspace-boundary.svg
 Caption: the dotted box is the boundary; read it from the outside in.
@@ -116,14 +116,14 @@ Caption: the dotted box is the boundary; read it from the outside in.
 5. cgroup limits: CPU, memory with swap equal to memory, pids; a soft disk quota on `/workspace`.
 6. What crosses: argv, allow-listed env and file bytes in; exit code, output and file bytes out.
 7. What cannot: host mounts, devices, the containerd socket, API keys, host networking.
-8. The LLM API key and the SSH key stay on alice's laptop; the agent never runs in the container.
+8. The LLM API key and the SSH key stay on durga's laptop; the agent never runs in the container.
 
 ## mcp-tool-call.svg
 Caption: follow one `exec` call to the right, then watch the 30 KiB cap trim the output on the
 way back. The cap is the orange box.
 1. Claude Code (the harness) sends `tools/call` `exec` with `command: "go test ./..."` as one JSON line on the stdin of `mirafleet mcp`.
 2. `mcpserver` decodes the arguments strictly: unknown, duplicate or mis-cased names are refused before any handler runs.
-3. `orch` resolves context, fleet and session, and finds or opens alice's workspace. Its guard lets only operator methods through.
+3. `orch` resolves context, fleet and session, and finds or opens durga's workspace. Its guard lets only operator methods through.
 4. One `api@` frame, method `workspace.exec`, goes to central over the pinned SSH connection.
 5. Central runs its checks, writes the `start` audit row and sends `workspace@` to the runner (flow 13).
 6. The runner runs the command in the container; exit code, stdout and stderr come back (1 MiB at most).
@@ -136,24 +136,24 @@ find the same workspace after `claude --resume` (row 2).
 1. Claude Code starts session `abc` and runs the SessionStart hook. The hook reads `session_id` from its stdin and makes no network call.
 2. The hook writes `cc:abc` to a handoff file in the state directory, keyed by the parent PID (Claude Code) and the project directory. The file is mode 0600 in a 0700 directory.
 3. `mirafleet mcp`, another child of the same Claude Code process, re-reads the file at every workspace open.
-4. `workspace.open` carries session `cc:abc`; central opens alice's workspace or returns the one she already has.
+4. `workspace.open` carries session `cc:abc`; central opens durga's workspace or returns the one durga already has.
 5. Claude Code exits. Nothing is closed: the workspace stays `open` and the 24 h idle TTL reaps it later.
 6. `claude --resume`: same session id, new PIDs. The hook runs again and rewrites the file for the new PID.
 7. The server reads `cc:abc` again and central answers `reused: true`: same container, same files.
 8. After `/clear` the id is new, so the next open binds a new workspace. With no hook there is no file, and the server uses a random per-process session `p:...`.
 
 ## gui-setup.svg
-Caption: follow the setup token from central's start to the file, then to Dana's browser and the first session.
+Caption: follow the setup token from central's start to the file, then to aarvee's browser and the first session.
 1. Central starts with no admin: it makes a setup token and stores only its SHA-256 and a 24 h expiry.
 2. It writes the token to `DATA/gui/setup-token` (mode 0600). The log names the file, never the token.
-3. Dana reads the file, opens `/setup` (every page redirects there) and checks the certificate fingerprint.
-4. She sends the token, a username and the password twice, with a CSRF token from a short-lived cookie.
+3. aarvee reads the file, opens `/setup` (every page redirects there) and checks the certificate fingerprint.
+4. aarvee sends the token, a username and the password twice, with a CSRF token from a short-lived cookie.
 5. `CompleteGUISetup`, one transaction: compare the hash, check expiry, insert the admin, delete the row.
-6. The token file is deleted and her first session starts (hash stored, cookie sent). `/setup` is now 404.
+6. The token file is deleted and aarvee's first session starts (hash stored, cookie sent). `/setup` is now 404.
 
 ## gui-revoke.svg
 Caption: count the gates before the service call; the last half is the same as `revoke.svg`.
-1. Dana types `dev/build-1` on the revoke page and submits: `POST /runners/dev/build-1/revoke`.
+1. aarvee types `dev/build-1` on the revoke page and submits: `POST /runners/dev/build-1/revoke`.
 2. Middleware: the Host must be allowed, the body a urlencoded form under 64 KiB (421, 415, 413).
 3. Session: the cookie's hash finds a live row of the active admin, else 303 to `/login`.
 4. CSRF: same-origin headers, then the `_csrf` token must match the cookie's key (403).

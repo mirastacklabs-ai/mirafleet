@@ -40,7 +40,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- laptop -->
 <rect class="pn" x="10" y="85" width="160" height="200" rx="4"/>
-<text class="h" x="20" y="105">alice</text>
+<text class="h" x="20" y="105">durga</text>
 <text x="20" y="127">Claude Code</text>
 <text class="m" x="20" y="145">mirafleet mcp</text>
 <g class="st" style="--i:8">
@@ -103,6 +103,6 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <g class="st" style="--i:5"><text x="10" y="590"><tspan class="b">5</tspan> cgroup limits: CPU, memory with swap equal to memory, pids; a soft disk quota on /workspace.</text></g>
 <g class="st" style="--i:6"><text x="10" y="610"><tspan class="b">6</tspan> What crosses: argv, allow-listed env and file bytes in; exit code, output and file bytes out.</text></g>
 <g class="st" style="--i:7"><text x="10" y="630"><tspan class="b">7</tspan> What cannot: host mounts, devices, the containerd socket, API keys, host networking.</text></g>
-<g class="st" style="--i:8"><text x="10" y="650"><tspan class="b">8</tspan> The LLM API key and the SSH key stay on alice's laptop; the agent never runs in the box.</text></g>
+<g class="st" style="--i:8"><text x="10" y="650"><tspan class="b">8</tspan> The LLM API key and the SSH key stay on durga's laptop; the agent never runs in the box.</text></g>
 <circle class="dot pk" cx="0" cy="0" r="7"/>
 </svg>

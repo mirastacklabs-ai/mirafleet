@@ -20,7 +20,9 @@ tests, and make your first change without asking the authors.
 
 ## The story in one paragraph
 
-Acme is a company with a `dev` fleet and a `prod` fleet of servers. Engineers use an AI coding
+MIRASTACK LABS has spare servers and VMs sitting idle, and built mirafleet to put them to work
+for its engineers' AI coding sessions without sharing credentials. The company has a `dev` fleet
+and a `prod` fleet of servers. Engineers use an AI coding
 agent (Claude Code) and want it to help run those servers. Letting an AI log in to production
 with a shell is dangerous. mirafleet puts one server, **central**, in the middle. Each fleet
 server runs a small **runner** that dials out to central. The agent talks to central, and central
@@ -28,7 +30,7 @@ passes along only the work that the runner's own allowlist permits. Every reques
 This is the same shape as GitLab CI runners. For coding work the `dev` fleet runs in
 **workspace mode**: the agent gets a private container on a runner, where it may run any command
 (`go test`, edits) without being able to reach the host, the network or anyone else's files.
-The admin (Dana) manages all of this from the command line or from a web page served by central,
+The admin (aarvee) manages all of this from the command line or from a web page served by central,
 the **admin GUI** (HTTPS, one admin account, every change audited).
 
 ## Reading order and time estimates
@@ -118,11 +120,11 @@ instead of a picture, the code itself is readable: `A -->|label| B` means "A sen
 
 ## Conventions used everywhere
 
-- **Running example.** Company Acme. Central is `central.example.com:2222`. Fleets are `dev` and
-  `prod`. Runners are `build-1` (in `dev`) and `db-1` (in `prod`). Operators (people who use fleets) are `alice`
-  and `bob`. Dana is the admin who runs `mirafleet central ...` on the central host. All hostnames
-  use `example.com`; nothing is real. For **actions** the story is alice running `tail-logs` on
-  `prod/db-1`. For **workspaces** it is Dana creating `dev` in workspace mode, then alice's Claude
+- **Running example.** Company MIRASTACK LABS. Central is `central.example.com:2222`. Fleets are `dev` and
+  `prod`. Runners are `build-1` (in `dev`) and `db-1` (in `prod`). Operators (people who use fleets) are `durga`
+  and `kalyan`. aarvee is the admin who runs `mirafleet central ...` on the central host. All hostnames
+  use `example.com`; nothing is real. For **actions** the story is durga running `tail-logs` on
+  `prod/db-1`. For **workspaces** it is aarvee creating `dev` in workspace mode, then durga's Claude
   Code opening a workspace on `build-1`, running `go test` and reading and writing files (told in
   [chapter 1](01-what-is-mirafleet.md#the-workspace-running-example)).
 - **Names, not line numbers.** The guide points at files and functions such as

@@ -9,8 +9,13 @@ guide they understand the whole design and code and never need to ask the author
   and link it to [glossary.md](glossary.md). No unexplained acronyms.
 - Teach the *why*, not only the *what*: for every rule or defence, say what would go wrong
   without it, with a concrete example.
-- Use one running example everywhere: company **Acme**, central `central.example.com:2222`,
-  fleets `dev` and `prod`, runners `build-1` and `db-1`, operators `alice` and `bob`.
+- Use one running example everywhere: company **MIRASTACK LABS**, central `central.example.com:2222`,
+  fleets `dev` and `prod`, runners `build-1` and `db-1`. The engineers: `aarvee` runs central and
+  is the admin, `raj` owns the spare servers and enrols them as runners, `durga` (Claude Code on a
+  Mac) and `kalyan` (Windows or Linux laptop) are operators, and `sid` is the newest engineer (the
+  reader of this guide). The story: MIRASTACK LABS has spare servers and VMs sitting idle, and
+  mirafleet puts them to work for its engineers' AI coding sessions without sharing credentials
+  with engineers. Refer to the engineers by name or as they/them. Attackers stay "an attacker".
   Never real hostnames, people or secrets.
 - Every chapter starts with **"What you will learn"** (3–5 bullets) and ends with
   **"Check your understanding"** (3–5 questions, answers in a collapsed `<details>` block).
