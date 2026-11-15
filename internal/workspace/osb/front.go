@@ -238,7 +238,7 @@ func (f *Front) newHandler() http.Handler {
 			return
 		}
 		if r.Body != nil && r.Body != http.NoBody {
-			r.Body = &deadlineBody{rc: http.NewResponseController(w), src: r.Body, d: f.bodyTimeout}
+			r.Body = &deadlineBody{rc: http.NewResponseController(w), src: r.Body, d: f.bodyTimeout, length: r.ContentLength}
 		}
 		rp.ServeHTTP(w, r)
 	})
@@ -247,20 +247,39 @@ func (f *Front) newHandler() http.Handler {
 // deadlineBody gives each read of a request body an inactivity deadline and clears it at the end
 // of the body, so a slow-sending client times out (the handler then answers 408) while the
 // response stream that follows is not subject to a read deadline.
+//
+// It also absorbs a read after Close once the body is known complete. The upstream transport
+// re-reads the body after its last byte to confirm EOF, and closes it as soon as the response
+// arrives; when the upstream answers first (an SSE stream), that late read returned
+// http.ErrBodyReadAfterClose, the transport treated it as a failed request write and closed the
+// upstream connection, cutting the response stream mid-flight.
 type deadlineBody struct {
 	rc       *http.ResponseController
 	src      io.ReadCloser
 	d        time.Duration
+	length   int64 // declared Content-Length, -1 if unknown
+	read     atomic.Int64
+	eof      atomic.Bool
 	timedOut atomic.Bool
 }
 
 func (b *deadlineBody) Read(p []byte) (int, error) {
+	if b.eof.Load() {
+		return 0, io.EOF
+	}
 	b.rc.SetReadDeadline(time.Now().Add(b.d)) // best effort: unsupported writers just skip it
 	n, err := b.src.Read(p)
+	got := b.read.Add(int64(n))
+	if errors.Is(err, http.ErrBodyReadAfterClose) && b.length >= 0 && got == b.length {
+		err = io.EOF // all bytes were delivered; only the final EOF probe came after Close
+	}
 	if err != nil {
 		var ne net.Error
 		if errors.As(err, &ne) && ne.Timeout() {
 			b.timedOut.Store(true)
+		}
+		if err == io.EOF {
+			b.eof.Store(true)
 		}
 		b.rc.SetReadDeadline(time.Time{})
 	}
