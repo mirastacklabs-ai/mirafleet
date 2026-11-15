@@ -40,7 +40,7 @@ func TestBrewGolden(t *testing.T) {
 		t.Fatalf("code %d %q", c, errs)
 	}
 	goldenN26(t, "brew/mirafleet.rb.golden", out)
-	for _, want := range []string{"bin.install \"mirafleet\"", "mirafleet --version", "on_macos do", "on_linux do", "on_arm do", "on_intel do"} {
+	for _, want := range []string{"bin.install \"mirafleet\"", "mirafleet version", "on_macos do", "on_linux do", "on_arm do", "on_intel do"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("formula lacks %q", want)
 		}

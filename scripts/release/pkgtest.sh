@@ -43,6 +43,8 @@ else fam=apk; fi
 
 if [ "$fam" = deb ]; then
 	export DEBIAN_FRONTEND=noninteractive
+	# Minimal images (ubuntu) tell dpkg to skip /usr/share/doc; a real host installs the docs.
+	rm -f /etc/dpkg/dpkg.cfg.d/excludes
 	apt-get update -qq >/dev/null
 	apt-get install -y -qq systemd >/dev/null 2>&1
 elif [ "$fam" = rpm ]; then
@@ -169,7 +171,8 @@ else
 		alive "remove"
 		;;
 	apk)
-		apk add -q --allow-untrusted --force-reinstall "$pkg" || fail "reinstall"
+		# apk has no --force-reinstall for a local file: remove, then add again over the kept data.
+		apk del -q mirafleet && apk add -q --allow-untrusted "$pkg" || fail "reinstall"
 		alive "reinstall"
 		apk del -q mirafleet
 		[ ! -e /usr/bin/mirafleet ] || fail "binary left after remove"

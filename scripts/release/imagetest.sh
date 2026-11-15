@@ -16,7 +16,7 @@ set -eu
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CTR="${MIRAFLEET_CTR:-docker}"
-TOOL_IMAGE="${MIRAFLEET_GO_IMAGE:-docker.io/library/golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea}"
+TOOL_IMAGE="${MIRAFLEET_GO_IMAGE:?run through scripts/release.sh (it pins the Go image)}"
 IMG="${MIRAFLEET_TEST_IMAGE:-mirafleet-imagetest:local}"
 LABEL=org.mirastacklabs.mirafleet.release=1
 WORK="$ROOT/dist/imagetest"

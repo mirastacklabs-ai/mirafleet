@@ -7,12 +7,12 @@
 # Sigstore and is covered by the release smoke test).
 set -eu
 
-IMAGE="${MIRAFLEET_GO_IMAGE:-docker.io/library/golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea}"
+IMAGE="${MIRAFLEET_GO_IMAGE:?run through scripts/release.sh (it pins the Go image)}"
 CTR="${MIRAFLEET_CTR:-docker}"
 
 if [ "${1:-}" != "--inside" ]; then
 	ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-	exec $CTR run -q --rm --network none -v "$ROOT/scripts":/scripts:ro "$IMAGE" \
+	exec $CTR run -q --rm --network none -e MIRAFLEET_GO_IMAGE="$IMAGE" -v "$ROOT/scripts":/scripts:ro "$IMAGE" \
 		sh /scripts/release/installtest.sh --inside
 fi
 
@@ -35,6 +35,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 )
 
 func main() {
@@ -42,7 +43,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	os.WriteFile(os.Args[4], []byte(l.Addr().(*net.TCPAddr).AddrPort().Port()), 0o600)
+	os.WriteFile(os.Args[4], []byte(strconv.Itoa(l.Addr().(*net.TCPAddr).Port)), 0o600)
 	panic(http.ServeTLS(l, http.FileServer(http.Dir(os.Args[1])), os.Args[2], os.Args[3]))
 }
 GO

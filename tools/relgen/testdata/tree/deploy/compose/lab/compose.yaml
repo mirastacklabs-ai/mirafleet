@@ -1,0 +1,48 @@
+# One-machine try-it lab: central + an actions runner + an operator container. Everything is
+# published on 127.0.0.1 only. See README.md.
+name: mirafleet-lab
+
+x-image: &image ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.5.0}
+
+services:
+  central-init:
+    image: *image
+    command: ["central", "init", "-data", "/var/lib/mirafleet/central"]
+    volumes:
+      - central-data:/var/lib/mirafleet
+    restart: "no"
+
+  central:
+    image: *image
+    depends_on:
+      central-init:
+        condition: service_completed_successfully
+    volumes:
+      - central-data:/var/lib/mirafleet
+    ports:
+      # An empty MIRAFLEET_*_PORT (set but empty) picks a random free host port.
+      - "127.0.0.1:${MIRAFLEET_SSH_PORT-2222}:2222"
+      - "127.0.0.1:${MIRAFLEET_GUI_PORT-8443}:8443"
+    restart: unless-stopped
+
+  # Started by name after the join (see README.md): `docker compose up -d runner`.
+  runner:
+    image: *image
+    profiles: ["runner"]
+    command: ["runner", "run", "-data", "/var/lib/mirafleet/runner", "-actions", "/etc/mirafleet/actions.yaml"]
+    volumes:
+      - runner-data:/var/lib/mirafleet
+      - ./actions.yaml:/etc/mirafleet/actions.yaml:ro
+    restart: unless-stopped
+
+  # The operator's side (what `mirafleet mcp` runs on a laptop): `docker compose run --rm operator ...`.
+  operator:
+    image: *image
+    profiles: ["tools"]
+    volumes:
+      - operator-data:/var/lib/mirafleet
+
+volumes:
+  central-data:
+  runner-data:
+  operator-data:

@@ -10,7 +10,7 @@
 #                 X.Y.Z or X.Y.Z-rc.N and the host/container arch must be linux amd64 or arm64.
 set -eu
 
-GO_IMAGE="${MIRAFLEET_GO_IMAGE:-docker.io/library/golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea}"
+GO_IMAGE="${MIRAFLEET_GO_IMAGE:?run through scripts/release.sh (it pins the Go image)}"
 NODE_IMAGE="${MIRAFLEET_NODE_IMAGE:-docker.io/library/node:24.21-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20}"
 CTR="${MIRAFLEET_CTR:-docker}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -26,7 +26,6 @@ fi
 mkdir -p "$ROOT/dist"
 WORK="$(mktemp -d "$ROOT/dist/npmtest-XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT INT TERM
-WORKNAME="$(basename "$WORK")"
 
 if [ $# -eq 2 ]; then
 	DISTDIR="$1"
@@ -66,7 +65,7 @@ $CTR run -q --rm --label "$LABEL" --network none --user "$(id -u):$(id -g)" \
 
 		echo "== launcher unit tests"
 		cp -R /src/npm/mirafleet /tmp/launcher
-		node --test /tmp/launcher/test
+		node --test /tmp/launcher/test/*.test.js
 
 		echo "== pack"
 		mkdir /work/tarballs
@@ -108,7 +107,7 @@ $CTR run -q --rm --label "$LABEL" --network none --user "$(id -u):$(id -g)" \
 		for t in /work/tarballs/*.tgz; do
 			tar -tzf "$t" | grep -v "^package/" && fail "$t: entry outside package/"
 			case "$t" in
-			*mirafleet-mirafleet-[0-9]*)
+			*/mirastacklabs-mirafleet-[0-9]*)
 				tar -tzf "$t" | grep -q "^package/bin/mirafleet.js$" || fail "launcher missing"
 				tar -tzf "$t" | grep -q "test/" && fail "tests shipped in the wrapper"
 				tar -tzf "$t" | grep -q "^package/LICENSE$" || fail "wrapper LICENSE"
@@ -154,7 +153,7 @@ $CTR run -q --rm --label "$LABEL" --network none --user "$(id -u):$(id -g)" \
 		[ "$out" = "$version" ] || fail "shim output [$out]"
 		npx --offline mirafleet bogus-command >/dev/null 2>&1 && fail "exit code not propagated"
 		init="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"npmtest\",\"version\":\"0\"}}}"
-		resp=$(printf "%s\n" "$init" | npx --offline mirafleet mcp -project-dir /tmp/proj 2>/dev/null) || true
+		resp=$( (printf "%s\n" "$init"; sleep 3) | npx --offline mirafleet mcp -project-dir /tmp/proj 2>/dev/null) || true
 		echo "$resp" | grep -q "\"serverInfo\"" || fail "MCP initialize through the launcher: [$resp]"
 		echo "npmtest OK"
 	' sh "$VERSION"

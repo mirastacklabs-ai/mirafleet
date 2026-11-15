@@ -116,7 +116,7 @@ func renderBrew(version string, sums map[string]string) (string, error) {
 		b.WriteString("  end\n")
 	}
 	b.WriteString("\n  def install\n    bin.install \"mirafleet\"\n  end\n")
-	b.WriteString("\n  test do\n    assert_match version.to_s, shell_output(\"#{bin}/mirafleet --version\")\n  end\nend\n")
+	b.WriteString("\n  test do\n    assert_match version.to_s, shell_output(\"#{bin}/mirafleet version\")\n  end\nend\n")
 	return b.String(), nil
 }
 

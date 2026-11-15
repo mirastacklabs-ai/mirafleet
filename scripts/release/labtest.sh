@@ -13,7 +13,7 @@ set -eu
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CTR="${MIRAFLEET_CTR:-docker}"
-TOOL_IMAGE="${MIRAFLEET_GO_IMAGE:-docker.io/library/golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea}"
+TOOL_IMAGE="${MIRAFLEET_GO_IMAGE:?run through scripts/release.sh (it pins the Go image)}"
 LAB="$ROOT/deploy/compose/lab"
 
 if [ -z "${MIRAFLEET_CTR:-}" ] && ! docker info >/dev/null 2>&1; then

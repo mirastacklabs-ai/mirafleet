@@ -89,6 +89,9 @@ func TestBumpThenCheck(t *testing.T) {
 		"cmd/mirafleet/mcp_hook.go",
 		".claude-plugin/marketplace.json",
 		"server.json",
+		"deploy/compose/central/compose.yaml",
+		"deploy/compose/runner/compose.yaml",
+		"deploy/compose/lab/compose.yaml",
 	} {
 		want := strings.ReplaceAll(read(t, filepath.Join("testdata", "tree"), rel), "0.5.0", "0.6.0")
 		if got := read(t, root, rel); got != want {

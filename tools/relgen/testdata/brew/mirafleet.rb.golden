@@ -32,6 +32,6 @@ class Mirafleet < Formula
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/mirafleet --version")
+    assert_match version.to_s, shell_output("#{bin}/mirafleet version")
   end
 end

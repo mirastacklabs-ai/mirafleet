@@ -1,0 +1,35 @@
+# mirafleet central. See README.md. Start with: docker compose up -d
+name: mirafleet-central
+
+x-image: &image ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.5.0}
+
+services:
+  # One-shot: creates the host key, database and registration secret (idempotent), then exits.
+  central-init:
+    image: *image
+    command: ["central", "init", "-data", "/var/lib/mirafleet/central"]
+    volumes:
+      - central-data:/var/lib/mirafleet
+    restart: "no"
+
+  central:
+    image: *image
+    depends_on:
+      central-init:
+        condition: service_completed_successfully
+    env_file:
+      - path: central.env
+        required: false
+    volumes:
+      - central-data:/var/lib/mirafleet
+    ports:
+      # SSH: runners and operators connect here. Open to your network as needed.
+      - "2222:2222"
+      # Admin GUI (HTTPS, self-signed certificate kept in the data volume). Local only by
+      # default. To reach it from other machines, change to "8443:8443" and firewall port 8443
+      # to your admins' networks; or keep this and use `ssh -L 8443:127.0.0.1:8443 HOST`.
+      - "127.0.0.1:8443:8443"
+    restart: unless-stopped
+
+volumes:
+  central-data:

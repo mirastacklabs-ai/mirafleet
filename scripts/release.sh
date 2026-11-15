@@ -99,7 +99,7 @@ runscript() {
 		echo "release.sh: not yet implemented: scripts/release/$name does not exist" >&2
 		exit 1
 	fi
-	MIRAFLEET_CTR="$CTR" MIRAFLEET_RELEASE_ROOT="$ROOT" MIRAFLEET_RELEASE_LABEL="$LABEL" \
+	MIRAFLEET_GO_IMAGE="$GO_IMAGE" MIRAFLEET_CTR="$CTR" MIRAFLEET_RELEASE_ROOT="$ROOT" MIRAFLEET_RELEASE_LABEL="$LABEL" \
 		exec sh "$ROOT/scripts/release/$name" "$@"
 }
 
@@ -193,7 +193,7 @@ snapshot)
 	echo "snapshot: assets in dist/goreleaser/"
 	;;
 pkgtest)
-	runscript pkgtest.sh "$@"
+	runscript pkgtest.sh "${1:-$ROOT/dist/goreleaser}"
 	;;
 installtest)
 	runscript installtest.sh "$@"
