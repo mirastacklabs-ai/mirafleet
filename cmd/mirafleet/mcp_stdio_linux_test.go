@@ -567,6 +567,7 @@ func TestM5NoHooks(t *testing.T) {
 	// Operator registration into a temp config dir, through the real `mcp login` path.
 	cfg := filepath.Join(t.TempDir(), "cfg")
 	t.Setenv(opconf.EnvDir, cfg)
+	waitCodeWindow()
 	code, err := c.svc.OperatorCode(context.Background(), auth.LocalAdmin(os.Getuid()), service.SourceCLI)
 	if err != nil {
 		t.Fatal(err)

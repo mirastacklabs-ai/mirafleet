@@ -70,6 +70,7 @@ func TestM2Done(t *testing.T) {
 	e.waitOnline("r1")
 
 	// Two operators register with the same current code (pinned from the code).
+	waitCodeWindow()
 	code, err := e.svc.OperatorCode(ctx, e.admin, service.SourceCLI)
 	must(t, err)
 	var clients []*apiclient.Client
