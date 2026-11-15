@@ -61,16 +61,23 @@ func TestOwnershipRefusalAuditedDenied(t *testing.T) {
 		}
 		// Guarded refusals use the same shape: denied, requester as actor, workspace id.
 	}
-	// Unknown and malformed ids: not_found, no row.
-	n := len(e.audit())
-	for _, id := range []string{strings.Repeat("0", 32), "short"} {
-		if c := code(t, errOf(e.svc.CloseWorkspace(e.ctx, bob, SourceAPI, id))); c != api.CodeNotFound {
-			t.Errorf("id %q: %q", id, c)
+	// F-47: an unknown (well-formed) id takes the foreign-id path: one denied row carrying the id.
+	// A malformed id is refused and audited with an empty Workspace (never echoed).
+	for _, c := range []struct{ id, wantWs string }{{strings.Repeat("0", 32), strings.Repeat("0", 32)}, {"short", ""}} {
+		n := len(e.audit())
+		if got := code(t, errOf(e.svc.CloseWorkspace(e.ctx, bob, SourceAPI, c.id))); got != api.CodeNotFound {
+			t.Errorf("id %q: %q", c.id, got)
 		}
-	}
-	for _, a := range e.audit()[n:] {
-		if a.Outcome == OutcomeDenied && a.Workspace != "" {
-			t.Errorf("row for an unknown id: %+v", a)
+		var denied []store.AuditEvent
+		for _, a := range e.audit()[n:] {
+			if a.Outcome == OutcomeDenied && a.Actor == "bob" {
+				denied = append(denied, a)
+			}
+		}
+		if len(denied) != 1 || denied[0].Workspace != c.wantWs {
+			t.Errorf("id %q: denied rows %+v, want exactly one with Workspace %q", c.id, denied, c.wantWs)
+		} else if c.wantWs != "" && denied[0].Message != "not found or not owner" {
+			t.Errorf("id %q: message %q", c.id, denied[0].Message)
 		}
 	}
 	// The owner still works.
