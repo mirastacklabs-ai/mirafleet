@@ -33,7 +33,7 @@ All examples use the running example: central at `central.example.com:2222`, fle
 `prod`, runners `build-1` (in `dev`) and `db-1` (in `prod`), operators `durga` and `kalyan`, and
 aarvee, the admin who uses the local admin socket. Tokens and codes are obviously fake (the secret
 and host-key-hash placeholders are exactly 43 characters long, like the real ones). Timestamps
-are made up. M1 to M5 are done, M7 (host mode) is built, and M6 (release) is in progress and unreleased; everything here is implemented, except where
+are made up. M1 to M5 are done, M7 (host mode) is built, and M6 (release, `v0.6.0`) is done; everything here is implemented, except where
 a paragraph says "planned". Workspace ids are 32 lowercase hex characters; the examples use
 `3f9a6c1e5b7d4820a1c3e5f708192a4b`.
 

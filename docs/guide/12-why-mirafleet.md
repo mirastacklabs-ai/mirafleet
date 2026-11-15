@@ -5,7 +5,7 @@
 > before relying on any row. This chapter compares mirafleet as designed, with all planned
 > milestones (M1 to M6) implemented. M1, M2, M3 (workspaces), M4 (the admin GUI) and M5 (the MCP
 > server, the Claude Code plugin and the other harness files) are done; release packaging (M6) is
-> in progress and unreleased (section 12.7 covers distribution). See [../PLAN.md](../PLAN.md) for what is built today. Star counts are approximate. The rows
+> done and shipped as `v0.6.0` (section 12.7 covers distribution). See [../PLAN.md](../PLAN.md) for what is built today. Star counts are approximate. The rows
 > for other tools were last researched on 13 Nov 2026 and were **not** re-researched for the M4
 > or M5 refreshes; only the statements about mirafleet were re-checked against the code.
 
@@ -189,7 +189,7 @@ box around the sandbox with credentials, and every connection to central points 
 
 Legend: ✅ yes, ⚠️ partly or with caveats, ❌ no. "Unverified" means the research could not
 confirm it. mirafleet's row describes the **full planned feature set** (M1 to M5 are built,
-including the MCP server and the admin GUI; release packaging is not), not the code today. The
+including the MCP server and the admin GUI; release packaging is too, as `v0.6.0`), not only the code today. The
 table has five columns of facts on purpose; everything else (extra dependencies, MCP support,
 audit and revoke) is in the prose after it.
 

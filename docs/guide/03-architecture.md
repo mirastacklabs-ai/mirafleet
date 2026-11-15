@@ -917,7 +917,7 @@ credentials, above) are built. Not built yet: a container-mode version of the M7
 `fsops` package is pure Go, so wiring it into `ctrd` is a small follow-up; the new tools return
 `unsupported` on container fleets). M6 (release
 packaging, systemd units, the package-manager and plugin-marketplace listings) is in the
-repository but the first release is not published yet; see
+repository and ships as the first release, `v0.6.0`; see
 [the distribution view](#distribution-how-the-parts-reach-a-machine-m6). Not built, by design: more than one GUI admin, roles,
 single sign-on and two-factor login (enterprise features; `gui.Backend` is the seam). Workspace mode, the containerd executor
 and the OpenSandbox executor are **built** (M3, [M3.md](../M3.md)). The MCP stdio server, the

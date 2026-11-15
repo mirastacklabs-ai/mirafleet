@@ -28,9 +28,9 @@ to write `actions.yaml`, and a table of error messages with fixes.
   GUI, Compose, verifying checksums, signatures and provenance, upgrade order, the automatic
   backup, rollback, and install troubleshooting ([section 10.12](#1012-install-upgrade-and-verify-by-channel-m6)).
 
-> **Status:** M1 to M5 and M7 (host mode) are built; M6 (release) is in progress. Sections 10.2 to 10.11 and 10.13 run the
+> **Status:** M1 to M5 and M7 (host mode) are built; M6 (release, `v0.6.0`) is done. Sections 10.2 to 10.11 and 10.13 run the
 > binary by hand, which still works; packages, systemd units, the image and Compose are in
-> [section 10.12](#1012-install-upgrade-and-verify-by-channel-m6) and the unreleased M6 plan
+> [section 10.12](#1012-install-upgrade-and-verify-by-channel-m6) and the M6 plan
 > ([PLAN.md](../PLAN.md)).
 > `mirafleet mcp` (no arguments) is the MCP server that Claude Code and other agents talk to;
 > `mirafleet mcp login`, `context` and `api` are the human operator tools. Where the guide shows
@@ -82,8 +82,8 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/mirafleet ./cmd/mirafleet
 
 (`/dist/` is git-ignored.) Change `GOOS`/`GOARCH` for other machines, for example
 `darwin`/`arm64` for an Apple-silicon laptop that only needs `mirafleet mcp`.
-Release archives, packages and `install.sh` are planned (M6). Copy the binary to
-`/usr/local/bin/mirafleet` on every machine, and check:
+Release archives, packages and `install.sh` are in [10.12](#1012-install-upgrade-and-verify-by-channel-m6).
+To use the binary you just built, copy it to `/usr/local/bin/mirafleet` on every machine, and check:
 
 ```console
 $ mirafleet version
@@ -920,7 +920,7 @@ fresh `runner join` with a new token (new `-data` directory), and every operator
 
 ### Upgrading central, including a migration
 
-1. Read the release notes (planned for M6; for now `git log` and `docs/PLAN.md`).
+1. Read the release notes (on the GitHub release page).
 2. Stop central and back up the data directory (above).
 3. Replace the binary and start central. On start, central compares the database's schema
    version (SQLite `PRAGMA user_version`) with the migrations built into the binary and applies

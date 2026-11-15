@@ -755,8 +755,8 @@ combined Apache-2.0 and MIT file is classified correctly. The full list of what 
 `docs/M5.md` section 10.
 
 When you add a dependency: **ask first** (CLAUDE.md), read its licence and its transitive modules'
-licences, run `scripts/dev.sh licenses`, and note the licence in the PR. A CI job for this
-is planned (M6); until then you run it by hand.
+licences, run `scripts/dev.sh licenses`, and note the licence in the PR. CI runs the same
+check (the `licenses` job).
 
 ## 9.10 Common failures and fixes
 
