@@ -1,0 +1,119 @@
+name: gate
+
+# The full local gate (scripts/dev.sh), split into parallel jobs. Every step runs in the same
+# digest-pinned containers as a local run; the runner only needs Docker. Final `gate` job is
+# the single check to require.
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  fmt-vet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/dev.sh fmt
+      - run: scripts/dev.sh vet
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/dev.sh build
+
+  test-race:
+    name: test-race (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [heavy, rest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: go test -race (${{ matrix.shard }})
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          all=$(scripts/dev.sh go list ./...)
+          heavy=$(printf '%s\n' "$all" | grep -E '/(internal/central|cmd/mirafleet)(/|$)' || true)
+          if [ "$SHARD" = heavy ]; then
+            pkgs=$heavy
+          else
+            pkgs=$(printf '%s\n' "$all" | grep -vxF -f <(printf '%s\n' "$heavy") || true)
+          fi
+          [ -n "$pkgs" ] || { echo "empty shard $SHARD" >&2; exit 1; }
+          echo "$pkgs"
+          # shellcheck disable=SC2086
+          scripts/dev.sh go test -race $pkgs
+
+  test-nocgo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: go test (CGO_ENABLED=0, as shipped)
+        env:
+          MIRAFLEET_CGO: "0" # becomes CGO_ENABLED inside the container (scripts/dev.sh)
+        run: scripts/dev.sh go test ./...
+
+  cross:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/dev.sh cross
+
+  licenses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/dev.sh licenses
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Runs a throwaway --privileged container on the runner's ephemeral VM.
+      - run: scripts/dev.sh integration
+
+  gate:
+    if: always()
+    needs: [fmt-vet, build, test-race, test-nocgo, cross, licenses, integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: all gate jobs succeeded
+        env:
+          RESULT: ${{ needs.fmt-vet.result }} ${{ needs.build.result }} ${{ needs.test-race.result }} ${{ needs.test-nocgo.result }} ${{ needs.cross.result }} ${{ needs.licenses.result }} ${{ needs.integration.result }}
+        run: |
+          echo "$RESULT"
+          for r in $RESULT; do [ "$r" = success ] || exit 1; done

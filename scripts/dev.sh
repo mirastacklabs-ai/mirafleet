@@ -45,6 +45,7 @@ run() {
 		-e GOPATH=/gocache/gopath \
 		-e GOMODCACHE=/go/pkg/mod \
 		-e GOFLAGS="-buildvcs=false -modcacherw" \
+		${MIRAFLEET_CGO:+-e CGO_ENABLED=$MIRAFLEET_CGO} \
 		"$GO_IMAGE" sh -ec "$PRECHECK$script" sh "$@"
 }
 
