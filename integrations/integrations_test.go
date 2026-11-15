@@ -92,7 +92,8 @@ func TestPluginManifest(t *testing.T) {
 	}
 	// Lockstep with the binary (pluginVersion in cmd/mirafleet) is checked in cmd/mirafleet,
 	// because package main cannot be imported here.
-	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(m.Version) {
+	// Same shape relgen bump writes (tools/relgen/check.go semverRE): X.Y.Z or X.Y.Z-rc.N.
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+(-rc\.\d+)?$`).MatchString(m.Version) {
 		t.Fatalf("version %q is not semver", m.Version)
 	}
 }
