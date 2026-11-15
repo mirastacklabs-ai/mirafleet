@@ -493,3 +493,72 @@ func TestSnapshotCarriesHeartbeatFields(t *testing.T) {
 	}
 	var _ Live = r
 }
+
+// The M7 dev ops run on an active runner, the fs image bytes follow the result, and a disabled
+// runner takes only the winding-down ops (S11).
+func TestWorkspaceDevOps(t *testing.T) {
+	fsReq := transport.WorkspaceRequest{Op: transport.OpFS, ID: wsID,
+		FS: &transport.FSOp{Op: transport.FSRead, Path: "a.png"}}
+	conn := newWSConn(okScript(t, transport.WorkspaceResult{FS: &transport.FSResult{Kind: transport.KindImage, Length: 3}}, []byte("png")))
+	r := wsReg(t, StatusActive, conn)
+	var out bytes.Buffer
+	res, err := r.Workspace(context.Background(), 1, fsReq, nil, &out)
+	if err != nil || res.Code != transport.CodeOK || out.String() != "png" {
+		t.Fatalf("fs: %+v %v %q", res, err, out.String())
+	}
+
+	// Too long a body is refused before it is read.
+	conn = newWSConn(okScript(t, transport.WorkspaceResult{FS: &transport.FSResult{Kind: transport.KindImage, Length: transport.MaxBodyBytes + 1}}, nil))
+	r = wsReg(t, StatusActive, conn)
+	if _, err := r.Workspace(context.Background(), 1, fsReq, nil, io.Discard); err == nil {
+		t.Fatal("oversized fs body accepted")
+	}
+
+	// Disabled: output_read and job_cancel yes, fs and creds_sync no.
+	r = wsReg(t, StatusDisabled, newWSConn(okScript(t, transport.WorkspaceResult{}, nil)))
+	if err := workspaceAllowed(transport.OpOutputRead, StatusDisabled); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{transport.OpFS, transport.OpJobStart, transport.OpCredsSync} {
+		if err := workspaceAllowed(op, StatusDisabled); !errors.Is(err, ErrDisabled) {
+			t.Errorf("%s on a disabled runner: %v", op, err)
+		}
+	}
+	_ = r
+}
+
+// SyncCredentials sends the whole set as the creds_sync body and reports a refusal.
+func TestSyncCredentials(t *testing.T) {
+	body := &transport.CredsSyncBody{Generation: 7, Credentials: []transport.CredSecret{{
+		CredMeta: transport.CredMeta{Name: "gl", Kind: "https-token", Hosts: []string{"gitlab.example.com"}, Auth: "bearer"},
+		Version:  1, Value: "s3cret"}}}
+	conn := newWSConn(okScript(t, transport.WorkspaceResult{Creds: &transport.CredsSyncResult{Generation: 7, Count: 1}}, nil))
+	r := wsReg(t, StatusActive, conn)
+	if err := r.SyncCredentials(context.Background(), 1, body); err != nil {
+		t.Fatal(err)
+	}
+	dec, err := transport.DecodeWorkspaceRequest(<-conn.datas)
+	if err != nil || dec.Op != transport.OpCredsSync || dec.StdinLen < 1 {
+		t.Fatalf("request: %+v %v", dec, err)
+	}
+	got, err := transport.DecodeCredsSync((<-conn.opened).got())
+	if err != nil || got.Generation != 7 || len(got.Credentials) != 1 || got.Credentials[0].Value != "s3cret" {
+		t.Fatalf("body: %v", err)
+	}
+
+	// An offline runner is an error.
+	if err := newReg().SyncCredentials(context.Background(), 9, body); err == nil {
+		t.Fatal("offline runner accepted")
+	}
+	// A refusing runner is an error that does not carry the value.
+	conn = newWSConn(func(c *wsChan) {
+		<-c.wclosed
+		transport.WriteResult(c.pw, &transport.WorkspaceResult{Code: transport.CodeUnsupported}, MaxWorkspaceResultBytes)
+		c.pw.Close()
+	})
+	r = wsReg(t, StatusActive, conn)
+	err = r.SyncCredentials(context.Background(), 1, body)
+	if err == nil || strings.Contains(err.Error(), "s3cret") {
+		t.Fatalf("refusal: %v", err)
+	}
+}

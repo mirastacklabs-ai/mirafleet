@@ -426,7 +426,14 @@ func (s *wsState) prepare(req *transport.WorkspaceRequest) (*wsOp, *opErr) {
 		labels := make(map[string]string, len(sp.Labels))
 		for k, v := range sp.Labels {
 			if k == LabelCredentials {
-				labels[k] = v // the one reserved label central sets; removed below
+				labels[k] = v // reserved label central sets; removed below
+				continue
+			}
+			if k == LabelWorkdir { // reserved label for the host executor, which reads it
+				if h, ok := s.ex.(HostModer); !ok || !h.HostMode() {
+					return nil, refuse("workdir needs a host runner")
+				}
+				labels[k] = v
 				continue
 			}
 			if strings.HasPrefix(strings.ToLower(k), "mirafleet.") {

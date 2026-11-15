@@ -228,6 +228,8 @@ func (s *Server) Start() (string, error) {
 	s.wg.Add(1)
 	go func() { defer s.wg.Done(); s.cfg.Service.RunReaper(s.ctx) }()
 	s.wg.Add(1)
+	go func() { defer s.wg.Done(); s.cfg.Service.RunRotation(s.ctx, time.Hour) }() // no-op without a key
+	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		for {

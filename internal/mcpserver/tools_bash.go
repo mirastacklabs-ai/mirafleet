@@ -50,7 +50,7 @@ const (
 		`"started":{"type":"string"},"ended":{"type":"string"},"stdout_bytes":{"type":"integer"},"stderr_bytes":{"type":"integer"}`
 	outBash = `{"type":"object","properties":{"exit_code":{"type":"integer"},"stdout":{"type":"string"},"stderr":{"type":"string"},` +
 		`"truncated":{"type":"boolean"},"omitted_bytes":{"type":"integer"},"stdout_bytes":{"type":"integer"},"stderr_bytes":{"type":"integer"},` +
-		`"timed_out":{"type":"boolean"},"duration":{"type":"string"},"ref":{"type":"string"},"note":{"type":"string"},` +
+		`"timed_out":{"type":"boolean"},"duration":{"type":"string"},"ref":{"type":"string"},"cwd":{"type":"string"},"note":{"type":"string"},` +
 		`"warnings":{"type":"array","items":{"type":"string"}},"workspace":{"type":"string"},"where":` + whereSchema + `},` +
 		`"required":["exit_code","stdout","stderr","truncated","duration","workspace","where"]}`
 	outShell = `{"type":"object","properties":{` + jobProps + `,"output":{"type":"string"},"omitted_bytes":{"type":"integer"},` +
@@ -75,6 +75,7 @@ type bashOut struct {
 	TimedOut     bool     `json:"timed_out,omitempty"`
 	Duration     string   `json:"duration"`
 	Ref          string   `json:"ref,omitempty"`
+	Cwd          string   `json:"cwd,omitempty"`
 	Note         string   `json:"note,omitempty"`
 	Warnings     []string `json:"warnings,omitempty"`
 	Workspace    string   `json:"workspace"`
@@ -218,7 +219,7 @@ func (s *wsState) bash(ctx context.Context, req Request) (any, error) {
 		ExitCode: r.ExitCode, Stdout: c.Stdout, Stderr: c.Stderr, Truncated: c.Truncated || r.Truncated || r.Omitted > 0,
 		OmittedBytes: int64(c.OmittedBytes) + r.Omitted, StdoutBytes: r.StdoutBytes, StderrBytes: r.StderrBytes,
 		TimedOut: r.TimedOut, Duration: (time.Duration(r.DurationMS) * time.Millisecond).String(),
-		Ref: r.Ref, Workspace: sel.id, Where: whereOf(sel.t), Warnings: sc.warnings(),
+		Ref: r.Ref, Cwd: r.Cwd, Workspace: sel.id, Where: whereOf(sel.t), Warnings: sc.warnings(),
 	}
 	if out.Truncated {
 		out.Note = fmt.Sprintf("output was cut (%d bytes omitted)", out.OmittedBytes)

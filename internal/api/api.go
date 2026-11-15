@@ -834,6 +834,8 @@ type WorkspaceExecResult struct {
 	StdoutBytes int64  `json:"stdout_bytes,omitempty"`
 	StderrBytes int64  `json:"stderr_bytes,omitempty"`
 	Omitted     int64  `json:"omitted,omitempty"`
+	// Cwd is the session's working directory after the command (host mode).
+	Cwd string `json:"cwd,omitempty"`
 }
 
 type WorkspaceReadFileParams struct {

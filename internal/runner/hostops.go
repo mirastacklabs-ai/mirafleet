@@ -33,6 +33,10 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/sshagent"
 )
 
+// LabelWorkdir is the spec label central sets from workspace_open's workdir name (host fleets);
+// the host executor reads it (hostx.LabelWorkdir) and resolves the name under its root.
+const LabelWorkdir = "mirafleet.workdir"
+
 // LabelCredentials is the spec label that carries the credential names a workspace_open asked
 // for: a comma-separated list; absent means every held credential, empty means none. Central
 // sets it; the runner checks every name is held and removes the label before the executor sees it.

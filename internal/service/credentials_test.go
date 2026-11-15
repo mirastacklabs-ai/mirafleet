@@ -522,3 +522,44 @@ func TestGitLabRotationFailure(t *testing.T) {
 		t.Fatal("error not cleared by replace")
 	}
 }
+
+// workspace_open's credentials narrow the session through the reserved spec label, and placement
+// only considers runners that hold every named credential (S11).
+func TestOpenWithCredentialsLabelAndPlacement(t *testing.T) {
+	ce := newCredEnv(t)
+	ce.hostFleet("vm", false)
+	r1, r2 := ce.hostRunner("vm"), ce.hostRunner("vm")
+	ce.setTok("a", "va")
+	ce.setTok("b", "vb")
+	ce.assign("a", "vm", "")
+	ce.assign("b", "vm", r1.Name)
+	ann := ce.operator("ann")
+
+	w, _, err := ce.cs.OpenWorkspaceWith(ce.ctx, ann, SourceAPI, "vm", "s1", "", nil, "", "", []string{"b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Runner != r1.Name {
+		t.Fatalf("placed on %s, want %s (the only holder of b)", w.Runner, r1.Name)
+	}
+	if !strings.Contains(w.Spec, `"mirafleet.credentials":"b"`) {
+		t.Fatalf("spec lacks the credentials label: %s", w.Spec)
+	}
+	// No narrowing: no label (the runner uses everything it holds).
+	w2, _, err := ce.cs.OpenWorkspaceWith(ce.ctx, ann, SourceAPI, "vm", "s2", "", nil, "", "", nil)
+	if err != nil || strings.Contains(w2.Spec, "mirafleet.credentials") {
+		t.Fatalf("default open: %v %s", err, w2.Spec)
+	}
+	_ = r2
+	// Nobody holds it.
+	if _, _, err := ce.cs.OpenWorkspaceWith(ce.ctx, ann, SourceAPI, "vm", "s3", "", nil, "", "", []string{"nope"}); err == nil {
+		t.Fatal("unheld credential placed")
+	}
+	// Names are validated; a label cannot be smuggled in through the caller's labels.
+	if _, _, err := ce.cs.OpenWorkspaceWith(ce.ctx, ann, SourceAPI, "vm", "s4", "", nil, "", "", []string{"a,b"}); code(t, err) != api.CodeBadRequest {
+		t.Fatalf("bad name: %v", err)
+	}
+	if _, _, err := ce.cs.OpenWorkspaceWith(ce.ctx, ann, SourceAPI, "vm", "s5", "", map[string]string{"mirafleet.credentials": ""}, "", "", nil); code(t, err) != api.CodeBadRequest {
+		t.Fatalf("reserved label: %v", err)
+	}
+}

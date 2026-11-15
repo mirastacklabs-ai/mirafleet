@@ -7,10 +7,13 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +60,55 @@ func centralKeygen(args []string, out, errw io.Writer) error {
 		"EnvironmentFile= before `central run`. Keep a backup: if this key is lost, every stored credential is lost\n"+
 		"(central refuses to start without the right key once credentials exist).\n")
 	return nil
+}
+
+// envCorporateCA names an optional PEM file of a corporate CA that central trusts, in addition to
+// the system roots, when it calls GitLab for self-rotation (docs/M7.md 4.5). Unset = system roots.
+const envCorporateCA = "MIRAFLEET_CORPORATE_CA_FILE"
+
+// rotateClient is the HTTP client for GitLab self-rotation: the system pool plus the optional
+// corporate CA. A nil client (no CA configured) lets the service use its default.
+func rotateClient() (*http.Client, error) {
+	p := os.Getenv(envCorporateCA)
+	if p == "" {
+		return nil, nil
+	}
+	pem, err := readCorporateCA(p)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", envCorporateCA, err)
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("%s: no certificate found in %s", envCorporateCA, p)
+	}
+	return &http.Client{Timeout: 30 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}}, nil
+}
+
+// maxCorporateCA bounds a corporate CA bundle file.
+const maxCorporateCA = 1 << 20
+
+// readCorporateCA reads a PEM bundle of at most 1 MiB that holds at least one certificate.
+func readCorporateCA(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	pem, err := io.ReadAll(io.LimitReader(f, maxCorporateCA+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(pem) > maxCorporateCA {
+		return nil, fmt.Errorf("%s is larger than %d bytes", path, maxCorporateCA)
+	}
+	if !x509.NewCertPool().AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("no certificate found in %s", path)
+	}
+	return pem, nil
 }
 
 func centralSecrets(args []string, stdin io.Reader, out io.Writer) error {

@@ -173,9 +173,12 @@ func TestExecutorSessionHooksBashAndExec(t *testing.T) {
 		t.Fatalf("output log: %v", err)
 	}
 	// The cwd persisted, and the output is paged by ref.
+	if !strings.HasSuffix(r.Cwd, "/sub") { // the result of req1 names where the shell ended up
+		t.Fatalf("result cwd = %q", r.Cwd)
+	}
 	r, _ = ex.Bash(ctx, id, "pwd", 0, "req2")
-	if !strings.HasSuffix(strings.TrimSpace(r.Stdout), "/sub") {
-		t.Fatalf("cwd not kept: %q", r.Stdout)
+	if !strings.HasSuffix(strings.TrimSpace(r.Stdout), "/sub") || !strings.HasSuffix(r.Cwd, "/sub") {
+		t.Fatalf("cwd not kept: %q %q", r.Stdout, r.Cwd)
 	}
 	out, err := ex.OutputRead(ctx, id, transport.OutputOp{Ref: "req1"})
 	if err != nil || !strings.Contains(out.Content, "from-runner") {

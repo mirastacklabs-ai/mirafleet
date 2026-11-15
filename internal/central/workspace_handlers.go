@@ -124,7 +124,7 @@ func handleWorkspaceOpen(ctx context.Context, c *callCtx, req *api.Request) (any
 	if e := api.DecodeParams(req.Params, &p); e != nil {
 		return nil, e
 	}
-	w, reused, err := c.svc.OpenWorkspaceIn(ctx, c.p, c.src, p.Fleet, p.Session, p.Image, p.Labels, p.Confirm, p.Workdir)
+	w, reused, err := c.svc.OpenWorkspaceWith(ctx, c.p, c.src, p.Fleet, p.Session, p.Image, p.Labels, p.Confirm, p.Workdir, p.Credentials)
 	if err != nil {
 		return nil, err
 	}

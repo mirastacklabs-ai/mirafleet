@@ -54,6 +54,9 @@ type meta struct {
 	Created  time.Time `json:"created"`
 	LastUsed time.Time `json:"last_used"`
 	HeldPID  int       `json:"held_pid,omitempty"` // process holding a live handle
+	// Open is true while the workspace is open: set by Open, cleared by Close. A runner restart
+	// (Detach, or a crash) leaves it set, so the executor re-adopts the session on start.
+	Open bool `json:"open,omitempty"`
 }
 
 // Manager owns the session directories of one runner user.
@@ -92,6 +95,9 @@ func NewManager(cfg SessionsConfig) (*Manager, error) {
 }
 
 func (c SessionsConfig) metaDir() string { return filepath.Join(c.StateDir, "sessions") }
+
+// WorkdirName is the grammar of a project-file workdir name (same as api's).
+var WorkdirName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
 var rawID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
@@ -196,7 +202,18 @@ func (m *Manager) Open(id, workdir string) (*SessionDir, error) {
 		mt.Dir, mt.Own = dir, true
 	} else {
 		if !filepath.IsAbs(workdir) {
-			return nil, errors.New("hostx: workdir must be an absolute path")
+			// A project-file workdir NAME: the shared directory <root>/<name> (docs/M7.md Q4),
+			// created 0700. The grammar has no separator or leading dot, so it cannot leave Root.
+			if !WorkdirName.MatchString(workdir) {
+				return nil, errors.New("hostx: workdir must be a name (a-z, 0-9, . _ -) or an absolute path")
+			}
+			workdir = filepath.Join(m.cfg.Root, workdir)
+			if err := os.Mkdir(workdir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+				return nil, err
+			}
+			if fi, err := os.Lstat(workdir); err != nil || !fi.IsDir() { // a symlink is refused
+				return nil, fmt.Errorf("hostx: %s is not a directory", workdir)
+			}
 		}
 		real, err := filepath.EvalSymlinks(filepath.Clean(workdir))
 		if err != nil {
@@ -213,6 +230,7 @@ func (m *Manager) Open(id, workdir string) (*SessionDir, error) {
 	}
 	mt.LastUsed = now
 	mt.HeldPID = os.Getpid()
+	mt.Open = true
 	if err := m.save(slug, mt); err != nil {
 		return nil, err
 	}
@@ -256,8 +274,15 @@ func (s *SessionDir) Files() (*Files, error) {
 	return s.files, s.ferr
 }
 
-// Close releases the handle; the directory stays. Safe to call more than once.
-func (s *SessionDir) Close() error {
+// Close releases the handle and marks the session closed; the directory stays. Safe to call
+// more than once.
+func (s *SessionDir) Close() error { return s.release(false) }
+
+// Detach releases the handle but leaves the session marked open (the runner is shutting down:
+// the workspace is still open and is re-adopted on the next start).
+func (s *SessionDir) Detach() error { return s.release(true) }
+
+func (s *SessionDir) release(keepOpen bool) error {
 	s.closed.Do(func() {
 		if s.files != nil {
 			s.files.Close()
@@ -272,6 +297,7 @@ func (s *SessionDir) Close() error {
 			mt.LastUsed = m.cfg.Now()
 			if m.held[s.slug] == 0 {
 				mt.HeldPID = 0
+				mt.Open = keepOpen
 			}
 			_ = m.save(s.slug, mt)
 		}
@@ -360,6 +386,39 @@ func (m *Manager) list(withSize bool) ([]Info, error) {
 		out = append(out, m.info(slug, mt, now, withSize))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastUsed.After(out[j].LastUsed) })
+	return out, nil
+}
+
+// OpenSession is a stored session that was still open when the previous runner process ended.
+type OpenSession struct {
+	ID      string
+	Workdir string // "" for the session's own directory, else the shared directory (absolute)
+}
+
+// OpenSessions returns the sessions whose workspace was still open at the last shutdown or crash.
+func (m *Manager) OpenSessions() ([]OpenSession, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ents, err := os.ReadDir(m.cfg.metaDir())
+	if err != nil {
+		return nil, err
+	}
+	var out []OpenSession
+	for _, e := range ents {
+		slug, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || strings.HasPrefix(slug, ".") {
+			continue
+		}
+		mt, err := m.load(slug)
+		if err != nil || !mt.Open || m.held[slug] > 0 {
+			continue
+		}
+		o := OpenSession{ID: mt.ID}
+		if !mt.Own {
+			o.Workdir = mt.Dir
+		}
+		out = append(out, o)
+	}
 	return out, nil
 }
 

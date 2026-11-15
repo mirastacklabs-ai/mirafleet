@@ -320,6 +320,7 @@ func (e *Engine) Bash(ctx context.Context, s Session, r BashRequest) (transport.
 	res.Truncated = t1 || t2
 	res.StdoutBytes, res.StderrBytes = outC.Total(), errC.Total()
 	res.Omitted = outC.Dropped() + errC.Dropped()
+	res.Cwd = e.Cwd(s)
 	pruneOutputs(filepath.Join(s.Dir, "out"), sink.ref)
 	return res, ctx.Err()
 }

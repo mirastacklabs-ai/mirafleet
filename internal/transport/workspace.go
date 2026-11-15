@@ -152,6 +152,8 @@ type WorkspaceExec struct {
 	StdoutBytes int64  `json:"stdout_bytes,omitempty"`
 	StderrBytes int64  `json:"stderr_bytes,omitempty"`
 	Omitted     int64  `json:"omitted,omitempty"`
+	// Cwd is the session's working directory after the command (host mode), a runner path.
+	Cwd string `json:"cwd,omitempty"`
 }
 
 // WorkspaceFile describes a file op outcome. For read, Length raw bytes follow the result frame.

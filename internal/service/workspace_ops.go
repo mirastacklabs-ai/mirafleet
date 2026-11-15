@@ -255,7 +255,7 @@ func (s *Service) ExecWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		}
 		out = api.WorkspaceExecResult{ExitCode: x.ExitCode, Stdout: x.Stdout, Stderr: x.Stderr,
 			Truncated: x.Truncated, TimedOut: x.TimedOut, DurationMS: end.DurationMS, RequestID: rid,
-			Ref: x.Ref, StdoutBytes: x.StdoutBytes, StderrBytes: x.StderrBytes, Omitted: x.Omitted}
+			Ref: x.Ref, StdoutBytes: x.StdoutBytes, StderrBytes: x.StderrBytes, Omitted: x.Omitted, Cwd: x.Cwd}
 	}
 	end.Outcome, end.Message = outcome, msg
 	s.recordBestEffort(ctx, end)

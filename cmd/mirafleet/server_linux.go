@@ -138,6 +138,9 @@ func runnerRun(args []string) error {
 		}
 		defer ex.Close()
 		rcfg.Workspace, rcfg.WorkspaceConfig = ex, wc
+		if rcfg.CorporateCA, err = loadCorporateCA(wc); err != nil {
+			return err
+		}
 		logf("runner %q (fleet %s) -> %s, workspace mode: %s executor, %d slot(s), owner %s",
 			cfg.Name, cfg.Fleet, cfg.Central, wc.Executor, wc.Concurrent, ownerName(cfg))
 	} else {

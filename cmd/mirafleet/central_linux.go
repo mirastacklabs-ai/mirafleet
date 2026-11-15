@@ -66,6 +66,11 @@ func loadCentral(ctx context.Context, data string) (*centralDeps, error) {
 		db.Close()
 		return nil, err
 	}
+	cc.Sender = reg // creds_sync over the runner's live connection
+	if cc.RotateClient, err = rotateClient(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	svc, err := service.New(service.Config{Store: db, Policy: policy.TablePolicy{}, Live: reg,
 		HostKey: signer.PublicKey(), Now: time.Now, OperatorConns: ops, Logf: logf, Credentials: cc})
 	if err != nil {

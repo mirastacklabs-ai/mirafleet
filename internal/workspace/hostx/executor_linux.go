@@ -60,7 +60,36 @@ func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
 	if cfg.Manager == nil || cfg.Engine == nil || !filepath.IsAbs(cfg.StateDir) {
 		return nil, errors.New("hostx: executor needs a Manager, an Engine and an absolute StateDir")
 	}
-	return &Executor{cfg: cfg, ws: map[workspace.ID]*hostWS{}}, nil
+	e := &Executor{cfg: cfg, ws: map[workspace.ID]*hostWS{}}
+	cfg.Manager.mu.Lock()
+	if cfg.Manager.cfg.Busy == nil { // the sweep and prune must never touch a session with a running job
+		cfg.Manager.cfg.Busy = e.jobsRunning
+	}
+	cfg.Manager.mu.Unlock()
+	// Sessions still open when the previous runner process ended are re-adopted, so List reports
+	// them and central's reconcile does not mark their workspaces lost. One that cannot be
+	// reopened (its workdir is gone) is skipped; central then marks it lost.
+	open, err := cfg.Manager.OpenSessions()
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range open {
+		if workspace.ValidID(workspace.ID(o.ID)) {
+			_ = e.attach(workspace.ID(o.ID), o.Workdir, nil)
+		}
+	}
+	return e, nil
+}
+
+// jobsRunning reports a running background job in the session (Manager.Busy).
+func (e *Executor) jobsRunning(id string) bool {
+	jobs, _ := e.cfg.Engine.ListJobs(Session{ID: id, Dir: filepath.Join(e.cfg.StateDir, "sessions", Slug(id))})
+	for _, j := range jobs {
+		if j.State == transport.JobRunning {
+			return true
+		}
+	}
+	return false
 }
 
 // Name implements workspace.Executor.
@@ -93,12 +122,17 @@ func (e *Executor) session(id workspace.ID) (Session, *hostWS, error) {
 
 // Create implements workspace.Executor: open (or reattach) the session directory. Idempotent.
 func (e *Executor) Create(ctx context.Context, sp workspace.Spec) error {
+	return e.attach(sp.ID, sp.Labels[LabelWorkdir], sp.Labels)
+}
+
+func (e *Executor) attach(id workspace.ID, workdir string, labels map[string]string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if _, ok := e.ws[sp.ID]; ok {
+	if _, ok := e.ws[id]; ok {
 		return nil
 	}
-	sd, err := e.cfg.Manager.Open(string(sp.ID), sp.Labels[LabelWorkdir])
+	sp := workspace.Spec{ID: id, Labels: labels}
+	sd, err := e.cfg.Manager.Open(string(sp.ID), workdir)
 	if err != nil {
 		return fmt.Errorf("%w: %v", workspace.ErrRefused, err)
 	}
@@ -343,7 +377,7 @@ func (e *Executor) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for id, w := range e.ws {
-		w.sd.Close()
+		w.sd.Detach() // still open: re-adopted on the next start
 		delete(e.ws, id)
 	}
 	return nil

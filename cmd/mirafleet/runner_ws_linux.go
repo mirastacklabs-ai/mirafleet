@@ -40,6 +40,8 @@ var newExecutor = func(cfg *wsconfig.Config, owner string) (workspace.Executor, 
 		return ctrd.New(cfg, ctrd.Options{Runner: owner})
 	case wsconfig.ExecOpenSandbox:
 		return osb.NewExecutor(cfg, owner)
+	case wsconfig.ExecHost:
+		return newHostExecutor(cfg)
 	}
 	return nil, fmt.Errorf("unknown executor %q", cfg.Executor)
 }

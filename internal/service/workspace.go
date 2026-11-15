@@ -186,6 +186,18 @@ const labelWorkdir = "mirafleet.workdir"
 // OpenWorkspaceIn is OpenWorkspace with an optional shared workdir name (host fleets only, Q4).
 func (s *Service) OpenWorkspaceIn(ctx context.Context, p auth.Principal, src Source, fleet, session, image string,
 	labels map[string]string, confirm, workdir string) (store.Workspace, bool, error) {
+	return s.OpenWorkspaceWith(ctx, p, src, fleet, session, image, labels, confirm, workdir, nil)
+}
+
+// labelCredentials is the reserved spec label that narrows the credentials a session uses
+// (runner.LabelCredentials): a comma-separated list, absent = every credential the runner holds.
+const labelCredentials = "mirafleet.credentials"
+
+// OpenWorkspaceWith is OpenWorkspaceIn plus an optional credential subset (host fleets only,
+// docs/M7.md 4.2): placement needs a runner that holds every named credential, and the names go
+// to the runner in the reserved spec label.
+func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src Source, fleet, session, image string,
+	labels map[string]string, confirm, workdir string, credentials []string) (store.Workspace, bool, error) {
 
 	if err := s.requireOperator(ctx, p, src, api.MethodWorkspaceOpen); err != nil {
 		return store.Workspace{}, false, err
@@ -243,7 +255,30 @@ func (s *Service) OpenWorkspaceIn(ctx context.Context, p auth.Principal, src Sou
 			}
 			specLabels[labelWorkdir] = workdir // reserved: not a placement label
 		}
+		if len(credentials) > 0 {
+			seen := map[string]bool{}
+			for _, n := range credentials {
+				if !transport.ValidCredName(n) || seen[n] || len(seen) >= transport.MaxSyncCreds {
+					return store.Workspace{}, false, badRequest("invalid credentials list")
+				}
+				seen[n] = true
+			}
+			if len(specLabels) == len(labels) { // not copied yet
+				specLabels = make(map[string]string, len(labels)+1)
+				for k, v := range labels {
+					specLabels[k] = v
+				}
+			}
+			joined := strings.Join(credentials, ",")
+			if len(joined) > transport.MaxSpecLabelBytes {
+				return store.Workspace{}, false, badRequest("credentials list is too long")
+			}
+			specLabels[labelCredentials] = joined
+		}
 	} else {
+		if len(credentials) > 0 {
+			return store.Workspace{}, false, badRequest("credentials need a host fleet")
+		}
 		if workdir != "" {
 			return store.Workspace{}, false, badRequest("workdir needs a host fleet")
 		}
@@ -290,6 +325,29 @@ func (s *Service) OpenWorkspaceIn(ctx context.Context, p auth.Principal, src Sou
 	if err != nil {
 		return store.Workspace{}, false, s.fail("place workspace", err)
 	}
+	if len(credentials) > 0 && len(cands) > 0 { // placement needs every named credential (Q33)
+		rs := make([]store.Runner, len(cands))
+		for i, c := range cands {
+			rs[i] = c.runner
+		}
+		ok, ferr := s.FilterRunnersByCredentials(ctx, rs, credentials)
+		if ferr != nil {
+			return store.Workspace{}, false, ferr
+		}
+		keep := make(map[int64]bool, len(ok))
+		for _, r := range ok {
+			keep[r.ID] = true
+		}
+		kept := cands[:0]
+		for _, c := range cands {
+			if keep[c.info.ID] {
+				kept = append(kept, c)
+			}
+		}
+		if cands = kept; len(cands) == 0 && heldBy == "" {
+			return store.Workspace{}, false, api.Errorf(api.CodeConflict, "no runner holds every requested credential")
+		}
+	}
 	if len(cands) == 0 && heldBy != "" {
 		return store.Workspace{}, false, s.refuseBusy(ctx, p, src, fleet, session, rid, heldBy)
 	}
@@ -305,6 +363,14 @@ func (s *Service) OpenWorkspaceIn(ctx context.Context, p auth.Principal, src Sou
 			break
 		}
 		tried++
+		if len(credentials) > 0 { // narrowing never widens: re-check against what it holds now
+			if _, rerr := s.ResolveCredentials(ctx, c.info.ID, credentials); rerr != nil {
+				if errors.Is(rerr, ErrCredentialNotHeld) {
+					continue
+				}
+				return store.Workspace{}, false, rerr
+			}
+		}
 		now := s.now()
 		id := string(workspace.NewID())
 		row := store.Workspace{WsID: id, FleetID: f.ID, RunnerID: c.info.ID, OperatorID: p.ID, Session: session,

@@ -417,15 +417,19 @@ func workspaceAllowed(op string, st Status) error {
 	case StatusActive:
 		switch op {
 		case transport.OpCreate, transport.OpExec, transport.OpRead, transport.OpWrite,
-			transport.OpDestroy, transport.OpList:
+			transport.OpDestroy, transport.OpList, transport.OpFS, transport.OpJobStart,
+			transport.OpJobStatus, transport.OpJobTail, transport.OpJobCancel, transport.OpOutputRead,
+			transport.OpCredsSync:
 			return nil
 		}
 		return fmt.Errorf("unknown workspace op %q", op)
 	case StatusDisabled:
 		switch op {
-		case transport.OpRead, transport.OpDestroy, transport.OpList:
+		case transport.OpRead, transport.OpDestroy, transport.OpList,
+			transport.OpJobStatus, transport.OpJobCancel, transport.OpOutputRead: // wind down
 			return nil
-		case transport.OpCreate, transport.OpExec, transport.OpWrite:
+		case transport.OpCreate, transport.OpExec, transport.OpWrite, transport.OpFS,
+			transport.OpJobStart, transport.OpJobTail, transport.OpCredsSync:
 			return ErrDisabled
 		}
 		return fmt.Errorf("unknown workspace op %q", op)
@@ -460,7 +464,7 @@ func (r *Registry) Workspace(ctx context.Context, id int64, req transport.Worksp
 	switch req.Op {
 	case transport.OpWrite:
 		bodyLen = req.Length
-	case transport.OpExec:
+	case transport.OpExec, transport.OpFS, transport.OpCredsSync:
 		bodyLen = req.StdinLen
 	}
 	if bodyLen > 0 && body == nil {
@@ -530,6 +534,17 @@ func workspaceOn(ctx context.Context, conn Conn, req *transport.WorkspaceRequest
 	res, err := transport.ReadResult(ch, MaxWorkspaceResultBytes)
 	if err != nil {
 		return fail(fmt.Errorf("runner sent no valid workspace result: %w", err))
+	}
+	if req.Op == transport.OpFS && res.Code == transport.CodeOK && res.FS != nil && res.FS.Length > 0 {
+		if res.FS.Length > transport.MaxBodyBytes {
+			return nil, fmt.Errorf("runner returned %d fs bytes, more than the %d allowed", res.FS.Length, transport.MaxBodyBytes)
+		}
+		if out == nil {
+			out = io.Discard
+		}
+		if err := transport.CopyBody(out, ch, res.FS.Length); err != nil {
+			return fail(fmt.Errorf("read fs body: %w", err))
+		}
 	}
 	if req.Op == transport.OpRead && res.Code == transport.CodeOK {
 		if res.File == nil {

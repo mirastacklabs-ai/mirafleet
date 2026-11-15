@@ -30,6 +30,19 @@ import (
 const (
 	ExecContainerd  = "containerd"
 	ExecOpenSandbox = "opensandbox"
+	// ExecHost runs tool calls as the runner's own user on the VM (docs/M7.md section 3).
+	ExecHost = "host"
+)
+
+// HostImage is the placeholder image of host-mode workspaces (service.hostImage): the host
+// executor has no images, so the allowlist is exactly this.
+const HostImage = "host"
+
+// Host-mode defaults and limits.
+const (
+	DefaultHostDeleteAfter = 30 * 24 * time.Hour
+	DefaultHostJobMax      = 12 * time.Hour
+	MaxHostJobMax          = 24 * time.Hour
 )
 
 // Hard ceilings. Config values above these are refused.
@@ -122,6 +135,34 @@ type OpenSandbox struct {
 	SecureRuntime string `yaml:"secure_runtime"`
 }
 
+// Host configures the host executor (docs/M7.md section 3.1). Every field is optional.
+type Host struct {
+	// Root is the parent of the session directories ("~/" is the runner user's home); default
+	// $XDG_DATA_HOME/mirafleet/work.
+	Root string `yaml:"root"`
+	// Cleanup.DeleteAfter: session directories unused this long are deleted by the sweep; 0 = never.
+	// Absent = 30 days.
+	Cleanup *HostCleanup `yaml:"cleanup"`
+	// JobMax caps a background shell (default 12h, at most 24h).
+	JobMax time.Duration `yaml:"job_max"`
+	// CorporateCAFile is a PEM bundle added to the system roots when the credential broker
+	// verifies upstream servers (a private GitLab).
+	CorporateCAFile string `yaml:"corporate_ca_file"`
+}
+
+// HostCleanup is the host.cleanup block.
+type HostCleanup struct {
+	DeleteAfter time.Duration `yaml:"delete_after"`
+}
+
+// DeleteAfter is the effective cleanup age: the default when unset, 0 = never.
+func (h *Host) DeleteAfter() time.Duration {
+	if h == nil || h.Cleanup == nil {
+		return DefaultHostDeleteAfter
+	}
+	return h.Cleanup.DeleteAfter
+}
+
 // Config is the parsed workspace.yaml.
 type Config struct {
 	Executor   string        `yaml:"executor"`
@@ -137,6 +178,7 @@ type Config struct {
 
 	Containerd  *Containerd  `yaml:"containerd"`
 	OpenSandbox *OpenSandbox `yaml:"opensandbox"`
+	Host        *Host        `yaml:"host"`
 }
 
 var envNameRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
@@ -232,9 +274,9 @@ func (c *Config) AllowsEnv(name string) bool {
 
 func (c *Config) validate() error {
 	switch c.Executor {
-	case ExecContainerd, ExecOpenSandbox:
+	case ExecContainerd, ExecOpenSandbox, ExecHost:
 	default:
-		return fmt.Errorf("executor %q: must be %q or %q", c.Executor, ExecContainerd, ExecOpenSandbox)
+		return fmt.Errorf("executor %q: must be %q, %q or %q", c.Executor, ExecContainerd, ExecOpenSandbox, ExecHost)
 	}
 	if c.Concurrent < 1 || c.Concurrent > MaxConcurrent {
 		return fmt.Errorf("concurrent %d: must be 1..%d", c.Concurrent, MaxConcurrent)
@@ -242,11 +284,18 @@ func (c *Config) validate() error {
 	if c.MaxAge < 0 || c.MaxAge > maxMaxAge {
 		return fmt.Errorf("max_age %s: must be 0..%s", c.MaxAge, maxMaxAge)
 	}
+	if c.Executor == ExecHost {
+		if err := c.hostDefaults(); err != nil {
+			return err
+		}
+	}
 	if err := c.validateImages(); err != nil {
 		return err
 	}
-	if err := c.validateLimits(); err != nil {
-		return err
+	if c.Executor != ExecHost { // the VM is the boundary: a host runner takes no resource limits
+		if err := c.validateLimits(); err != nil {
+			return err
+		}
 	}
 	if len(c.Network) == 0 {
 		return errors.New("network: list at least one of none, egress")
@@ -281,7 +330,15 @@ func (c *Config) validate() error {
 			return errors.New("containerd block required for executor containerd")
 		}
 		return c.Containerd.validate()
+	case ExecHost:
+		if c.Containerd != nil || c.OpenSandbox != nil {
+			return errors.New("containerd and opensandbox blocks are not allowed with executor host")
+		}
+		return c.Host.validate()
 	default:
+		if c.Host != nil {
+			return errors.New("host block present but executor is opensandbox")
+		}
 		if c.Containerd != nil {
 			return errors.New("containerd block present but executor is opensandbox")
 		}
@@ -290,6 +347,62 @@ func (c *Config) validate() error {
 		}
 		return c.OpenSandbox.validate()
 	}
+}
+
+// hostDefaults fills what a host runner does not spell out and refuses what it cannot have: no
+// images (the allowlist is the placeholder "host"), no resource limits (the VM is the boundary),
+// both network modes unless narrowed.
+func (c *Config) hostDefaults() error {
+	if len(c.Images) > 0 {
+		return errors.New("images: the host executor takes none")
+	}
+	c.Images = []string{HostImage}
+	if l := c.Limits; l.CPUs != 0 || l.Memory != 0 || l.Pids != 0 || l.Tmpfs != 0 || l.Disk != 0 {
+		return errors.New("limits: the host executor takes no cpus, memory, pids, tmpfs or disk limits (the VM is the boundary)")
+	}
+	if c.Limits.MaxFile == 0 {
+		c.Limits.MaxFile = Bytes(64 << 20)
+	}
+	if c.Limits.MaxFile < 0 || int64(c.Limits.MaxFile) > maxFile {
+		return fmt.Errorf("limits.max_file %d: must be >0 and <= %d", c.Limits.MaxFile, maxFile)
+	}
+	if c.Limits.ExecMax == 0 {
+		c.Limits.ExecMax = DefaultExecMax
+	}
+	if c.Limits.ExecMax < 0 || c.Limits.ExecMax > MaxExecMax {
+		return fmt.Errorf("limits.exec_max %s: must be >0 and <= %s", c.Limits.ExecMax, MaxExecMax)
+	}
+	if len(c.Network) == 0 {
+		c.Network = []string{"none", "egress"}
+	}
+	if c.Host == nil {
+		c.Host = &Host{}
+	}
+	return nil
+}
+
+func (h *Host) validate() error {
+	if h.Root != "" {
+		if r := strings.TrimPrefix(h.Root, "~/"); r == h.Root && !filepath.IsAbs(r) || r == "" {
+			return fmt.Errorf("host.root %q: must be an absolute path or start with ~/", h.Root)
+		}
+		if strings.ContainsRune(h.Root, 0) {
+			return errors.New("host.root: invalid")
+		}
+	}
+	if h.Cleanup != nil && h.Cleanup.DeleteAfter < 0 {
+		return errors.New("host.cleanup.delete_after: must be >= 0 (0 = never)")
+	}
+	switch {
+	case h.JobMax == 0:
+		h.JobMax = DefaultHostJobMax
+	case h.JobMax < 0 || h.JobMax > MaxHostJobMax:
+		return fmt.Errorf("host.job_max %s: must be >0 and <= %s", h.JobMax, MaxHostJobMax)
+	}
+	if h.CorporateCAFile != "" && !filepath.IsAbs(h.CorporateCAFile) {
+		return fmt.Errorf("host.corporate_ca_file %q: must be an absolute path", h.CorporateCAFile)
+	}
+	return nil
 }
 
 func (c *Config) validateImages() error {
