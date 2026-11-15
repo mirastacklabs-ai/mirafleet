@@ -1,0 +1,7 @@
+description = "Work on fleets"
+prompt = '''
+Use the tools. Task: {{args}}
+
+1. Step one.
+2. Step two.
+'''

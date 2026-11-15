@@ -1,0 +1,19 @@
+# Example workspace.yaml for `mirafleet-runner-workspace`. Copy to /etc/mirafleet/workspace.yaml
+# and edit. Unknown fields are errors. A workspace runner is root-equivalent (containerd).
+executor: containerd
+concurrent: 4
+max_age: 168h
+# Runner-side image allowlist (the boundary). Must be non-empty; prefer digests.
+images: ["docker.io/library/golang@sha256:*"]
+limits: {cpus: 4, memory: 8GiB, pids: 2048, tmpfs: 1GiB, disk: 20GiB, max_file: 64MiB}
+network: [none]
+env_allow: [LANG, LC_ALL, TERM, CI, GOFLAGS]
+containerd:
+  address: /run/containerd/containerd.sock
+  namespace: mirafleet
+  snapshotter: overlayfs
+  runtime: io.containerd.runc.v2
+  root: /var/lib/mirafleet/ws   # root-owned, mode 0700 (created by the package)
+  userns: required
+  uid_base: 1000000
+  apparmor: auto

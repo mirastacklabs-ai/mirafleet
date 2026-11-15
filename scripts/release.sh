@@ -6,7 +6,7 @@
 # Override with MIRAFLEET_CTR. MIRAFLEET_CTR and the *_IMAGE variables are trusted caller
 # environment (CTR is word-split and executed); never derive them from untrusted input.
 #
-# Usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|clean
+# Usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|stage|snapshot|pkgtest|installtest|image|lab|npmtest|harnesscheck|clean
 set -eu
 
 # Pinned by tag and multi-arch index digest. GO_IMAGE must equal the one in dev.sh
@@ -54,6 +54,53 @@ gorun() {
 		-e GOMODCACHE=/go/pkg/mod \
 		-e GOFLAGS="-buildvcs=false -modcacherw" \
 		"$GO_IMAGE" sh -ec "[ -f /src/go.mod ] || { echo 'source not visible in the VM: colima only mounts \$HOME by default' >&2; exit 1; }; $script" sh "$@"
+}
+
+
+# Release tools image (goreleaser, syft, cosign, nfpm; each pinned in tools.Dockerfile).
+# Not named *_IMAGE: it is built locally from pinned bases, not pulled.
+TOOLS_TAG=mirafleet-release-tools:local
+tools_build() {
+	$CTR build -q --label "$LABEL" -t "$TOOLS_TAG" \
+		-f "$ROOT/scripts/release/tools.Dockerfile" "$ROOT/scripts/release" >/dev/null
+	$CTR run --rm "$TOOLS_TAG" sh -c 'goreleaser --version | grep -m1 -i version; go version; syft version | grep -m1 -i "^version"; cosign version 2>&1 | grep -m1 -i gitversion; nfpm --version'
+}
+
+# toolsrun SCRIPT: run SCRIPT under sh -ec in the tools image with the source writable at /src.
+# A git worktree's .git file points outside the tree, so the common git dir is mounted at its
+# own path (read-only). No network credentials, no Docker socket.
+# shellcheck disable=SC2086
+toolsrun() {
+	gitmount=""
+	common=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+	case "$common" in "" | "$ROOT"/*) ;; *) gitmount="-v $common:$common:ro" ;; esac
+	$CTR run -q --rm --user 0:0 -v mirafleet-gomod:/go/pkg/mod -v mirafleet-gocache:/gocache \
+		"$TOOLS_TAG" sh -c 'chown -R "$1:$2" /go/pkg/mod /gocache' sh "$(id -u)" "$(id -g)"
+	$CTR run -q --rm \
+		--user "$(id -u):$(id -g)" \
+		-v "$ROOT":/src:rw $gitmount \
+		-v mirafleet-gomod:/go/pkg/mod \
+		-v mirafleet-gocache:/gocache \
+		-w /src \
+		-e HOME=/tmp \
+		-e GOCACHE=/gocache \
+		-e GOPATH=/gocache/gopath \
+		-e GOMODCACHE=/go/pkg/mod \
+		-e GOFLAGS="-buildvcs=false -modcacherw" \
+		-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+		"$TOOLS_TAG" sh -ec "$1"
+}
+
+# runscript NAME [ARG...]: run scripts/release/NAME (written by another N2 step), or fail clearly.
+runscript() {
+	name=$1
+	shift
+	if [ ! -f "$ROOT/scripts/release/$name" ]; then
+		echo "release.sh: not yet implemented: scripts/release/$name does not exist" >&2
+		exit 1
+	fi
+	MIRAFLEET_CTR="$CTR" MIRAFLEET_RELEASE_ROOT="$ROOT" MIRAFLEET_RELEASE_LABEL="$LABEL" \
+		exec sh "$ROOT/scripts/release/$name" "$@"
 }
 
 cmd="${1:-}"
@@ -118,8 +165,53 @@ clean)
 	echo "clean: dist/ and labelled release-test resources removed"
 	;;
 # --- N2/N3 targets go below this line (snapshot, pkgtest, ..., m6check) ---
+stage)
+	# dist/stage/: the documents goreleaser puts in archives and packages. THIRD_PARTY_LICENSES.txt
+	# comes from `licenses-report`; docs/QUICKSTART.md is a late-lane file, so without it this
+	# fails unless MIRAFLEET_STAGE_PLACEHOLDER=1 (snapshot sets it; a real release never does).
+	[ -f "$ROOT/dist/THIRD_PARTY_LICENSES.txt" ] || sh "$0" licenses-report
+	rm -rf "$ROOT/dist/stage"
+	mkdir -p "$ROOT/dist/stage"
+	for f in LICENSE NOTICE README.md; do cp "$ROOT/$f" "$ROOT/dist/stage/$f"; done
+	cp "$ROOT/dist/THIRD_PARTY_LICENSES.txt" "$ROOT/dist/stage/THIRD_PARTY_LICENSES.txt"
+	if [ -f "$ROOT/docs/QUICKSTART.md" ]; then
+		cp "$ROOT/docs/QUICKSTART.md" "$ROOT/dist/stage/QUICKSTART.md"
+	elif [ "${MIRAFLEET_STAGE_PLACEHOLDER:-}" = 1 ]; then
+		echo "stage: docs/QUICKSTART.md missing (late lane): using a placeholder" >&2
+		echo "QUICKSTART placeholder: docs/QUICKSTART.md is not written yet." >"$ROOT/dist/stage/QUICKSTART.md"
+	else
+		echo "stage: docs/QUICKSTART.md is missing; a release needs it" >&2
+		exit 1
+	fi
+	;;
+snapshot)
+	# Proof that .goreleaser.yaml builds every asset: no publish, no signing. Output in
+	# dist/goreleaser/ (archives, packages, checksums.txt, SBOMs); other release tests read it.
+	MIRAFLEET_STAGE_PLACEHOLDER=1 sh "$0" stage
+	tools_build
+	toolsrun "goreleaser release --snapshot --clean --skip=publish,sign"
+	echo "snapshot: assets in dist/goreleaser/"
+	;;
+pkgtest)
+	runscript pkgtest.sh "$@"
+	;;
+installtest)
+	runscript installtest.sh "$@"
+	;;
+image)
+	runscript imagetest.sh "$@"
+	;;
+lab)
+	runscript labtest.sh "$@"
+	;;
+npmtest)
+	runscript npmtest.sh "$@"
+	;;
+harnesscheck)
+	runscript harnesscheck.sh "$@"
+	;;
 *)
-	echo "usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|clean" >&2
+	echo "usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|stage|snapshot|pkgtest|installtest|image|lab|npmtest|harnesscheck|clean" >&2
 	exit 2
 	;;
 esac

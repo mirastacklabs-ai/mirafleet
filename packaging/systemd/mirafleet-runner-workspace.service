@@ -1,0 +1,24 @@
+[Unit]
+Description=mirafleet runner (container workspaces, runs as root)
+Documentation=https://github.com/mirastacklabs-ai/mirafleet
+After=network-online.target containerd.service
+Wants=network-online.target containerd.service
+# Join first: mirafleet runner join -data /var/lib/mirafleet/runner-ws ... (writes runner.yaml).
+# The workspace file is yours to write: see /usr/share/doc/mirafleet/examples/workspace.yaml.
+ConditionPathExists=/var/lib/mirafleet/runner-ws/runner.yaml
+ConditionPathExists=/etc/mirafleet/workspace.yaml
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/mirafleet/runner.env
+ExecStart=/usr/bin/mirafleet runner run -data /var/lib/mirafleet/runner-ws -workspace /etc/mirafleet/workspace.yaml $MIRAFLEET_RUNNER_ARGS
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+
+# No sandbox directives on purpose: the runner creates namespaces and cgroups itself.
+# This runner is root-equivalent (containerd socket access).
+
+[Install]
+WantedBy=multi-user.target

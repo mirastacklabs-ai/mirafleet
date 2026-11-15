@@ -1,0 +1,3 @@
+[mcp_servers.mirafleet]
+command = "mirafleet"
+args = ["mcp", "-project-dir", "."]

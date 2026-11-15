@@ -1,0 +1,28 @@
+[Unit]
+Description=mirafleet runner (actions mode)
+Documentation=https://github.com/mirastacklabs-ai/mirafleet
+After=network-online.target
+Wants=network-online.target
+# Join first: sudo -u mirafleet mirafleet runner join ... (writes runner.yaml).
+# The actions file is yours to write: see /usr/share/doc/mirafleet/examples/actions.yaml.
+ConditionPathExists=/var/lib/mirafleet/runner/runner.yaml
+ConditionPathExists=/etc/mirafleet/actions.yaml
+
+[Service]
+Type=simple
+User=mirafleet
+Group=mirafleet
+EnvironmentFile=/etc/mirafleet/runner.env
+ExecStart=/usr/bin/mirafleet runner run -data /var/lib/mirafleet/runner -actions /etc/mirafleet/actions.yaml $MIRAFLEET_RUNNER_ARGS
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+
+# Hardening: light only. The actions run as this user and need the host largely visible;
+# a strict drop-in example is in the docs.
+PrivateTmp=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

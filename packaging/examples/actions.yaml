@@ -1,0 +1,14 @@
+# Example actions.yaml for `mirafleet-runner` (actions mode). Copy to /etc/mirafleet/actions.yaml
+# and edit. Only the named actions below can ever run: argv only, no shell, every parameter
+# must match its regular expression.
+actions:
+  uptime:
+    run: ["/usr/bin/uptime"]
+  disk:
+    run: ["/bin/df", "-h"]
+  logs:
+    run: ["/usr/bin/journalctl", "-u", "{{unit}}", "-n", "{{lines}}", "--no-pager"]
+    params:
+      unit: { pattern: "^[a-z][a-z0-9@._-]{0,63}$" }
+      lines: { pattern: "^[0-9]{1,4}$", default: "100" }
+    timeout: 30s

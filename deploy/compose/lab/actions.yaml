@@ -1,0 +1,7 @@
+# The runner's allowlist (the security boundary). The image has no shell and no other programs,
+# so actions here can only run the mirafleet binary itself. Mount your own programs into the
+# container to allow more.
+actions:
+  version:
+    run: ["/usr/bin/mirafleet", "version"]
+    timeout: 10s

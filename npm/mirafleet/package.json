@@ -1,0 +1,35 @@
+{
+  "name": "@mirastacklabs/mirafleet",
+  "description": "Orchestrate fleets of servers from an MCP client through a central mirafleet server.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mirastacklabs-ai/mirafleet.git"
+  },
+  "homepage": "https://github.com/mirastacklabs-ai/mirafleet#readme",
+  "bugs": {
+    "url": "https://github.com/mirastacklabs-ai/mirafleet/issues"
+  },
+  "keywords": [
+    "mcp",
+    "claude-code",
+    "fleet",
+    "orchestration"
+  ],
+  "mcpName": "io.github.mirastacklabs-ai/mirafleet",
+  "bin": {
+    "mirafleet": "bin/mirafleet.js"
+  },
+  "files": [
+    "bin/mirafleet.js",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

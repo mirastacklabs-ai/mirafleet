@@ -1,0 +1,22 @@
+{
+  "name": "@mirastacklabs/mirafleet-PLATFORM",
+  "description": "mirafleet binary",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mirastacklabs-ai/mirafleet.git"
+  },
+  "homepage": "https://github.com/mirastacklabs-ai/mirafleet#readme",
+  "bugs": {
+    "url": "https://github.com/mirastacklabs-ai/mirafleet/issues"
+  },
+  "files": [
+    "bin/",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.txt"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

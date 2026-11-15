@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "mirafleet": {
+      "command": "mirafleet",
+      "args": ["mcp", "-project-dir", "."],
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mirafleet": {
+      "type": "stdio",
+      "command": "mirafleet",
+      "args": ["mcp", "-project-dir", "."]
+    }
+  }
+}

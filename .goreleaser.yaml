@@ -1,0 +1,171 @@
+# goreleaser OSS v2 (MIT), pinned in scripts/release/tools.Dockerfile. No Pro features.
+# Builds, archives, nFPM packages, checksums, syft SBOMs, cosign keyless signature of
+# checksums.txt, draft GitHub release. It never pushes images, Homebrew or npm (docs/M6.md 2.4).
+# Run only through scripts/release.sh (`snapshot` locally; release.yml in CI). Archive and
+# package documents come from dist/stage/, which `scripts/release.sh stage` fills.
+version: 2
+project_name: mirafleet
+
+# Keep goreleaser's output inside dist/ but apart from dist/stage (--clean must not erase it).
+dist: dist/goreleaser
+
+report_sizes: true
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+builds:
+  - id: mirafleet
+    main: ./cmd/mirafleet
+    binary: mirafleet
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: mirafleet
+    ids: [mirafleet]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "mirafleet_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    wrap_in_directory: false
+    files:
+      - src: dist/stage/LICENSE
+        strip_parent: true
+      - src: dist/stage/NOTICE
+        strip_parent: true
+      - src: dist/stage/THIRD_PARTY_LICENSES.txt
+        strip_parent: true
+      - src: dist/stage/README.md
+        strip_parent: true
+      - src: dist/stage/QUICKSTART.md
+        strip_parent: true
+
+nfpms:
+  - id: mirafleet
+    ids: [mirafleet]
+    package_name: mirafleet
+    file_name_template: "mirafleet_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    vendor: mirastacklabs-ai
+    homepage: https://github.com/mirastacklabs-ai/mirafleet
+    maintainer: mirastacklabs-ai <opensource@mirastacklabs.ai>
+    description: Claude Code orchestrates fleets of servers through a central server.
+    license: Apache-2.0
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+    section: admin
+    priority: optional
+    mtime: "{{ .CommitDate }}"
+    contents:
+      # Units are deb/rpm only: apk (Alpine) has no systemd.
+      - src: packaging/systemd/mirafleet-central.service
+        dst: /usr/lib/systemd/system/mirafleet-central.service
+        file_info: {mode: 0644, owner: root, group: root}
+        packager: deb
+      - src: packaging/systemd/mirafleet-central.service
+        dst: /usr/lib/systemd/system/mirafleet-central.service
+        file_info: {mode: 0644, owner: root, group: root}
+        packager: rpm
+      - src: packaging/systemd/mirafleet-runner.service
+        dst: /usr/lib/systemd/system/mirafleet-runner.service
+        file_info: {mode: 0644, owner: root, group: root}
+        packager: deb
+      - src: packaging/systemd/mirafleet-runner.service
+        dst: /usr/lib/systemd/system/mirafleet-runner.service
+        file_info: {mode: 0644, owner: root, group: root}
+        packager: rpm
+      - src: packaging/systemd/mirafleet-runner-workspace.service
+        dst: /usr/lib/systemd/system/mirafleet-runner-workspace.service
+        file_info: {mode: 0644, owner: root, group: root}
+        packager: deb
+      - src: packaging/systemd/mirafleet-runner-workspace.service
+        dst: /usr/lib/systemd/system/mirafleet-runner-workspace.service
+        file_info: {mode: 0644, owner: root, group: root}
+        packager: rpm
+      # Config: kept on upgrade. central.env holds secrets (M7): 0600 root.
+      - src: packaging/env/central.env
+        dst: /etc/mirafleet/central.env
+        type: config|noreplace
+        file_info: {mode: 0600, owner: root, group: root}
+      - src: packaging/env/runner.env
+        dst: /etc/mirafleet/runner.env
+        type: config|noreplace
+        file_info: {mode: 0644, owner: root, group: root}
+      - src: dist/stage/LICENSE
+        dst: /usr/share/doc/mirafleet/LICENSE
+        file_info: {mode: 0644, owner: root, group: root}
+      - src: dist/stage/NOTICE
+        dst: /usr/share/doc/mirafleet/NOTICE
+        file_info: {mode: 0644, owner: root, group: root}
+      - src: dist/stage/THIRD_PARTY_LICENSES.txt
+        dst: /usr/share/doc/mirafleet/THIRD_PARTY_LICENSES.txt
+        file_info: {mode: 0644, owner: root, group: root}
+      - src: dist/stage/QUICKSTART.md
+        dst: /usr/share/doc/mirafleet/QUICKSTART.md
+        file_info: {mode: 0644, owner: root, group: root}
+      - src: packaging/examples/actions.yaml
+        dst: /usr/share/doc/mirafleet/examples/actions.yaml
+        file_info: {mode: 0644, owner: root, group: root}
+      - src: packaging/examples/workspace.yaml
+        dst: /usr/share/doc/mirafleet/examples/workspace.yaml
+        file_info: {mode: 0644, owner: root, group: root}
+    scripts:
+      preinstall: packaging/scripts/preinstall.sh
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+    # Late lane (L3, M7): add the host-mode units
+    # (/usr/lib/systemd/user/mirafleet-runner.service, mirafleet-runner@.service) and
+    # examples/workspace-host.yaml here once M7 creates the files.
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+sboms:
+  # One SBOM per archive and per package, made by syft from the artifact (CycloneDX JSON).
+  - id: archive
+    artifacts: archive
+    cmd: syft
+    documents: ["${artifact}.sbom.json"]
+    args: ["$artifact", "--output", "cyclonedx-json=$document", "--enrich", "all"]
+  - id: package
+    artifacts: package
+    cmd: syft
+    documents: ["${artifact}.sbom.json"]
+    args: ["$artifact", "--output", "cyclonedx-json=$document"]
+
+signs:
+  # Keyless: the GitHub OIDC token is the identity (release.yml has id-token: write). Locally the
+  # snapshot skips signing. Output is a sigstore bundle: verify with `cosign verify-blob --bundle`.
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    output: true
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - --yes
+      - --bundle=${signature}
+      - ${artifact}
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: mirastacklabs-ai
+    name: mirafleet
+  draft: true
+  prerelease: auto
+  mode: keep-existing
+  name_template: "mirafleet {{ .Tag }}"
