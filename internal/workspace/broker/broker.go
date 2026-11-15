@@ -2,6 +2,7 @@ package broker
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -425,8 +426,12 @@ func (b *Broker) exchange(tc net.Conn, req *http.Request, host, port, hostport s
 	case Header:
 		out.Header.Set(cred.HeaderName, cred.Secret)
 	}
+	out.Header.Del("Accept-Encoding") // the transport then asks for gzip itself and decodes it, so the body scrub sees plain text
+	secrets := []string{cred.Secret}
 	if cred.Kind == Registry {
-		resp, err = b.registryDo(ctx, cred, hostport, out)
+		var tok string
+		resp, tok, err = b.registryDo(ctx, cred, hostport, out)
+		secrets = append(secrets, tok)
 	} else {
 		resp, err = b.tr.RoundTrip(out)
 	}
@@ -437,7 +442,7 @@ func (b *Broker) exchange(tc net.Conn, req *http.Request, host, port, hostport s
 	}
 	defer resp.Body.Close()
 	stripHop(resp.Header)
-	b.scrub(resp.Header, cred)
+	scrub(resp, cred, secrets)
 	if cred.Kind == Registry {
 		resp.Header.Del("Www-Authenticate")
 	}
@@ -451,20 +456,80 @@ func (b *Broker) exchange(tc net.Conn, req *http.Request, host, port, hostport s
 	return true
 }
 
-// scrub drops credential-looking response headers and any header that echoes the secret.
-func (b *Broker) scrub(h http.Header, cred Credential) {
+// scrub drops credential-looking response headers and any header that echoes a secret (the
+// credential's own, and for a registry the exchanged bearer token), and replaces an echoed
+// secret in the body. Empty secrets are ignored (they would match everything).
+func scrub(resp *http.Response, cred Credential, secrets []string) {
+	h := resp.Header
 	for _, k := range secretHeaders {
 		h.Del(k)
 	}
 	if cred.HeaderName != "" {
 		h.Del(cred.HeaderName)
 	}
+	var live []string
+	for _, s := range secrets {
+		if s != "" {
+			live = append(live, s)
+		}
+	}
 	for k, vs := range h {
+	hdr:
 		for _, v := range vs {
-			if strings.Contains(v, cred.Secret) {
-				delete(h, k)
-				break
+			for _, s := range live {
+				if strings.Contains(v, s) {
+					delete(h, k)
+					break hdr
+				}
 			}
 		}
 	}
+	noBody := resp.StatusCode < 200 || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotModified ||
+		(resp.Request != nil && resp.Request.Method == http.MethodHead)
+	if len(live) > 0 && resp.Body != nil && resp.Body != http.NoBody && !noBody {
+		resp.Body = &scrubBody{r: resp.Body, secrets: live}
+		// The length may change, so the body is sent chunked (or until close, for HTTP/1.0).
+		resp.ContentLength = -1
+		resp.TransferEncoding = []string{"chunked"}
+		h.Del("Content-Length")
+	}
 }
+
+const redacted = "[redacted]"
+
+// scrubBody replaces every occurrence of a secret in the stream, including one split across
+// reads, by holding back the last len(longest secret)-1 bytes until more data (or EOF) arrives.
+type scrubBody struct {
+	r       io.ReadCloser
+	secrets []string
+	out     []byte // ready to hand out
+	tail    []byte // held back, may start a secret
+	err     error  // sticky read error, returned once out is drained
+	tmp     [32 << 10]byte
+}
+
+func (s *scrubBody) Read(p []byte) (int, error) {
+	for len(s.out) == 0 && s.err == nil {
+		n, err := s.r.Read(s.tmp[:])
+		data := append(s.tail, s.tmp[:n]...)
+		hold := 0
+		for _, sec := range s.secrets {
+			data = bytes.ReplaceAll(data, []byte(sec), []byte(redacted))
+			hold = max(hold, len(sec)-1)
+		}
+		if err != nil {
+			s.err, s.tail, s.out = err, nil, data
+		} else {
+			hold = min(hold, len(data))
+			s.out, s.tail = data[:len(data)-hold:len(data)-hold], append([]byte(nil), data[len(data)-hold:]...)
+		}
+	}
+	if len(s.out) > 0 {
+		n := copy(p, s.out)
+		s.out = s.out[n:]
+		return n, nil
+	}
+	return 0, s.err
+}
+
+func (s *scrubBody) Close() error { return s.r.Close() }

@@ -356,3 +356,99 @@ func TestBundleAndValidate(t *testing.T) {
 		t.Fatal("bad header accepted")
 	}
 }
+
+// H-14: a CA whose hosts are all DNS names must not vouch for an IP address, and one whose hosts
+// are all IPs must not vouch for a DNS name.
+func TestNameConstraintsCoverTheOtherFamily(t *testing.T) {
+	for _, tc := range []struct {
+		hosts  []string
+		ok     string
+		badSet []string
+	}{
+		{[]string{"gitlab.example"}, "gitlab.example", []string{"10.9.9.9", "::1", "evil.example"}},
+		{[]string{"10.1.2.3"}, "10.1.2.3", []string{"gitlab.example", "10.9.9.9"}},
+	} {
+		ca, err := newCA(tc.hosts, 1<<40)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pool := x509.NewCertPool()
+		pool.AddCert(ca.cert)
+		verify := func(host string) error {
+			l, err := ca.leaf(host)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, _ := x509.ParseCertificate(l.Certificate[0])
+			_, err = c.Verify(x509.VerifyOptions{Roots: pool, DNSName: host})
+			return err
+		}
+		if err := verify(tc.ok); err != nil {
+			t.Errorf("%v: %s should verify: %v", tc.hosts, tc.ok, err)
+		}
+		for _, bad := range tc.badSet {
+			if verify(bad) == nil {
+				t.Errorf("%v: %s must not verify", tc.hosts, bad)
+			}
+		}
+	}
+}
+
+// H-13: a secret echoed in the body (also split across reads) is redacted, the registry bearer is
+// scrubbed like the secret, and an empty secret does not drop every header.
+func TestBodyEchoIsRedacted(t *testing.T) {
+	up := upstream(t, func(w http.ResponseWriter, r *http.Request) {
+		fl := w.(http.Flusher)
+		io.WriteString(w, "a "+decoy[:10])
+		fl.Flush()
+		io.WriteString(w, decoy[10:]+" b "+decoy)
+	})
+	r := newRig(t, up, Credential{Name: "b", Kind: Bearer, Hosts: []string{"example.com"}, Secret: decoy})
+	cl := r.client(r.b.ProxyURL(r.addr), r.b.CAPEM())
+	resp, err := cl.Get("https://example.com/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if want := "a " + redacted + " b " + redacted; string(body) != want {
+		t.Fatalf("body %q, want %q", body, want)
+	}
+}
+
+func TestRegistryBearerEchoIsScrubbed(t *testing.T) {
+	up := upstream(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/token":
+			fmt.Fprintf(w, `{"token":%q}`, jwt)
+		case r.Header.Get("Authorization") == "Bearer "+jwt:
+			w.Header().Set("X-Echo", "Bearer "+jwt)
+			io.WriteString(w, "t="+jwt)
+		default:
+			w.Header().Set("WWW-Authenticate", `Bearer realm="https://example.com/token",service="reg"`)
+			w.WriteHeader(401)
+		}
+	})
+	r := newRig(t, up, Credential{Name: "reg", Kind: Registry, User: "robot", Hosts: []string{"example.com"}, Secret: decoy})
+	cl := r.client(r.b.ProxyURL(r.addr), r.b.CAPEM())
+	resp, err := cl.Get("https://example.com/v2/x/manifests/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || strings.Contains(fmt.Sprint(resp.Header, string(body)), jwt) {
+		t.Fatalf("bearer leaked: %d %v %q", resp.StatusCode, resp.Header, body)
+	}
+}
+
+func TestScrubEmptySecretKeepsHeaders(t *testing.T) {
+	resp := &http.Response{StatusCode: 200, Header: http.Header{"X-Keep": {"v"}}, Body: io.NopCloser(strings.NewReader("hi"))}
+	scrub(resp, Credential{}, []string{""})
+	if resp.Header.Get("X-Keep") != "v" {
+		t.Fatal("empty secret dropped a header")
+	}
+	if b, _ := io.ReadAll(resp.Body); string(b) != "hi" {
+		t.Fatalf("body %q", b)
+	}
+}
