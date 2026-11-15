@@ -2,6 +2,7 @@ package gui
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,7 +28,7 @@ func assertInert(t *testing.T, name, body string) {
 }
 
 func TestSetupFlow(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	ctx := context.Background()
 	c := e.newClient()
 
@@ -161,7 +162,7 @@ func TestSetupFlow(t *testing.T) {
 }
 
 func TestLoginLogoutNoJS(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	first := loginForTest(t, e) // setup
 	_ = first
 	c := e.newClient()
@@ -243,7 +244,7 @@ func TestLoginLogoutNoJS(t *testing.T) {
 }
 
 func TestCSRFRefusedOnEveryPost(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	c := loginForTest(t, e)
 	good := c.token("/account")
 	posts := map[string]url.Values{
@@ -314,7 +315,7 @@ func TestCSRFRefusedOnEveryPost(t *testing.T) {
 }
 
 func TestLoginLockout(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	loginForTest(t, e)
 	c := e.newClient()
 	try := func(pw string) *http.Response {
@@ -368,7 +369,7 @@ func TestLoginLockout(t *testing.T) {
 }
 
 func TestLoginOversizedPasswordAndBusy(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	loginForTest(t, e)
 	c := e.newClient()
 	logins := e.auditCount("gui.login")
@@ -407,7 +408,7 @@ func TestLoginOversizedPasswordAndBusy(t *testing.T) {
 }
 
 func TestSetupLimiterAndStalePage(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	c := e.newClient()
 	if _, created, err := e.srv.PrepareSetup(context.Background()); err != nil || !created {
 		t.Fatal(err)
@@ -428,9 +429,9 @@ func TestSetupLimiterAndStalePage(t *testing.T) {
 }
 
 // newAuthEnvWithAdmin returns an env that already has the admin (created through the setup flow).
-func newAuthEnvWithAdmin(t *testing.T) *authEnv {
+func newAuthEnvWithAdmin(t *testing.T) *guiHarness {
 	t.Helper()
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	loginForTest(t, e)
 	return e
 }
@@ -446,5 +447,79 @@ func TestPrepareSetupRemovesStaleFile(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("stale token file remains: %v", err)
+	}
+}
+
+// The failed-login log line carries the address and the length of the typed username, never the
+// username itself (people paste passwords into that field).
+func TestFailedLoginLogOmitsUsername(t *testing.T) {
+	e := newGUIHarness(t)
+	loginForTest(t, e)
+	c := e.newClient()
+	typed := "hunter2-pasted-secret"
+	if rec := c.login(typed, "wrong password here"); rec.Code != 401 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	logs := e.logText()
+	if strings.Contains(logs, typed) || !strings.Contains(logs, "failed login") {
+		t.Errorf("log: %q", logs)
+	}
+}
+
+// A request whose hashing outlasts the route timeout is the Busy page, not a 500.
+func TestLoginHashTimeoutIsBusy(t *testing.T) {
+	e := newGUIHarness(t, withBackend(func(b Backend) Backend { return timeoutLogin{Backend: b} }))
+	loginForTest(t, e)
+	rec := e.newClient().login(testUser, testPW)
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+		t.Errorf("status %d, Retry-After %q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	if e.srv.timeouts["POST /login"] != hashRouteTimeout || e.srv.timeouts["POST /setup"] != hashRouteTimeout {
+		t.Errorf("route timeouts: %v", e.srv.timeouts)
+	}
+}
+
+type timeoutLogin struct{ Backend }
+
+func (timeoutLogin) GUILogin(context.Context, string, string, string, string) (string, auth.Principal, error) {
+	return "", auth.Principal{}, fmt.Errorf("hash: %w", context.DeadlineExceeded)
+}
+
+// With setup open and the token file gone, PrepareSetup issues a new token (the raw one cannot be
+// recovered from its hash) and writes it, so the operator is never locked out of /setup.
+func TestPrepareSetupReissuesWhenFileMissing(t *testing.T) {
+	e := newGUIHarness(t)
+	path, created, err := e.srv.PrepareSetup(context.Background())
+	if err != nil || !created {
+		t.Fatalf("first PrepareSetup = %q %v %v", path, created, err)
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second start with the file in place keeps the token.
+	if _, created, err := e.srv.PrepareSetup(context.Background()); err != nil || created {
+		t.Fatalf("PrepareSetup with the file present = %v %v", created, err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := e.srv.PrepareSetup(context.Background()); err != nil || !created {
+		t.Fatalf("PrepareSetup with the file missing = %v %v", created, err)
+	}
+	fresh, err := os.ReadFile(path)
+	if err != nil || string(fresh) == string(old) {
+		t.Fatalf("token file after reissue: %q (old %q) %v", fresh, old, err)
+	}
+	// The new token works; the old one does not.
+	c := e.newClient()
+	form := url.Values{"token": {strings.TrimSpace(string(old))}, "username": {testUser}, "password": {testPW}, "password2": {testPW}}
+	rec := c.post("/setup", "/setup", form)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "mirafleet central gui reset-admin") {
+		t.Errorf("old token: %d, hint missing", rec.Code)
+	}
+	form.Set("token", strings.TrimSpace(string(fresh)))
+	if rec := c.post("/setup", "/setup", form); rec.Code != http.StatusSeeOther {
+		t.Errorf("new token: %d", rec.Code)
 	}
 }

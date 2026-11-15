@@ -44,9 +44,9 @@ type workspacesData struct {
 	CancelURL string
 }
 
-func (s *Server) routesWorkspaces(mux *http.ServeMux) {
+func (s *Server) routesWorkspaces(mux adminMux) {
 	mux.HandleFunc("GET /workspaces", s.workspacesPage)
-	mux.Handle("GET /workspaces/live", Passive(http.HandlerFunc(s.workspacesPage)))
+	mux.Passive("GET /workspaces/live", s.workspacesPage)
 	mux.HandleFunc("GET /workspaces/{id}/kill", s.workspaceKillForm)
 	mux.HandleFunc("POST /workspaces/{id}/kill", s.workspaceKill)
 	s.RouteTimeout("POST /workspaces/{id}/kill", wsKillTimeout)

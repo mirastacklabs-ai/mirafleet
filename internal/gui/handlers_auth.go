@@ -17,13 +17,20 @@ import (
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/service"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
 
 const (
 	setupTokenFile = "setup-token"
 	maxFieldBytes  = 512 // username and setup token fields: longer is refused before any work
+
+	hashRouteTimeout = 60 * time.Second
 )
+
+// userMessage is a service message made fit for the page: the "auth: " package prefix of the
+// password-rule errors is dropped.
+func userMessage(m string) string { return strings.TrimPrefix(m, "auth: ") }
 
 // authState is the per-server state of the auth screens.
 type authState struct {
@@ -63,6 +70,10 @@ func (s *Server) routesAuth(mux *http.ServeMux) {
 	mux.HandleFunc("POST /setup", s.handleSetup)
 	mux.HandleFunc("GET /login", s.handleLoginForm)
 	mux.HandleFunc("POST /login", s.handleLogin)
+	// Argon2 under a full semaphore can outlast the default timeout; a timeout is the Busy page.
+	s.RouteTimeout("POST /login", hashRouteTimeout)
+	s.RouteTimeout("POST /setup", hashRouteTimeout)
+	s.RouteTimeout("POST /account/password", hashRouteTimeout)
 	mux.Handle("POST /logout", s.requireAdmin(http.HandlerFunc(s.handleLogout)))
 }
 
@@ -84,17 +95,37 @@ func (s *Server) PrepareSetup(ctx context.Context) (path string, created bool, e
 	if s.cfg.DataDir == "" {
 		return "", false, errors.New("gui: a data directory is required for the setup token file")
 	}
-	dir := filepath.Join(s.cfg.DataDir, "gui")
 	tok, created, err := s.cfg.Backend.EnsureGUISetup(ctx)
 	if err != nil {
 		return "", false, err
 	}
 	if !created {
-		if open, oerr := s.cfg.Backend.GUISetupOpen(ctx); oerr == nil && !open {
-			s.removeSetupFile()
+		open, oerr := s.cfg.Backend.GUISetupOpen(ctx)
+		if oerr != nil {
+			return "", false, nil
 		}
-		return "", false, nil
+		if !open {
+			s.removeSetupFile()
+			return "", false, nil
+		}
+		// Setup is open with a live token whose file is gone (deleted, or the data dir was
+		// restored): the raw token cannot be recovered, so issue a new one.
+		if _, serr := os.Stat(s.SetupTokenPath()); serr == nil || !errors.Is(serr, fs.ErrNotExist) {
+			return "", false, nil
+		}
+		if tok, created, err = s.cfg.Backend.ReissueGUISetup(ctx); err != nil {
+			return "", false, err
+		}
+		if !created {
+			return "", false, nil
+		}
 	}
+	return s.writeSetupFile(tok)
+}
+
+// writeSetupFile writes tok to the token file (0600, O_EXCL, replacing a stale file).
+func (s *Server) writeSetupFile(tok string) (string, bool, error) {
+	dir := filepath.Join(s.cfg.DataDir, "gui")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", false, err
 	}
@@ -359,13 +390,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	sessTok, _, err := s.cfg.Backend.GUILogin(r.Context(), r.RemoteAddr, clip(r.UserAgent(), store.MaxGUIUserAgent), username, password)
 	release()
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) { // slow hashing under load: busy, not a bug
+			s.hashBusy(w, r)
+			return
+		}
 		if apiCode(err) != api.CodeUnauthenticated {
 			s.logf("gui: login: %v", err)
 			s.ErrorPage(w, r, http.StatusInternalServerError)
 			return
 		}
 		s.recordFailure(r, s.auth.login)
-		s.logf("gui: failed login from %s user=%q", LimiterKey(r.RemoteAddr), clip(username, 64))
+		// The typed username is not logged: people paste passwords into that field.
+		s.logf("gui: failed login from %s (username length %d)", LimiterKey(r.RemoteAddr), len(username))
 		wrong()
 		return
 	}
@@ -382,6 +418,11 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.parseAndCheckSession(w, r); !ok {
 		return
 	}
+	s.logout(w, r)
+}
+
+// logout is the core of a sign-out: the request was already parsed and CSRF-checked.
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	p, id, _ := SessionFrom(r.Context())
 	if err := s.cfg.Backend.GUILogout(r.Context(), p, id); err != nil {
 		s.logf("gui: logout: %v", err)
@@ -433,7 +474,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	errs := map[string]string{}
 	switch {
 	case token == "" || len(token) > maxFieldBytes:
-		errs["token"] = "Enter the setup token from the setup-token file."
+		errs["token"] = "Enter the setup token from the setup-token file or from reset-admin."
 	case len(username) > maxFieldBytes:
 		errs["username"] = "That username is too long."
 	case PasswordTooLong(pw) || PasswordTooLong(pw2):
@@ -455,15 +496,17 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var ae *api.Error
 		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			s.hashBusy(w, r)
 		case errors.As(err, &ae) && ae.Code == api.CodeBadRequest: // username or password rule, fixed wording
 			field := "password"
-			if strings.Contains(ae.Message, "username") {
+			if errors.Is(err, service.ErrInvalidUsername) {
 				field = "username"
 			}
-			fail(http.StatusUnprocessableEntity, map[string]string{field: ae.Message})
+			fail(http.StatusUnprocessableEntity, map[string]string{field: userMessage(ae.Message)})
 		case errors.As(err, &ae) && ae.Code == api.CodeConflict: // wrong, expired or used token, or a lost race (G-07)
 			s.recordFailure(r, s.auth.setup)
-			fail(http.StatusUnprocessableEntity, map[string]string{"token": "Setup is not available with that token. Check the token, or restart central to get a new one."})
+			fail(http.StatusUnprocessableEntity, map[string]string{"token": "Setup is not available with that token. Check the token, or run `mirafleet central gui reset-admin` on the central host to get a new one."})
 		default:
 			s.logf("gui: setup: %v", err)
 			s.ErrorPage(w, r, http.StatusInternalServerError)

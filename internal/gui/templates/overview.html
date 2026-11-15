@@ -15,7 +15,7 @@
 <div class="grid">
 <div class="card"><span class="label">Fleets</span><span class="stat">{{.Fleets}}</span><span class="stat-note">{{.FleetsActions}} actions, {{.FleetsWorkspace}} workspace</span></div>
 <div class="card{{if .Pending}} is-attention{{end}}"><span class="label">Pending runners</span><span class="stat">{{.Pending}}</span><span class="stat-note">{{if .Pending}}<a href="/runners">{{.Pending}} waiting for approval</a>{{else}}none waiting{{end}}</span></div>
-<div class="card"><span class="label">Runners online</span><span class="stat">{{.Online}} / {{.Runners}}</span><span class="stat-note">{{.Active}} active, {{.Disabled}} disabled, {{.Offline}} offline</span></div>
+<div class="card"><span class="label">Runners online</span><span class="stat">{{.Online}} / {{.Enrolled}}</span><span class="stat-note">{{.Active}} active, {{.Disabled}} disabled, {{.Offline}} offline</span></div>
 <div class="card"><span class="label">Live workspaces</span><span class="stat">{{.LiveWorkspaces}}</span><span class="stat-note"><a href="/workspaces">view workspaces</a></span></div>
 <div class="card"><span class="label">Join tokens usable</span><span class="stat">{{.TokensUsable}}</span><span class="stat-note"><a href="/tokens">view tokens</a></span></div>
 </div>

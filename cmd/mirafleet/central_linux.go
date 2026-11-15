@@ -163,7 +163,7 @@ func startCentral(ctx context.Context, data, listen string, gui ...guiOptions) (
 	}
 	var g *runningGUI
 	if len(gui) > 0 && gui[0].enabled() {
-		if g, err = startGUI(ctx, data, d.svc, gui[0]); err != nil {
+		if g, err = startGUI(ctx, data, d.svc, gui[0], ssh.FingerprintSHA256(d.signer.PublicKey())); err != nil {
 			srv.Close()
 			closeAll()
 			return nil, err

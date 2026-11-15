@@ -81,8 +81,17 @@ func parseCentralRun(args []string, errOut io.Writer) (centralRunConfig, error) 
 		return centralRunConfig{}, fmt.Errorf("%w: -gui-listen must be an address or %q", errAdminUsage, guiOff)
 	}
 	if gl != guiOff {
-		if _, _, err := net.SplitHostPort(gl); err != nil {
+		_, port, err := net.SplitHostPort(gl)
+		if err != nil {
 			return centralRunConfig{}, fmt.Errorf("%w: -gui-listen %q: %v", errAdminUsage, gl, err)
+		}
+		if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
+			return centralRunConfig{}, fmt.Errorf("%w: -gui-listen %q: bad port", errAdminUsage, gl)
+		}
+	}
+	for _, h := range hosts {
+		if err := gui.CheckHostName(h); err != nil {
+			return centralRunConfig{}, fmt.Errorf("%w: %v", errAdminUsage, err)
 		}
 	}
 	if *advertise != "" {
@@ -106,13 +115,14 @@ type runningGUI struct {
 
 // startGUI builds and starts the GUI on svc. On the first start (no admin yet) it writes the
 // setup token to <data>/gui/setup-token and logs only the path. The token is never logged.
-func startGUI(ctx context.Context, data string, svc *service.Service, o guiOptions) (*runningGUI, error) {
+func startGUI(ctx context.Context, data string, svc *service.Service, o guiOptions, hostKeyFP string) (*runningGUI, error) {
 	lg := o.Logf
 	if lg == nil {
 		lg = logf
 	}
 	srv, err := gui.New(gui.Config{Backend: svc, Version: version, Logf: lg, Listen: o.Listen,
-		DataDir: data, CertFile: o.CertFile, KeyFile: o.KeyFile, GUIHosts: o.Hosts})
+		DataDir: data, CertFile: o.CertFile, KeyFile: o.KeyFile, GUIHosts: o.Hosts,
+		SSHAdvertise: o.Advertise, HostKeyFingerprint: hostKeyFP})
 	if err != nil {
 		return nil, err
 	}
@@ -139,5 +149,9 @@ func (g *runningGUI) stop() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = g.srv.Shutdown(ctx)
+	if err := g.srv.Shutdown(ctx); err != nil {
+		// Drain timed out: cancel the in-flight requests' context and drop the connections so no
+		// backend call is still running when the store closes.
+		_ = g.srv.Close()
+	}
 }

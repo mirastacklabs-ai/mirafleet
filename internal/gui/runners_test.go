@@ -1,7 +1,7 @@
 package gui
 
-// Tests for the Runners screens (M4 step S9). They run against a real service on a temp SQLite
-// file, signed in through loginForTest. Runner-reported data a real runner would send over the
+// Tests for the Runners screens (M4 step S9). They use the shared harness (helpers_test.go),
+// signed in through loginForTest. Runner-reported data a real runner would send over the
 // heartbeat (info, advertised actions) is injected by a Backend wrapper.
 
 import (
@@ -10,16 +10,13 @@ import (
 	"crypto/rand"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"golang.org/x/crypto/ssh"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
-	"github.com/mirastacklabs-ai/mirafleet/internal/policy"
 	"github.com/mirastacklabs-ai/mirafleet/internal/service"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
@@ -50,64 +47,37 @@ func (b s9Backend) ListRunnersAll(ctx context.Context, p auth.Principal, src ser
 	return rvs, nil
 }
 
-type s9 struct {
-	t   *testing.T
-	e   *authEnv
-	c   *testClient
-	adm auth.Principal
-}
-
-func newS9(t *testing.T, hostile bool) *s9 {
+// newRunnersHarness is a harness with a signed-in cookie-jar client in h.c; hostile makes every
+// listed runner carry hostile heartbeat data.
+func newRunnersHarness(t *testing.T, hostile bool) *guiHarness {
 	t.Helper()
-	e := newAuthEnv(t)
-	// newAuthEnv's live stub has no Snapshot; rebuild the service on the same store with one.
-	hpub, _, _ := ed25519.GenerateKey(rand.Reader)
-	hostKey, err := ssh.NewPublicKey(hpub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if e.svc, err = service.New(service.Config{Store: e.db, Policy: policy.TablePolicy{}, Live: s8Live{}, HostKey: hostKey,
-		OperatorConns: s8Conns{}, Now: e.clk.now}); err != nil {
-		t.Fatal(err)
-	}
-	srv, err := New(Config{
-		Backend: s9Backend{Backend: e.svc, hostile: hostile}, Version: "test-1.2.3", Listen: "127.0.0.1:0", DataDir: e.dir,
-		Logf: func(string, ...any) {}, Now: e.clk.now,
-		Timeout: 3 * time.Minute, // Argon2id under -race on a loaded machine can pass the 15 s default
-		Hostname:           func() (string, error) { return "central-01", nil },
-		Interfaces:         func() ([]netip.Addr, error) { return []netip.Addr{netip.MustParseAddr("192.0.2.10")}, nil },
-		HostKeyFingerprint: "SHA256:hostkeyfp", SSHAdvertise: "central.example.org:2222",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.srv = srv
-	h := &s9{t: t, e: e, adm: auth.Principal{Kind: auth.KindAdmin, Name: testUser, Remote: "test"}}
-	h.c = loginForTest(t, e)
+	h := newGUIHarness(t, withBackend(func(b Backend) Backend { return s9Backend{Backend: b, hostile: hostile} }))
+	h.c = loginForTest(t, h)
 	return h
 }
 
-func (h *s9) fleet(name string) {
+// mkFleet creates an actions-mode fleet.
+func (h *guiHarness) mkFleet(name string) {
 	h.t.Helper()
-	if _, err := h.e.svc.CreateFleet(context.Background(), h.adm, service.SourceGUI, name, store.ModeActions, false, nil); err != nil {
+	if _, err := h.svc.CreateFleet(context.Background(), h.adm, service.SourceGUI, name, store.ModeActions, false, nil); err != nil {
 		h.t.Fatal(err)
 	}
 }
 
 // addRunner enrols a runner through a real join token; auto-approve makes it active.
-func (h *s9) addRunner(fleet, name string, approve bool, labels map[string]string) {
+func (h *guiHarness) addRunner(fleet, name string, approve bool, labels map[string]string) {
 	h.t.Helper()
 	ctx := context.Background()
-	ct, err := h.e.svc.CreateToken(ctx, h.adm, service.SourceGUI, service.TokenParams{Fleet: fleet, Labels: labels, Approve: approve})
+	ct, err := h.svc.CreateToken(ctx, h.adm, service.SourceGUI, service.TokenParams{Fleet: fleet, Labels: labels, Approve: approve})
 	if err != nil {
 		h.t.Fatal(err)
 	}
 	h.joinWith(ct.Token, name)
 }
 
-func (h *s9) status(fleet, name string) store.Status {
+func (h *guiHarness) status(fleet, name string) store.Status {
 	h.t.Helper()
-	rvs, err := h.e.svc.ListRunnersAll(context.Background(), h.adm, service.SourceGUI, fleet, true)
+	rvs, err := h.svc.ListRunnersAll(context.Background(), h.adm, service.SourceGUI, fleet, true)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -121,14 +91,14 @@ func (h *s9) status(fleet, name string) store.Status {
 }
 
 // act posts a form to target with the CSRF token of the page at formPage.
-func (h *s9) act(formPage, target string, form url.Values) *httptest.ResponseRecorder {
+func (h *guiHarness) act(formPage, target string, form url.Values) *httptest.ResponseRecorder {
 	h.t.Helper()
 	return h.c.post(formPage, target, form)
 }
 
 func TestRunnerTransitionsPerStatus(t *testing.T) {
-	h := newS9(t, false)
-	h.fleet("dev")
+	h := newRunnersHarness(t,false)
+	h.mkFleet("dev")
 	h.addRunner("dev", "r1", false, nil)
 	page := "/runners/dev/r1"
 
@@ -196,8 +166,8 @@ func TestRunnerTransitionsPerStatus(t *testing.T) {
 }
 
 func TestRunnerRevokeNeedsTypedRef(t *testing.T) {
-	h := newS9(t, false)
-	h.fleet("dev")
+	h := newRunnersHarness(t,false)
+	h.mkFleet("dev")
 	h.addRunner("dev", "r1", true, nil)
 	page := "/runners/dev/r1"
 
@@ -238,14 +208,14 @@ func TestRunnerRevokeNeedsTypedRef(t *testing.T) {
 	if !strings.Contains(h.c.get("/runners?revoked=1").Body.String(), "r1") {
 		t.Error("revoked runner missing with revoked=1")
 	}
-	if h.e.auditCount("runner.revoke") != 1 {
-		t.Errorf("revoke audit rows = %d", h.e.auditCount("runner.revoke"))
+	if h.auditCount("runner.revoke") != 1 {
+		t.Errorf("revoke audit rows = %d", h.auditCount("runner.revoke"))
 	}
 }
 
 func TestRunnerHostileDataIsInert(t *testing.T) {
-	h := newS9(t, true)
-	h.fleet("dev")
+	h := newRunnersHarness(t,true)
+	h.mkFleet("dev")
 	h.addRunner("dev", "r1", true, map[string]string{
 		"<script>alert(1)</script>": "javascript:alert(1)",
 		"role":                      "\xe2\x80\xaeevil\"><img src=x onerror=alert(1)>",
@@ -282,9 +252,9 @@ func TestRunnerHostileDataIsInert(t *testing.T) {
 }
 
 func TestRunnersListFiltersAndPolling(t *testing.T) {
-	h := newS9(t, false)
-	h.fleet("dev")
-	h.fleet("prod")
+	h := newRunnersHarness(t,false)
+	h.mkFleet("dev")
+	h.mkFleet("prod")
 	h.addRunner("dev", "run-a", false, map[string]string{"env": "dev"})
 	h.addRunner("prod", "run-b", true, nil)
 
@@ -319,11 +289,11 @@ func TestRunnersListFiltersAndPolling(t *testing.T) {
 }
 
 func TestRunnersNeedAdminAndCSRF(t *testing.T) {
-	h := newS9(t, false)
-	h.fleet("dev")
+	h := newRunnersHarness(t,false)
+	h.mkFleet("dev")
 	h.addRunner("dev", "r1", false, nil)
 
-	anon := h.e.newClient()
+	anon := h.newClient()
 	for _, target := range []string{"/runners", "/runners/dev/r1", "/runners/dev/r1/revoke", "/tokens", "/tokens/new"} {
 		rec := anon.get(target)
 		if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/login") {
@@ -341,14 +311,14 @@ func TestRunnersNeedAdminAndCSRF(t *testing.T) {
 }
 
 // joinWith enrols a runner with an existing join token string.
-func (h *s9) joinWith(tok, name string) {
+func (h *guiHarness) joinWith(tok, name string) {
 	h.t.Helper()
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	key, err := ssh.NewPublicKey(pub)
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	if _, err := h.e.svc.Join(context.Background(), auth.Principal{Kind: auth.KindEnroll, Remote: "test"},
+	if _, err := h.svc.Join(context.Background(), auth.Principal{Kind: auth.KindEnroll, Remote: "test"},
 		service.SourceEnroll, tok, name, key); err != nil {
 		h.t.Fatal(err)
 	}

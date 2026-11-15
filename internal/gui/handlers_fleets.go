@@ -40,18 +40,13 @@ type adminReq struct {
 // screenAuth returns the signed-in admin. Without a valid session it redirects to /login and
 // returns false. It reuses a session an outer middleware already established.
 func (s *Server) screenAuth(w http.ResponseWriter, r *http.Request) (adminReq, bool) {
-	tok, ok := SessionToken(r)
-	if !ok {
-		s.toLogin(w, r)
-		return adminReq{}, false
-	}
+	// The route is wrapped in requireAdmin, which authenticated the session; a handler reached
+	// without it fails closed.
 	p, _, have := SessionFrom(r.Context())
-	if !have {
-		var err error
-		if p, _, err = authenticate(r, s.cfg.Backend); err != nil {
-			s.toLogin(w, r)
-			return adminReq{}, false
-		}
+	tok, hasTok := SessionToken(r)
+	if !have || !hasTok {
+		s.loginRedirect(w, r)
+		return adminReq{}, false
 	}
 	if p.Kind != auth.KindAdmin {
 		s.ErrorPage(w, r, http.StatusForbidden)
@@ -59,14 +54,6 @@ func (s *Server) screenAuth(w http.ResponseWriter, r *http.Request) (adminReq, b
 	}
 	key := CSRFKey(tok)
 	return adminReq{P: p, Key: key, Form: FormToken(key)}, true
-}
-
-func (s *Server) toLogin(w http.ResponseWriter, r *http.Request) {
-	target := "/login"
-	if r.Method == http.MethodGet && r.Header.Get("HX-Request") != "true" {
-		target += "?next=" + QueryEscape(r.URL.RequestURI())
-	}
-	s.Redirect(w, r, target, "", "")
 }
 
 // screenForm parses a POST body and checks CSRF (after ParseForm, as csrf.go requires). It
@@ -152,7 +139,7 @@ func relAge(now, t time.Time) string {
 
 func fleetURL(name string) string { return "/fleets/" + PathEscape(name) }
 
-func (s *Server) routesFleets(mux *http.ServeMux) {
+func (s *Server) routesFleets(mux adminMux) {
 	mux.HandleFunc("GET /fleets", s.fleetsList)
 	mux.HandleFunc("GET /fleets/new", s.fleetNewForm)
 	mux.HandleFunc("POST /fleets", s.fleetCreate)

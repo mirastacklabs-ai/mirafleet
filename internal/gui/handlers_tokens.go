@@ -27,52 +27,42 @@ func init() {
 }
 
 const (
-	// nonceTTL must not exceed nonceRetention, or an expired-from-memory nonce could still verify.
-	nonceTTL       = 30 * time.Minute
-	nonceRetention = time.Hour
-	nonceMax       = 1024
+	// A used nonce is remembered for nonceTTL after use: its signature expires nonceTTL after it
+	// was issued, which is never later than that, so a forgotten nonce can no longer verify.
+	nonceTTL = 30 * time.Minute
+	nonceMax = 1024
 )
 
-// nonceSet remembers used nonces for nonceRetention, at most nonceMax of them (oldest dropped
-// first). MarkUsed is the single atomic check-and-insert.
+// nonceSet remembers used nonces for nonceTTL, at most nonceMax of them. Live entries are never
+// evicted (that would let a replay mint a second token): when the set is full of live nonces the
+// create is refused instead. MarkUsed is the single atomic check-and-insert.
 type nonceSet struct {
 	mu    sync.Mutex
 	used  map[string]time.Time
 	order []string
 }
 
-// MarkUsed records nonce and reports true, or reports false when it was already used.
-func (n *nonceSet) MarkUsed(nonce string, now time.Time) bool {
+// MarkUsed records nonce and reports (true, false), or (false, false) when it was already used,
+// or (false, true) when the set is full of live nonces.
+func (n *nonceSet) MarkUsed(nonce string, now time.Time) (ok, full bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.used == nil {
 		n.used = map[string]time.Time{}
 	}
-	for len(n.order) > 0 {
-		first := n.order[0]
-		if len(n.order) < nonceMax && now.Sub(n.used[first]) < nonceRetention {
-			break
-		}
-		delete(n.used, first)
+	for len(n.order) > 0 && now.Sub(n.used[n.order[0]]) >= nonceTTL {
+		delete(n.used, n.order[0])
 		n.order = n.order[1:]
 	}
 	if _, dup := n.used[nonce]; dup {
-		return false
+		return false, false
+	}
+	if len(n.order) >= nonceMax {
+		return false, true
 	}
 	n.used[nonce] = now
 	n.order = append(n.order, nonce)
-	return true
-}
-
-// tokenNonces holds one nonceSet per Server (kept here so server.go stays untouched).
-var tokenNonces sync.Map // *Server -> *nonceSet
-
-func (s *Server) nonces() *nonceSet {
-	if v, ok := tokenNonces.Load(s); ok {
-		return v.(*nonceSet)
-	}
-	v, _ := tokenNonces.LoadOrStore(s, &nonceSet{})
-	return v.(*nonceSet)
+	return true, false
 }
 
 type selOpt struct {
@@ -132,7 +122,7 @@ var tokenTTLs = []selOpt{
 
 const defaultTokenTTLOpt = "24h"
 
-func (s *Server) routesTokens(mux *http.ServeMux) {
+func (s *Server) routesTokens(mux adminMux) {
 	mux.HandleFunc("GET /tokens", s.tokensList)
 	mux.HandleFunc("GET /tokens/new", s.tokenNewForm)
 	mux.HandleFunc("POST /tokens", s.tokenCreate)
@@ -321,7 +311,12 @@ func (s *Server) tokenCreate(w http.ResponseWriter, r *http.Request) {
 
 	// The nonce is consumed before the token is minted: a second submit of the same form (or a
 	// concurrent one) finds it used and mints nothing.
-	if !s.nonces().MarkUsed(raw, s.now()) {
+	fresh, full := s.nonces.MarkUsed(raw, s.now())
+	if full {
+		redo(http.StatusTooManyRequests, map[string]string{"form": "Too many tokens were created recently. Reload the form and try again in a few minutes."})
+		return
+	}
+	if !fresh {
 		w.Header().Set("Cache-Control", "no-store")
 		pg := s.screenPage(w, r, a, "Join token", "tokens", Crumb{Text: "Join tokens", URL: "/tokens"}, Crumb{Text: "Created"})
 		pg.Data = tokensData{View: "result", Res: tokenResult{Replay: true}}

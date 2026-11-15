@@ -182,15 +182,16 @@ const guiPkg = "github.com/mirastacklabs-ai/mirafleet/internal/gui"
 // forbiddenForGUI lists what internal/gui must never import (docs/M4.md 2.1): the GUI talks to
 // central only through gui.Backend (*service.Service), never to the store, registry or SSH side.
 // direct is true for its own imports; the transitive closure (through internal/service, which
-// legitimately uses internal/central/registry) only keeps SQLite, containerd and grpc out.
+// legitimately uses exactly internal/central/registry) keeps every other one of these out too, plus
+// containerd and grpc.
 func forbiddenForGUI(pkg string, direct bool) bool {
 	const mod = "github.com/mirastacklabs-ai/mirafleet/"
-	paths := []string{"internal/store/sqlite"}
-	if direct {
-		paths = append(paths, "internal/central", "internal/apiclient", "internal/orch", "internal/mcpserver")
-	}
+	paths := []string{"internal/store/sqlite", "internal/central", "internal/apiclient", "internal/orch", "internal/mcpserver"}
 	for _, p := range paths {
 		if pkg == mod+p || strings.HasPrefix(pkg, mod+p+"/") {
+			if !direct && pkg == mod+"internal/central/registry" {
+				continue
+			}
 			return true
 		}
 	}

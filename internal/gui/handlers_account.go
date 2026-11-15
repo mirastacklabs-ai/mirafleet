@@ -4,13 +4,14 @@ package gui
 // the theme switch. Every route is behind requireAdmin and checks the session CSRF token.
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/service"
 )
 
 // viewTime renders an absolute UTC time for the ui/time partial (timeView is in handlers_fleets.go).
@@ -130,13 +131,17 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 	release()
 	if err != nil {
 		var ae *api.Error
+		if errors.Is(err, context.DeadlineExceeded) {
+			s.hashBusy(w, r)
+			return
+		}
+		if errors.Is(err, service.ErrWrongCurrentPassword) {
+			s.recordFailure(r, s.auth.login)
+			invalid(map[string]string{"current": "Your current password is incorrect."})
+			return
+		}
 		if errors.As(err, &ae) && ae.Code == api.CodeBadRequest {
-			if strings.Contains(ae.Message, "current") {
-				s.recordFailure(r, s.auth.login)
-				invalid(map[string]string{"current": "Your current password is incorrect."})
-			} else {
-				invalid(map[string]string{"new": ae.Message})
-			}
+			invalid(map[string]string{"new": userMessage(ae.Message)})
 			return
 		}
 		s.logf("gui: change password: %v", err)
@@ -158,8 +163,8 @@ func (s *Server) handleRevokeOne(w http.ResponseWriter, r *http.Request) {
 		s.ErrorPage(w, r, http.StatusNotFound)
 		return
 	}
-	if id == cur { // signing out this very session is a logout
-		s.handleLogout(w, r)
+	if id == cur { // signing out this very session is a logout (CSRF was checked above)
+		s.logout(w, r)
 		return
 	}
 	if err := s.cfg.Backend.RevokeGUISession(r.Context(), p, id); err != nil {

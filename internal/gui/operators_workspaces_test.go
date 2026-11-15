@@ -1,8 +1,7 @@
 package gui
 
-// Tests for the Operators and Workspaces screens (M4 step S10). They reuse the s8 harness (a real
-// service on a temp SQLite file, a session made through the Backend) and add a store handle to
-// seed operators, runners and workspaces.
+// Tests for the Operators and Workspaces screens (M4 step S10). They use the shared harness
+// (helpers_test.go) and seed operators, runners and workspaces through its store handle.
 
 import (
 	"context"
@@ -10,11 +9,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -23,63 +20,22 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
-	"github.com/mirastacklabs-ai/mirafleet/internal/policy"
 	"github.com/mirastacklabs-ai/mirafleet/internal/service"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
-	"github.com/mirastacklabs-ai/mirafleet/internal/store/sqlite"
 	"github.com/mirastacklabs-ai/mirafleet/internal/tokens"
-	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
 const hostile = `<script>alert(1)</script>"onmouseover="x`
 
-// s10Live answers the runner's destroy call with res and err.
-type s10Live struct {
-	s8Live
-	res *transport.WorkspaceResult
-	err error
-}
-
-func (l *s10Live) Workspace(context.Context, int64, transport.WorkspaceRequest, io.Reader, io.Writer) (*transport.WorkspaceResult, error) {
-	return l.res, l.err
-}
-
-type s10 struct {
-	*s8
-	db   *sqlite.DB
-	live *s10Live
-	n    int
-}
-
-func newS10(t *testing.T) *s10 {
+// newOpsHarness is a signed-in harness with the operator registration secret set and the SSH
+// advertise address the operators screen prints.
+func newOpsHarness(t *testing.T) *guiHarness {
 	t.Helper()
-	ctx := context.Background()
-	db, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "mirafleet.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
-	pub, _, _ := ed25519.GenerateKey(rand.Reader)
-	host, err := ssh.NewPublicKey(pub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	live := &s10Live{res: &transport.WorkspaceResult{Code: transport.CodeOK}}
-	svc, err := service.New(service.Config{Store: db, Policy: policy.TablePolicy{}, Live: live, HostKey: host,
-		OperatorConns: s8Conns{}, Now: time.Now})
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := &s8{t: t, svc: svc, spy: &s8Spy{Backend: svc}}
-	h.e = newEnv(t, func(c *Config) { c.Backend = h.spy; c.SSHAdvertise = "central-01.example.org:2222" })
-	h.login()
-	if err := svc.InitRegistrationSecret(ctx, h.adm, service.SourceGUI); err != nil {
-		t.Fatal(err)
-	}
-	return &s10{s8: h, db: db, live: live}
+	return newAdminHarness(t, withRegistrationSecret(),
+		withConfig(func(c *Config) { c.SSHAdvertise = "central-01.example.org:2222" }))
 }
 
-func (h *s10) operator(name, fp string) store.Operator {
+func (h *guiHarness) operator(name, fp string) store.Operator {
 	h.t.Helper()
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	k, _ := ssh.NewPublicKey(pub)
@@ -94,7 +50,7 @@ func (h *s10) operator(name, fp string) store.Operator {
 	return op
 }
 
-func (h *s10) runner(fleet, name string) store.Runner {
+func (h *guiHarness) runner(fleet, name string) store.Runner {
 	h.t.Helper()
 	ctx := context.Background()
 	if _, err := h.fleet(fleet); err != nil {
@@ -122,7 +78,7 @@ func (h *s10) runner(fleet, name string) store.Runner {
 }
 
 // ws seeds an open workspace in fleet on runner r owned by op.
-func (h *s10) ws(fleet string, r store.Runner, op store.Operator, session, image string) store.Workspace {
+func (h *guiHarness) ws(fleet string, r store.Runner, op store.Operator, session, image string) store.Workspace {
 	h.t.Helper()
 	ctx := context.Background()
 	f, err := h.fleet(fleet)
@@ -144,7 +100,7 @@ func (h *s10) ws(fleet string, r store.Runner, op store.Operator, session, image
 	return w
 }
 
-func (h *s10) wsState(id string) store.WorkspaceState {
+func (h *guiHarness) wsState(id string) store.WorkspaceState {
 	h.t.Helper()
 	w, err := h.db.GetWorkspace(context.Background(), id)
 	if err != nil {
@@ -153,7 +109,7 @@ func (h *s10) wsState(id string) store.WorkspaceState {
 	return w.State
 }
 
-func (h *s10) opStatus(name string) store.OperatorStatus {
+func (h *guiHarness) opStatus(name string) store.OperatorStatus {
 	h.t.Helper()
 	ops, err := h.svc.ListOperators(context.Background(), h.adm, service.SourceGUI, true)
 	if err != nil {
@@ -170,7 +126,7 @@ func (h *s10) opStatus(name string) store.OperatorStatus {
 
 var codeRE = regexp.MustCompile(`id="copy-reg-code">([^<]+)<`)
 
-func showCode(t *testing.T, h *s10, mod func(*http.Request)) (string, *httptest.ResponseRecorder) {
+func showCode(t *testing.T, h *guiHarness, mod func(*http.Request)) (string, *httptest.ResponseRecorder) {
 	t.Helper()
 	rec := h.do("POST", "/operators/code", url.Values{"_csrf": {h.csrf()}}, mod)
 	if rec.Code != 200 {
@@ -184,14 +140,19 @@ func showCode(t *testing.T, h *s10, mod func(*http.Request)) (string, *httptest.
 }
 
 func TestOperatorsCodeOnlyOnPostAuditedOncePerShow(t *testing.T) {
-	h := newS10(t)
+	h := newOpsHarness(t)
 	h.operator("alice", "")
 
 	body := wantBody(t, h.get("/operators"), 200, "Show code", "alice", `action="/operators/code"`)
 	if codeRE.MatchString(body) || strings.Contains(body, "reg-fp") {
 		t.Fatal("GET /operators carries a code")
 	}
-	if strings.Contains(body, "hx-trigger") {
+	// Only <main> is checked: the layout carries htmx attributes of its own.
+	mainStart, mainEnd := strings.Index(body, "<main"), strings.Index(body, "</main>")
+	if mainStart < 0 || mainEnd < mainStart {
+		t.Fatal("operators page has no <main>")
+	}
+	if strings.Contains(body[mainStart:mainEnd], "hx-trigger") {
 		t.Error("operators page polls")
 	}
 	if n := len(h.audit(api.MethodOperatorCode)); n != 0 {
@@ -214,7 +175,7 @@ func TestOperatorsCodeOnlyOnPostAuditedOncePerShow(t *testing.T) {
 		t.Error("show code must render directly, not redirect")
 	}
 	evs := h.audit(api.MethodOperatorCode)
-	if len(evs) != 1 || evs[0].Source != "gui" || evs[0].Actor != s8User {
+	if len(evs) != 1 || evs[0].Source != "gui" || evs[0].Actor != testUser {
 		t.Fatalf("audit after one show = %+v", evs)
 	}
 	if strings.Contains(fmt.Sprint(evs[0]), code) {
@@ -250,7 +211,7 @@ func TestOperatorsCodeOnlyOnPostAuditedOncePerShow(t *testing.T) {
 }
 
 func TestOperatorsRotateSecret(t *testing.T) {
-	h := newS10(t)
+	h := newOpsHarness(t)
 	before, _ := showCode(t, h, nil)
 
 	wantBody(t, h.get("/operators/rotate"), 200, "Rotate the registration secret", `action="/operators/rotate"`, "stops working")
@@ -271,7 +232,7 @@ func TestOperatorsRotateSecret(t *testing.T) {
 }
 
 func TestOperatorsRevokeNeedsName(t *testing.T) {
-	h := newS10(t)
+	h := newOpsHarness(t)
 	h.operator("alice", "")
 	h.operator("bob", "")
 
@@ -314,7 +275,7 @@ func TestOperatorsRevokeNeedsName(t *testing.T) {
 }
 
 func TestWorkspacesListFiltersAndPassivePoll(t *testing.T) {
-	h := newS10(t)
+	h := newOpsHarness(t)
 	wantBody(t, h.get("/workspaces"), 200, "No workspaces")
 	op := h.operator("alice", "")
 	r1, r2 := h.runner("prod", "p1"), h.runner("dev", "d1")
@@ -356,7 +317,7 @@ func TestWorkspacesListFiltersAndPassivePoll(t *testing.T) {
 }
 
 func TestWorkspaceKillClosedOrClosing(t *testing.T) {
-	h := newS10(t)
+	h := newOpsHarness(t)
 	op := h.operator("alice", "")
 	r := h.runner("prod", "p1")
 	w1 := h.ws("prod", r, op, "a", "img")
@@ -403,7 +364,7 @@ func TestWorkspaceKillClosedOrClosing(t *testing.T) {
 }
 
 func TestOperatorsWorkspacesHostileDataInert(t *testing.T) {
-	h := newS10(t)
+	h := newOpsHarness(t)
 	op := h.operator("alice", hostile)
 	r := h.runner("prod", "p1")
 	w := h.ws("prod", r, op, hostile, hostile)
@@ -423,7 +384,7 @@ func TestOperatorsWorkspacesHostileDataInert(t *testing.T) {
 }
 
 func TestOperatorsWorkspacesCSRFOnEveryPost(t *testing.T) {
-	h := newS10(t)
+	h := newOpsHarness(t)
 	op := h.operator("alice", "")
 	r := h.runner("prod", "p1")
 	w := h.ws("prod", r, op, "a", "img")

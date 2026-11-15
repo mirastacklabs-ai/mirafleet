@@ -172,3 +172,18 @@ func TestCentralGUIOff(t *testing.T) {
 		t.Fatal("gui dir created with the GUI off")
 	}
 }
+
+// -gui-listen ports outside 0-65535 and bad -gui-host names fail at parse time.
+func TestParseCentralRunValidatesGUIFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"-gui-listen", "127.0.0.1:99999"}, {"-gui-listen", "127.0.0.1:-1"}, {"-gui-listen", "127.0.0.1:http"},
+		{"-gui-host", "10.0.0.1"}, {"-gui-host", "bad name"}, {"-gui-host", "-x.example"},
+	} {
+		if _, err := parseCentralRun(args, &bytes.Buffer{}); !errors.Is(err, errAdminUsage) {
+			t.Errorf("%v: err %v", args, err)
+		}
+	}
+	if _, err := parseCentralRun([]string{"-gui-listen", "127.0.0.1:0", "-gui-host", "a.example"}, nil); err != nil {
+		t.Errorf("valid flags: %v", err)
+	}
+}

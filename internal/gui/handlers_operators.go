@@ -42,7 +42,7 @@ type operatorsData struct {
 	CancelU string
 }
 
-func (s *Server) routesOperators(mux *http.ServeMux) {
+func (s *Server) routesOperators(mux adminMux) {
 	mux.HandleFunc("GET /operators", s.operatorsList)
 	mux.HandleFunc("POST /operators/code", s.operatorsShowCode)
 	mux.HandleFunc("GET /operators/rotate", s.operatorsRotateForm)

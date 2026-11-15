@@ -2,7 +2,7 @@
 {{define "content"}}<div class="container narrow">
 <section class="panel" aria-labelledby="setup-h"><div class="panel-head"><h1 id="setup-h">Set up mirafleet</h1></div>
 <div class="panel-body">
-<p>Create the administrator account. You need the setup token that central wrote to the <span class="mono">setup-token</span> file in its data directory (central's log gives the path).</p>
+<p>Create the administrator account. You need the setup token: either the one central wrote to the <span class="mono">setup-token</span> file in its data directory (central's log gives the path), or the one that <span class="mono">mirafleet central gui reset-admin</span> printed.</p>
 <p class="hint">Before you type the token, check that the certificate fingerprint in your browser is <span class="mono">{{.Data.Fingerprint}}</span>, as printed in central's log.</p>
 {{with .Data.Errors.form}}<p class="field-error" role="alert">{{.}}</p>{{end}}
 <form class="form" method="post" action="/setup">

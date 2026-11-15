@@ -380,6 +380,15 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The export is a GET with a side effect (an audit row) and a download: a cross-site trigger
+	// (an <img>, a link) is refused before anything is recorded. Browsers send Sec-Fetch-Site;
+	// same-origin and none (typed or bookmarked URL) are the only fetches we serve.
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+	default:
+		s.ErrorPage(w, r, http.StatusForbidden)
+		return
+	}
 	format := r.URL.Query().Get("format")
 	if format != "csv" && format != "jsonl" {
 		s.ErrorPage(w, r, http.StatusNotFound)

@@ -17,6 +17,7 @@ import (
 type Backend interface {
 	// Admin account, setup and sessions (no Source: the service uses SourceGUI itself).
 	EnsureGUISetup(ctx context.Context) (token string, created bool, err error)
+	ReissueGUISetup(ctx context.Context) (token string, created bool, err error)
 	CompleteGUISetup(ctx context.Context, remote, ua, token, username, password string) (string, auth.Principal, error)
 	GUILogin(ctx context.Context, remote, ua, username, password string) (string, auth.Principal, error)
 	GUIAuthenticate(ctx context.Context, remote, sessionToken string, passive bool) (auth.Principal, int64, error)

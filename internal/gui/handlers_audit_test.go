@@ -8,7 +8,6 @@ import (
 	"html"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"regexp"
 	"strings"
 	"sync"
@@ -22,7 +21,7 @@ import (
 
 var auditT0 = time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 
-func seedAudit(t *testing.T, e *authEnv, evs ...store.AuditEvent) {
+func seedAudit(t *testing.T, e *guiHarness, evs ...store.AuditEvent) {
 	t.Helper()
 	for _, ev := range evs {
 		if ev.Source == "" {
@@ -46,7 +45,7 @@ func seedAudit(t *testing.T, e *authEnv, evs ...store.AuditEvent) {
 func hasAction(body, action string) bool { return strings.Contains(body, ">"+action+"<") }
 
 func TestAuditRequiresLogin(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	loginForTest(t, e)
 	rec := e.newClient().get("/audit")
 	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/login") {
@@ -59,7 +58,7 @@ func TestAuditRequiresLogin(t *testing.T) {
 }
 
 func TestAuditEveryFilter(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	c := loginForTest(t, e)
 	seedAudit(t, e,
 		store.AuditEvent{Time: auditT0, Action: "f.one", Fleet: "fa", Runner: "ra", Actor: "alice", Source: "cli", Outcome: "ok", RequestID: "req-1"},
@@ -114,7 +113,7 @@ func TestAuditEveryFilter(t *testing.T) {
 }
 
 func TestAuditBookmarkableQuery(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	c := loginForTest(t, e)
 	seedAudit(t, e, store.AuditEvent{Time: auditT0, Action: "bm.one", Fleet: "fa", Actor: "alice", RequestID: "req-bm"})
 	q := "/audit?action=bm.&actor=alice&fleet=fa&from=2026-03-01&outcome=ok&request=req-bm&source=cli&to=2026-03-02&workspace=w1"
@@ -168,7 +167,7 @@ func pageActions(body string) []string {
 }
 
 func TestAuditKeysetPagingBothWays(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	c := loginForTest(t, e)
 	for i := 1; i <= 120; i++ {
 		seedAudit(t, e, store.AuditEvent{Time: auditT0.Add(time.Duration(i) * time.Minute), Action: fmt.Sprintf("page.%d", i)})
@@ -221,7 +220,7 @@ func TestAuditKeysetPagingBothWays(t *testing.T) {
 }
 
 func TestAuditExportCSV(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	c := loginForTest(t, e)
 	exit := -1
 	seedAudit(t, e,
@@ -274,7 +273,7 @@ func TestAuditExportCSV(t *testing.T) {
 }
 
 func TestAuditExportJSONLValidPerLine(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	c := loginForTest(t, e)
 	msg := "has \"quotes\"\nand newline, " + string(rune(0x2028)) + " sep"
 	seedAudit(t, e,
@@ -303,7 +302,7 @@ func TestAuditExportJSONLValidPerLine(t *testing.T) {
 }
 
 func TestAuditExportRowWrittenAndFilterRecorded(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	c := loginForTest(t, e)
 	seedAudit(t, e, store.AuditEvent{Time: auditT0, Action: "rec.a", Fleet: "fx"})
 	if rec := c.get("/audit/export?format=jsonl&fleet=fx&source=cli"); rec.Code != 200 {
@@ -316,6 +315,36 @@ func TestAuditExportRowWrittenAndFilterRecorded(t *testing.T) {
 	p := evs[0].Params
 	if p["format"] != "jsonl" || p["fleet"] != "fx" || p["source"] != "cli" || evs[0].Source != "gui" {
 		t.Errorf("audit.export row: %+v", evs[0])
+	}
+}
+
+// A cross-site fetch of the export (an <img>, a link on another site) is refused before the
+// audit.export row is written; same-origin, none (typed URL) and an absent header are served.
+func TestAuditExportRefusesCrossSite(t *testing.T) {
+	e := newGUIHarness(t)
+	c := loginForTest(t, e)
+	seedAudit(t, e, store.AuditEvent{Time: auditT0, Action: "cs.a"})
+	for _, site := range []string{"cross-site", "same-site", "bogus"} {
+		rec := c.do("GET", "/audit/export?format=csv", nil, func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", site) })
+		if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "cs.a") {
+			t.Errorf("Sec-Fetch-Site %q: status %d", site, rec.Code)
+		}
+	}
+	if n := e.auditCount("audit.export"); n != 0 {
+		t.Fatalf("refused exports wrote %d audit.export rows", n)
+	}
+	for _, site := range []string{"same-origin", "none", ""} {
+		rec := c.do("GET", "/audit/export?format=csv", nil, func(r *http.Request) {
+			if site != "" {
+				r.Header.Set("Sec-Fetch-Site", site)
+			}
+		})
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "cs.a") {
+			t.Errorf("Sec-Fetch-Site %q: status %d", site, rec.Code)
+		}
+	}
+	if n := e.auditCount("audit.export"); n != 3 {
+		t.Errorf("audit.export rows = %d, want 3", n)
 	}
 }
 
@@ -368,19 +397,10 @@ func (f *auditFake) order() string {
 }
 
 // fakeServer builds a second GUI server over fake, sharing e's sessions through the real service.
-func fakeServer(t *testing.T, e *authEnv, fake *auditFake) *Server {
+func fakeServer(t *testing.T, e *guiHarness, fake *auditFake) *Server {
 	t.Helper()
 	fake.Backend = e.svc
-	s, err := New(Config{
-		Backend: fake, Version: "test", Listen: "127.0.0.1:0", DataDir: t.TempDir(), Logf: func(string, ...any) {}, Now: e.clk.now,
-		Hostname:           func() (string, error) { return "central-01", nil },
-		Interfaces:         func() ([]netip.Addr, error) { return []netip.Addr{netip.MustParseAddr("192.0.2.10")}, nil },
-		HostKeyFingerprint: "SHA256:hostkeyfp", SSHAdvertise: "central.example.org:2222",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s
+	return e.newServer(fake, t.TempDir(), nil)
 }
 
 func fakeGet(s *Server, c *testClient, target string) *httptest.ResponseRecorder {
@@ -396,7 +416,7 @@ func fakeGet(s *Server, c *testClient, target string) *httptest.ResponseRecorder
 }
 
 func TestAuditExportRowBeforeData(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	c := loginForTest(t, e)
 	fake := &auditFake{total: 2500}
 	rec := fakeGet(fakeServer(t, e, fake), c, "/audit/export?format=csv")
@@ -419,7 +439,7 @@ func TestAuditExportRowBeforeData(t *testing.T) {
 }
 
 func TestAuditExport100kCapMarker(t *testing.T) {
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	c := loginForTest(t, e)
 	fake := &auditFake{total: int64(auditExportCap) + 7}
 	s := fakeServer(t, e, fake)
@@ -457,7 +477,7 @@ func TestAuditExportTimeout(t *testing.T) {
 	old := auditExportTimeout
 	auditExportTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { auditExportTimeout = old })
-	e := newAuthEnv(t)
+	e := newGUIHarness(t)
 	c := loginForTest(t, e)
 	fake := &auditFake{total: 5000, blockAfter: 1}
 	s := fakeServer(t, e, fake)

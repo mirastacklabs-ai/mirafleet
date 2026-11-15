@@ -5,6 +5,7 @@ package gui
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,7 +22,7 @@ var (
 )
 
 // tokenForm loads /tokens/new and returns its CSRF token and nonce.
-func (h *s9) tokenForm() (csrf, nonce string) {
+func (h *guiHarness) tokenForm() (csrf, nonce string) {
 	h.t.Helper()
 	rec := h.c.get("/tokens/new")
 	if rec.Code != http.StatusOK {
@@ -39,9 +40,9 @@ func tokenValues(csrf, nonce string) url.Values {
 		"uses": {"1"}, "ttl": {"24h"}, "approve": {"1"}}
 }
 
-func (h *s9) tokenCount() int {
+func (h *guiHarness) tokenCount() int {
 	h.t.Helper()
-	ts, err := h.e.svc.ListTokens(context.Background(), h.adm, "gui", "")
+	ts, err := h.svc.ListTokens(context.Background(), h.adm, "gui", "")
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -49,8 +50,8 @@ func (h *s9) tokenCount() int {
 }
 
 func TestTokenShownOnceNoStore(t *testing.T) {
-	h := newS9(t, false)
-	h.fleet("dev")
+	h := newRunnersHarness(t,false)
+	h.mkFleet("dev")
 	csrf, nonce := h.tokenForm()
 
 	rec := h.c.do("POST", "/tokens", tokenValues(csrf, nonce), nil)
@@ -79,14 +80,14 @@ func TestTokenShownOnceNoStore(t *testing.T) {
 	for _, p := range []string{"/tokens", "/tokens?finished=1", "/tokens/new", "/", "/fleets/dev", "/audit", "/runners"} {
 		h.c.get(p)
 	}
-	if n := strings.Count(h.e.seenText(), tok); n != 1 {
+	if n := strings.Count(h.seenText(), tok); n != 1 {
 		t.Errorf("token appears %d times across all responses, want exactly 1 (the create response)", n)
 	}
 	list := h.c.get("/tokens").Body.String()
 	if !strings.Contains(list, "env=ci") || strings.Contains(list, tok) {
 		t.Errorf("list page:\n%s", list)
 	}
-	if logs := h.e.logText(); strings.Contains(logs, tok) {
+	if logs := h.logText(); strings.Contains(logs, tok) {
 		t.Error("token in the server log")
 	}
 
@@ -95,8 +96,8 @@ func TestTokenShownOnceNoStore(t *testing.T) {
 }
 
 func TestTokenNonceReplayShowsNoSecondToken(t *testing.T) {
-	h := newS9(t, false)
-	h.fleet("dev")
+	h := newRunnersHarness(t,false)
+	h.mkFleet("dev")
 	csrf, nonce := h.tokenForm()
 	first := h.c.do("POST", "/tokens", tokenValues(csrf, nonce), nil)
 	if tokenRE.FindString(first.Body.String()) == "" {
@@ -115,14 +116,14 @@ func TestTokenNonceReplayShowsNoSecondToken(t *testing.T) {
 	if h.tokenCount() != 1 {
 		t.Fatalf("tokens = %d, want 1", h.tokenCount())
 	}
-	if n := h.e.auditCount("token.create"); n != 1 {
+	if n := h.auditCount("token.create"); n != 1 {
 		t.Errorf("token.create audit rows = %d", n)
 	}
 }
 
 func TestTokenConcurrentDoubleSubmitMintsOne(t *testing.T) {
-	h := newS9(t, false)
-	h.fleet("dev")
+	h := newRunnersHarness(t,false)
+	h.mkFleet("dev")
 	csrf, nonce := h.tokenForm()
 	form := tokenValues(csrf, nonce)
 	sess := h.c.jar[SessionCookieName]
@@ -141,7 +142,7 @@ func TestTokenConcurrentDoubleSubmitMintsOne(t *testing.T) {
 			r.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sess})
 			rec := httptest.NewRecorder()
 			<-start
-			h.e.srv.Handler().ServeHTTP(rec, r)
+			h.srv.Handler().ServeHTTP(rec, r)
 			recs[i] = rec
 		}(i)
 	}
@@ -166,8 +167,8 @@ func TestTokenConcurrentDoubleSubmitMintsOne(t *testing.T) {
 }
 
 func TestTokenNonceChecks(t *testing.T) {
-	h := newS9(t, false)
-	h.fleet("dev")
+	h := newRunnersHarness(t,false)
+	h.mkFleet("dev")
 	csrf, nonce := h.tokenForm()
 
 	// Missing, forged, truncated nonces mint nothing.
@@ -180,7 +181,7 @@ func TestTokenNonceChecks(t *testing.T) {
 	// A nonce signed for another session does not verify.
 	rawN, _ := NewToken()
 	otherKey, _ := NewToken() // another session's key
-	foreign := SignNonce(CSRFKey(otherKey), rawN, h.e.clk.now(), nonceTTL)
+	foreign := SignNonce(CSRFKey(otherKey), rawN, h.clk.now(), nonceTTL)
 	if rec := h.c.do("POST", "/tokens", tokenValues(csrf, foreign), nil); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("foreign nonce: %d", rec.Code)
 	}
@@ -207,18 +208,18 @@ func TestTokenNonceChecks(t *testing.T) {
 	// A nonce past its lifetime is refused.
 	csrf, _ = h.tokenForm()
 	raw, _ := NewToken()
-	nonce = SignNonce(CSRFKey(h.c.jar[SessionCookieName]), raw, h.e.clk.now().Add(-2*nonceTTL), nonceTTL)
+	nonce = SignNonce(CSRFKey(h.c.jar[SessionCookieName]), raw, h.clk.now().Add(-2*nonceTTL), nonceTTL)
 	if rec = h.c.do("POST", "/tokens", tokenValues(csrf, nonce), nil); rec.Code != http.StatusUnprocessableEntity || tokenRE.MatchString(rec.Body.String()) {
 		t.Errorf("expired nonce: %d", rec.Code)
 	}
 }
 
 func TestTokenRevokeAndFilters(t *testing.T) {
-	h := newS9(t, false)
-	h.fleet("dev")
+	h := newRunnersHarness(t,false)
+	h.mkFleet("dev")
 	csrf, nonce := h.tokenForm()
 	h.c.do("POST", "/tokens", tokenValues(csrf, nonce), nil)
-	ts, _ := h.e.svc.ListTokens(context.Background(), h.adm, "gui", "")
+	ts, _ := h.svc.ListTokens(context.Background(), h.adm, "gui", "")
 	id := ts[0].TokenID
 
 	if body := h.c.get("/tokens").Body.String(); !strings.Contains(body, id) || !strings.Contains(body, "Usable") {
@@ -250,32 +251,72 @@ func TestTokenRevokeAndFilters(t *testing.T) {
 }
 
 func TestNonceSet(t *testing.T) {
-	if nonceTTL > nonceRetention {
-		t.Fatalf("nonce TTL %v exceeds retention %v", nonceTTL, nonceRetention)
-	}
 	var n nonceSet
 	now := time.Now()
-	if !n.MarkUsed("a", now) || n.MarkUsed("a", now) {
-		t.Fatal("MarkUsed must accept once")
+	if ok, full := n.MarkUsed("a", now); !ok || full {
+		t.Fatal("first use must be accepted")
 	}
-	// Past the retention a nonce is forgotten (its signature has long expired by then).
-	if !n.MarkUsed("a", now.Add(nonceRetention+time.Second)) {
+	if ok, full := n.MarkUsed("a", now); ok || full {
+		t.Fatal("second use must be a replay, not a full set")
+	}
+	// Past nonceTTL a nonce is forgotten (its signature has expired by then).
+	if ok, _ := n.MarkUsed("a", now.Add(nonceTTL+time.Second)); !ok {
 		t.Error("expired entry was not dropped")
 	}
-	// The set is bounded; the newest entries survive.
-	for i := 0; i < nonceMax+50; i++ {
-		n.MarkUsed("n"+strings.Repeat("x", i%7)+time.Duration(i).String(), now)
+}
+
+// A set full of live nonces refuses new ones instead of evicting a live one (which would let its
+// form be replayed); entries older than nonceTTL are evicted to make room.
+func TestNonceSetFullRefusesAndNeverEvictsLive(t *testing.T) {
+	var n nonceSet
+	now := time.Now()
+	for i := 0; i < nonceMax; i++ {
+		if ok, full := n.MarkUsed(fmt.Sprintf("n%d", i), now); !ok || full {
+			t.Fatalf("fill %d: ok=%v full=%v", i, ok, full)
+		}
 	}
-	if len(n.used) > nonceMax || len(n.order) > nonceMax {
-		t.Errorf("set grew to %d/%d", len(n.used), len(n.order))
+	if ok, full := n.MarkUsed("extra", now.Add(time.Minute)); ok || !full {
+		t.Fatalf("full set: ok=%v full=%v, want refused", ok, full)
+	}
+	if ok, full := n.MarkUsed("n0", now.Add(time.Minute)); ok || full {
+		t.Error("a live nonce was forgotten while the set was full")
+	}
+	if len(n.used) != nonceMax {
+		t.Errorf("set size %d, want %d", len(n.used), nonceMax)
+	}
+	if ok, full := n.MarkUsed("extra", now.Add(nonceTTL+time.Second)); !ok || full {
+		t.Errorf("after the TTL: ok=%v full=%v, want accepted", ok, full)
+	}
+}
+
+// Each Server has its own nonce set (no package-level state).
+func TestNonceSetPerServer(t *testing.T) {
+	a, b := newGUIHarness(t), newGUIHarness(t)
+	if ok, _ := a.srv.nonces.MarkUsed("same", time.Now()); !ok {
+		t.Fatal("first use refused")
+	}
+	if ok, _ := b.srv.nonces.MarkUsed("same", time.Now()); !ok {
+		t.Error("a nonce used on one server is seen as used on another")
 	}
 }
 
 // addRunnerWithToken joins a runner with an existing token string.
-func (h *s9) addRunnerWithToken(fleet, name, tok string) {
+func (h *guiHarness) addRunnerWithToken(fleet, name, tok string) {
 	h.t.Helper()
 	h.joinWith(tok, name)
 	if st := h.status(fleet, name); st == "" {
 		h.t.Fatal("runner did not join")
+	}
+}
+
+// The result page's join command carries the advertised SSH address (-advertise), not a placeholder.
+func TestTokenResultShowsAdvertisedAddress(t *testing.T) {
+	h := newRunnersHarness(t, false)
+	h.mkFleet("dev")
+	csrf, nonce := h.tokenForm()
+	rec := h.c.do("POST", "/tokens", tokenValues(csrf, nonce), nil)
+	body := wantBody(t, rec, http.StatusOK, "mirafleet runner join central.example.org:2222 -name NAME")
+	if strings.Contains(body, "CENTRAL:2222") {
+		t.Error("placeholder address shown")
 	}
 }

@@ -33,7 +33,7 @@ type emptyView struct{ Title, Body, CLI string }
 type overviewData struct {
 	Fleets, FleetsActions, FleetsWorkspace int
 	Runners, Pending, Active, Disabled     int
-	Online, Offline                        int
+	Online, Offline, Enrolled              int // Enrolled = Active + Disabled: the Online card's denominator
 	LiveWorkspaces, TokensUsable           int
 	PendingRunners                         []pendingRow
 	Recent, Denied                         []auditRow
@@ -41,9 +41,9 @@ type overviewData struct {
 	NoPending, NoRecent                    emptyView
 }
 
-func (s *Server) routesOverview(mux *http.ServeMux) {
+func (s *Server) routesOverview(mux adminMux) {
 	mux.HandleFunc("GET /{$}", s.overviewPage)
-	mux.Handle("GET /overview/live", Passive(http.HandlerFunc(s.overviewPage)))
+	mux.Passive("GET /overview/live", s.overviewPage)
 }
 
 func (s *Server) overviewPage(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +121,8 @@ func (s *Server) overviewData(r *http.Request, a adminReq) (overviewData, error)
 			d.TokensUsable++
 		}
 	}
+	d.Enrolled = d.Active + d.Disabled
+	// Successful list calls write no audit row (only a denial does), so the 10 s poll adds none.
 	recent, err := be.ListAudit(ctx, a.P, src, store.AuditFilter{Desc: true, Limit: overviewAuditRows})
 	if err != nil {
 		return d, err

@@ -160,9 +160,9 @@ type runnersData struct {
 	Ref, Typed, Err, ActionURL, Back, DetailURL string
 }
 
-func (s *Server) routesRunners(mux *http.ServeMux) {
+func (s *Server) routesRunners(mux adminMux) {
 	mux.HandleFunc("GET /runners", s.runnersList)
-	mux.Handle("GET /runners/live", Passive(http.HandlerFunc(s.runnersList)))
+	mux.Passive("GET /runners/live", s.runnersList)
 	mux.HandleFunc("GET /runners/{fleet}/{runner}", s.runnerDetailPage)
 	mux.HandleFunc("GET /runners/{fleet}/{runner}/revoke", s.runnerRevokeForm)
 	mux.HandleFunc("POST /runners/{fleet}/{runner}/{op}", s.runnerOp)
