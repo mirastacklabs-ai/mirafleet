@@ -453,7 +453,7 @@ func TestWorkspaceCLIEndToEnd(t *testing.T) {
 		defer wg.Done()
 		runner.New(runner.Config{Central: e.addr, Name: "r1", Signer: signer, KnownHosts: runner.KnownHostsPath(data),
 			Workspace: namedFake{ex}, WorkspaceConfig: wc, Version: "test", Logf: t.Logf,
-			HeartbeatEvery: 100 * time.Millisecond}).Run(rctx)
+			HeartbeatEvery: 100 * time.Millisecond, HeartbeatTimeout: 10 * time.Second}).Run(rctx)
 	}()
 	t.Cleanup(func() { cancel(); wg.Wait() })
 

@@ -147,7 +147,7 @@ func newHarness(t *testing.T, y string, ex *fake.Executor, mod func(*Config)) *w
 		h.cfg = parseWS(t, y)
 	}
 	cfg := Config{Central: ln.Addr().String(), Name: "r", Signer: signer, KnownHosts: kh,
-		HeartbeatEvery: 100 * time.Millisecond, Audit: audit.New(h.log)}
+		HeartbeatEvery: 100 * time.Millisecond, HeartbeatTimeout: 10 * time.Second, Audit: audit.New(h.log)}
 	if h.cfg != nil {
 		cfg.Workspace, cfg.WorkspaceConfig = ex, h.cfg
 	}

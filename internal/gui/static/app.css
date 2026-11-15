@@ -411,3 +411,8 @@ html.js .js-only { display: inline-flex; }
 
 /* Theme switch: pressed state */
 .btn[aria-pressed="true"] { color: var(--ink); border-color: var(--signal); background: var(--bg-band); }
+
+/* Logo bars (G-04): fills via classes, not attributes. */
+.logo-1 { fill: var(--logo-teal); }
+.logo-2 { fill: #FF671F; }
+.logo-3 { fill: #CED4DA; }

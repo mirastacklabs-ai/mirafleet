@@ -5,6 +5,11 @@ Live status of every remaining step. Plans: [PLAN.md](PLAN.md), [M4.md](M4.md), 
 
 Status: `done` · `running` · `next` · `queued` · `waiting on user` · `blocked`.
 
+**Paused 14 Nov 2026 (offline).** Local commits, not pushed: main `ce68f76` (M4 wave B) +
+`299f27e` (test flake fix), gate to re-run; branch `m4-wave-c` (`../mirafleet-m4c`) WIP S7/S8/S12;
+branch `m6-now` (`../mirafleet-m6`) N1 done + partial fix pass. Resume: gate main → push → finish
+wave C and the M6 fix pass in their worktrees.
+
 Every wave ends the same way: narrow read-only Opus reviews → fix P0/P1 (P2/P3 batched per
 milestone) → full gate (`scripts/dev.sh fmt build vet test cross licenses integration`) → push →
 Windows/macOS CI green → clean up.
@@ -25,9 +30,10 @@ Windows/macOS CI green → clean up.
 | Wave | Step | What | Owner | Status | ETA |
 |---|---|---|---|---|---|
 | A | S0–S3 | Assets, store + migration 0003, Argon2id, design system; review + fixes | Sonnet + Opus | done | — |
-| B | S4 | Service and API: GUI methods, audit query, guard toggle, admin methods | Sonnet | next | 105 min |
-| B | S5 | GUI core: server, listener, TLS cert, Host allowlist, middleware, render, routes | Sonnet | next | 105 min |
-| B | S6 | Sessions (SQLite), login limiter, CSRF | Sonnet | next | 60 min |
+| B | S4 | Service and API: GUI methods, audit query, guard toggle, admin methods | Sonnet | built, in review | — |
+| B | S5 | GUI core: server, listener, TLS cert, Host allowlist, middleware, render, routes | Sonnet | built, in review | — |
+| B | S6 | Sessions (SQLite), login limiter, CSRF | Sonnet | built, in review | — |
+| B | — | Review, fixes, gate, push | Opus + Sonnet | running | 1 h |
 | C | S7–S11 | Screens: auth/account, overview/fleets, runners/tokens, operators/workspaces, audit/export | Sonnet ×5 | queued | 75–120 min |
 | C | S12 | `central run` GUI flags, `central gui reset-admin`, `fleet set -confirm`, audit filters | Sonnet | queued | 75 min |
 | D | S13 | `TestM4Done` | Sonnet | queued | 135 min |
@@ -50,12 +56,13 @@ Windows/macOS CI green → clean up.
 | Wave | What | Owner | Status | ETA |
 |---|---|---|---|---|
 | — | Update M6.md with all decisions (Docker Hub `mirastack`, Compose, no telemetry, DCO, version skew, backup before migrate, PR + auto-merge, wiki docs, 6 harness configs, M7 changes) and split into a "now" lane (parallel with M4, own worktree) and a "late" lane | Opus | running | 20 min |
-| A | R0–R5 | Sonnet + review | queued | ~2 h |
-| B | R6–R11 | Sonnet + review | queued | ~2.5 h |
-| C | R12–R14 | Sonnet + review | queued | ~2 h |
-| D | R15–R17a/b | Sonnet + review | queued | ~2 h |
-| E | R18, closing review, test lab run | Opus + Sonnet | queued | ~2 h |
-| F | P1–P9 publish (rc.1 rehearsal, then v0.6.0); accounts set up by the user; **each step needs the user's yes** | user + me | stop point | ~2 h |
+| Now N1 | N1.1 relgen, N1.2 LF/.gitattributes (F-45), N1.3 marketplace.json + server.json, N1.6 protover, N1.7 buildinfo version, N1.9 SECURITY/CONTRIBUTING/CoC/templates/dependabot | Sonnet | built, in review | — |
+| Now N1 | N1.4 F-47/F-48 audit fixes, N1.5 backup before migrate | Sonnet | running | 45 min |
+| Now N1 | N1.8 release.sh + extra licences | Sonnet | next | 45 min |
+| Now N2 | goreleaser, packages + systemd, OCI image + Compose, npm, install.sh/ps1, relgen brew/serverjson/wiki/harness, 6 harness configs | Sonnet + review | queued | ~3 h |
+| Now N3 | ci.yml, release.yml (Docker Hub + ghcr), m6check | Sonnet + review | queued | ~1.5 h |
+| Late L1–L9 | GUI/host-mode packaging, version-skew wiring, README/QUICKSTART/THREAT-MODEL, guide, bump to 0.6.0, closing review | Sonnet + review | after M4/M7 | ~4.5 h |
+| Publish P1–P12 | accounts, rc.1 rehearsal, v0.6.0, Docker Hub/ghcr, wiki, plugin directory, galleries, Docker OSS, one-pager; **each step needs the user's yes** | user + me | stop point | ~2.5 h |
 
 ## User
 

@@ -35,10 +35,23 @@ func (s *Service) ListRunners(ctx context.Context, p auth.Principal, src Source,
 	if err := s.authorize(ctx, p, src, api.MethodRunnersList, false); err != nil {
 		return nil, err
 	}
+	return s.listRunners(ctx, fleet, false)
+}
+
+// ListRunnersAll is ListRunners with an optional includeRevoked. Including revoked runners is
+// admin only (double gate); otherwise it behaves exactly like ListRunners.
+func (s *Service) ListRunnersAll(ctx context.Context, p auth.Principal, src Source, fleet string, includeRevoked bool) ([]RunnerView, error) {
+	if err := s.authorize(ctx, p, src, api.MethodRunnersList, includeRevoked); err != nil {
+		return nil, err
+	}
+	return s.listRunners(ctx, fleet, includeRevoked)
+}
+
+func (s *Service) listRunners(ctx context.Context, fleet string, includeRevoked bool) ([]RunnerView, error) {
 	if !store.ValidFleetName(fleet) {
 		return nil, badRequest("invalid fleet name")
 	}
-	rs, err := s.st.ListRunners(ctx, fleet, false)
+	rs, err := s.st.ListRunners(ctx, fleet, includeRevoked)
 	if err != nil {
 		return nil, s.fail("list runners", err)
 	}

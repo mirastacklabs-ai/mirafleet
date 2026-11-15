@@ -75,3 +75,27 @@ func (s *Service) GetFleet(ctx context.Context, p auth.Principal, src Source, na
 	}
 	return f, nil
 }
+
+// SetFleetConfirm turns a fleet's confirm guard on or off. Admin only (double gate); audited
+// with the old and new value.
+func (s *Service) SetFleetConfirm(ctx context.Context, p auth.Principal, src Source, fleet string, confirm bool) (store.Fleet, error) {
+	if err := s.authorize(ctx, p, src, api.MethodFleetSetConfirm, true); err != nil {
+		return store.Fleet{}, err
+	}
+	if !store.ValidFleetName(fleet) {
+		return store.Fleet{}, badRequest("invalid fleet name")
+	}
+	cur, err := s.st.GetFleet(ctx, fleet)
+	if err != nil {
+		return store.Fleet{}, s.fail("get fleet", err)
+	}
+	ev := s.event(p, src, api.MethodFleetSetConfirm)
+	ev.Fleet = fleet
+	ev.Subject = fleet
+	ev.Params = map[string]string{"from": strconv.FormatBool(cur.Confirm), "to": strconv.FormatBool(confirm)}
+	f, err := s.st.SetFleetConfirm(ctx, fleet, confirm, s.now(), ev)
+	if err != nil {
+		return store.Fleet{}, s.fail("set fleet confirm", err)
+	}
+	return f, nil
+}

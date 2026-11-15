@@ -90,6 +90,7 @@ func (e *cenv) token(approve bool) string {
 
 func (e *cenv) code() string {
 	e.t.Helper()
+	waitCodeWindow()
 	r, err := e.svc.OperatorCode(context.Background(), e.admin, service.SourceCLI)
 	if err != nil {
 		e.t.Fatal(err)

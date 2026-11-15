@@ -306,7 +306,7 @@ func TestMethodSetsDisjoint(t *testing.T) {
 	operator := []string{MethodHello, MethodFleetsList, MethodRunnersList, MethodActionRun}
 	admin := []string{MethodFleetCreate, MethodTokenCreate, MethodTokenList, MethodTokenRevoke,
 		MethodRunnerLifecycle, MethodOperatorCode, MethodOperatorRotateSecret, MethodOperatorList,
-		MethodOperatorRevoke, MethodAuditList}
+		MethodOperatorRevoke, MethodAuditList, MethodGUIResetAdmin, MethodFleetSetConfirm}
 	for _, m := range operator {
 		if !IsOperatorMethod(m) || IsAdminMethod(m) {
 			t.Errorf("%s misclassified", m)

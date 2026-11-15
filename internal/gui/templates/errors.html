@@ -1,0 +1,15 @@
+{{/*
+Branded error pages (403, 404, 405, 413, 415, 421, 429, 500, 503). Page.Data is ErrorData
+{Status, Heading, Message}. Full page: "layout"; htmx request: "errors/panel".
+*/}}
+{{define "errors/panel"}}<section class="empty error-panel" id="error-panel">
+<p class="label">Error {{.Data.Status}}</p>
+<h1>{{.Data.Heading}}</h1>
+<p>{{.Data.Message}}</p>
+{{if .RequestID}}<p class="muted">Request ID <span class="mono">{{.RequestID}}</span></p>{{end}}
+<p><a class="btn btn-secondary" href="/">Back to the start</a></p>
+</section>{{end}}
+
+{{define "content"}}<div class="container narrow">
+{{template "errors/panel" .}}
+</div>{{end}}

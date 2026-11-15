@@ -283,7 +283,7 @@ func nhStartCentral(t *testing.T) *nhCentral {
 	go func() {
 		runner.New(runner.Config{Central: addr, Name: "rw", Signer: signer, KnownHosts: known,
 			Workspace: nhFake{fx, seen}, WorkspaceConfig: wc, Version: "test",
-			HeartbeatEvery: 50 * time.Millisecond, BackoffMin: 20 * time.Millisecond, BackoffMax: 100 * time.Millisecond}).Run(rctx)
+			HeartbeatEvery: 50 * time.Millisecond, HeartbeatTimeout: 10 * time.Second, BackoffMin: 20 * time.Millisecond, BackoffMax: 100 * time.Millisecond}).Run(rctx)
 		close(done)
 	}()
 	t.Cleanup(func() { cancel(); <-done })
@@ -567,6 +567,7 @@ func TestM5NoHooks(t *testing.T) {
 	// Operator registration into a temp config dir, through the real `mcp login` path.
 	cfg := filepath.Join(t.TempDir(), "cfg")
 	t.Setenv(opconf.EnvDir, cfg)
+	waitCodeWindow()
 	code, err := c.svc.OperatorCode(context.Background(), auth.LocalAdmin(os.Getuid()), service.SourceCLI)
 	if err != nil {
 		t.Fatal(err)

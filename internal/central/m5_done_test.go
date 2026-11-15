@@ -184,6 +184,7 @@ func TestM5Done(t *testing.T) {
 		f.pubFingerprint = append(f.pubFingerprint, ssh.FingerprintSHA256(signer.PublicKey()))
 		var lines []string
 		for _, te := range targets {
+			waitCodeWindow()
 			code, err := te.svc.OperatorCode(ctx, te.admin, service.SourceCLI)
 			must(t, err)
 			rr, hk, err := apiclient.Register(ctx, te.addr, code.Code, name, signer)
