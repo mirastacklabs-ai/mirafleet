@@ -114,7 +114,7 @@ on purpose: residual gaps are documented and left to the enterprise edition.
   decoy-secret leak scan).
 
 ## M6 — Release and distribution
-**Status: planned (14 Nov 2026).** Detailed plan: [M6.md](M6.md); M7 additions below are applied
+**Status: in progress — now lane done, late lane running.** Detailed plan: [M6.md](M6.md); M7 additions below are applied
 there once M7's plan is approved.
 - README and quickstart, LICENSE (Apache-2.0), threat-model notes.
 - Docker first-class for adoption: OCI image published to Docker Hub (`docker.io`) as well as

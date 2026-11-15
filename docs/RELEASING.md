@@ -178,7 +178,46 @@ answers its usual questions. Fill the contact fields yourself.
 >
 > **Contact / maintainers:** (fill in)
 
-## 8. Where things live
+## 8. mirastacklabs.ai one-pager copy (P12)
+
+The maintainer builds the page elsewhere. This is the copy; style follows [BRAND.md](BRAND.md)
+(Oswald headings in upper case, JetBrains Mono for labels and the command, teal accent, orange
+only for emphasis rules). Use the three-bar mark and the `MIRAFLEET BY MIRASTACK LABS` wordmark.
+
+**Heading:** MIRAFLEET
+
+**Tagline:** Let Claude Code operate your fleet of servers, safely.
+
+**What it is**
+mirafleet connects Claude Code (and other MCP agents) to your servers through one central server
+you run yourself. A small runner on each server dials out to central over SSH, so no server opens
+an inbound port. Every action runs on the runner through an allowlist guard: argv only, no shell,
+parameters checked by regex. Every call is audited. One static binary, Apache-2.0, no telemetry.
+
+**Who it is for**
+- Platform and ops teams who want an agent to check, restart and fix things across servers
+  without handing it a shell.
+- Developers who want Claude Code to work in a remote workspace with the same guard and audit.
+- Anyone who needs to see and revoke what an agent can reach: there is an admin GUI for it.
+
+**Install in one line** (laptop, macOS or Linux)
+
+```
+curl -fsSL https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.sh | sh
+```
+
+Also: `brew install mirastacklabs-ai/tap/mirafleet` · `npx -y @mirastacklabs/mirafleet version` ·
+Docker `docker.io/mirastack/mirafleet`. Windows: `install.ps1` from the release page.
+
+**Links**
+- Source and releases: https://github.com/mirastacklabs-ai/mirafleet
+- Quickstart: link the published wiki page (from [QUICKSTART.md](QUICKSTART.md))
+- Security and threat model: link the wiki or repo copy of [THREAT-MODEL.md](THREAT-MODEL.md)
+- Image: https://hub.docker.com/r/mirastack/mirafleet and ghcr.io/mirastacklabs-ai/mirafleet
+
+Releases are signed and carry build provenance; the quickstart shows how to verify a download.
+
+## 9. Where things live
 
 - Workflow: `.github/workflows/release.yml`; CI: `ci.yml`, `orchestrator.yml`, `dco.yml`.
 - Config: `.goreleaser.yaml`, `scripts/release/tools.Dockerfile` (pinned tool versions),

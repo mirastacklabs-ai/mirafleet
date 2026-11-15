@@ -570,6 +570,93 @@ mirafleet mcp login central.example.com:2222 -name alice -code -
 Join tokens and registration codes are described under
 [Join tokens and registration codes](#join-tokens-and-registration-codes).
 
+## Distribution
+
+One git tag `vX.Y.Z` (pre-releases `vX.Y.Z-rc.N`) produces every channel from one build. The
+design is in [M6.md](M6.md); the maintainer's checklist is [RELEASING.md](RELEASING.md).
+
+### Channels
+
+| Channel | For | What it carries |
+|---|---|---|
+| GitHub release | everyone | archives for six targets (`tar.gz`, `zip` on Windows), `.deb` `.rpm` `.apk`, `checksums.txt` with its signature bundle, SBOMs, `install.sh`, `install.ps1`, `THIRD_PARTY_LICENSES.txt` |
+| OCI image | central, actions runners | `docker.io/mirastack/mirafleet` and `ghcr.io/mirastacklabs-ai/mirafleet` |
+| Docker Compose | central, runners, one-machine lab | uses the image |
+| Homebrew tap, `install.sh`, `install.ps1` | operators (laptops) | the binary |
+| npm `@mirastacklabs/mirafleet` | MCP configs on any OS | launcher plus six platform packages |
+| MCP Registry, Claude Code marketplace | discovery | point at npm and at this repository |
+
+Central and runners are Linux only, so they come from packages, the image or Compose. Operators
+(`mirafleet mcp`) use any channel. mirafleet sends no telemetry.
+
+### Units and packages
+
+The Linux packages install the binary, `/etc/mirafleet/{central,runner}.env`, example configs,
+the licence files and three systemd units:
+
+- `mirafleet-central.service`: user `mirafleet`, `central init` before `central run`, a strict
+  sandbox, writes only to `/var/lib/mirafleet/central` (database, backups, GUI certificate,
+  setup-token file, admin socket).
+- `mirafleet-runner.service`: actions mode, user `mirafleet`, starts only when `runner.yaml` exists.
+- `mirafleet-runner-workspace.service`: container workspaces, root, after `containerd`, no sandbox
+  directives (the runner creates namespaces and cgroups).
+
+<!-- verify: M7 host-mode units (mirafleet-runner@.service, the user unit packaged under packaging/systemd/user/) are decided in M7.md but not yet packaged; late-lane step L3 adds them to .goreleaser.yaml and pkgtest -->
+Host mode (M7) adds a per-user runner unit and a template unit; `pkgtest` runs `systemd-analyze
+verify` on all of them.
+
+### The OCI image
+
+`FROM scratch`, the static binary at `/usr/bin/mirafleet`, licence files under
+`/usr/share/doc/mirafleet/`, user `65532`, volume `/var/lib/mirafleet`, ports 2222 and 8443. Only
+`COPY` steps, so one buildx run builds `linux/amd64` and `linux/arm64`. It is not distroless
+(that would bundle MPL-licensed `ca-certificates`). The image runs central and an actions-mode
+runner; container workspaces and host mode need host containerd or a real OS user, so they are
+not supported in it. First start needs `central init` (a one-shot service in Compose). No
+certificate, key or secrets key is baked in.
+
+One build pushes one manifest list to both registries, so the digest is the same. Tags are
+`X.Y.Z`, `X.Y` and `latest`; a pre-release gets only `X.Y.Z-rc.N`.
+
+### Signing and provenance
+
+- `checksums.txt` is signed keyless with cosign (GitHub OIDC; no key to keep). The signature is a
+  single sigstore bundle, `checksums.txt.sigstore.json`. Verify with `cosign verify-blob --bundle`
+  and the exact identity: the `release.yml` workflow of this repository at `refs/tags/v*`, issuer
+  `https://token.actions.githubusercontent.com`. `install.sh` and `install.ps1` always check the
+  SHA-256; `install.sh --verify-signature` also requires the cosign check.
+- Every archive and package has a build-provenance attestation (`gh attestation verify FILE --repo
+  mirastacklabs-ai/mirafleet`). The image is cosign-signed and carries provenance in both registries.
+- SBOMs (CycloneDX) are published per artifact. npm packages publish with trusted publishing and provenance.
+- No Apple or Windows code signing; the docs give quarantine one-liners for browser downloads.
+- `release.yml` runs `verify` and `build` without credentials; every publishing job waits for
+  approval in the protected `release` environment, and each credential belongs to one job.
+
+### Protocol levels and version skew
+
+The protocol level is one integer: the release's minor version in 0.x (v0.6.x is 6), the major
+version from 1.0. Central at level N accepts runners and operators at N and N-1; anything else is
+refused with a message that says who must upgrade ("upgrade central first" when the peer is
+newer). A missing level counts as 0 and is refused. Upgrade order: central, then runners, then
+operators. The rule lives in `internal/protover` (a pure package). At 1.0 the level restarts at
+1, so a 1.x central does not accept 0.x peers; this is called out in the 1.0 notes.
+
+<!-- verify: protover is a pure rule package today; late-lane step L2 wires it (runner heartbeat `proto`, operator `hello` `proto`, `refused@mirafleet`, audit `runner.refused_version`, runner backoff) after M7 merges -->
+The wiring adds `proto` to the runner heartbeat and to the operator `hello`. Central refuses a
+mismatch on the first heartbeat, audits `runner.refused_version` and closes; the runner logs the
+message and backs off to its maximum interval. The orchestrator maps a refusal to a tool error.
+The wire protocol itself has its own version list (`api.SupportedVersions`), separate from the level.
+
+### Upgrades and backups
+
+Before central migrates its SQLite database, it takes an online, consistent copy with `VACUUM INTO`
+to `<data>/backups/mirafleet-schema<N>-<UTC time>.db` (directory 0700, file 0600) and keeps the 3
+newest. A fresh database makes no backup. If the backup fails, central does not migrate and does
+not start. A database newer than the binary is refused. To roll back: stop central, reinstall the
+previous version, move the database and its `-wal` and `-shm` files aside, copy the newest backup
+back, start. Writes after the upgrade are lost. Backups hold the encrypted credentials store, so a
+restore needs the same `MIRAFLEET_SECRETS_KEY`.
+
 ## Security summary
 
 - Runners and operators authenticate with Ed25519 keys. Central's host key is pinned on join and
