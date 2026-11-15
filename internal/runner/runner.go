@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -21,6 +22,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/actions"
 	"github.com/mirastacklabs-ai/mirafleet/internal/audit"
 	"github.com/mirastacklabs-ai/mirafleet/internal/keys"
+	"github.com/mirastacklabs-ai/mirafleet/internal/protover"
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/wsconfig"
@@ -52,7 +54,22 @@ type Config struct {
 	BackoffMax       time.Duration // default 60s; clamped to >= BackoffMin
 	HealthyAfter     time.Duration // connection must stay up this long (with an acked heartbeat) to reset backoff; default 30s
 	MaxExec          int           // concurrent actions; default 4
+
+	// Proto is the protocol level sent in every heartbeat. Zero means protover.Current; tests set
+	// it to fake version skew.
+	Proto int
+	// After is the clock for the reconnect wait. Nil means time.After; tests inject one.
+	After func(time.Duration) <-chan time.Time
 }
+
+// refusedError is central's version-skew refusal (refused@mirafleet). Run logs it and waits
+// BackoffMax before the next attempt.
+type refusedError struct{ msg string }
+
+func (e *refusedError) Error() string { return "central refused this runner: " + e.msg }
+
+// maxRefusal bounds the refusal text the runner keeps and logs.
+const maxRefusal = 512
 
 type Runner struct {
 	cfg    Config
@@ -100,6 +117,12 @@ func New(cfg Config) *Runner {
 	if cfg.MaxExec <= 0 {
 		cfg.MaxExec = 4
 	}
+	if cfg.Proto <= 0 {
+		cfg.Proto = protover.Current
+	}
+	if cfg.After == nil {
+		cfg.After = time.After
+	}
 	r := &Runner{cfg: cfg, sem: make(chan struct{}, cfg.MaxExec), hbKick: make(chan struct{}, 1), cfgErr: cfg.Validate()}
 	if r.cfgErr == nil && cfg.Workspace != nil {
 		r.ws = newWSState(cfg.Workspace, cfg.WorkspaceConfig)
@@ -141,11 +164,15 @@ func (r *Runner) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			break
 		}
+		var ref *refusedError
+		if errors.As(err, &ref) {
+			backoff = r.cfg.BackoffMax // version skew does not heal by itself: no fast reconnects
+		}
 		wait := jitter(backoff)
 		r.cfg.Logf("disconnected: %v; retrying in %s", err, wait.Round(time.Millisecond))
 		select {
 		case <-ctx.Done():
-		case <-time.After(wait):
+		case <-r.cfg.After(wait):
 		}
 		backoff = min(backoff*2, r.cfg.BackoffMax)
 	}
@@ -177,7 +204,25 @@ func (r *Runner) session(ctx context.Context) (healthy bool, err error) {
 	// the dispatcher reads them.
 	noChans := make(chan ssh.NewChannel)
 	defer close(noChans)
-	client := ssh.NewClient(cc, noChans, reqs)
+	// Global requests from central pass through this filter: refused@mirafleet is recorded (and
+	// acknowledged) before the failed heartbeat reply can be seen, everything else is forwarded.
+	var refusal atomic.Pointer[string]
+	fwd := make(chan *ssh.Request)
+	go func() {
+		defer close(fwd)
+		for rq := range reqs {
+			if rq.Type != transport.ReqRefused {
+				fwd <- rq
+				continue
+			}
+			m := string(rq.Payload[:min(len(rq.Payload), maxRefusal)])
+			refusal.Store(&m)
+			if rq.WantReply {
+				rq.Reply(true, nil)
+			}
+		}
+	}()
+	client := ssh.NewClient(cc, noChans, fwd)
 	defer client.Close()
 	sctx, cancel := context.WithCancel(ctx) // cancelled when this connection ends
 	defer cancel()
@@ -203,7 +248,7 @@ func (r *Runner) session(ctx context.Context) (healthy bool, err error) {
 	dead := make(chan error, 1)
 	go func() { dead <- client.Wait() }()
 	hostname, _ := os.Hostname()
-	base := transport.Heartbeat{Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, Version: r.cfg.Version, Labels: r.cfg.Labels}
+	base := transport.Heartbeat{Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, Version: r.cfg.Version, Labels: r.cfg.Labels, Proto: r.cfg.Proto}
 	r.fillActions(&base)
 	if r.dev != nil {
 		go r.runEvents(sctx, client)
@@ -216,6 +261,9 @@ func (r *Runner) session(ctx context.Context) (healthy bool, err error) {
 		r.fillHeartbeat(&hb)
 		payload, _ := json.Marshal(hb)
 		if err := r.heartbeat(ctx, client, payload); err != nil {
+			if m := refusal.Load(); m != nil {
+				return false, &refusedError{msg: *m}
+			}
 			return false, err
 		}
 		acked = true

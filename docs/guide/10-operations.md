@@ -1954,16 +1954,15 @@ the install-script binary, `npm` needs nothing installed. Compose: see 10.12.4.
 
 | What you see | Likely cause | Fix |
 |---|---|---|
-| `runner ... is protocol 4, central needs 5 or 6: upgrade mirafleet on that runner` | The runner is too old (once the skew wiring is in). | Upgrade that runner. |
-| `central is protocol 6, this runner is 7: upgrade central first` | Wrong upgrade order. | Upgrade central. |
+| "runner db-1 is protocol 4, central needs 5 or 6: upgrade mirafleet on that runner" (runner journal: `central refused this runner: ...`; audit action `runner.refused_version`) | The runner is too old. It retries only every ~60 s. | Upgrade that runner. |
+| "central is protocol 6, runner db-1 is 7: upgrade central first" | Wrong upgrade order. | Upgrade central. |
+| The same texts with `orchestrator` instead of `runner`, as a tool error or from `mcp login` | The orchestrator is too old or too new. | Upgrade it (or central first). |
 | Central will not start, error mentions the pre-migration backup | Disk full or `backups/` not writable. | Free space or fix the owner (`mirafleet`), start again. |
 | `database schema version N is newer than this binary supports` | Old binary on a new database. | Install the newer version, or restore a backup. |
 | `install.sh`: checksum mismatch / "not listed" | Corrupt or tampered download, or wrong version string. | Do not use the file; retry; check the version. |
 | Runner unit does not start after install | No `runner.yaml` yet (no `runner join`) or no `actions.yaml`. | Join, write the config, then start. |
 | macOS "cannot be opened because the developer cannot be verified" | Browser-downloaded zip, quarantined. | The `xattr` one-liner above. |
 | Windows "Windows protected your PC" | Same, for `.exe`. | `Unblock-File`, or use `install.ps1`. |
-
-<!-- verify: the exact protocol-refusal wording and the "refused" journal line come from L2 and are not built on m6-now -->
 
 ## 10.13 Developer workspaces on a VM (M7): host mode and credentials
 
@@ -2430,7 +2429,7 @@ and broker) closes the other doors. Root on the VM sees everything. The enterpri
     same `MIRAFLEET_SECRETS_KEY` because backups hold credentials as encrypted as the database. The
     key is what to back up apart from the data (and copy `backups/` off the machine too).
 18. Central (still at the old level) sees a runner one level *ahead* and refuses it with "central
-    is protocol N, this runner is N+1: upgrade central first"; `db-1` stays offline until central
+    is protocol N, runner `db-1` is N+1: upgrade central first"; `db-1` stays offline until central
     is upgraded. Order: central, then runners, then operators.
 19. A checksum only says the file matches a list; whoever can replace the file can replace the list.
     The signature ties `checksums.txt` to this repository's release workflow identity, so the list

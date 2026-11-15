@@ -22,7 +22,7 @@ func TestRunnersListShowsActions(t *testing.T) {
 	cl, err := e.dial(transport.UserRunner, "old")
 	must(t, err)
 	defer cl.Close()
-	b, _ := json.Marshal(transport.Heartbeat{Hostname: "h"})
+	b, _ := json.Marshal(transport.Heartbeat{Hostname: "h", Proto: testProto})
 	if ok, _, err := cl.SendRequest(transport.ReqHeartbeat, true, b); err != nil || !ok {
 		t.Fatalf("heartbeat without actions refused: %v", err)
 	}

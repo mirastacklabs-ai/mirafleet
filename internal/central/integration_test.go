@@ -681,7 +681,7 @@ func (e *env) rawRunner(name string, onChan func(ssh.NewChannel)) *ssh.Client {
 			}
 		}
 	}()
-	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "raw"})
+	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "raw", Proto: testProto})
 	if ok, _, err := cl.SendRequest(transport.ReqHeartbeat, true, hb); err != nil || !ok {
 		e.t.Fatalf("heartbeat: %v %v", ok, err)
 	}

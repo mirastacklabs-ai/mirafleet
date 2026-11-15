@@ -48,7 +48,7 @@ func (s *Server) serveOperator(sconn *ssh.ServerConn, p auth.Principal, chans <-
 	tcancel()
 
 	table := operatorTable()
-	cc := &callCtx{p: p, src: table.src, svc: s.cfg.Service, st: s.cfg.Store, logf: s.cfg.Logf, state: &connState{}}
+	cc := &callCtx{p: p, src: table.src, svc: s.cfg.Service, st: s.cfg.Store, logf: s.cfg.Logf, state: &connState{}, proto: s.cfg.Proto}
 	sem := make(chan struct{}, api.MaxChannelsPerConn)
 	var wg sync.WaitGroup
 	defer wg.Wait()

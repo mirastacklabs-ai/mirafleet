@@ -731,7 +731,6 @@ newer). A missing level counts as 0 and is refused. Upgrade order: central, then
 operators. The rule lives in `internal/protover` (a pure package). At 1.0 the level restarts at
 1, so a 1.x central does not accept 0.x peers; this is called out in the 1.0 notes.
 
-<!-- verify: protover is a pure rule package today; late-lane step L2 wires it (runner heartbeat `proto`, operator `hello` `proto`, `refused@mirafleet`, audit `runner.refused_version`, runner backoff) after M7 merges -->
 The wiring adds `proto` to the runner heartbeat and to the operator `hello`. Central refuses a
 mismatch on the first heartbeat, audits `runner.refused_version` and closes; the runner logs the
 message and backs off to its maximum interval. The orchestrator maps a refusal to a tool error.

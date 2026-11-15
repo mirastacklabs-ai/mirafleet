@@ -94,6 +94,23 @@ func (s *Service) RunnerReplaced(ctx context.Context, runnerID int64) {
 	_ = s.recordRunnerEvent(ctx, ev)
 }
 
+// ActionRunnerRefusedVersion is the audit action written when central refuses a runner for
+// protocol version skew (docs/M6.md 2.2).
+const ActionRunnerRefusedVersion = "runner.refused_version"
+
+// RunnerRefusedVersion writes the runner.refused_version audit row; msg is the refusal text sent
+// to the runner. Best effort: failures are logged.
+func (s *Service) RunnerRefusedVersion(ctx context.Context, runnerID int64, msg string) {
+	r, err := s.st.GetRunnerByID(ctx, runnerID)
+	if err != nil {
+		s.logf("service: runner.refused_version for %d: %v", runnerID, err)
+		return
+	}
+	ev := store.AuditEvent{Time: s.now(), Source: SourceRunner, ActorKind: "runner", Actor: r.Name, Fleet: r.Fleet,
+		Runner: r.Name, Action: ActionRunnerRefusedVersion, Outcome: OutcomeDenied, Subject: r.Name, Message: msg}
+	_ = s.recordRunnerEvent(ctx, ev)
+}
+
 func (s *Service) recordRunnerEvent(ctx context.Context, ev store.AuditEvent) error {
 	if _, err := s.st.RecordAudit(ctx, ev); err != nil {
 		s.logf("service: audit of runner event %s failed: %v", ev.Action, err)

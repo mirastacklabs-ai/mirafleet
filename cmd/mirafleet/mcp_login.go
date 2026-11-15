@@ -13,9 +13,11 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/apiclient"
 	"github.com/mirastacklabs-ai/mirafleet/internal/keys"
 	"github.com/mirastacklabs-ai/mirafleet/internal/opconf"
+	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
 // Cross-platform (linux, darwin, windows): no central or runner dependencies.
@@ -73,6 +75,23 @@ func mcpLogin(args []string, stdin io.Reader, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "registered operator %q (%s); context %q -> %s is now current\nconfig: %s\n",
 		res.Operator, res.Status, *name, addr, dir)
+	return loginSkew(ctx, dir, addr, signer)
+}
+
+// loginSkew says hello to the central just registered with and returns its version-skew refusal
+// (docs/M6.md 2.2) as the error, which the CLI prints and turns into a non-zero exit. Any other
+// hello failure is ignored: registration succeeded, and `mcp` reports connection problems itself.
+func loginSkew(ctx context.Context, dir, addr string, signer ssh.Signer) error {
+	cl, err := apiclient.Dial(ctx, addr, transport.UserOperator, signer, keys.PinnedHostKeys(opconf.KnownHostsPath(dir)))
+	if err != nil {
+		return nil
+	}
+	defer cl.Close()
+	_, err = cl.Hello(ctx, "mcp")
+	var ae *api.Error
+	if errors.As(err, &ae) && ae.Code == api.CodeUnsupportedVersion {
+		return errors.New(ae.Message)
+	}
 	return nil
 }
 

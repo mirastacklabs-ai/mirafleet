@@ -8,6 +8,7 @@ import (
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
+	"github.com/mirastacklabs-ai/mirafleet/internal/protover"
 	"github.com/mirastacklabs-ai/mirafleet/internal/service"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
@@ -25,6 +26,7 @@ type callCtx struct {
 	st    store.Store
 	logf  func(string, ...any)
 	state *connState
+	proto int // central's protocol level (Config.Proto)
 	// body is the channel body I/O of this call (api@ only; nil on the admin socket). It is set on a
 	// per-call copy of the connection's callCtx, never on the shared one.
 	body *callBody
@@ -146,6 +148,11 @@ func handleHello(ctx context.Context, c *callCtx, req *api.Request) (any, error)
 	if err != nil || op.Status != store.OperatorActive {
 		return nil, api.Errorf(api.CodeForbidden, "forbidden")
 	}
+	// Version skew (docs/M6.md 2.2): a missing proto is level 0 and is refused too.
+	if verr := protover.Check("orchestrator", c.p.Name, c.proto, p.Proto); verr != nil {
+		c.logf("operator %q refused: %v", c.p.Name, verr)
+		return nil, api.Errorf(api.CodeUnsupportedVersion, "%s", verr.Error())
+	}
 	hint := sanitizeHint(p.Client)
 	c.state.mu.Lock()
 	c.state.hint = hint
@@ -153,7 +160,7 @@ func handleHello(ctx context.Context, c *callCtx, req *api.Request) (any, error)
 	if hint != "" {
 		c.logf("operator %q hello (client hint %q, unverified)", c.p.Name, hint)
 	}
-	return api.HelloResult{Operator: c.p.Name, Versions: versions(), Server: "mirafleet"}, nil
+	return api.HelloResult{Operator: c.p.Name, Versions: versions(), Server: "mirafleet", Proto: c.proto}, nil
 }
 
 // sanitizeHint keeps a short printable-ASCII client hint; anything else is dropped.

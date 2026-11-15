@@ -23,6 +23,7 @@ import (
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 	"github.com/mirastacklabs-ai/mirafleet/internal/central/registry"
+	"github.com/mirastacklabs-ai/mirafleet/internal/protover"
 	"github.com/mirastacklabs-ai/mirafleet/internal/service"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
@@ -38,6 +39,10 @@ type Config struct {
 	// be the service's OperatorConns.
 	Operators *OperatorConns
 	Logf      func(format string, args ...any)
+
+	// Proto is central's protocol level (internal/protover). Zero means protover.Current; tests
+	// set it to fake version skew.
+	Proto int
 
 	// EnrollRatePerMin limits enroll connections per source IP (token bucket, burst = rate).
 	// Zero means DefaultEnrollRatePerMin.
@@ -160,6 +165,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
+	}
+	if cfg.Proto <= 0 {
+		cfg.Proto = protover.Current
 	}
 	if cfg.EnrollRatePerMin <= 0 {
 		cfg.EnrollRatePerMin = DefaultEnrollRatePerMin

@@ -99,7 +99,7 @@ func TestReconcileOnFirstHeartbeat(t *testing.T) {
 		cl, err := e.dial(transport.UserRunner, "r1")
 		must(t, err)
 		defer cl.Close()
-		hb := transport.Heartbeat{Hostname: "h"}
+		hb := transport.Heartbeat{Hostname: "h", Proto: testProto}
 		if withExec {
 			hb.Slots, hb.Executor = 2, "containerd"
 		}

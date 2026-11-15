@@ -374,7 +374,7 @@ func TestHeartbeatReplyDoesNotWaitOnStore(t *testing.T) {
 	cl := e.rawRunner("r1", nil) // first heartbeat: registers, enqueues a touch
 	for i := 0; i < 5; i++ {
 		time.Sleep(30 * time.Millisecond)
-		hb, _ := json.Marshal(transport.Heartbeat{Hostname: "raw"})
+		hb, _ := json.Marshal(transport.Heartbeat{Hostname: "raw", Proto: testProto})
 		if ok, _, err := cl.SendRequest(transport.ReqHeartbeat, true, hb); err != nil || !ok {
 			t.Fatalf("heartbeat %d: %v %v", i, ok, err)
 		}

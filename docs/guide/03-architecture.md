@@ -908,10 +908,9 @@ Without a rule, an old runner could meet a new central and fail in a confusing w
 through a request (a field it does not know, a method that moved). A refusal at connect time
 turns that into one clear sentence.
 
-<!-- verify: protover.Check exists and is tested, but it is not yet wired into the heartbeat, `hello`, audit (`runner.refused_version`) or runner backoff; that is late-lane step L2 in docs/M6.md section 2.2 -->
-Status: the rule and its tests exist; wiring it into the heartbeat (`proto`), the operator
-`hello` and the audit log arrives with the late lane of M6, after M7. Until then no connection is
-refused for its level.
+Status: the rule is wired. The runner heartbeat and the operator `hello` carry `proto`; central
+refuses a mismatch with the message, audits `runner.refused_version` for runners, and the runner
+backs off to its maximum interval.
 
 ## Planned parts (not in the code yet)
 

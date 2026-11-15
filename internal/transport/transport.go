@@ -82,6 +82,9 @@ func ValidateAction(a ActionInfo) error {
 const (
 	ChanExec     = "exec@mirafleet"
 	ReqHeartbeat = "heartbeat@mirafleet"
+	// ReqRefused is the central->runner global request that carries the version-skew refusal
+	// message (docs/M6.md 2.2). The payload is the plain message text; the runner replies true.
+	ReqRefused = "refused@mirafleet"
 )
 
 // Channel types opened toward central (operators on api@, enrolling peers on join@/register@).
@@ -110,6 +113,9 @@ type Heartbeat struct {
 	Arch     string            `json:"arch"`
 	Version  string            `json:"version"`
 	Labels   map[string]string `json:"labels,omitempty"`
+	// Proto is the runner's protocol level (internal/protover). Central checks it on the first
+	// heartbeat; missing counts as level 0 and is refused.
+	Proto int `json:"proto,omitempty"`
 
 	// Workspace fields (M3), all optional: M2 runners omit them, and zero values mean "no workspace
 	// executor". Bounded by Validate.

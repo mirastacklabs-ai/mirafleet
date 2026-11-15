@@ -17,7 +17,7 @@ func TestRunnerEventsChannel(t *testing.T) {
 	cl, err := e.dial(transport.UserRunner, "r1")
 	must(t, err)
 	defer cl.Close()
-	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "h", Features: []string{transport.FeatureCreds, transport.FeatureEvents},
+	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "h", Proto: testProto, Features: []string{transport.FeatureCreds, transport.FeatureEvents},
 		Credentials: []transport.HeartbeatCredential{{Name: "gl", Kind: "https-token", Hosts: []string{"gitlab.example.com"}, Status: "ok"}}})
 	if ok, _, err := cl.SendRequest(transport.ReqHeartbeat, true, hb); err != nil || !ok {
 		t.Fatalf("heartbeat: %v %v", ok, err)

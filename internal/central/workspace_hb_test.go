@@ -22,7 +22,7 @@ func TestInvalidHeartbeatClosesConnection(t *testing.T) {
 			return err == nil && ok
 		}
 		if !first {
-			if !send(transport.Heartbeat{Hostname: "h", Slots: 3, Executor: "containerd", SecureRuntime: "gvisor", Images: []string{"a:*"}}) {
+			if !send(transport.Heartbeat{Hostname: "h", Proto: testProto, Slots: 3, Executor: "containerd", SecureRuntime: "gvisor", Images: []string{"a:*"}}) {
 				t.Fatal("valid heartbeat refused")
 			}
 			e.waitOnline("r1")
@@ -36,7 +36,7 @@ func TestInvalidHeartbeatClosesConnection(t *testing.T) {
 				t.Fatalf("snapshot lacks heartbeat fields: %+v", e.reg.Snapshot())
 			}
 		}
-		if send(transport.Heartbeat{Hostname: "h", Slots: -1}) {
+		if send(transport.Heartbeat{Hostname: "h", Proto: testProto, Slots: -1}) {
 			t.Fatal("invalid heartbeat accepted")
 		}
 		closed := make(chan struct{})

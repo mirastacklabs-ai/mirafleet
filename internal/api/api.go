@@ -600,11 +600,15 @@ type AuditListResult struct {
 
 type HelloParams struct {
 	Client string `json:"client,omitempty"` // e.g. "mcp"; recorded as a hint, not trusted
+	// Proto is the caller's protocol level (internal/protover). Missing counts as 0 and is
+	// refused with CodeUnsupportedVersion (docs/M6.md 2.2).
+	Proto int `json:"proto,omitempty"`
 }
 type HelloResult struct {
 	Operator string `json:"operator"`
 	Versions []int  `json:"versions"`
 	Server   string `json:"server,omitempty"`
+	Proto    int    `json:"proto,omitempty"` // central's protocol level
 }
 
 type FleetInfo struct {

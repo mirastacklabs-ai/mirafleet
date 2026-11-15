@@ -1595,23 +1595,30 @@ The level restarts at 1 with v1.0, so a bare comparison could mistake 0.1 for 1.
 first") and only then compares levels. A 1.x central therefore does not accept 0.x peers. This is
 a deliberate one-time break, to be called out in the 1.0 release notes.
 
-### Wiring: what is built and what is not
+### Wiring
 
-On this branch `internal/protover` exists with its table tests, but it is **not yet wired** into
-the SSH handshake (its package comment says so). The design (docs/M6.md section 2.2, step L2,
-after M7 lands) is:
+The rule is wired into the handshake (docs/M6.md section 2.2, step L2). Central compares plain
+levels (`Config.Proto`, default `protover.Current`); the peer's name is in the message, so the
+runner sees "runner `db-1` is protocol 4, ..." and "central is protocol 6, runner `db-1` is 7:
+upgrade central first".
 
-- **Runners:** the `heartbeat@mirafleet` payload gains a `proto` field (additive, so old
-  receivers ignore it). Central checks it on the first heartbeat. On a mismatch it sends a
-  `refused@mirafleet` message with the text above, writes an audit row `runner.refused_version`
-  and closes the connection. The runner logs the message and backs off to its **maximum**
-  reconnect interval, because a fast retry loop against a permanent refusal would hammer central.
-- **Operators:** `hello` carries `proto` in its params and its result. `internal/orch` turns a
-  refusal into a tool error with the same message, and `mcp login` prints it.
+- **Runners:** the `heartbeat@mirafleet` payload gains a `proto` field (`transport.Heartbeat.Proto`,
+  additive, so old receivers ignore it). Central checks it on the first heartbeat. On a mismatch it
+  sends a `refused@mirafleet` global request whose payload is the message text (the runner
+  acknowledges it), writes an audit row `runner.refused_version` (source `runner`, outcome
+  `denied`, the message in the row) and closes the connection. The runner logs "central refused
+  this runner: <message>" and backs off to its **maximum** reconnect interval (60 s by default,
+  with the usual jitter) and stays there, because a fast retry loop against a permanent refusal
+  would hammer central.
+- **Operators:** `hello` carries `proto` in its params and its result. A mismatch is an error
+  with code `unsupported_version` and the message above (the subject reads "orchestrator
+  `alice`"). `internal/orch` turns it into a tool error with the same message, and `mcp login`
+  says hello right after registering and prints it (the exit status is non-zero; the
+  registration itself stands).
 
-<!-- verify: L2 wiring (heartbeat proto, refused@mirafleet, audit action runner.refused_version, hello proto) is decided but not built on m6-now; check every name against internal/{api,transport,central,runner,orch} after L2 -->
-
-Until L2 lands, skew between builds is unchecked and the section 7.12 rules are all there is.
+A missing `proto` counts as level 0 and is refused too. Operator refusals are logged by central
+but not audited. The wiring compares levels, so the 0.x/1.x break above is not enforced by it yet;
+`CheckVersions` is for callers that hold both release versions.
 
 Where else does the version show up? The release build stamps the binary (`-X main.version=...`).
 `go install ...@v0.6.0` has no such stamp, so `cmd/mirafleet/version_buildinfo.go` reads the module

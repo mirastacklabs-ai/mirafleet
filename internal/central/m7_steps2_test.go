@@ -30,7 +30,7 @@ func (f *m7Fix) rawRunnerEvents(name string) (*ssh.Client, ssh.Channel) {
 	f.t.Helper()
 	cl, err := f.e.dial(transport.UserRunner, name)
 	must(f.t, err)
-	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "raw", Features: []string{transport.FeatureCreds, transport.FeatureEvents}})
+	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "raw", Proto: testProto, Features: []string{transport.FeatureCreds, transport.FeatureEvents}})
 	if ok, _, err := cl.SendRequest(transport.ReqHeartbeat, true, hb); err != nil || !ok {
 		f.t.Fatalf("heartbeat: %v %v", ok, err)
 	}
@@ -151,7 +151,7 @@ func m7OneOperator(t *testing.T, f *m7Fix) {
 	before := len(f.e.auditRowsFor("runner.replaced"))
 	cl, err := f.e.dial(transport.UserRunner, "vm1-qa")
 	must(t, err)
-	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "raw"})
+	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "raw", Proto: testProto})
 	if ok, _, err := cl.SendRequest(transport.ReqHeartbeat, true, hb); err != nil || !ok {
 		t.Fatalf("replacing heartbeat: %v %v", ok, err)
 	}

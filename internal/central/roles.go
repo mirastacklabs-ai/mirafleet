@@ -14,6 +14,7 @@ import (
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 	"github.com/mirastacklabs-ai/mirafleet/internal/central/registry"
+	"github.com/mirastacklabs-ai/mirafleet/internal/protover"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
@@ -118,6 +119,14 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			r.Reply(false, nil)
 			continue
 		}
+		if sess == nil {
+			// Version skew (docs/M6.md 2.2), checked on the first heartbeat: a missing proto is
+			// level 0. Tell the runner why, audit it, and close.
+			if verr := protover.Check("runner", p.Name, s.cfg.Proto, hb.Proto); verr != nil {
+				s.refuseRunner(sconn, p, r, verr)
+				continue
+			}
+		}
 		if err := hb.Validate(); err != nil && len(hb.Actions) > 0 {
 			// F-16: an invalid Actions list is informational and may be version skew; drop it and
 			// keep the connection if everything else is valid.
@@ -186,6 +195,32 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 		}
 		r.Reply(true, nil)
 	}
+}
+
+// refuseTimeout bounds how long central waits for the runner to acknowledge refused@mirafleet.
+const refuseTimeout = 5 * time.Second
+
+// refuseRunner sends the refusal message, audits it, answers the pending heartbeat with false and
+// closes the connection. The message goes first and is acknowledged (bounded by refuseTimeout),
+// so the runner has it before it sees the failed heartbeat. Runs on the request loop of the
+// connection: serveRunner returns right after, and its deferred cleanup runs.
+func (s *Server) refuseRunner(sconn *ssh.ServerConn, p auth.Principal, r *ssh.Request, verr error) {
+	msg := verr.Error()
+	s.cfg.Logf("runner %q (id %d) refused: %s", p.Name, p.ID, msg)
+	actx, cancel := context.WithTimeout(context.Background(), storeTimeout)
+	s.cfg.Service.RunnerRefusedVersion(actx, p.ID, msg)
+	cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sconn.SendRequest(transport.ReqRefused, true, []byte(msg))
+	}()
+	select {
+	case <-done:
+	case <-time.After(refuseTimeout):
+	}
+	r.Reply(false, nil)
+	sconn.Close()
 }
 
 // reconcileAsync compares the runner's workspaces with the store in the background (M3.md 1.6). It

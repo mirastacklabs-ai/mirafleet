@@ -266,7 +266,7 @@ func TestRoleChannelIsolation(t *testing.T) {
 			t.Fatalf("operator opened %s: %v", typ, err)
 		}
 	}
-	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "x"})
+	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "x", Proto: testProto})
 	if ok, _, err := oc.SendRequest(transport.ReqHeartbeat, true, hb); err != nil || ok {
 		t.Fatalf("operator heartbeat: %v %v", ok, err)
 	}

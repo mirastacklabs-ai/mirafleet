@@ -23,7 +23,7 @@ func TestInvalidActionsHeartbeatKeepsConnection(t *testing.T) {
 	}
 	bad := []transport.ActionInfo{{Name: "ok"}, {Name: ""}}
 	for i := 0; i < 2; i++ { // as the first heartbeat, then as a later one
-		if !send(transport.Heartbeat{Hostname: "h", Slots: 3, Actions: bad}) {
+		if !send(transport.Heartbeat{Hostname: "h", Proto: testProto, Slots: 3, Actions: bad}) {
 			t.Fatalf("heartbeat %d with an invalid actions list was refused", i)
 		}
 		e.waitOnline("r1")
@@ -44,7 +44,7 @@ func TestInvalidActionsHeartbeatKeepsConnection(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 	// Another invalid field, even with a bad actions list, still closes it.
-	if send(transport.Heartbeat{Hostname: "h", Slots: -1, Actions: bad}) {
+	if send(transport.Heartbeat{Hostname: "h", Proto: testProto, Slots: -1, Actions: bad}) {
 		t.Fatal("heartbeat with invalid slots accepted")
 	}
 	select {

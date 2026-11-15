@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
+	"github.com/mirastacklabs-ai/mirafleet/internal/protover"
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
@@ -226,7 +227,12 @@ func typedCall[R any](ctx context.Context, c *Client, method string, params any)
 
 // Hello identifies the operator and the supported protocol versions.
 func (c *Client) Hello(ctx context.Context, client string) (*api.HelloResult, error) {
-	return typedCall[api.HelloResult](ctx, c, api.MethodHello, api.HelloParams{Client: client})
+	return c.HelloProto(ctx, client, protover.Current)
+}
+
+// HelloProto is Hello with an explicit protocol level (tests fake version skew with it).
+func (c *Client) HelloProto(ctx context.Context, client string, proto int) (*api.HelloResult, error) {
+	return typedCall[api.HelloResult](ctx, c, api.MethodHello, api.HelloParams{Client: client, Proto: proto})
 }
 
 // FleetsList lists fleets.

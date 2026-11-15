@@ -1,6 +1,6 @@
 // Package protover is the protocol-level rule for version skew between central, runners and
-// orchestrators (docs/M6.md section 2.2). It is a pure rule package: it has no I/O and is not
-// yet wired into the SSH handshake.
+// orchestrators (docs/M6.md section 2.2). It is a pure rule package with no I/O. Central applies
+// it to the runner heartbeat and to the operator hello (internal/central).
 //
 // The protocol level is one integer: the release's minor version while in 0.x (v0.6.x is 6)
 // and the major version from 1.0 on (v1.4.2 is 1). Patch and pre-release parts never matter,
