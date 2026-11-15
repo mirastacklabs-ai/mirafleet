@@ -713,11 +713,11 @@ type conflictStore struct {
 	setPassword, ensure bool
 }
 
-func (c conflictStore) SetGUIPassword(ctx context.Context, id, gen int64, hash string, keep store.GUISession, now time.Time, ev store.AuditEvent) (store.GUIAdmin, error) {
+func (c conflictStore) SetGUIPassword(ctx context.Context, id, gen int64, hash string, keep store.GUISession, replaceID int64, now time.Time, ev store.AuditEvent) (store.GUIAdmin, error) {
 	if c.setPassword {
 		return store.GUIAdmin{}, store.ErrConflict
 	}
-	return c.Store.SetGUIPassword(ctx, id, gen, hash, keep, now, ev)
+	return c.Store.SetGUIPassword(ctx, id, gen, hash, keep, replaceID, now, ev)
 }
 
 func (c conflictStore) EnsureGUISetup(ctx context.Context, h []byte, exp, now time.Time, ev store.AuditEvent) (bool, error) {

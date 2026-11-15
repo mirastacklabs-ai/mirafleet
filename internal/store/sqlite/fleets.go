@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
@@ -141,6 +142,18 @@ func (d *DB) SetFleetConfirm(ctx context.Context, name string, confirm bool, now
 	}
 	var out store.Fleet
 	err := d.withTx(ctx, func(tx *sql.Tx) error {
+		var from bool
+		if err := tx.QueryRowContext(ctx, `SELECT confirm FROM fleets WHERE name = ?`, name).Scan(&from); errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: fleet", store.ErrNotFound)
+		} else if err != nil {
+			return err
+		}
+		params := map[string]string{}
+		for k, v := range ev.Params {
+			params[k] = v
+		}
+		params["from"] = strconv.FormatBool(from)
+		ev.Params = params
 		res, err := tx.ExecContext(ctx, `UPDATE fleets SET confirm = ? WHERE name = ?`, confirm, name)
 		if err != nil {
 			return err

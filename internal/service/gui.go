@@ -242,7 +242,7 @@ func (s *Service) GUILogin(ctx context.Context, remote, ua, username, password s
 	}
 	ev := s.guiEvent(adm.Username, remote, ActionGUILogin)
 	ev.Message = "password hash upgraded"
-	if _, err := s.st.SetGUIPassword(ctx, adm.ID, adm.Generation, hash, sess, s.now(), ev); err != nil {
+	if _, err := s.st.SetGUIPassword(ctx, adm.ID, adm.Generation, hash, sess, 0, s.now(), ev); err != nil {
 		if !errors.Is(err, store.ErrConflict) {
 			return "", auth.Principal{}, s.fail("rehash gui password", err)
 		}
@@ -355,7 +355,7 @@ func (s *Service) ChangeGUIPassword(ctx context.Context, p auth.Principal, sessi
 		CreatedAt: old.CreatedAt, LastActiveAt: now, ExpiresAt: old.ExpiresAt, Remote: old.Remote, UserAgent: old.UserAgent}
 	ev := s.event(p, SourceGUI, ActionGUIPasswordChange)
 	ev.Subject = adm.Username
-	if _, err := s.st.SetGUIPassword(ctx, adm.ID, adm.Generation, hash, keep, now, ev); err != nil {
+	if _, err := s.st.SetGUIPassword(ctx, adm.ID, adm.Generation, hash, keep, old.ID, now, ev); err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return "", api.Errorf(api.CodeConflict, "the account changed while you were editing it; try again")
 		}

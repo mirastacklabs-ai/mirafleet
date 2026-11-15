@@ -93,6 +93,7 @@ func fleets(t *testing.T, s store.Store) {
 		{Name: "", Mode: store.ModeActions},
 		{Name: "Upper", Mode: store.ModeActions},
 		{Name: "a/b", Mode: store.ModeActions},
+		{Name: "new", Mode: store.ModeActions}, // reserved by the GUI route (G-38)
 		{Name: "ok", Mode: "bogus"},
 		{Name: "ok", Mode: ""},
 	} {
@@ -1935,19 +1936,27 @@ func guiPassword(t *testing.T, s store.Store) {
 	keep := guiSess(a, "kept", t0.Add(time.Minute))
 	keep.Generation = 99 // forced to the new generation by the store
 	before := auditCount(t, s)
-	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation+5, "$new", keep, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrConflict) {
+	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation+5, "$new", keep, 0, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("generation mismatch: %v", err)
 	}
-	if _, err := s.SetGUIPassword(ctx, a.ID+100, a.Generation, "$new", keep, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.SetGUIPassword(ctx, a.ID+100, a.Generation, "$new", keep, 0, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unknown admin: %v", err)
 	}
-	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "", keep, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrInvalid) {
+	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "", keep, 0, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("empty hash: %v", err)
 	}
 	badKeep := keep
 	badKeep.TokenHash = []byte{1}
-	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$new", badKeep, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrInvalid) {
+	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$new", badKeep, 0, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("bad keep: %v", err)
+	}
+	// G-18: the session being re-issued must still exist; nothing changes otherwise.
+	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$new", keep, 987654, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("revoked replaceID: %v", err)
+	}
+	pre, _ := s.ListGUISessions(ctx, a.ID)
+	if len(pre) != 3 {
+		t.Fatalf("sessions before change = %d", len(pre))
 	}
 	if l, _ := s.ListGUISessions(ctx, a.ID); len(l) != 3 || auditCount(t, s) != before {
 		t.Fatalf("failed changes altered state: %d sessions, audit %d->%d", len(l), before, auditCount(t, s))
@@ -1956,7 +1965,7 @@ func guiPassword(t *testing.T, s store.Store) {
 		t.Fatalf("failed changes altered admin: %+v", g)
 	}
 
-	b, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$new", keep, t0.Add(time.Hour), guiEv("gui.password_change"))
+	b, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$new", keep, pre[0].ID, t0.Add(time.Hour), guiEv("gui.password_change"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1980,7 +1989,7 @@ func guiPassword(t *testing.T, s store.Store) {
 		t.Fatal("password change not audited once")
 	}
 	// The old generation can no longer be used.
-	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$again", guiSess(b, "k2", t0), t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrConflict) {
+	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$again", guiSess(b, "k2", t0), 0, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("CAS replay: %v", err)
 	}
 
@@ -2086,6 +2095,13 @@ func guiSessions(t *testing.T, s store.Store) {
 	}
 	if g, _, _ := s.GetGUISession(ctx, secretHash("s3")); !g.LastActiveAt.Equal(t0.Add(time.Hour)) {
 		t.Fatalf("touch: %v", g.LastActiveAt)
+	}
+	// G-10: an older timestamp never moves last_active_at backwards.
+	if err := s.TouchGUISession(ctx, l[0].ID, t0); err != nil {
+		t.Fatal(err)
+	}
+	if g, _, _ := s.GetGUISession(ctx, secretHash("s3")); !g.LastActiveAt.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("touch moved backwards: %v", g.LastActiveAt)
 	}
 	if err := s.TouchGUISession(ctx, 99999, t0); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("touch unknown: %v", err)
@@ -2350,6 +2366,9 @@ func setFleetConfirm(t *testing.T, s store.Store) {
 	evs, _ := s.QueryAudit(ctx, store.AuditFilter{Action: "fleet.set_confirm"})
 	if !evs[0].Time.Equal(t0.Add(time.Minute)) {
 		t.Fatalf("zero ev.Time should default to now: %v", evs[0].Time)
+	}
+	if evs[0].Params["from"] != "false" {
+		t.Fatalf("audit from = %q, want false (G-20)", evs[0].Params["from"])
 	}
 	w, err := s.SetFleetConfirm(ctx, "ws", true, t0, ev("fleet.set_confirm"))
 	if err != nil || !w.Confirm || w.Workspace == nil || w.Workspace.DefaultImage == "" {

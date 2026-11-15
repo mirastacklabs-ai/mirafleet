@@ -85,14 +85,11 @@ func (s *Service) SetFleetConfirm(ctx context.Context, p auth.Principal, src Sou
 	if !store.ValidFleetName(fleet) {
 		return store.Fleet{}, badRequest("invalid fleet name")
 	}
-	cur, err := s.st.GetFleet(ctx, fleet)
-	if err != nil {
-		return store.Fleet{}, s.fail("get fleet", err)
-	}
 	ev := s.event(p, src, api.MethodFleetSetConfirm)
 	ev.Fleet = fleet
 	ev.Subject = fleet
-	ev.Params = map[string]string{"from": strconv.FormatBool(cur.Confirm), "to": strconv.FormatBool(confirm)}
+	// The store adds "from" inside its transaction (G-20).
+	ev.Params = map[string]string{"to": strconv.FormatBool(confirm)}
 	f, err := s.st.SetFleetConfirm(ctx, fleet, confirm, s.now(), ev)
 	if err != nil {
 		return store.Fleet{}, s.fail("set fleet confirm", err)
