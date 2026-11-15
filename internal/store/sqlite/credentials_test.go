@@ -44,8 +44,8 @@ func TestSchemaChecks(t *testing.T) {
 		t.Errorf("fleet assignment: %v", err)
 	}
 	for name, q := range map[string]string{
-		"bad kind":   `INSERT INTO credentials (name, kind, hosts, nonce, ciphertext, version, created_at) VALUES ('k', 'password', '["h"]', zeroblob(12), x'01', 1, 0)`,
-		"no hosts":   `INSERT INTO credentials (name, kind, hosts, nonce, ciphertext, version, created_at) VALUES ('k', 'ssh-key', '[]', zeroblob(12), x'01', 1, 0)`,
+		"bad kind":    `INSERT INTO credentials (name, kind, hosts, nonce, ciphertext, version, created_at) VALUES ('k', 'password', '["h"]', zeroblob(12), x'01', 1, 0)`,
+		"no hosts":    `INSERT INTO credentials (name, kind, hosts, nonce, ciphertext, version, created_at) VALUES ('k', 'ssh-key', '[]', zeroblob(12), x'01', 1, 0)`,
 		"short nonce": `INSERT INTO credentials (name, kind, hosts, nonce, ciphertext, version, created_at) VALUES ('k', 'ssh-key', '["h"]', zeroblob(4), x'01', 1, 0)`,
 		"empty value": `INSERT INTO credentials (name, kind, hosts, nonce, ciphertext, version, created_at) VALUES ('k', 'ssh-key', '["h"]', zeroblob(12), x'', 1, 0)`,
 		"dup name":    `INSERT INTO credentials (name, kind, hosts, nonce, ciphertext, version, created_at) VALUES ('c', 'ssh-key', '["h"]', zeroblob(12), x'01', 1, 0)`,

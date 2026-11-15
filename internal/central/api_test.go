@@ -400,6 +400,18 @@ func TestEnrollRateLimit(t *testing.T) {
 		cl, err := e.dial(transport.UserEnroll, "anon")
 		must(t, err)
 		cl.Close()
+		// The server takes the token in its own goroutine after the handshake; under load the 4th
+		// dial could otherwise be served before the 3rd is counted and stay open until the deadline.
+		used := float64(i + 1)
+		waitFor(t, func() bool {
+			l := e.srv.limiter
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			for _, b := range l.m {
+				return b.tokens <= l.rate-used+0.5
+			}
+			return false
+		})
 	}
 	// 4th: handshake may complete but the connection is closed right after.
 	cl, err := e.dial(transport.UserEnroll, "anon")

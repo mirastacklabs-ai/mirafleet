@@ -32,8 +32,16 @@ func credentialsConfig() (service.CredentialsConfig, error) {
 	if err != nil {
 		return service.CredentialsConfig{}, err
 	}
-	return service.CredentialsConfig{Key: k}, nil
+	return service.CredentialsConfig{Key: keyRing{k}}, nil
 }
+
+// keyRing adapts a secrets.Key to service.KeyRing (the service package must not link secrets).
+type keyRing struct{ k secrets.Key }
+
+func (r keyRing) Seal(pt, aad []byte) ([]byte, error) { return secrets.Seal(r.k, pt, aad) }
+func (r keyRing) Open(ct, aad []byte) ([]byte, error) { return secrets.Open(r.k, ct, aad) }
+func (r keyRing) Check() []byte                       { return r.k.Check() }
+func (r keyRing) VerifyCheck(stored []byte) bool      { return r.k.VerifyCheck(stored) }
 
 // centralKeygen prints a fresh key as the line for central.env (stdout) with the warning on stderr.
 func centralKeygen(args []string, out, errw io.Writer) error {

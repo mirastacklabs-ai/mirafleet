@@ -70,6 +70,24 @@ func TestHostFleetDefaultsAndOpen(t *testing.T) {
 	}
 }
 
+func TestOpenWithWorkdir(t *testing.T) {
+	e := newEnv(t)
+	e.hostFleet("vm2", false)
+	e.hostRunner("vm2")
+	bob := e.operator("bob")
+	w, _, err := e.svc.OpenWorkspaceIn(e.ctx, bob, SourceAPI, "vm2", "s9", "", nil, "", "shared-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(w.Spec, `"mirafleet.workdir":"shared-1"`) {
+		t.Fatalf("spec lacks the workdir label: %s", w.Spec)
+	}
+	for _, bad := range []string{"../etc", "/abs", "A B"} {
+		if _, _, err := e.svc.OpenWorkspaceIn(e.ctx, bob, SourceAPI, "vm2", "s10", "", nil, "", bad); code(t, err) != api.CodeBadRequest {
+			t.Errorf("workdir %q accepted", bad)
+		}
+	}
+}
 
 func TestFSDispatchEveryOp(t *testing.T) {
 	e, op, w, _ := hostEnv(t, false)

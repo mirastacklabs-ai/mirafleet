@@ -68,7 +68,7 @@ type callIO struct {
 	result   any
 	body     []byte // request body frame, when hasBody
 	hasBody  bool
-	wantBody bool // a response body frame follows the result
+	wantBody bool        // a response body frame follows the result
 	bodyIf   func() bool // a response body frame follows the result only if this says so
 	got      []byte
 	addr     string // set by call: the address of the context the call went to

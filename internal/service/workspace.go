@@ -173,6 +173,19 @@ func validSpecLabels(labels map[string]string) error {
 // (the "start" audit row, fail closed) and the runner asked to create it.
 func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Source, fleet, session, image string,
 	labels map[string]string, confirm string) (store.Workspace, bool, error) {
+	return s.OpenWorkspaceIn(ctx, p, src, fleet, session, image, labels, confirm, "")
+}
+
+// workdirRE is the shared-directory name grammar (the same as a fleet name).
+var workdirRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
+// labelWorkdir is the reserved spec label that carries workdir to the host executor
+// (hostx.LabelWorkdir).
+const labelWorkdir = "mirafleet.workdir"
+
+// OpenWorkspaceIn is OpenWorkspace with an optional shared workdir name (host fleets only, Q4).
+func (s *Service) OpenWorkspaceIn(ctx context.Context, p auth.Principal, src Source, fleet, session, image string,
+	labels map[string]string, confirm, workdir string) (store.Workspace, bool, error) {
 
 	if err := s.requireOperator(ctx, p, src, api.MethodWorkspaceOpen); err != nil {
 		return store.Workspace{}, false, err
@@ -214,12 +227,26 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		return store.Workspace{}, false, badRequest(api.MsgConfirmRequired)
 	}
 	host := cfg.Executor == store.ExecutorHost
+	specLabels := labels
 	if host { // no images in host mode; guarding is the typed confirm above, nothing else (Q10)
 		if image != "" {
 			return store.Workspace{}, false, badRequest("host fleets take no image")
 		}
 		image = hostImage
+		if workdir != "" {
+			if !workdirRE.MatchString(workdir) {
+				return store.Workspace{}, false, badRequest("invalid workdir name")
+			}
+			specLabels = make(map[string]string, len(labels)+1)
+			for k, v := range labels {
+				specLabels[k] = v
+			}
+			specLabels[labelWorkdir] = workdir // reserved: not a placement label
+		}
 	} else {
+		if workdir != "" {
+			return store.Workspace{}, false, badRequest("workdir needs a host fleet")
+		}
 		if image == "" {
 			image = cfg.DefaultImage
 		}
@@ -266,7 +293,7 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 	if len(cands) == 0 && heldBy != "" {
 		return store.Workspace{}, false, s.refuseBusy(ctx, p, src, fleet, session, rid, heldBy)
 	}
-	spec := buildSpec(cfg, image, labels, f.Confirm && !host)
+	spec := buildSpec(cfg, image, specLabels, f.Confirm && !host)
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
 		return store.Workspace{}, false, s.fail("encode spec", err)

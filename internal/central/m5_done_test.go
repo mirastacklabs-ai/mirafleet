@@ -282,6 +282,22 @@ func m5Tools(t *testing.T, f *m5Fixture) {
 		"read_file":       {true, false, true, true},
 		"write_file":      {false, true, false, true},
 		"workspace_close": {false, true, true, true},
+		// M7 (docs/M7.md §3.5, §3.7): Claude Code tool parity. Annotations as in mcpserver.
+		"read":          {true, false, true, true},
+		"write":         {false, true, false, true},
+		"edit":          {false, true, false, true},
+		"multi_edit":    {false, true, false, true},
+		"grep":          {true, false, true, true},
+		"glob":          {true, false, true, true},
+		"ls":            {true, false, true, true},
+		"notebook_edit": {false, true, false, true},
+		"upload":        {false, true, true, true},
+		"download":      {false, true, true, true},
+		"bash":          {false, true, false, true},
+		"bash_output":   {false, false, false, true},
+		"kill_shell":    {false, true, true, true},
+		"job_list":      {true, false, true, true},
+		"read_output":   {true, false, true, true},
 	}
 	if len(res.Tools) != len(want) {
 		var names []string

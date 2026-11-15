@@ -90,7 +90,9 @@ func denied(c string) bool {
 	return false
 }
 
-func tErr(code, format string, a ...any) error { return errf(code, nil, clean(fmt.Sprintf(format, a...))) }
+func tErr(code, format string, a ...any) error {
+	return errf(code, nil, clean(fmt.Sprintf(format, a...)))
+}
 
 // LocalPath turns a user-supplied local path into a clean, slash-separated path relative to
 // projectDir, or an error. It is lexical only (confinement against symlinks is os.Root's job in

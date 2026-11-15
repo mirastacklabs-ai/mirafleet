@@ -185,9 +185,9 @@ func (a *connAgent) Extension(extensionType string, contents []byte) ([]byte, er
 	return nil, nil
 }
 
-func (a *connAgent) Add(agent.AddedKey) error                { return errRefused }
-func (a *connAgent) Remove(ssh.PublicKey) error              { return errRefused }
-func (a *connAgent) RemoveAll() error                        { return errRefused }
-func (a *connAgent) Lock([]byte) error                       { return errRefused }
-func (a *connAgent) Unlock([]byte) error                     { return errRefused }
-func (a *connAgent) Signers() ([]ssh.Signer, error)          { return nil, errRefused }
+func (a *connAgent) Add(agent.AddedKey) error       { return errRefused }
+func (a *connAgent) Remove(ssh.PublicKey) error     { return errRefused }
+func (a *connAgent) RemoveAll() error               { return errRefused }
+func (a *connAgent) Lock([]byte) error              { return errRefused }
+func (a *connAgent) Unlock([]byte) error            { return errRefused }
+func (a *connAgent) Signers() ([]ssh.Signer, error) { return nil, errRefused }

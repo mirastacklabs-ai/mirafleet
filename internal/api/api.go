@@ -800,6 +800,9 @@ type WorkspaceOpenParams struct {
 	// Credentials (M7, additive) narrows the credentials the session uses to this subset of those
 	// the runner holds; empty = all. Placement needs every named credential on the runner.
 	Credentials []string `json:"credentials,omitempty"`
+	// Workdir (M7, additive, host fleets only) names a shared directory on the runner instead of
+	// the per-session one (docs/M7.md Q4). A name, never a path.
+	Workdir string `json:"workdir,omitempty"`
 }
 type WorkspaceOpenResult struct {
 	Workspace WorkspaceInfo `json:"workspace"`

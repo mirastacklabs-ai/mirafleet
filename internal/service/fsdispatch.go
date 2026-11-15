@@ -63,8 +63,8 @@ type devCall struct {
 	audit     bool              // start and end rows; otherwise one row, only on failure
 	timeout   time.Duration
 	body      io.Reader
-	out       io.Writer                                      // receives the reply body when set
-	verify    func(*transport.WorkspaceResult, int64) error  // checks an ok result (body bytes received)
+	out       io.Writer                                          // receives the reply body when set
+	verify    func(*transport.WorkspaceResult, int64) error      // checks an ok result (body bytes received)
 	endParams func(*transport.WorkspaceResult) map[string]string // end-row params of an ok result
 }
 

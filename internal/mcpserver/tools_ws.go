@@ -466,7 +466,7 @@ func (s *wsState) open(ctx context.Context, req Request) (any, error) {
 	defer unlock()
 	r, err := s.b.WorkspaceOpen(ctx, t.Context, api.WorkspaceOpenParams{
 		Fleet: t.Fleet, Session: session, Image: a.Image, Labels: a.Labels,
-		Confirm: a.Confirm, // verbatim: never defaulted or cached
+		Confirm:     a.Confirm, // verbatim: never defaulted or cached
 		Credentials: a.Creds,
 	})
 	if err != nil {

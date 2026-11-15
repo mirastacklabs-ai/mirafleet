@@ -111,7 +111,18 @@ func (ce *credEnv) service(key secrets.Key) *Service {
 	return svc
 }
 
+type testRing struct{ k secrets.Key }
+
+func (r testRing) Seal(pt, aad []byte) ([]byte, error) { return secrets.Seal(r.k, pt, aad) }
+func (r testRing) Open(ct, aad []byte) ([]byte, error) { return secrets.Open(r.k, ct, aad) }
+func (r testRing) Check() []byte                       { return r.k.Check() }
+func (r testRing) VerifyCheck(stored []byte) bool      { return r.k.VerifyCheck(stored) }
+
 func (ce *credEnv) build(key secrets.Key) (*Service, error) {
+	var ring KeyRing
+	if key != (secrets.Key{}) {
+		ring = testRing{key}
+	}
 	return New(Config{Store: ce.db, Policy: ce.policy, Live: ce.live, HostKey: ce.host, OperatorConns: ce.conns,
 		Now: func() time.Time { return t0 },
 		Logf: func(f string, a ...any) {
@@ -119,7 +130,7 @@ func (ce *credEnv) build(key secrets.Key) (*Service, error) {
 			fmt.Fprintf(ce.logs, f+"\n", a...)
 			ce.logMu.Unlock()
 		},
-		Credentials: CredentialsConfig{Key: key, Sender: ce.snd,
+		Credentials: CredentialsConfig{Key: ring, Sender: ce.snd,
 			RotateBaseURL: func(string) string { return ce.gl.URL }}})
 }
 

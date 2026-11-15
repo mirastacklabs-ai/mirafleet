@@ -49,7 +49,7 @@ func TestKeygenFormat(t *testing.T) {
 
 func TestCredentialsConfigFromEnv(t *testing.T) {
 	t.Setenv(secrets.EnvKey, "")
-	if cc, err := credentialsConfig(); err != nil || cc.Key != (secrets.Key{}) {
+	if cc, err := credentialsConfig(); err != nil || cc.Key != nil {
 		t.Fatalf("unset: %+v %v", cc, err)
 	}
 	t.Setenv(secrets.EnvKey, "not-a-key")
@@ -58,7 +58,7 @@ func TestCredentialsConfigFromEnv(t *testing.T) {
 	}
 	_, enc, _ := secrets.GenerateKey()
 	t.Setenv(secrets.EnvKey, enc)
-	if cc, err := credentialsConfig(); err != nil || cc.Key == (secrets.Key{}) {
+	if cc, err := credentialsConfig(); err != nil || cc.Key == nil {
 		t.Fatalf("set: %+v %v", cc, err)
 	}
 }

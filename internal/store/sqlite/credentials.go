@@ -29,10 +29,10 @@ func invalidCred(format string, a ...any) error {
 
 func scanCred(sc interface{ Scan(...any) error }, sealed bool) (store.SealedCredential, error) {
 	var (
-		s                         store.SealedCredential
-		kind, hosts, meta         string
-		created                   int64
-		rotated, expires          sql.NullInt64
+		s                 store.SealedCredential
+		kind, hosts, meta string
+		created           int64
+		rotated, expires  sql.NullInt64
 	)
 	dst := []any{&s.ID, &s.Name, &kind, &hosts, &meta, &s.Fingerprint, &s.Version, &created, &rotated, &expires}
 	if sealed {

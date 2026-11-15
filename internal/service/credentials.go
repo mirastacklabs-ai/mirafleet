@@ -24,7 +24,6 @@ import (
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
-	"github.com/mirastacklabs-ai/mirafleet/internal/secrets"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
@@ -52,11 +51,23 @@ type CredentialSender interface {
 	SyncCredentials(ctx context.Context, runnerID int64, body *transport.CredsSyncBody) error
 }
 
+// secretsEnvKey is the name of the key variable (secrets.EnvKey), repeated here so that this
+// package, which every binary links, does not link internal/secrets (server-only, M7.md S0).
+const secretsEnvKey = "MIRAFLEET_SECRETS_KEY"
+
+// KeyRing is the sealing key as the service sees it; cmd adapts a secrets.Key to it.
+type KeyRing interface {
+	Seal(plaintext, aad []byte) ([]byte, error)
+	Open(sealed, aad []byte) ([]byte, error)
+	Check() []byte
+	VerifyCheck(stored []byte) bool
+}
+
 // CredentialsConfig configures the credential feature. The zero value disables it unless
 // credentials or a key check already exist in the store (then New refuses to start).
 type CredentialsConfig struct {
-	// Key is the secrets key (secrets.KeyFromEnv). The zero Key means none configured.
-	Key secrets.Key
+	// Key is the secrets key. Nil means none configured.
+	Key KeyRing
 	// Sender delivers creds_sync; nil disables delivery (set/list still work).
 	Sender CredentialSender
 	// RotateClient is the HTTP client for GitLab rotation (system pool + optional corporate CA);
@@ -69,7 +80,7 @@ type CredentialsConfig struct {
 }
 
 type credState struct {
-	key      secrets.Key
+	key      KeyRing
 	hasKey   bool
 	sender   CredentialSender
 	client   *http.Client
@@ -91,7 +102,7 @@ func (s *Service) initCredentials(cfg CredentialsConfig) error {
 	c := &credState{key: cfg.Key, sender: cfg.Sender, client: cfg.RotateClient, baseURL: cfg.RotateBaseURL,
 		lifetime: cfg.RotateLifetime, delivered: map[int64]map[string]int64{},
 		reported: map[int64]map[string]string{}, rotErr: map[string]string{}, lastTry: map[string]time.Time{}}
-	c.hasKey = cfg.Key != (secrets.Key{})
+	c.hasKey = cfg.Key != nil
 	if c.client == nil {
 		c.client = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -110,20 +121,20 @@ func (s *Service) initCredentials(cfg CredentialsConfig) error {
 	have := err == nil
 	if !c.hasKey {
 		if have {
-			return errors.New("service: stored credentials need " + secrets.EnvKey + " (not set)")
+			return errors.New("service: stored credentials need " + secretsEnvKey + " (not set)")
 		}
 		list, lerr := s.st.ListCredentials(ctx)
 		if lerr != nil {
 			return fmt.Errorf("service: list credentials: %w", lerr)
 		}
 		if len(list) > 0 {
-			return errors.New("service: stored credentials need " + secrets.EnvKey + " (not set)")
+			return errors.New("service: stored credentials need " + secretsEnvKey + " (not set)")
 		}
 		return nil
 	}
 	if have {
 		if !c.key.VerifyCheck(stored) {
-			return errors.New("service: " + secrets.EnvKey + " does not match the key that sealed the stored credentials")
+			return errors.New("service: " + secretsEnvKey + " does not match the key that sealed the stored credentials")
 		}
 		return nil
 	}
@@ -143,7 +154,7 @@ func (s *Service) initCredentials(cfg CredentialsConfig) error {
 
 func (s *Service) needKey() error {
 	if !s.cred.hasKey {
-		return api.Errorf(api.CodeUnavailable, "credentials are not configured (set %s)", secrets.EnvKey)
+		return api.Errorf(api.CodeUnavailable, "credentials are not configured (set %s)", secretsEnvKey)
 	}
 	return nil
 }
@@ -156,7 +167,9 @@ type payload struct {
 	KnownHosts []string `json:"kh,omitempty"`
 }
 
-func credAAD(id, version int64) []byte { return []byte(fmt.Sprintf("mirafleet credential v1|%d|%d", id, version)) }
+func credAAD(id, version int64) []byte {
+	return []byte(fmt.Sprintf("mirafleet credential v1|%d|%d", id, version))
+}
 
 func (s *Service) sealer(pl payload) store.CredentialSealer {
 	return func(id, version int64) ([]byte, []byte, error) {
@@ -164,7 +177,7 @@ func (s *Service) sealer(pl payload) store.CredentialSealer {
 		if err != nil {
 			return nil, nil, errors.New("encode credential")
 		}
-		sealed, err := secrets.Seal(s.cred.key, raw, credAAD(id, version))
+		sealed, err := s.cred.key.Seal(raw, credAAD(id, version))
 		if err != nil {
 			return nil, nil, errors.New("seal credential")
 		}
@@ -179,7 +192,7 @@ func (s *Service) sealer(pl payload) store.CredentialSealer {
 }
 
 func (s *Service) open(sc store.SealedCredential) (payload, error) {
-	raw, err := secrets.Open(s.cred.key, sc.Ciphertext, credAAD(sc.ID, sc.Version))
+	raw, err := s.cred.key.Open(sc.Ciphertext, credAAD(sc.ID, sc.Version))
 	if err != nil {
 		return payload{}, errors.New("cannot open credential")
 	}

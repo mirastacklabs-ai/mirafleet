@@ -22,10 +22,10 @@ type fakeBackend struct {
 	Cap      int // 0 = 30 KiB
 	Session  string
 
-	ResolveFn            func(ctx context.Context, contextArg, fleetArg string) (orch.Target, error)
-	ContextNamesFn       func() ([]string, error)
-	FleetsListFn         func(ctx context.Context, cname string) (*api.FleetsListResult, error)
-	RunnersListFn        func(ctx context.Context, cname, fleet string) (*api.RunnersListResult, error)
+	ResolveFn      func(ctx context.Context, contextArg, fleetArg string) (orch.Target, error)
+	ContextNamesFn func() ([]string, error)
+	FleetsListFn   func(ctx context.Context, cname string) (*api.FleetsListResult, error)
+	RunnersListFn  func(ctx context.Context, cname, fleet string) (*api.RunnersListResult, error)
 
 	// M7 dev-workspace calls; the methods live in fake_dev_test.go.
 	WorkspaceCloseWithFn func(ctx context.Context, cname string, p api.WorkspaceCloseParams) (*api.WorkspaceCloseResult, error)

@@ -243,7 +243,9 @@ func TestDevReadImageFallsBackToBinary(t *testing.T) {
 	}
 	for name, c := range cases {
 		c := c
-		r.f.WorkspaceFSFn = func(context.Context, string, api.FSParams, []byte) (*api.FSResult, []byte, error) { return c.res, c.img, nil }
+		r.f.WorkspaceFSFn = func(context.Context, string, api.FSParams, []byte) (*api.FSResult, []byte, error) {
+			return c.res, c.img, nil
+		}
 		res := callJSON(t, r.h, "read", `{"path":"big.png"}`)
 		if res.IsError || len(res.Content) != 1 {
 			t.Fatalf("%s: %+v", name, res)
@@ -563,7 +565,9 @@ func TestDevBackgroundShellLifecycle(t *testing.T) {
 		t.Fatalf("%v", v)
 	}
 	// Empty list is an empty array, not null.
-	r.f.JobStatusFn = func(context.Context, string, api.JobStatusParams) (*api.JobStatusResult, error) { return &api.JobStatusResult{}, nil }
+	r.f.JobStatusFn = func(context.Context, string, api.JobStatusParams) (*api.JobStatusResult, error) {
+		return &api.JobStatusResult{}, nil
+	}
 	v = r.mustCall(t, "job_list", `{}`)
 	if sh, ok := v["shells"].([]any); !ok || len(sh) != 0 {
 		t.Fatalf("%v", v)
@@ -639,7 +643,6 @@ func TestDevReadOutputPaging(t *testing.T) {
 		t.Fatalf("%v", v)
 	}
 }
-
 
 func TestDevUploadDownload(t *testing.T) {
 	proj := t.TempDir()
