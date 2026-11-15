@@ -6,7 +6,7 @@
 # Override with MIRAFLEET_CTR. MIRAFLEET_CTR and the *_IMAGE variables are trusted caller
 # environment (CTR is word-split and executed); never derive them from untrusted input.
 #
-# Usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|stage|snapshot|pkgtest|installtest|image|lab|npmtest|harnesscheck|clean
+# Usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|stage|snapshot|pkgtest|installtest|image|lab|npmtest|harnesscheck|m6check|clean
 set -eu
 
 # Pinned by tag and multi-arch index digest. GO_IMAGE must equal the one in dev.sh
@@ -210,8 +210,58 @@ npmtest)
 harnesscheck)
 	runscript harnesscheck.sh "$@"
 	;;
+m6check)
+	# docs/M6.md 2.14: every check in order, then `relgen check`; stops at the first failure,
+	# prints one summary line, and always cleans up (dist/ and labelled test resources).
+	# MIRAFLEET_M6CHECK_SKIP="cross licenses" skips named steps (for example when CI already ran the
+	# full gate); a skipped step is listed in the summary. The slow privileged `integration` run is
+	# not part of m6check (CI runs it).
+	steps="fmt vet build test cross licenses vuln lint-sh lint-actions snapshot relgen pkgtest installtest image lab npmtest harnesscheck"
+	skip=" ${MIRAFLEET_M6CHECK_SKIP:-} "
+	mkdir -p "$ROOT/dist/m6check"
+	ran=0
+	skipped=""
+	failed=""
+	for s in $steps; do
+		case "$skip" in *" $s "*)
+			skipped="$skipped $s"
+			continue
+			;;
+		esac
+		log="$ROOT/dist/m6check/$s.log"
+		mkdir -p "$ROOT/dist/m6check" # a step such as snapshot may clear dist/
+		echo "== $s"
+		rc=0
+		case "$s" in
+		fmt | vet | build | test | cross | licenses) "$ROOT/scripts/dev.sh" "$s" >"$log" 2>&1 || rc=$? ;;
+		relgen)
+			# the version every versioned file must agree on: server.json's own
+			v=$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$ROOT/server.json" | head -n 1)
+			if [ -n "$v" ]; then
+				"$ROOT/scripts/dev.sh" go run ./tools/relgen check "v$v" >"$log" 2>&1 || rc=$?
+			else
+				echo "no version in server.json" >"$log"
+				rc=1
+			fi
+			;;
+		*) sh "$0" "$s" >"$log" 2>&1 || rc=$? ;;
+		esac
+		if [ "$rc" -ne 0 ]; then
+			failed=$s
+			tail -n 25 "$log"
+			break
+		fi
+		ran=$((ran + 1))
+	done
+	sh "$0" clean >/dev/null 2>&1 || echo "m6check: clean failed (run scripts/release.sh clean)" >&2
+	if [ -n "$failed" ]; then
+		echo "m6check: FAIL at $failed ($ran steps passed)"
+		exit 1
+	fi
+	echo "m6check: OK ($ran steps passed${skipped:+; skipped:$skipped})"
+	;;
 *)
-	echo "usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|stage|snapshot|pkgtest|installtest|image|lab|npmtest|harnesscheck|clean" >&2
+	echo "usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|stage|snapshot|pkgtest|installtest|image|lab|npmtest|harnesscheck|m6check|clean" >&2
 	exit 2
 	;;
 esac
