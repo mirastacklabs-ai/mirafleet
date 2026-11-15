@@ -141,3 +141,26 @@ find the same workspace after `claude --resume` (row 2).
 6. `claude --resume`: same session id, new PIDs. The hook runs again and rewrites the file for the new PID.
 7. The server reads `cc:abc` again and central answers `reused: true`: same container, same files.
 8. After `/clear` the id is new, so the next open binds a new workspace. With no hook there is no file, and the server uses a random per-process session `p:...`.
+
+## host-session.svg
+Caption: follow one session from open (top) to close, reattach and cleanup (bottom); the
+directory outlives every step except the last.
+1. The agent calls `workspace_open`; the session id (`cc:abc`) comes from the hook, never a path.
+2. Central checks the one-operator-per-runner hold and that the runner has every requested credential.
+3. The runner creates `<root>/sessions/<slug>` (0700) and a session record in its state directory.
+4. It starts the session's ssh-agent socket (0600) and HTTPS broker, and sets the tool environment.
+5. Bash, background jobs and file tools run as the runner's own user; the cwd persists.
+6. `workspace_close` kills the process groups and closes the socket and broker; the directory stays.
+7. Opening the same session id again, or restarting the runner, re-adopts the directory and jobs.
+8. Only the daily sweep (30 d unused, warning 3 d before), `runner host prune`, `workspace.kill -delete` or `workspace_close {delete:true}` delete it.
+
+## credential-flow.svg
+Caption: the value moves left to right once (central to runner memory) and never reaches the agent.
+1. Dana runs `central credential set gl-token < file`; central seals the value with AES-256-GCM.
+2. She assigns it to a runner or a whole fleet; a runner gets the union of both.
+3. Central pushes the set with `creds_sync` over the runner's own SSH connection; the runner keeps it in memory only.
+4. At session open the runner starts a restricted ssh-agent and an HTTPS broker for that session.
+5. `git` over SSH: the agent signs. `git` over HTTPS: the broker adds the header on credential hosts only.
+6. Each use is logged on the runner and sent to central as aggregated `credential.use` events.
+7. Dana replaces the value, or central rotates an opted-in GitLab token itself.
+8. `creds_sync` again: the runner swaps the whole set atomically, so the new value is used at once.

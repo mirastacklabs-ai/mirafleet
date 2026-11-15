@@ -7,6 +7,7 @@ use them.
 
 ## What you will learn
 
+- The M7 packages (`hostx`, `fsops`, `sshagent`, `broker`, `secrets`) and a bash call followed end to end (sections 8.11 and 8.12).
 - Where every directory and file group lives, and what it is for.
 - Which package imports which, and why the arrows only point one way.
 - The key types and functions of each package, and the traps ("gotchas") that bit us before.
@@ -1280,6 +1281,286 @@ What to look at first when debugging: `mirafleet mcp context list` and the `wher
 (step 5), the stderr of `mirafleet mcp` (Claude Code's `/mcp` panel or `--debug`; step 8 errors),
 then central's audit log (steps 9 onwards). [Chapter 10](10-operations.md#10108-troubleshooting-the-orchestrator)
 has the symptom table.
+
+## 8.11 Developer workspaces (M7): the new packages
+
+M7 adds a second kind of workspace. Instead of a container, the **host** executor runs tool calls
+directly on the runner's VM as the runner's own unprivileged user, and central stores credentials
+for it. Read [chapter 7, section 7.14](07-protocols.md#714-developer-workspaces-m7-tools-jobs-credentials)
+for the wire view first. The new code sits next to `ctrd` and `osb` and implements the same
+`workspace.Executor` interface, so sessions, placement, ownership, audit and the reaper are the
+M3 code, unchanged.
+
+![Host mode: open, session directory, close, reattach, cleanup](diagrams/host-session.svg)
+
+*Caption: follow one session from open (top row) to cleanup (bottom row); the directory outlives
+every step except the last.*
+
+1. The agent calls `workspace_open`; the session id (`cc:abc`) comes from the hook, never a path.
+2. Central refuses a runner another operator holds, and a runner lacking a requested credential.
+3. The runner creates `<root>/sessions/<slug>` (0700) and a session record in its state directory.
+4. It starts the session's ssh-agent socket (0600) and HTTPS broker and sets the tool environment.
+5. Bash, background jobs and file tools run as the runner's own user; the cwd persists.
+6. `workspace_close` kills the process groups and closes the socket and broker; the directory stays.
+7. Opening the same session id again, or restarting the runner, re-adopts the directory and jobs.
+8. Only the sweep, `runner host prune`, `workspace.kill -delete` or `workspace_close {delete:true}` delete it.
+
+### Where each piece lives
+
+```text
+internal/secrets                 central only: AES-256-GCM seal/open, key from env, key check, rekey
+internal/service/credentials.go  central: set/list/assign/delete/rotate, delivery, placement filter
+internal/service/{fsdispatch,jobs}.go   central: workspace.fs / job_* / output_read dispatch
+internal/runner/creds.go         runner: the in-memory credential holder (atomic swap)
+internal/runner/hostops.go       runner: per-session wiring (agent socket, broker, env, ssh_config)
+internal/runner/events.go        runner: aggregated credential.use events to central
+internal/workspace/hostx         runner: the host executor (Linux only; doc_other.go elsewhere)
+internal/workspace/fsops         pure Go file tools (no OS-specific code)
+internal/workspace/sshagent      restricted ssh-agent
+internal/workspace/broker        HTTPS credential broker (local TLS-terminating proxy)
+cmd/mirafleet/host_shim_linux.go the job supervisor: `mirafleet host-shim job`
+packaging/systemd/               the two unit files
+```
+
+**Why `service` does not import `secrets`:** `internal/service` talks to a small `KeyRing`
+interface (`Seal`, `Open`, `Check`, `VerifyCheck`). `cmd/mirafleet/central_secrets_linux.go`
+adapts the real key to it. The `deps_test` in `cmd/mirafleet` then proves the orchestrator
+binaries (macOS, Windows) never link `hostx`, `secrets`, `broker` or `sshagent`: the laptop
+build cannot even contain the code that handles secrets.
+
+### `internal/secrets`: sealing values at rest
+
+`Seal(key, plaintext, aad)` produces `version | key id | nonce | ciphertext+tag`. The nonce is 12
+random bytes per value (never reused under one key). The *additional authenticated data* (AAD) is
+the credential id plus its version: a sealed value copied onto another row, or an old version
+replayed, fails to open. A `Key` prints as `secrets.Key{redacted}` even with `%#v`, so a stray log
+line cannot leak it. Central stores only a **key check** value (an HMAC of a constant under the
+key) so that at start-up it can say "wrong key" instead of failing on the first credential.
+`Rekey` opens with the old key and seals with the new one; `central secrets rekey` does all rows in
+one SQLite transaction.
+
+### `internal/workspace/hostx`: the host executor
+
+| File | What it does |
+|---|---|
+| `harden_linux.go` | `Harden`: `prctl(PR_SET_DUMPABLE, 0)` first (so a same-user process cannot read the runner's memory through `ptrace` or `/proc/<pid>/mem`), `RLIMIT_CORE 0`, refuse uid 0, refuse any effective capability, refuse a state dir that is not private to the user. Runs before any secret is loaded. |
+| `xdg.go` | `Paths`: config, state and data directories from the XDG variables, with `~/.config`, `~/.local/state`, `~/.local/share` as defaults. A relative XDG value is ignored (as the XDG spec says). |
+| `sessions.go` | `Manager`: the session directories. `OpenFor(sessionID, workspaceID, workdir)` creates or reattaches; metadata is a JSON file per session in the state dir; `Slug` turns the session id into a safe directory name. Close keeps the directory; `Delete` removes it. |
+| `sweep.go` | `Sweep` (daily): delete session directories unused for `delete_after`; `Prune`: the same on demand (`runner host prune`). Never touches a shared `workdir`, never a busy session. |
+| `exec_linux.go` | `Engine`: foreground `Bash`, the clean child environment (`childEnv`), cwd persistence, per-exec output files, process-group kill. |
+| `job_linux.go`, `shim_linux.go` | Background jobs: `Engine` starts `mirafleet host-shim job`, which supervises the command in its own process group and writes `status.json`, `stdout` and `stderr` under `jobs/<id>/`; after a runner restart `Adopt` re-reads them. |
+| `files.go` | `Files`: the file tools for one directory: wraps `fsops`, optionally delegates `grep` to `rg`. |
+| `executor_linux.go` | `Executor`: implements `workspace.Executor` plus the extra interfaces in `internal/runner/hostops.go` (`BashExecutor`, `FSExecutor`, `JobExecutor`, `SessionHooks`, `DestroyDeleter`). |
+
+Two design rules are worth understanding:
+
+- **Children are not the runner.** `execve` resets the dumpable flag, so a command the agent runs is
+  an ordinary process of the same user that can `ptrace` its siblings, as on any laptop. The
+  runner is the one non-dumpable process, and it is where the secrets are. The child's environment
+  is built from nothing (`childEnv`): only `HOME USER LOGNAME PATH LANG`, the names in
+  `env_allow`, and the tool variables the runner sets for that session (`SSH_AUTH_SOCK`,
+  `GIT_SSH_COMMAND`, the proxy and CA variables). Only fds 0 to 2 (plus fd 3 for the cwd report)
+  reach a child.
+- **Close never deletes.** A developer expects `git status` to be the same tomorrow. Deleting is
+  explicit (`delete: true`, `prune`, or the 30-day sweep).
+
+The file tools are rooted at the session directory (or the `workdir`) through `os.Root`
+(`fsops.Open`), so `..` and symlinks that leave the directory are refused by the kernel-checked
+resolver, not by string tests. Bash is not confined: it can reach whatever the user can.
+<!-- verify: docs/M7.md §3.7 says file tools reach everything the user can see (absolute paths); the code roots them at the session dir via os.Root. Confirm which is the decided behaviour -->
+
+### `internal/workspace/fsops`: the file tools as a pure library
+
+No goroutines of its own, no network, no OS-specific code except one `O_NONBLOCK` open flag
+(`open_unix.go`, `open_other.go`). It implements `Read`, `Write`, `Edit`, `MultiEdit`,
+`NotebookEdit`, `LS`, `Stat`, `Glob` and `Grep` with Claude Code's semantics and error messages
+(`edit.go`, `read.go`, `notebook.go`, `grep*.go`, `glob.go`, `gitignore.go`). Notable choices:
+
+- **Not a regular file means refused.** A FIFO or device planted in the repo would hang a
+  blocking `open`; `fsops` opens non-blocking and checks the file type before and after.
+- **Atomic writes**: write a temp file, then rename, keeping the mode.
+- **`Edit` needs a unique match** unless `replace_all`, because an ambiguous edit is the classic way
+  a model changes the wrong line. `MultiEdit` applies in order and is all-or-nothing.
+- **Binary detection**: a NUL byte or more than 5% control bytes in the first 8 KiB; Latin-1 text
+  is still text. `Glob` includes hidden files but never enters `.git`, and honours `.gitignore`,
+  `.ignore` and `.rgignore`.
+- **Tests**: golden fixtures under `testdata/` and fuzz tests (`fuzz_test.go`), so the
+  rg-compatible behaviour is pinned.
+
+### `internal/workspace/sshagent`: a signing oracle with rules
+
+An SSH agent is a small server that holds private keys and signs challenges, so the key never
+leaves it. This one (`agent.go`, `userauth.go`, `serve.go`) answers only `List` and `Sign`, signs
+only an SSH *user authentication* request for the credential's user (it parses the signed blob
+itself, `userauth.go`; the parser has a fuzz test), and with **host binding** on (the default) it
+requires the client's `session-bind@openssh.com` message and signs only if the server host key is
+in the credential's pinned `known_hosts`. Add, remove, lock and export are refused. It listens on
+`<session state dir>/agent.sock` (0600 in a 0700 directory) and checks the peer's uid with
+`SO_PEERCRED` (`peercred_linux.go`; on other systems it refuses everyone). Without host binding a
+tricked client could ask the agent to sign for an attacker's server. OpenSSH older than 8.9 does
+not send the bind message; set `host_binding off` for that credential and accept the weaker rule.
+
+### `internal/workspace/broker`: the HTTPS side
+
+The broker is a local forward proxy on `127.0.0.1`. For each session the runner starts one and
+gives the session's tools `HTTPS_PROXY` with a per-session proxy password (other users on the VM
+share loopback; the password keeps them off this broker). For a host with no credential the broker
+just tunnels (`CONNECT`). For a **credential host** it terminates TLS with a certificate from a
+per-session CA (`ca.go`: ECDSA P-256, key in memory only, **NameConstraints** limited to that
+session's credential hosts, so even a stolen CA key could not mint a certificate for any other
+site), checks that the SNI matches the `CONNECT` host, connects upstream with real verification
+(system roots plus the optional corporate CA), replaces the client's auth header with the injected
+one (`cred.go`: `basic`, `bearer`, `header`) and never follows redirects. For a registry
+credential (`registry.go`) it answers the `401 Bearer` challenge itself: it fetches a token from the
+realm with the stored user and password, caches it per scope, and retries, so `docker pull`-style
+clients never see a JWT. The CA certificate is appended to the VM's bundle at `<state>/ca.pem` and
+announced to common tools through `SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `CURL_CA_BUNDLE`,
+`REQUESTS_CA_BUNDLE`, `PIP_CERT`, `NODE_EXTRA_CA_CERTS` and `JAVA_TOOL_OPTIONS`.
+The `Credential` type prints as `credential(name)` under every formatter, so a log line cannot
+leak the secret.
+
+### The runner side of credentials
+
+`internal/runner/creds.go` holds the set delivered by `creds_sync` (an atomic replace, so an
+unassigned credential stops working at once and a rotated one is used on the next request).
+`hostops.go` (`devMgr`) wires each session: it starts the agent and the broker, writes the
+`ssh_config` (pinned `known_hosts`, `IdentitiesOnly`, `IdentityAgent`), sets
+`GIT_SSH_COMMAND="ssh -F <state>/ssh_config"`, and on close tears them down but keeps the files.
+`events.go` aggregates `credential.use` records into 60-second windows for central.
+
+![Credential flow: assign, sync, use, rotate](diagrams/credential-flow.svg)
+
+*Caption: the value moves left to right once, from central to runner memory, and never reaches the
+agent.*
+
+1. Dana runs `central credential set gl-token < file`; central seals the value (AES-256-GCM).
+2. She assigns it to a runner or a whole fleet; a runner gets the union of both.
+3. Central pushes the set with `creds_sync` over the runner's own SSH connection; the runner keeps it in memory only.
+4. At session open the runner starts a restricted ssh-agent and an HTTPS broker for that session.
+5. `git` over SSH: the agent signs. Over HTTPS: the broker adds the header on credential hosts only.
+6. Each use is logged on the runner and sent to central as aggregated `credential.use` events.
+7. Dana replaces the value, or central rotates an opted-in GitLab token itself.
+8. `creds_sync` again: the runner swaps the set atomically and the new value is used at once.
+
+### MCP and the orchestrator side
+
+- `internal/mcpserver/tools_fs.go` and `tools_bash.go`: the fifteen M7 tools (schemas, hints,
+  handlers). `server.go`'s `neutralize` is applied to every result and error.
+- `internal/orch/devws.go`: typed calls (`WorkspaceFS`, `JobStart`, `JobTail`, `OutputRead`, ...).
+  `internal/orch/transfer.go`: `upload`/`download` confinement with `os.OpenRoot`.
+- `internal/opconf/project.go`: `.mirafleet.yaml` gains `remote` and `workdir`.
+- `integrations/claude-code`: the skill text and the `PreToolUse` deny hook for remote projects.
+
+### Honest limits (also in the threat model)
+
+The runner's own enrolment key must stay on disk so the runner can reconnect, and the agent runs
+as the same user, so a determined agent could read that key, connect to central as this runner
+and receive its assigned secrets. M7 accepts this gap (a better answer needs a second user or a
+hardware key, which is enterprise scope) and records a `runner.replaced` audit row when a newer
+connection takes over, which the GUI flags. Root on the VM can read anything. See
+[chapter 5](05-security.md).
+<!-- verify: runner.replaced audit row and GUI flag are described in M7.md §3.2; confirm the exact audit action name when S11 handlers land -->
+
+## 8.12 Follow one `bash` call (M7)
+
+A foreground `bash` call from the model to the VM and back, then the follow-up that pages its
+output. It repeats the shape of [8.10](#810-follow-one-exec-tool-call) and
+[8.9](#89-follow-one-workspaceexec); only the differences are spelled out.
+
+```mermaid
+sequenceDiagram
+    participant H as Harness (Claude Code)
+    participant M as mcpserver (tools_bash.go)
+    participant O as orch
+    participant C as central (service)
+    participant R as runner (runBash)
+    participant X as hostx.Engine
+    H->>M: tools/call bash {command: "go build ./..."}
+    M->>M: DecodeArgs, timeout 120, argv = [bash, -lc, command]
+    M->>O: WorkspaceExec(ctx, params)
+    O->>C: api@ workspace.exec (argv, timeout_s)
+    C->>C: ownership, state, confirm, start audit row
+    C->>R: workspace@ op exec
+    R->>R: argv is [bash -lc X], no stdin/env/cwd: BashExecutor
+    R->>X: Executor.Bash(id, X, timeout, requestID)
+    X->>X: childEnv, open out/Ref, run, read cwd from fd 3
+    X-->>R: WorkspaceExec{exit, stdout, stderr, Ref, byte counts, Omitted, Cwd}
+    R-->>C: result frame
+    C->>C: outcome audit row (same request_id)
+    C-->>O: WorkspaceExecResult
+    O-->>M: result
+    M->>M: scrub tags, CapOutput 30 KiB, note with ref
+    M-->>H: structuredContent + text (neutralised)
+    H->>M: tools/call read_output {ref, tail_lines: 50}
+    M->>C: workspace.output_read {ref, tail_lines}
+    C->>R: workspace@ op output_read
+    R->>X: OutputRead -> reads out/Ref from disk
+    X-->>H: page: content, next_offset, eof (via the same path back)
+```
+
+### In detail
+
+1. **`mcpserver.(*wsState).bash`** (`internal/mcpserver/tools_bash.go`) decodes the arguments
+   strictly (`DecodeArgs`), checks `timeout_s` (0 to 600; 0 means 120) and builds the argv
+   `["bash","-lc",command]`. With `run_in_background` it takes the other branch,
+   `bashBackground`, which sends `workspace.job_start` instead. It then calls `s.pick` to find
+   this session's workspace (opening one on an unguarded default fleet if there is none) and
+   `s.b.WorkspaceExec`. `confirm` is passed through verbatim.
+2. **`orch` and `central`** are exactly the `workspace.exec` path of 8.9: `service.ExecWorkspace`
+   validates, writes the *start* audit row first, and opens a `workspace@` channel to the runner.
+   There is no new method for foreground `bash`: that is deliberate, because it means ownership,
+   guarded `confirm` and audit are the code that M3 already tested.
+3. **The runner recognises the shape.** `Runner.runExec` (`internal/runner/workspace.go`) checks
+   that the executor implements `BashExecutor`, that there is no stdin, no env and the default
+   cwd, and that argv is `bash -lc X`. Then `runBash` calls `Executor.Bash`. Any other `exec` goes
+   the old way. A container fleet's executor does not implement `BashExecutor`, so it is
+   untouched.
+4. **`hostx.Engine.Bash`** (`exec_linux.go`):
+   - refuses an empty command or one containing a NUL byte;
+   - `prepare`: ensures `out/` and `jobs/` exist in the session state dir (0700);
+   - `childEnv`: builds the clean environment (see 8.11);
+   - `openSink`: creates `out/<Ref>`, the file that will hold the **full** output;
+   - starts `bash -lc 'trap "pwd >&3" EXIT; eval "$1"' bash <command>` with `Setsid: true` (its own
+     process group) and a pipe as fd 3. After the command exits, the final `pwd` is read from the
+     pipe and stored in the session's `cwd` file. That is how "the directory persists between
+     calls" works without keeping a shell alive;
+   - on timeout (default 120 s, at most 10 min) or when central cancels, it kills the whole process
+     group with `SIGKILL` (`cmd.Cancel`), so no stray child survives;
+   - both streams go through two writers: one into the file (up to 64 MiB), one into a `Capture`
+     that keeps the head and tail of about 32 KiB. The result carries `StdoutBytes`, `StderrBytes`
+     (true totals), `Omitted` (bytes not inline) and `Ref`;
+   - `pruneOutputs` keeps the 32 newest output files.
+5. **The way back.** The runner puts the result in the transport result frame. Central writes
+   the *outcome* audit row (it records exit code, sizes and `ref`, never the output) and replies.
+   `orch` returns the DTO; `mcpserver.bash` runs `scrub` (removes harness control tags from each
+   stream, then caps), applies `orch.CapOutput` (30 KiB, one third head, two thirds tail), sets
+   `truncated`, `omitted_bytes` and a `note` that names the `ref` and how to page it. Finally
+   `neutralize` runs over the JSON.
+6. **Paging.** `read_output {ref}` becomes `workspace.output_read`, the transport op
+   `output_read`, and `Executor.OutputRead`, which opens `out/<ref>` (the ref is validated as a
+   plain name, so it cannot point elsewhere), seeks to `offset`, applies `tail_lines` or `grep`, and
+   returns at most `limit` bytes with `next_offset`.
+
+What can go wrong, and what you see: a `timeout_s` of 700 is a `bad_request` before anything is
+sent; a command that runs 5 minutes comes back `timed_out: true` with the note to use
+`run_in_background`; a guarded fleet without `confirm` gets the "ask the user" rewrite of chapter 7;
+a runner that restarts mid-command loses the command (foreground commands do not survive a runner
+restart; background jobs do, because `KillMode=process` leaves their supervisors running).
+
+### Check your understanding (M7)
+
+1. Why does `runExec` check for the exact argv `bash -lc X` instead of a new method?
+2. How does the cwd persist when every `bash` call is a fresh shell?
+3. Why does the broker's CA carry NameConstraints?
+
+<details>
+<summary>Answers</summary>
+
+1. Foreground bash then reuses the tested ownership, confirm and audit path of `workspace.exec`.
+2. The wrapper runs `pwd >&3` on exit; the engine stores it in the session's `cwd` file and starts the next call there.
+3. So a stolen session CA key still could not mint a certificate for any host other than the credential hosts.
+
+</details>
 
 ## Check your understanding
 

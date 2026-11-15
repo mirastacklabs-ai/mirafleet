@@ -6,6 +6,7 @@ to write `actions.yaml`, and a table of error messages with fixes.
 
 ## What you will learn
 
+- The M7 set-up: a host-mode runner VM, credentials, the secrets key, rotation, the corporate CA, cleanup and a troubleshooting table (section 10.11).
 - How to install and run central, a runner and an operator, step by step, with the output you
   should see.
 - Every `mirafleet` command and flag, and which machine each one runs on.
@@ -1518,6 +1519,367 @@ are written below as `code: message`; on the wire they are `{"error":{"code":"..
 - Guarded fleets are *not* anyone's default (`.mirafleet.yaml` or `default_fleet`).
 - You know which hooks you have (Claude Code plugin) and what you give up without them.
 - You can find your workspaces (`workspace_list`) and the audit trail (`central audit` on central).
+
+## 10.11 Developer workspaces on a VM (M7): host mode and credentials
+
+This is the operator's manual for the M7 feature: a **host-mode runner** on a plain Linux VM, with
+**credentials** (an SSH deploy key, a GitLab token, a registry login) stored on central. The
+developer's Claude Code runs on a Mac; every tool call and every repository file lives on the VM;
+the secrets live on central and in the runner's memory, never in front of the agent. Design:
+[docs/M7.md](../M7.md). Terms: [glossary](glossary.md).
+
+### 10.11.1 What you are setting up
+
+![Host mode: open, session directory, close, reattach, cleanup](diagrams/host-session.svg)
+
+*Caption: one session from open to cleanup; the directory outlives every step except the last.*
+(The numbered list for this picture is in [8.11](08-code-tour.md#811-developer-workspaces-m7-the-new-packages).)
+
+Facts to hold on to before you start:
+
+- **One runner is one operating-system user on one VM.** `mirafleet runner` runs as an ordinary
+  user (say `dev`), never root, and the agent's commands run as that same user. What the agent can
+  touch is exactly what `dev` can touch, like Claude Code on a laptop. The **VM is the boundary**:
+  use a VM that holds nothing you would mind the agent reading.
+- **More runners** means another VM or another user on the same VM (`qa`), enrolled separately and
+  isolated by ordinary Unix permissions (home directories 0700).
+- **A runner serves one operator at a time.** While `alice` has an open workspace on `vm1-dev`,
+  `bob`'s `workspace_open` there is refused (`runner busy, in use by alice`) and placement picks
+  another runner. Any registered operator may use any runner otherwise.
+- **Containers are not involved.** There is no containerd and no root. M3's container mode is
+  unchanged and still available on other fleets.
+- **Network control is the VM's firewall.** Host mode has no egress allow-list of its own.
+
+![Credential flow: assign, sync, use, rotate](diagrams/credential-flow.svg)
+
+*Caption: a credential's value moves once, from central to the runner's memory.*
+(Numbered list in [8.11](08-code-tour.md#811-developer-workspaces-m7-the-new-packages).)
+
+### 10.11.2 Step by step
+
+Names follow the running example: central `central.example.com:2222`, fleet `dev`, VM `vm1`, runner
+`vm1-dev`, runner user `dev`, admin Dana, operator `alice`. Steps marked **root** need root on that
+machine; the runner itself never does.
+
+**1. Central: create the secrets key (once).** Central encrypts credentials with a 32-byte key
+that it reads from the environment variable `MIRAFLEET_SECRETS_KEY`.
+
+```bash
+# on the central host, as root
+umask 077
+mirafleet central keygen > /etc/mirafleet/central.env     # one line: MIRAFLEET_SECRETS_KEY=...
+chmod 600 /etc/mirafleet/central.env
+```
+
+Load that file into central's environment (for a systemd unit: `EnvironmentFile=/etc/mirafleet/central.env`)
+and restart central. **Back the key up somewhere other than the central host.** If the key is lost,
+every stored credential is lost (central refuses to start without the right key once credentials
+exist, so a lost key never silently corrupts anything). The key is shown once, by `keygen`, on
+standard output; the warning goes to standard error so `>` does not capture it.
+<!-- verify: M6 changes /etc/mirafleet/central.env to 0600 root and ships the central unit with EnvironmentFile=; until then wire it into your own unit -->
+
+**2. Central: create a host-mode fleet and a join token.**
+
+```bash
+mirafleet central fleet create dev -mode workspace -executor host
+TOKEN=$(mirafleet central token create -fleet dev)
+```
+
+A host fleet takes no `-image`, `-cpus`, `-memory`, `-pids`, `-tmpfs` or `-disk`: the VM is the
+boundary and `workspace.yaml` rejects limits for the host executor. A guarded host fleet is
+allowed; guarding means only the typed fleet-name `confirm` ([chapter 5](05-security.md#537-guarded-fleets-confirm-must-equal-the-fleet-name)).
+
+**3. The VM: one user, once (root).**
+
+```bash
+useradd -m dev && chmod 700 /home/dev        # the runner's own user
+loginctl enable-linger dev                   # so its user services start at boot and survive logout
+install -m 0755 mirafleet /usr/bin/mirafleet
+```
+
+Why `chmod 700`: a home directory that other users can list lets them read the runner's
+enrolment key and the session directories.
+
+**4. The VM: join as `dev`.** The token is read from stdin, never from the command line.
+
+```bash
+sudo -iu dev
+printf '%s\n' "$TOKEN" | mirafleet runner join central.example.com:2222 -name vm1-dev -token -
+```
+
+With no `-data`, a non-root runner keeps its key and config under `$XDG_CONFIG_HOME/mirafleet`
+(`~/.config/mirafleet`), created 0700. Root keeps the system default `/var/lib/mirafleet/runner`
+(and will refuse to run host mode anyway).
+
+**5. The VM: `workspace.yaml`.**
+
+```yaml
+# ~dev/.config/mirafleet/workspace.yaml
+executor: host
+concurrent: 8
+host:
+  root: /home/dev/work         # session directories live in <root>/sessions/<slug>
+  cleanup: {delete_after: 720h}
+  job_max: 12h
+  corporate_ca_file: /etc/ssl/corp/acme-root.pem   # only if your GitLab uses a private CA
+env_allow: [LANG, LC_ALL, TERM, CI, GOFLAGS, NODE_ENV]
+```
+
+**6. The VM: run the runner as a service.** Two supported ways; the user unit is the first choice
+because it needs no root after `enable-linger`.
+
+*A. systemd user unit* (as `dev`; the unit ships in `packaging/systemd/user/mirafleet-runner.service`):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp mirafleet-runner.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now mirafleet-runner
+```
+
+*B. system unit with `User=` (root; `packaging/systemd/mirafleet-runner@.service`):*
+
+```bash
+cp mirafleet-runner@.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now mirafleet-runner@dev       # %i = dev
+```
+
+Both run `mirafleet runner run -workspace <home>/.config/mirafleet/workspace.yaml` with
+`Restart=on-failure` and **`KillMode=process`**. That last line matters: with the default
+`KillMode=control-group`, stopping or restarting the runner would kill every background build the
+agent started. With `process`, systemd stops only the runner and the job supervisors survive; the
+restarted runner re-adopts them.
+
+**7. Central: approve the runner.**
+
+```bash
+mirafleet central runner approve dev/vm1-dev
+mirafleet central runner list
+```
+
+**8. Central: store and assign credentials** (section 10.11.4 for what to create in GitLab).
+
+```bash
+mirafleet central credential set gl-deploy -kind ssh-key -hosts gitlab.example.com \
+  -known-hosts ./gitlab.known_hosts < ./deploy_key
+mirafleet central credential set gl-token  -kind https-token -hosts gitlab.example.com \
+  -user oauth2 -auth basic -expires 2027-06-30 < ./token.txt
+mirafleet central credential assign gl-deploy -runner dev/vm1-dev
+mirafleet central credential assign gl-token  -fleet dev
+mirafleet central credential list
+```
+
+The secret is **always read from standard input**, never a flag (a flag would land in shell
+history and `ps`). `list` shows name, kind, hosts, a fingerprint, the expiry, the assignments and
+the delivery status per runner. It never shows a value. There is no command that does.
+
+**9. The developer's Mac.** The project's `.mirafleet.yaml`:
+
+```yaml
+fleet: dev
+remote: true          # the plugin steers Claude to the remote tools
+workdir: app          # optional: share one directory between sessions
+```
+
+`workdir` is a **name** (`^[a-z0-9][a-z0-9._-]{0,62}$`), never a path; central refuses it on a
+non-host fleet. It resolves to `<root>/work/app` (0700, symlinks refused), so two Claude sessions
+can work in the same checkout. Without it each session gets its own directory
+`<root>/sessions/<slug>`. Then in Claude Code the model runs `git clone git@gitlab.example.com:acme/app.git`
+with a **plain URL**: the credential is injected, so the model must never put a token in a URL.
+
+**10. A second runner.** For a second user on the same VM: `useradd -m qa && chmod 700 /home/qa`,
+then as `qa` repeat steps 4 to 6 (`runner join ... -name vm1-qa`, its own `workspace.yaml`,
+`mirafleet-runner@qa` or its own user unit) and step 7 and 8 on central. Central sees two runners
+and each is assigned credentials separately.
+
+### 10.11.3 `workspace.yaml` for host mode
+
+| Key | Meaning | Default |
+|---|---|---|
+| `executor` | `host` | (required) |
+| `concurrent` | most live workspaces on this runner | required, 1 to the maximum |
+| `host.root` | directory holding `sessions/<slug>` and `work/<name>` (0700). `~` is expanded. | `$XDG_DATA_HOME/mirafleet/work` |
+| `host.cleanup.delete_after` | delete session directories unused this long (daily sweep). `0` = never. | 720 h (30 days) |
+| `host.job_max` | longest a background shell may run; at most 24 h | 12 h |
+| `host.corporate_ca_file` | absolute path of a PEM bundle the broker trusts, in addition to the system roots, for upstream TLS to credential hosts | none |
+| `env_allow` | runner-environment names passed to commands, in addition to `HOME USER LOGNAME PATH LANG` | none |
+| `limits.max_file`, `limits.exec_max` | file size and one-exec cap | 64 MiB, default exec max |
+| `network` | `none`/`egress` as before (central's egress list is not enforced by host mode) | both |
+
+Refused with the host executor: `images`, `limits.cpus/memory/pids/tmpfs/disk`, and the
+`containerd` and `opensandbox` blocks. The file is read at runner start; restart the runner after
+an edit.
+<!-- verify: `network` is accepted but not enforced in host mode (M7.md: "use the VM's firewall"); confirm what `egress` does on a host fleet -->
+
+Where things live for the user `dev` (all 0700):
+
+| What | Path |
+|---|---|
+| runner key, `workspace.yaml` | `~/.config/mirafleet/` |
+| session records, per-session runtime dir (`agent.sock`, `ca.pem`, `ssh_config`, `out/`, `jobs/`, `cwd`) | `~/.local/state/mirafleet/` |
+| session directories | `<host.root>/sessions/<slug>`, shared `<host.root>/work/<name>` |
+| runner audit log, credential-use log (JSONL, no values) | the runner's data directory |
+
+`HOME` for the agent's commands is the user's real home, so tool caches (`~/.m2`,
+`~/.cache/go-build`) are shared across sessions, as on a laptop.
+<!-- verify: location of the runner-local audit and credential-use JSONL under XDG -->
+
+### 10.11.4 Creating the credentials in GitLab
+
+Give each credential the **least** power its job needs, because a credential's limits are the limits
+GitLab gives it; mirafleet adds no path or branch rules.
+
+- **SSH deploy key**: create a key pair (`ssh-keygen -t ed25519 -f deploy_key -N ''`), add the
+  *public* key to the project as a deploy key with write access, and give central the *private*
+  key. Pin the server: `ssh-keyscan -t ed25519 gitlab.example.com > gitlab.known_hosts` and check the
+  fingerprint against what your GitLab admin publishes; `-known-hosts` is what stops the agent
+  being talked into signing for a look-alike server. Prefer one deploy key per project.
+- **Project access token**: scope `write_repository` (and `read_repository` implied), role
+  Developer, short expiry. Use `-auth basic -user oauth2`, or `-auth header -header PRIVATE-TOKEN`
+  for API calls.
+- **Registry token**: a deploy token or access token with `read_registry`/`write_registry`; kind
+  `registry`, with the user name. The broker does the Docker-registry bearer exchange itself.
+- **`-host-binding off`** only for OpenSSH older than 8.9 on the VM; it removes the "sign only for a
+  pinned server" check, so use it for that credential only.
+
+### 10.11.5 Rotation, expiry and the key
+
+- **Replace a value**: run `credential set` again with the same name. The version goes up, central
+  pushes the new set to every assigned runner at once, and the next request uses it. No restart.
+- **Remove access**: `credential unassign` stops it working on that runner at once;
+  `credential delete` removes it everywhere.
+- **Expiry warnings** start 14 days ahead: status `expiring` in the GUI, the runner list, the
+  heartbeat and in tool results that name the credential. `expired` stops being useful on its own
+  schedule (GitLab will refuse it).
+- **Automatic GitLab rotation (opt in)**: `-rotate gitlab_self -rotate-project acme/app -expires
+  DATE` on an `https-token`. When fewer than 7 days remain, **central** calls GitLab's
+  `POST /projects/:id/access_tokens/self/rotate` (the token needs the `self_rotate` scope), stores
+  the new value in the same transaction as its audit row, and pushes it. That needs central to reach
+  GitLab over HTTPS. If central cannot, rotation is manual; a failed attempt is audited, shows as
+  `rotate_error` in the GUI, and the old token keeps working until it expires.
+  `mirafleet central credential rotate NAME` (or the GUI "Rotate now" button) does it on demand.
+- **Change the secrets key** (`central secrets rekey`): stop nothing; with the **old** key in the
+  environment, pipe the **new** key line on standard input.
+
+  ```bash
+  mirafleet central keygen > /tmp/newkey.env            # keep this file private
+  MIRAFLEET_SECRETS_KEY=<old key> mirafleet central secrets rekey < /tmp/newkey.env
+  # then put the new line in /etc/mirafleet/central.env, restart central, delete /tmp/newkey.env
+  ```
+
+  All credentials are re-encrypted in one transaction; a failure leaves the old key valid. Back up
+  the new key first.
+  <!-- verify: whether central must be stopped during rekey; the CLI opens the DB directly (-data) -->
+- **Central cannot start** ("wrong key" or "key not set"): the environment variable is missing or
+  does not match the stored key check. Fix the file; do not delete credentials to get past it.
+
+### 10.11.6 The corporate CA
+
+If your GitLab certificate is signed by a private CA, three places need to know it:
+
+1. **The VM's system trust store** (`update-ca-certificates` on Debian/Ubuntu). The broker builds the
+   bundle that tools use from the VM's bundle plus the session CA, so a CA the VM trusts is trusted
+   by `git`, `curl`, `pip` and `node` without more work.
+2. **`host.corporate_ca_file`** in `workspace.yaml`: the broker's own upstream connection to
+   GitLab is verified against the system roots *plus* this file.
+3. **Central** (only for automatic rotation): `MIRAFLEET_CORPORATE_CA_FILE=/etc/mirafleet/corp-ca.pem`
+   in central's environment.
+
+Java does not read the system bundle: build a truststore with `keytool` once (the plugin's skill
+carries the recipe) and use `JAVA_TOOL_OPTIONS`.
+
+### 10.11.7 Cleanup and disk
+
+`workspace_close` and the idle reaper **never delete files**. Directories are deleted by:
+
+- the daily sweep, after `delete_after` (default 30 days) unused. Tool results warn 3 days before;
+- `mirafleet runner host prune [-older-than D] [-yes] [-root host.root]` as the runner user. Without
+  `-yes` it only lists what it would delete. Directories in use are skipped; shared `work/<name>`
+  directories are never touched;
+- `workspace_close {delete: true}` (the owner), or on central `mirafleet central workspace kill ID
+  -delete` (admin).
+
+One practical consequence: if `bob` uses the runner after `alice`, `alice`'s directories are still
+there and readable by the same Unix user. Prune between operators if that matters to you.
+<!-- verify: the API method workspace.kill has `delete`, but the CLI `central workspace kill` has no -delete flag yet; check admin_workspace.go before release -->
+<!-- verify: `central fleet create -mode workspace -executor host` with no image flag (step 2); try it once on a real build -->
+<!-- verify: the `runner.replaced` audit row and the GUI flag (10.11.8) are decided in M7.md 3.2; confirm the action name when S11 lands -->
+
+
+### 10.11.8 Day-2
+
+- **Restart the runner** (`systemctl --user restart mirafleet-runner`): foreground commands in
+  flight end; background jobs and open sessions are re-adopted from their records. If a job's
+  process is gone (VM reboot), it is reported `lost`.
+- **See what the runner holds**: the GUI **Credentials** page (`/credentials`) and the runner
+  detail page show names, kinds, hosts and per-runner delivery status. Values are write-only: no
+  page, API or CLI shows one, and the GUI has no file upload (use the CLI to load from a file).
+- **Audit**: `central audit` shows `credential.*` admin rows (without values), workspace rows, and
+  aggregated `credential.use` rows with source `runner` (per session, credential, host and status
+  in 60-second windows). `events.dropped` means a runner produced more than central accepts.
+- **A replaced connection**: if a second process connects as the same runner, central writes a
+  `runner.replaced` audit row and the GUI flags the runner. See "known gap" below.
+- **Back up** the central data directory *and* the key, separately.
+
+### 10.11.9 Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Runner exits at start: "refusing to run as root" or "capabilities" | started as root or with ambient capabilities | run as the ordinary user (`User=` or a user unit); no `AmbientCapabilities=` |
+| Runner exits: state dir not private | `~/.local/state/mirafleet` or `$HOME` is group/world-writable | `chmod 700` the directory; fix the home permissions |
+| `workspace_open`: `runner busy, in use by alice` | another operator has live workspaces there | wait for her to close or be reaped, or use another runner; an admin can `workspace kill` |
+| `workspace_open`: no runner holds credential `gl-token` | not assigned to a runner of that fleet, or the runner has not synced yet | `credential assign`; check delivery status in `credential list`; the runner must be online |
+| `workspace_open` with `credentials` on a container fleet | credentials exist only on host fleets | use a host-mode fleet |
+| Background job stops when the runner restarts | unit has the default `KillMode` | `KillMode=process` in the unit (shipped units have it) |
+| Runner does not start after reboot (user unit) | linger is off | `loginctl enable-linger dev` (as root) |
+| `git clone` over SSH: `Host key verification failed` | server key not in the credential's `known_hosts` | re-run `credential set` with the right `-known-hosts` |
+| `git clone` over SSH: `sign_and_send_pubkey: signing failed` | host binding on with OpenSSH < 8.9, or the key is not the project's deploy key | update OpenSSH, or `-host-binding off` for that credential |
+| `git clone` over HTTPS: certificate error | private CA not trusted | section 10.11.6 |
+| `git` asks for a username/password | the host is not in the credential's `-hosts`, or it is on another port | `-hosts gitlab.example.com:8443` style; hosts must match exactly |
+| 401 from a registry | wrong user, or no `registry` credential for that host | create a `registry` kind credential |
+| Central: `wrong key` at start | `MIRAFLEET_SECRETS_KEY` unset or different | restore the key from the backup |
+| `credential set` says value too large | secret over the maximum value size | keys and tokens are small; check you piped the right file |
+| Tool result: `output was cut ... read_output` | the command printed more than the inline budget | page it with `read_output {ref}` (this is the design, not an error) |
+| `bash` timed out | foreground limit (default 120 s, max 600 s) | use `run_in_background` and poll with `bash_output` |
+| `grep` finds nothing in ignored files | `.gitignore` is honoured | search the file directly or use `bash` with `grep -r` |
+
+### 10.11.10 The known gap, in plain words
+
+The runner has its own enrolment key on disk (it must, to reconnect). The agent runs as the same
+user, so a determined, prompt-injected agent *could* read that key, connect to central pretending to
+be this runner and ask for the credentials assigned to it. The accepted OSS answer is: do not
+assign more than the runner needs, scope every token in GitLab, use a dedicated VM, and watch for
+`runner.replaced`. Everything else in the design (memory-only secrets, non-dumpable runner, agent
+and broker) closes the other doors. Root on the VM sees everything. The enterprise answer
+(separate users or hardware-held keys) is out of scope.
+
+### 10.11.11 Checklist before real use
+
+- [ ] A dedicated VM; firewall limits outbound traffic to what the project needs.
+- [ ] Runner user is not root, home is 0700, linger is on, unit has `KillMode=process`.
+- [ ] `/etc/mirafleet/central.env` is 0600 and the key is backed up elsewhere.
+- [ ] Every credential is scoped in GitLab to one project with the least rights, has an expiry, and
+      is assigned to the runners that need it (not the whole fleet by habit).
+- [ ] `known_hosts` pinned for every SSH key; host binding left on.
+- [ ] `delete_after` is what you want; someone owns `runner host prune`.
+- [ ] You tried a tool-call leak check: in a session, `env`, `ls ~/.ssh`, `ssh-add -L`,
+      `cat /proc/$(pgrep -f 'runner run')/environ` show no secret.
+
+### Check your understanding (M7)
+
+1. Why `KillMode=process` in the runner unit?
+2. Alice has a workspace on `vm1-dev`; what happens when Bob opens one there?
+3. You lost `central.env`. What is lost, and what does central do at start?
+
+<details>
+<summary>Answers</summary>
+
+1. Otherwise systemd kills background jobs when the runner restarts.
+2. It is refused with `runner busy, in use by alice` and placement tries other runners.
+3. Every stored credential is unreadable; central refuses to start rather than run without the right key. Restore the key from the backup.
+
+</details>
 
 ## Check your understanding
 

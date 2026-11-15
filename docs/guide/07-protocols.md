@@ -2,6 +2,7 @@
 
 ## What you will learn
 
+- The M7 additions: the 24 MCP tools (the fifteen Claude Code parity tools), background jobs, the `Ref` output paging, and the admin-only credential methods (section 7.14).
 - Which SSH users and channels exist, and who may open what.
 - The exact bytes of a message: the 4-byte length prefix, the JSON envelope, and a hex example.
 - Every method with a real request and response: operator methods, admin methods on the local
@@ -1402,6 +1403,214 @@ where the session id came from ([chapter 4](04-flows.md)). `workspace_close` ret
 `{state, workspace, where}`: `state` is `"closed"`, or `"closing"` when central could not reach the
 runner yet and the reaper will finish (the `workspace.close` `state` field of section 7.5). After
 a close, the server forgets the binding, so the next `exec` opens a fresh workspace.
+
+## 7.14 Developer workspaces (M7): tools, jobs, credentials
+
+M7 lets an agent on the orchestrator's Mac work on a remote VM as if the VM were its laptop. The
+design is [docs/M7.md](../M7.md); this section is the wire-level view. Plain-language story first:
+the **model** (inference) stays on the Mac; every **tool call** runs on the VM; the **secrets**
+(an SSH key, a GitLab token) live on central and reach the VM's memory, never the model. Terms
+(host mode, credential, broker, ssh-agent, background job, `Ref`) are in the [glossary](glossary.md).
+
+Everything below follows the rules of the rest of this chapter: strict v1 envelope, exact-case
+keys, size limits, body frames for bytes. The new DTOs are in `internal/api/devws.go` and
+`internal/transport/devws.go`.
+
+> Status: the types and the MCP tools exist; central's dispatch for `workspace.fs`, `job_*`,
+> `output_read` and `credential.*` is the last piece being wired when this was written.
+<!-- verify: dispatch of workspace.fs / job_* / output_read / credential.* on central is landing in S17; re-check the method table and error codes against internal/central and internal/service -->
+
+### The 24 tools
+
+`tools/list` now returns **24** tools: the nine of section 7.13 plus fifteen M7 tools. They are
+defined in `internal/mcpserver/tools_fs.go` (files, transfer) and `tools_bash.go` (shells and
+output); `TestM5Done/02_tools` pins the full list with its four hints. Every tool carries
+`openWorldHint: true`. `?` marks an optional argument. All tools also accept `workspace?`, `fleet?`
+and `context?` (omitted: this session's workspace on the default fleet). A tool marked **confirm**
+also takes `confirm?`, the fleet name on a *guarded* fleet, exactly as `exec` does
+([chapter 5](05-security.md#537-guarded-fleets-confirm-must-equal-the-fleet-name)).
+
+| Tool | Like Claude Code's | Arguments | Hints | confirm |
+|---|---|---|---|---|
+| `bash` | Bash | `command`, `description?` (256 bytes), `timeout_s?` (0 to 600; default 120), `run_in_background?` | destructive | yes |
+| `bash_output` | BashOutput | `shell_id`, `filter?` (RE2, matching lines only) | none of the four (it moves a read cursor) | no |
+| `kill_shell` | KillShell | `shell_id` | destructive, idempotent | no |
+| `job_list` | (none) | no arguments | read-only, idempotent | no |
+| `read_output` | (none) | `ref` or `shell_id` (exactly one), `stream?`, `offset?`, `limit?` (at most 1 MiB), `tail_lines?`, `grep?` | read-only, idempotent | no |
+| `read` | Read | `path`, `offset?` (first line, 1-based), `limit?` (lines; default 2000) | read-only, idempotent | no |
+| `write` | Write | `path`, `content` (at most 1 MiB), `mode?` | destructive | yes |
+| `edit` | Edit | `path`, `old_string`, `new_string`, `replace_all?` | destructive | yes |
+| `multi_edit` | MultiEdit | `path`, `edits[]` (1 to 64 of `old_string`, `new_string`, `replace_all?`) | destructive | yes |
+| `grep` | Grep | `pattern`, `path?`, `glob?`, `type?`, `output_mode?`, `-i?`, `-n?`, `-A?`, `-B?`, `-C?`, `multiline?`, `head_limit?` | read-only, idempotent | no |
+| `glob` | Glob | `pattern`, `path?` | read-only, idempotent | no |
+| `ls` | LS | `path?`, `ignore?[]` | read-only, idempotent | no |
+| `notebook_edit` | NotebookEdit | `path`, `edit_mode` (`replace`, `insert`, `delete`), `cell_id?`, `new_source?`, `cell_type?` | destructive | yes |
+| `upload` | (none) | `local`, `remote?`, `mode?` | destructive, idempotent | yes |
+| `download` | (none) | `remote`, `local?`, `overwrite?` | destructive, idempotent | no |
+
+Changed existing tools (all additive):
+- `workspace_open` gains `credentials?[]` (up to 32 names): narrow this session to a subset of the
+  credentials the runner holds. It can never widen (section "Credentials on the wire" below).
+  The `workdir` name comes from the project file (`.mirafleet.yaml` `workdir:`), not from a tool
+  argument.
+- `workspace_close` gains `delete?`: also delete the session directory. Without it the directory is
+  kept and reattached on the next open.
+
+What is worth knowing:
+
+- **`bash` runs `bash -lc` in the session's current directory.** The directory persists between
+  calls (the result's `cwd`); environment variables do not (each call is a fresh shell). Over the
+  wire it is an ordinary `workspace.exec` with `argv: ["bash","-lc",command]`; the runner
+  recognises that shape and takes the host path ([chapter 8](08-code-tour.md#812-follow-one-bash-call-m7)).
+- **`run_in_background: true`** returns a `shell_id` at once (`workspace.job_start`).
+  `bash_output` returns only the output since the previous call; `read_output` re-reads from the
+  start. At most 8 background shells per session; a shell stops at the fleet's `job_max`
+  (default 12 h, at most 24 h).
+- **File tools run in the runner process, not through a shell.** `workspace.fs` carries one op
+  from a fixed enum (`read write edit multi_edit notebook_edit grep glob ls stat`). Unknown ops are
+  `bad_request`. A write is followed by one body frame holding the bytes (length and SHA-256 in the
+  request), the same pattern as `workspace.write_file` in section 7.3.
+- **`read` returns images as MCP image content** (png, jpg, gif, webp, up to 5 MiB) and describes
+  other binary files (size, type, SHA-256) instead of dumping them. Text is numbered; long lines
+  are clipped; `.ipynb` is rendered as cells with outputs.
+  <!-- verify: exact image types and size limit; fsops read.go is the source of truth -->
+- **`grep` uses `rg` when it is on the runner's `PATH`, else a Go implementation** with the same
+  options (RE2, so no look-around). The result shape is the same either way. Hidden files are
+  searched; `.git` is never entered; `.gitignore`, `.ignore` and `.rgignore` are honoured.
+- **`upload` and `download` are the only tools that touch the Mac's disk**, and they are confined to
+  the local project directory by `os.OpenRoot`: symlinks out are refused, so are `.git`, `.claude`,
+  `.mirafleet.yaml`, `.env*`, `*.pem`, `*.key`, `id_*`, `.npmrc`, `.netrc` and similar, at most
+  64 MiB. Without this, a prompt-injected model could copy `~/.ssh/id_ed25519` to the VM. The
+  code is `internal/orch/transfer.go` and runs on the Mac, never on central.
+- **Local tools are denied for a remote project.** The Claude Code plugin's `PreToolUse` hook
+  denies local `Bash`, `Read`, `Write`, `Edit`, `MultiEdit`, `Grep`, `Glob`, `LS` and
+  `NotebookEdit` when `.mirafleet.yaml` says `remote: true`, with a reason naming the remote tool.
+  The MCP server works without the hook; the hook only stops the model from picking the wrong tool
+  ([chapter 11](11-contributing.md#117-adding-a-harness-integration)).
+  <!-- verify: hook behaviour and wording; S15 owns integrations/claude-code -->
+- **Remote text is neutralised.** Every tool result and error passes `neutralize` in
+  `internal/mcpserver/server.go`, which breaks harness control tags such as `<system-reminder>` so
+  output from a remote file or command cannot pose as an instruction. `fsops` notices to the model
+  are plain `[Warning: ...]` text for the same reason.
+
+### Output is never cut silently
+
+A foreground `bash` result has these new fields next to the old `stdout`/`stderr`/`truncated`:
+
+```json
+{"exit_code":1,"stdout":"...first and last part...","stderr":"","truncated":true,
+ "stdout_bytes":5242880,"stderr_bytes":0,"omitted_bytes":5210112,
+ "ref":"c1f0a77e92b4d3a5","cwd":"/home/dev/work/sessions/cc-abc/app",
+ "note":"output was cut (5210112 bytes omitted); page the full output with read_output {\"ref\":\"c1f0a77e92b4d3a5\"} ..."}
+```
+
+The runner tees the full output of every foreground command to a file named by `ref` (the last 32
+are kept, at most 64 MiB each). The result carries the true sizes, how much was omitted, and the
+`ref`; `read_output {ref, offset, limit, tail_lines, grep}` pages it. The inline part is bounded
+twice: the runner keeps about 32 KiB per stream, and the MCP server applies the 30 KiB cap of section 7.13
+(`orch.CapOutput`). The result says what was cut and how to get it: that is the "never a silent
+cut" rule. Without it a failing build whose error is in the middle of 5 MiB of log would look
+like a success that printed nothing useful.
+
+`read_output` replies `{content, offset, size, eof, lines, next_offset, omitted_bytes}`; pass
+`next_offset` as `offset` to continue.
+
+### Operator methods behind the tools
+
+New methods on `api@mirafleet` (all strict, all checked for ownership like the other workspace
+methods; the mutating ones need `confirm` on a guarded fleet):
+
+| Method | Params (besides `workspace`) | Result | Tool |
+|---|---|---|---|
+| `workspace.fs` | `op` + the op's fields; `confirm?`; body frame for `write` | `FSResult` (`kind`: text, image, binary, notebook, entries, none); an image adds one body frame | `read` `write` `edit` `multi_edit` `notebook_edit` `grep` `glob` `ls`, and `upload`/`download` |
+| `workspace.job_start` | `command`, `description?`, `timeout_s?`, `confirm?` | `{job}` | `bash` (background) |
+| `workspace.job_status` | `job?` (empty lists) | `{job}` or `{jobs}` | `job_list` |
+| `workspace.job_tail` | `job`, `filter?` | `{job}` with `output` since the last tail | `bash_output` |
+| `workspace.job_cancel` | `job` | `{job}` | `kill_shell` |
+| `workspace.output_read` | `ref` or `job`, `stream?`, `offset?`, `limit?`, `tail_lines?`, `grep?` | one page | `read_output` |
+
+A `job` result has `job` (the `shell_id`), `state` (`running`, `exited`, `canceled`, `lost`),
+`exit_code`, `started_ms`, `ended_ms`, `stdout_bytes`, `stderr_bytes`. `lost` means the runner
+could not find the job's process after a restart.
+
+Other additive changes:
+- `workspace.open` gains `credentials?` and `workdir?` (a name, never a path).
+- `workspace.close` gains `delete?`. The admin `workspace.kill` gains the same flag.
+- `runners.list` shows, per runner, the credentials it holds as `{name, kind, hosts, status}` with
+  status `ok`, `expiring`, `expired` or `invalid`. An operator never sees fingerprints, expiry dates
+  or values.
+- The heartbeat gains `features` (`fs`, `jobs`, `creds`, `events`, `host`), `credentials` (the same
+  four fields, no value) and `busy` (running background jobs; a workspace with one is "in use" and is
+  not reaped as idle).
+- A host runner is held by one operator at a time: `workspace.open` by another operator is refused
+  with `conflict`, message `runner busy, in use by alice`, and placement skips held runners. The
+  hold ends when that operator's last live workspace there is closed, reaped, expired, killed or
+  lost.
+  <!-- verify: error code is conflict in service/workspace_sched.go; M7.md wrote "busy:" -->
+
+### Credentials on the wire
+
+Credentials are **admin only**: they exist on the local admin socket (and in the GUI), never on
+`api@mirafleet`, so a prompt-injected agent cannot call them. `IsOperatorMethod` is false for all of
+them and `TestM7Done` checks that none is reachable on `api@`.
+
+| Method | Params | Result |
+|---|---|---|
+| `credential.set` | `name`, `kind` (`ssh-key`, `https-token`, `registry`), `hosts[]`, `user?`, `auth?` (`basic`, `bearer`, `header`), `header?`, `known_hosts[]?`, `host_binding?` (`required` default, or `off`), `expires?`, `rotate?` (`gitlab_self`), `rotate_project?`, `length`, `sha256`; the secret as ONE body frame | `{credential, replaced}` |
+| `credential.list` | `name?` | `{credentials[]}`: masked info with `fingerprint`, `expires`, `assignments`, `delivery` per runner |
+| `credential.delete` | `name` | `{}` |
+| `credential.assign` / `credential.unassign` | `name`, `fleet`, `runner?` (empty: whole fleet) | the updated credential |
+| `credential.rotate` | `name` | rotate now (only `rotate: gitlab_self` credentials) |
+
+The value travels in a **body frame** (like `workspace.write_file`), never in the JSON params, so
+it cannot appear in a logged request or an error message. No result echoes it. Replacing a
+credential bumps its `version` and re-delivers to every assigned runner.
+
+Central to runner, on the existing `workspace@mirafleet` channel kind, there is one new op,
+`creds_sync`, whose body is `{generation, credentials[]}` with the secret values (this is the one
+place a value leaves central). The runner replaces its whole in-memory set atomically and answers
+`{generation, count}`. The effective set of a runner is **its own assignments plus its fleet's
+assignments**. Central also pushes on connect.
+
+The other new op family is `fs`, `job_start`, `job_status`, `job_tail`, `job_cancel` and
+`output_read`, the transport side of the operator methods above.
+
+A new channel kind goes the other way: the runner opens **`events@mirafleet`** to central and
+writes length-prefixed `EventBatch` frames (at most 128 events or 64 KiB each). Central accepts
+only this channel from a runner. An event is `credential.use`: session, credential name, host,
+status, count, in 60 s windows. Central stores them as audit rows with source `runner`. If a runner
+floods, an `events.dropped` row records what was dropped.
+
+### New error behaviour worth knowing
+- A credential name the runner does not hold, in `workspace_open {credentials}`, is refused at
+  placement: central only picks a runner that holds **every** requested credential. A credentials
+  list on a non-host (container) fleet is `bad_request`.
+- `workspace_open` on a host fleet with a session that is already open elsewhere on the same runner
+  is `ErrRefused` on the runner ("already open here"); two terminals cannot drive one directory.
+- File tools, jobs and credentials are for host fleets: M7 does not extend container mode.
+  <!-- verify: M7.md says the new tools return `unsupported` on container fleets; check the exact error code once S17 lands -->
+- Foreground `bash` on a container fleet still works (it is `exec` with a shell), but there is no
+  `ref` and no persisted cwd.
+  <!-- verify: behaviour of bash on container fleets -->
+- A job status `lost` means the runner could not find the job's process (for example after a VM reboot).
+
+Hosts, ports and tokens in this section are examples; no real secret appears anywhere in the
+guide.
+
+### Check your understanding (M7)
+
+1. Why is the secret of `credential.set` a body frame and not a JSON field?
+2. A 5 MiB build log: what does the model get inline, and how does it read the rest?
+3. Which tools may a prompt-injected model call to read a credential value?
+
+<details>
+<summary>Answers</summary>
+
+1. Params are logged, audited and echoed in errors; a body frame never is, and no result returns it.
+2. About 30 KiB (head and tail), the true byte counts, `omitted_bytes` and a `ref`; it pages with `read_output {ref, offset, tail_lines, grep}`.
+3. None: `credential.*` are admin methods, not reachable on `api@`, and no tool result contains a value.
+
+</details>
 
 ## Check your understanding
 

@@ -5,6 +5,7 @@ inside containers, and teaches you how the tests are built so you can write your
 
 ## What you will learn
 
+- The M7 tests, `scripts/dev.sh integration-host`, and how to try host mode locally (section 9.15).
 - Why every Go step runs in a container, and how to set that up on macOS (colima) and Linux.
 - What each `scripts/dev.sh` command does, what it costs in time, and how the cache volumes and
   host user ID work.
@@ -1007,6 +1008,189 @@ auto-approve permission modes, that `${CLAUDE_PROJECT_DIR}` is filled in the plu
 and that the hook and the MCP server share a parent process (so that `--resume` reattaches to the
 old workspace). If one of them is false for your version, the core still works; you lose the
 convenience, and the docs say which ([chapter 11](11-contributing.md#117-adding-a-harness-integration)).
+
+## 9.15 The M7 acceptance tests
+
+M7's promise is: an agent on the Mac works on a remote VM, the code and the commands stay on the
+VM, and no secret reaches the agent. Two tests prove it, one that runs in every `scripts/dev.sh
+test` and one that needs a real Linux user setup. As with M3, the first uses a fake for the part
+that needs the OS and the second uses the real thing.
+
+### `TestM7Done`: the fast one (`internal/central/m7_done_test.go`)
+
+It follows [docs/M7.md section 7.1](../M7.md). It starts a real central in process (SQLite, the
+registry, the service, an SSH listener on an ephemeral port, the admin socket), **two host-mode
+runners** running the real runner code (credential holder, per-session wiring, events) over
+`m7Host`, a stand-in for the host executor built on `internal/workspace/fake`, a third, guarded
+runner, and two MCP servers (`mcpserver.Serve` over `io.Pipe`, one `orch` each) for the operators
+`ann` and `bob`. The clock is injected. The secrets are **decoys** generated at test time (random
+tokens, a fresh SSH key), so the test can search for their exact bytes everywhere. Helpers live in
+`m7_helpers_test.go`, shared steps in `m7_steps_test.go`.
+
+The subtests are numbered like the checks in M7.md:
+
+1. `01_credentials`: set through the admin socket (no method ever returns the value), list is
+   masked, assign to one runner and to a fleet, each runner receives exactly its effective set,
+   unassign removes it at once, an operator's `runners.list` shows names, kinds, hosts and status
+   only, central refuses to start with the wrong key, `rekey` works.
+2. `02_placement`: `workspace_open` needs every requested credential; narrowing works; widening is
+   refused.
+3. `03_tool_parity`: every file tool against golden results (edit uniqueness, `multi_edit`
+   atomicity, grep modes with `.gitignore`, glob order, notebook edit, an image returned as image
+   content).
+4. bash: the cwd persists; the timeout; a 5 MiB output is cut with counts and a `ref`;
+   `read_output` pages it exactly.
+5. Background shells: start, incremental `bash_output`, runner restart (the job is still running),
+   kill; the idle reaper skips a busy session.
+6. Directories: close keeps the directory, reopen reattaches, `workdir` is shared, the cleanup
+   warning and then deletion happen on the injected clock, `delete: true` deletes.
+7. Transfer confinement: a symlink out, `.git/config`, `.env` and `id_ed25519` are refused; the
+   downloaded file is 0644.
+8. Events are aggregated with source `runner`; a flood produces `events.dropped`.
+9. **Hygiene:** the decoy bytes are absent from every MCP result, audit row, log line, heartbeat,
+   GUI page and from the SQLite file; no admin method is reachable on `api@`.
+10. One operator per runner: `bob`'s open on a runner `ann` holds is refused, placement skips it, and
+    after `ann`'s last workspace closes (and separately after an idle reap) `bob` gets it; a
+    replacing runner connection writes `runner.replaced`.
+11. A guarded host fleet: mutating tools without `confirm` are refused, with the fleet name accepted.
+12. Central rotation: a `rotate: gitlab_self` credential near expiry is rotated against an
+    `httptest` GitLab and every assigned runner gets the new value; an unreachable GitLab is
+    audited and the old value keeps working.
+<!-- verify: the file currently registers 01_credentials..03_tool_parity; steps 4-12 are being added (S17). Re-check names against internal/central/m7_done_test.go -->
+
+Run it alone with `scripts/dev.sh go test -race -run TestM7Done ./internal/central/`. Like
+`TestM5Done`, the steps share state, so a failing step stops the later ones (the log says so).
+
+What `m7Host` cannot show: real processes, `/proc`, the broker on a real TLS connection, ownership
+by real Unix users. That is the second test's job.
+
+### `TestM7DoneIntegration`: the real one (`m7_done_integration_linux_test.go`, tags `linux && integration`)
+
+It follows M7.md section 7.2. It starts the **real binary** (`MIRAFLEET_TEST_BIN`) as central and as
+two runners that run as two real Unix users, `dev` and `qa`, each enrolled with its own token. A
+fake GitLab (`internal/testfake/gitlab`) plays the corporate server on a non-loopback address with
+a test CA: Git over HTTPS (`git http-backend` behind `net/http/cgi`), Git over SSH (`x/crypto/ssh`
+running `git-upload-pack` and `git-receive-pack`), and an OCI registry that demands the token
+exchange. Keys and tokens are generated at test time. It checks, through the MCP `bash` tool:
+
+1. `git clone` over SSH and over HTTPS with **plain URLs** (no token in the URL), and a registry
+   pull through the broker.
+2. An edit, a three-minute background build, a runner restart in the middle, `bash_output`
+   tailing, and completion.
+3. Commit and push over both remotes; the fake GitLab records the deploy key and the token.
+4. A **leak scan as `dev`**: the decoy bytes are in no readable file and in no
+   `/proc/*/environ` or `cmdline`; `/proc/<runner>/mem` and `environ` are unreadable and a
+   `ptrace` attach is refused (the runner is non-dumpable); `git credential fill` and
+   `GIT_TRACE_CURL=1` show nothing; `ssh-add -L` lists only the public key; `ssh-keygen -Y sign`
+   through the agent is refused; SSH to an unpinned host key is refused; an HTTPS host without a
+   credential shows its real certificate. `grep` gives the same answer with and without `rg` on
+   `PATH`. The known gap (a same-user process can read the runner's enrolment key) is **not**
+   tested as closed.
+5. Isolation between the two runner users: `qa`'s tools cannot read `dev`'s directories, sockets or
+   broker, and the other way round; `workspace_close` kills the session's processes and keeps the
+   directory.
+6. Central's audit has aggregated `credential.use` rows and the database file has no secret bytes.
+
+The test skips itself unless `MIRAFLEET_TEST_BIN`, `MIRAFLEET_TEST_FAKE_IP` and
+`MIRAFLEET_TEST_RUNNER_USERS` are set and the process is root (it must start the two runners as
+other users). `MIRAFLEET_TEST_M7_BUILD_STEPS` shortens the three-minute build for development.
+
+### `scripts/dev.sh integration-host`
+
+```bash
+scripts/dev.sh integration-host
+```
+
+What it does, in order (read the comments in `scripts/dev.sh`):
+
+1. Builds the test binaries with `-tags integration` and the `mirafleet` binary (static,
+   `CGO_ENABLED=0`) in the pinned Go image, into the volume `mirafleet-itest-host-bin`.
+2. Starts a **throwaway, non-privileged** container of the same image (Debian bookworm already has
+   `git` and `openssh-client`), as root inside it, installs `ripgrep` (best effort, so grep is also
+   tested with `rg`), creates the users `dev` and `qa` with 0700 homes, and maps the container's
+   own non-loopback address to `gitlab.test` and `registry.gitlab.test` in `/etc/hosts`.
+3. Runs `TestM7DoneIntegration` (and the fake GitLab's own tests) there.
+
+It needs neither containerd nor `--privileged`, unlike `scripts/dev.sh integration` for M3. The
+container is `--rm`, so users, directories and keys vanish with it. It costs several minutes (the
+build alone takes three). The CI workflow runs it as the job `integration-host`. Do not run it
+while another gate is using the machine; locally run the scoped `TestM7Done` and the package tests
+while you work.
+
+### Try host mode locally (no VM needed)
+
+The walkthrough of [9.11](#911-try-it-locally-central-runner-and-operator-in-one-container) works
+for host mode too, because a host runner needs no containerd and no root: it refuses to run as
+root, and the `scripts/dev.sh shell` container runs as your unprivileged user. Open the shell, build
+`mf` as in 9.11 steps, and then:
+
+```bash
+# 1. central, with a secrets key (needed once any credential is stored)
+export MIRAFLEET_SECRETS_KEY=$(mf central keygen 2>/dev/null | sed 's/^MIRAFLEET_SECRETS_KEY=//')
+mf central init -data /tmp/c -listen 127.0.0.1:2222
+mf central run -data /tmp/c -listen 127.0.0.1:2222 &
+sleep 1
+
+# 2. a host-mode fleet and a runner
+mf central fleet create dev -data /tmp/c -mode workspace -executor host
+TOKEN=$(mf central token create -fleet dev -data /tmp/c)
+printf '%s\n' "$TOKEN" | mf runner join 127.0.0.1:2222 -name vm1-dev -data /tmp/r -token -
+cat > /tmp/workspace.yaml <<'EOF'
+executor: host
+concurrent: 4
+host:
+  root: /tmp/work
+EOF
+mkdir -p /tmp/work && chmod 700 /tmp/work
+mf runner run -data /tmp/r -workspace /tmp/workspace.yaml &
+mf central runner approve dev/vm1-dev -data /tmp/c
+
+# 3. a credential (here a fake token; use a real one only on a throwaway server) and its assignment
+printf 'not-a-real-token\n' | mf central credential set gl-token -kind https-token -hosts gitlab.example.com -user oauth2 -auth basic -data /tmp/c
+mf central credential assign gl-token -runner dev/vm1-dev -data /tmp/c
+mf central credential list -data /tmp/c          # masked: no value anywhere
+
+# 4. register alice (as in 9.11) and use the tools as an agent would
+mf mcp api workspace.open '{"fleet":"dev","session":"try1"}'
+```
+
+Then call `workspace.exec` with `{"argv":["bash","-lc","pwd; id -un"]}` and the workspace id the
+open returned, and look at what the runner created: `ls -la /tmp/work/sessions/` and
+`ls -la /tmp/.local/state/mirafleet/sessions/` (the `HOME` in that container is `/tmp`). Close the
+workspace with `workspace.close`, list the directories again (they are still there), and run
+`mf runner host prune -older-than 1s -root /tmp/work` (without `-older-than` the 30-day default finds nothing yet; this is a dry run; `-root` is the `host.root` of the runner's `workspace.yaml`) and then with `-yes`. To see what a
+real MCP client sees, point it at `mf mcp serve` as in [9.14](#914-try-it-locally-the-mcp-server-and-the-claude-code-plugin);
+the 24 tools appear in `tools/list`.
+<!-- verify: exact flags of `central fleet create -executor host`, `runner host prune -root` and the location of the state dir; try the block once in scripts/dev.sh shell before release -->
+
+To try Git with credentials end to end you need a Git server whose host is reachable from the
+runner and a CA the VM trusts; the easiest way is to read `internal/testfake/gitlab`, which
+is exactly that server in a test, rather than build one by hand.
+
+### Common failures in the M7 tests
+
+| Symptom | Likely cause |
+|---|---|
+| `TestM7DoneIntegration` is skipped | The three `MIRAFLEET_TEST_*` variables are unset or you are not root; run it through `scripts/dev.sh integration-host`. |
+| `refusing to run as root` from a runner | A host-mode runner must be an ordinary user; start it with `su`, `setpriv` or a systemd `User=`. |
+| `central refuses to start` after a test sets a different key | The key check does not match the stored secrets; the test is meant to show that. |
+| The leak scan finds the decoy | A real leak. Do not edit the decoy; find which layer (`runner`, `service`, `gui`, audit) printed the value and fix that. |
+| `ripgrep` warning in the log | The container could not reach the network; the test continues and checks the Go grep only. |
+
+### Check your understanding (M7)
+
+1. Why are the secrets in `TestM7Done` decoys generated at test time?
+2. Why does `integration-host` need root inside its container although runners refuse root?
+3. Which things can `m7Host` not show?
+
+<details>
+<summary>Answers</summary>
+
+1. The test searches for their exact bytes in every output; real secrets must never be in tests.
+2. The test must create the users `dev` and `qa` and start each runner as that user.
+3. Real processes, `/proc`, ptrace refusal, real TLS through the broker, Unix isolation between users.
+
+</details>
 
 ## Check your understanding
 
