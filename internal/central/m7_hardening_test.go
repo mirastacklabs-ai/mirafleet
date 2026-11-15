@@ -36,7 +36,7 @@ func TestReconnectInsideEdgeGapDefersDelivery(t *testing.T) {
 	cl, err := e.dial(transport.UserRunner, "r1")
 	must(t, err)
 	defer cl.Close()
-	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "h", Features: []string{transport.FeatureCreds}})
+	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "h", Proto: testProto, Features: []string{transport.FeatureCreds}})
 	if ok, _, err := cl.SendRequest(transport.ReqHeartbeat, true, hb); err != nil || !ok {
 		t.Fatalf("heartbeat: %v %v", ok, err)
 	}
