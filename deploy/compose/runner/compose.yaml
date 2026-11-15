@@ -3,7 +3,7 @@ name: mirafleet-runner
 
 services:
   runner:
-    image: ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.6.0-rc.2}
+    image: ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.6.0-rc.3}
     command: ["runner", "run", "-data", "/var/lib/mirafleet/runner", "-actions", "/etc/mirafleet/actions.yaml"]
     volumes:
       - runner-data:/var/lib/mirafleet

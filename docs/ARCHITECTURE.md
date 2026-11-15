@@ -717,7 +717,7 @@ One build pushes one manifest list to both registries, so the digest is the same
   SHA-256; `install.sh --verify-signature` also requires the cosign check.
 - Every archive and package has a build-provenance attestation (`gh attestation verify FILE --repo
   mirastacklabs-ai/mirafleet`). The image is cosign-signed and carries provenance in both registries.
-- SBOMs (CycloneDX) are published per artifact. npm packages publish with trusted publishing and provenance.
+- SBOMs (CycloneDX) are published per artifact. npm packages are staged by CI with provenance and approved by the maintainer with 2FA.
 - No Apple or Windows code signing; the docs give quarantine one-liners for browser downloads.
 - `release.yml` runs `verify` and `build` without credentials; every publishing job waits for
   approval in the protected `release` environment, and each credential belongs to one job.

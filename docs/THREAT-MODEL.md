@@ -231,7 +231,7 @@ a **self-signed certificate** unless you give `-gui-cert` and `-gui-key`. It is 
   binary downloaded in a browser. Homebrew, npm, `install.sh` and `install.ps1` avoid the
   warning without it. The trust anchor is the checksum and the cosign/provenance chain, not a
   platform vendor's signature. Quarantine one-liners are in the [quickstart](QUICKSTART.md).
-- **npm:** published with provenance via trusted publishing, no install scripts, no download at
+- **npm:** staged by CI with provenance and approved by the maintainer with 2FA (the CI token can only stage), no install scripts, no download at
   install time. **Homebrew:** a formula rendered from `checksums.txt`.
 - **Image:** `FROM scratch`, non-root (65532), no shell, no bundled certificates or secrets.
 - **Claude Code plugin:** the marketplace entry is pinned to the release tag. Hooks run

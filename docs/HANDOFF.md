@@ -27,7 +27,7 @@ Wiki: https://github.com/mirastacklabs-ai/mirafleet/wiki, generated from `docs/`
 ## What is waiting on the user
 1. **Account secrets on the `release` environment** (RELEASING.md §2): variable `DOCKERHUB_USERNAME`
    and secret `DOCKERHUB_TOKEN` before approving `image`; npm org `mirastacklabs` with trusted
-   publishers (or a first-publish `NPM_TOKEN`) before approving `npm`; `HOMEBREW_TAP_TOKEN` before
+   publishers (or a stage-only first-publish `NPM_TOKEN`) before approving `npm`, then approve the staged packages on npmjs.com; `HOMEBREW_TAP_TOKEN` before
    `v0.6.0`.
 2. **Approvals** in the Actions page: P3 for the rc (`draft`, then `publish-release`, `image`, `npm`),
    P5 for `v0.6.0`.
