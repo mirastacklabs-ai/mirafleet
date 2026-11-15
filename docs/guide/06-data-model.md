@@ -16,6 +16,9 @@
 - That M5 changed **no schema**, and which local files it added on the operator's machine
   (`contexts.yaml`, `.mirafleet.yaml`, the session handoff file) plus the heartbeat `actions`
   field (section 6.16).
+- Migration 0004 (M7): the `credentials`, `credential_assignments` and `secrets_meta` tables, the
+  rebuilt `fleet_workspace` that allows the `host` executor, and the audit actions M7 added
+  (section 6.17).
 
 Each new database word is explained where it first appears, and the main ones are also in the
 [glossary](glossary.md). Quick versions: a **transaction** is a group of changes that all
@@ -415,7 +418,7 @@ exclusive lock that the busy handler does not always wait for. `pingRetry` retri
 ## 6.10 Migrations
 
 Schema changes are **embedded SQL files** `internal/store/sqlite/migrations/NNNN_name.sql`
-(`0001_init.sql` and `0002_workspaces.sql` today), applied by `migrate` in `migrate.go`.
+(`0001_init.sql` to `0004_devws.sql` today; see [6.17](#617-host-mode-and-credentials-migration-0004-m7) for 0004), applied by `migrate` in `migrate.go`.
 
 - **Forward-only.** There are no "down" migrations. Rolling back means restoring a backup.
 - **Versioned with `PRAGMA user_version`**, an integer stored in the database header. After
@@ -886,6 +889,126 @@ they take, so it need not guess names. For that, an actions-mode runner now adds
   `actions.yaml` is still the security boundary (chapter 5, 5.2), and a runner that lied about its
   list would only mislead the model, whose call the guard would still refuse.
 
+## 6.17 Host mode and credentials: migration 0004 (M7)
+
+<!-- verify: column lists below were read from internal/store/sqlite/migrations/0004_devws.sql in the m7-wave-a worktree. docs/M7.md section 4.1 lists slightly different columns (meta JSON / updated_at; the migration has fingerprint, rotated_at, expires_at). The migration is right; re-check at reconciliation if the file changes. -->
+
+Migration 0004 (schema version 4; `0003_gui.sql` was M4's admin accounts, sessions and two audit
+indexes) is M7's only schema change. It adds three tables and **rebuilds** one. As always it is
+applied automatically in the single start-up transaction of [section 6.10](#610-migrations), and an
+older binary then refuses to open the database. **Take a backup of `mirafleet.db` first**: the
+credential rows in it are encrypted, but if you also lose `MIRAFLEET_SECRETS_KEY` they are
+unreadable for good.
+
+```mermaid
+erDiagram
+    credentials ||--o{ credential_assignments : "credential_id (CASCADE)"
+    runners |o--o{ credential_assignments : "runner_id (CASCADE)"
+    fleets |o--o{ credential_assignments : "fleet_id (CASCADE)"
+
+    credentials {
+        integer id PK
+        text name UK
+        text kind "ssh-key https-token registry"
+        text hosts "JSON array, 1 or more"
+        text meta "JSON object, no secret"
+        text fingerprint "admin only"
+        blob nonce "12 bytes"
+        blob ciphertext "AES-256-GCM"
+        integer version "part of the AAD"
+        integer created_at "unix ms"
+        integer rotated_at "nullable"
+        integer expires_at "nullable"
+    }
+    credential_assignments {
+        integer id PK
+        integer credential_id FK
+        integer runner_id FK "nullable"
+        integer fleet_id FK "nullable"
+        integer created_at "unix ms"
+    }
+    secrets_meta {
+        integer id PK "always 1"
+        blob key_check "HMAC of a constant"
+        integer updated_at "unix ms"
+    }
+```
+
+### `credentials`
+
+One row per named secret.
+
+| Column | Meaning |
+|---|---|
+| `name` | Unique, chosen by Dana (`gitlab-deploy`). The only thing operators and the agent ever see, with kind, hosts and status. |
+| `kind` | `ssh-key`, `https-token` or `registry` (CHECK). |
+| `hosts` | JSON array of `host` or `host:port` (CHECK: valid JSON, an array, at least one). The hosts the credential applies to; also what the agent's pinned host list and the broker's intercept list are built from. |
+| `meta` | JSON object with the non-secret settings: SSH user, `known_hosts` lines, auth style (`basic`, `bearer`, `header` plus its name), host binding, rotation settings. Never a secret. |
+| `fingerprint` | A public fingerprint of the value, so Dana can tell which key is stored. Shown to admins only. |
+| `nonce`, `ciphertext` | The AES-256-GCM output: a 12-byte random nonce (CHECK on length) and the sealed value. The only place the secret exists in the database. |
+| `version` | Starts at 1, grows with each replaced value. Together with `id` it is the AEAD associated data, so a ciphertext cannot be moved to another row or back to an older version. |
+| `created_at`, `rotated_at`, `expires_at` | Unix milliseconds. `rotated_at` is NULL until the first replacement; `expires_at` drives the 14-day warning and the self-rotation. |
+
+### `credential_assignments`
+
+A credential goes to **one runner or one whole fleet** per row. A CHECK enforces
+`(runner_id IS NULL) <> (fleet_id IS NULL)`, so a row is never both and never neither. Unique partial
+indexes `credential_assign_runner` and `credential_assign_fleet` stop duplicate assignments, and
+two more indexes make "what does this runner hold" fast. Foreign keys cascade: delete the
+credential, runner or fleet and the assignment goes. A runner's **effective set** is the union
+of its own rows and the rows of its fleet (`Store.EffectiveCredentials`).
+
+### `secrets_meta`
+
+At most one row (`id = 1` by CHECK): the **key-check value**, an HMAC of a constant under the secrets
+key. At start-up central recomputes it with `MIRAFLEET_SECRETS_KEY` and compares. If credentials
+exist but the key is missing or does not match, central refuses to start. `central secrets rekey`
+rewrites every ciphertext **and** this row in one transaction (`Store.RekeyCredentials`).
+
+### `fleet_workspace` rebuilt
+
+SQLite cannot change a CHECK in place, so the migration creates `fleet_workspace_new`, copies the
+rows, drops the old table and renames. The `executor` check now allows `'host'`, and the resource
+columns (`cpu_milli`, `memory_mb`, `pids`, `tmpfs_mb`, `disk_mb`) must be positive only when the
+executor is not `host`: a host fleet has no image allowlist and no limits, because the VM is the
+boundary. Existing container rows are unchanged.
+
+### New `Store` methods
+
+`SetCredential` (create or replace, with its audit row in the same transaction), `GetCredential`
+and `ListCredentials` (metadata, never ciphertext), `DeleteCredential`, `AssignCredential`,
+`UnassignCredential`, `EffectiveCredentials`, `CredentialRunners`, and the only two readers of
+ciphertext: `SealedCredentialsFor` (delivery) and `GetSealedCredential` (central-side rotation).
+`RekeyCredentials` re-encrypts. Each write takes its audit event and commits it atomically, like
+every other write in the store. Workspace reservation also counts live rows of other operators on
+the runner to enforce the one-operator hold ([flow 24](04-flows.md#24-open-a-host-workspace)); there is
+no table for it.
+
+### Audit actions added by M7
+
+The `audit` table gets no new column. New values appear in `action` and `source`:
+
+| Action | Source | When |
+|---|---|---|
+| `credential.set`, `credential.delete`, `credential.assign`, `credential.unassign`, `credential.rotate` | admin (`cli` or `gui`) | Admin changes. The row names the credential and the runner or fleet; the value is never recorded. <!-- verify: exact action strings written by service.SetCredential/DeleteCredential/AssignCredential/UnassignCredential/RotateCredential --> |
+| `credential.rotate_failed` | `system` | Self-rotation could not reach GitLab or was refused; the old value keeps working. <!-- verify: this action string and its source --> |
+| `credential.use` | `runner` | An aggregated usage event from a runner: session, credential name, host, outcome, with a count (60-second windows). |
+| `events.dropped` | `runner` | A runner's event batch exceeded the caps; the row carries the count of lost events. |
+| `runner.replaced` | `system` | A runner's new connection replaced a live one. The GUI flags the runner. <!-- verify: source value of runner.replaced rows --> |
+| `secrets.keycheck` | `system` | The secrets key was checked or first recorded at start-up. |
+| `workspace.fs`, `workspace.job_start`, `workspace.job_status`, `workspace.job_tail`, `workspace.job_cancel`, `workspace.output_read` | `api` | The host-mode operations of flows 26 and 27. `workspace.fs` records op, paths, sizes and the SHA-256 of what was written, never content. |
+| `workspace.kill` (with delete) | admin | An admin kill that also deletes the session directory. |
+
+For `credential.use` and `events.dropped`, `fleet` and `runner` are filled from the store (the
+batch cannot lie about which runner sent it) and the `actor` is the runner's name.
+
+### Not in the database
+
+What is *not* here matters as much: the **plaintext** of any credential; the per-session CA key; job
+logs and outputs (files on the VM); session directories and their records (files on the VM, owned
+by the runner's user); the runner's local credential-use JSONL. Central's database holds only
+ciphertext, names, hosts, assignments and audit.
+
 ## Check your understanding
 
 1. Why does `runners` have a *partial* unique index on `(fleet_id, name)` but a plain `UNIQUE`
@@ -906,6 +1029,13 @@ they take, so it need not guess names. For that, an actions-mode runner now adds
    needed a database migration, and where does each live?
 10. A cloned repository contains a `.mirafleet.yaml` with `fleet: prod`. Why can it neither add a
     new central nor silently run commands on `prod`?
+11. A credential row has `id` 7 and `version` 3. An attacker with write access to the database
+    copies its `ciphertext` into the row of credential 9. What happens when central opens it, and
+    which columns made that fail?
+12. Why can `credential_assignments` not hold a row that assigns a credential to both a runner and
+    a fleet, and how does a runner end up holding both kinds?
+13. Which table lets central refuse to start with the wrong secrets key, and what does it hold
+    instead of the key?
 
 <details>
 <summary>Answers</summary>
@@ -940,6 +1070,13 @@ they take, so it need not guess names. For that, an actions-mode runner now adds
     address or key, and an unknown context is `not_found`. A guarded fleet taken from a project
     default is refused: it must be named explicitly and confirmed, and central refuses without the
     exact `confirm`.
+11. The decryption fails its authentication tag. The AES-GCM associated data is the credential id
+    and version, so ciphertext sealed for (7, 3) does not open as (9, anything). `id` and
+    `version` together are the cause.
+12. A CHECK says exactly one of `runner_id` and `fleet_id` is NULL. A runner holds both kinds
+    through two separate rows (one for the runner, one for its fleet); its effective set is their
+    union.
+13. `secrets_meta`. It holds `key_check`, an HMAC of a constant under the key, never the key.
 
 </details>
 

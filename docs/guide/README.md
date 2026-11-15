@@ -10,8 +10,17 @@ tests, and make your first change without asking the authors.
 
 > **Status:** M1, M2 and M3 (workspaces) are done (13 Nov 2026), and M5 (the orchestrator: MCP
 > server, Claude Code plugin and hooks, Windows support) is built; a smoke test with a real Claude
-> Code is still to run. Next: M4 (GUI) and M6 (release). Where a feature is planned, the guide
-> says so and links the milestone in [../PLAN.md](../PLAN.md).
+> Code is still to run. M4 (the admin GUI) is done pending the user's browser check, and M7
+> (**host mode**: remote development on a VM, central-held credentials, background jobs, full
+> output, Claude Code tool parity; see [../M7.md](../M7.md)) is built on branch `m7-wave-a`, with the
+> user smoke test still to run. Next: M6 (release). Where a feature is planned, the guide says so
+> and links the milestone in [../PLAN.md](../PLAN.md). <!-- verify: status wording at merge time -->
+>
+> **New in M7 (read these first if you work on host mode):** [1.4a](01-what-is-mirafleet.md#14a-host-mode-remote-development-on-a-vm-m7),
+> [2.12](02-background.md#212-host-mode-background-secrets-you-can-use-but-not-read-m7),
+> [the host runner](03-architecture.md#host-mode-the-m7-runner), [flows 24 to 30](04-flows.md#host-mode-flows-m7),
+> [5.12 (attacking host mode)](05-security.md#512-host-mode-and-credentials-m7) and
+> [6.17 (migration 0004)](06-data-model.md#617-host-mode-and-credentials-migration-0004-m7).
 
 ## The story in one paragraph
 
@@ -32,9 +41,9 @@ Read in order the first time. Later, jump around with the map below.
 |---|---|---|---|
 | 0 | [Glossary](glossary.md) | Every term, alphabetical. Keep it open in a tab. | skim 10 min, then look things up |
 | 1 | [What is mirafleet?](01-what-is-mirafleet.md) | The problem, the three roles, the big picture | 25 min |
-| 2 | [Background](02-background.md) | Public-key crypto, SSH, HMAC, TOTP, SQLite, context, containers (namespaces, seccomp, cgroups, egress proxy, `os.Root`), MCP in depth (JSON-RPC, tools, harness, plugin, skill, hook), Unix sockets, Windows DACLs | 80 min |
+| 2 | [Background](02-background.md) | Public-key crypto, SSH, HMAC, TOTP, SQLite, context, containers (namespaces, seccomp, cgroups, egress proxy, `os.Root`), MCP in depth (JSON-RPC, tools, harness, plugin, skill, hook), Unix sockets, Windows DACLs, and (M7) ssh-agent versus broker, secrets at rest, rotation, OS-user isolation | 90 min |
 | 3 | [Architecture](03-architecture.md) | Components, packages, the orchestrator, executors, trust boundaries (the model is untrusted input) and how they fit | 65 min |
-| 4 | [Flows](04-flows.md) | Twenty-three step-by-step flows: join, register, run an action, revoke, the workspace flows (open, exec, files, close, reaper, reconcile) and the MCP flows (one `exec` tool call, session handoff, idle on exit, SessionEnd, guarded `confirm`) | 95 min |
+| 4 | [Flows](04-flows.md) | Thirty step-by-step flows: join, register, run an action, revoke, the workspace flows (open, exec, files, close, reaper, reconcile), the MCP flows (one `exec` tool call, session handoff, idle on exit, SessionEnd, guarded `confirm`) and the host-mode flows (open, reattach, bash with paging, background jobs, credentials, re-adoption, cleanup) | 120 min |
 | 5 | [Security](05-security.md) | Every defence, the workspace container boundary, prompt injection through tool output, and what would go wrong without it | 95 min |
 | 6 | [Data model](06-data-model.md) | The SQLite tables (including the workspace tables), migrations, the audit log, and the local files M5 added | 45 min |
 | 7 | [Protocols](07-protocols.md) | SSH users, channels, framing, the JSON API | 40 min |
@@ -57,15 +66,17 @@ that is enough to review most changes. If you only want the MCP and orchestrator
    this".
 3. **Architecture.** The components, how they connect, which Go package owns what, the
    orchestrator on the operator's machine and where each key lives on each operating system.
-4. **Flows.** Twenty-three flows (join, register, run an action, revoke, the workspace flows:
-   open, exec, files, close, reaper, reconcile, revoke cascades, and the MCP flows: one `exec`
-   tool call, session handoff and `--resume`, idle on exit, SessionEnd, guarded `confirm`), told
-   one numbered step at a time.
-5. **Security.** The threat model, every defence layer, the workspace container boundary, and
-   prompt injection through MCP tool output (with a worked example).
+4. **Flows.** Thirty flows (join, register, run an action, revoke, the workspace flows:
+   open, exec, files, close, reaper, reconcile, revoke cascades, the MCP flows: one `exec`
+   tool call, session handoff and `--resume`, idle on exit, SessionEnd, guarded `confirm`, and
+   the host-mode flows 24 to 30), told one numbered step at a time.
+5. **Security.** The threat model, every defence layer, the workspace container boundary,
+   prompt injection through MCP tool output (with a worked example), and host mode: credentials,
+   the broker and agent, worked attacks, and what is not protected.
 6. **Data model.** Tables (including `fleet_workspace` and `workspaces`), statuses, the workspace
-   state machine, migrations, append-only audit, and (no schema change in M5) the local files
-   `contexts.yaml`, `.mirafleet.yaml` and the session handoff file.
+   state machine, migrations, append-only audit, (no schema change in M5) the local files
+   `contexts.yaml`, `.mirafleet.yaml` and the session handoff file, and M7's migration 0004
+   (credentials, assignments, `secrets_meta`) with the new audit actions.
 7. **Protocols.** The wire format: SSH users, channels, length-prefixed JSON frames.
 8. **Code tour.** Where to find things in the repository.
 9. **Dev setup and testing.** How to build and test, and the testing rules.
@@ -123,7 +134,7 @@ instead of a picture, the code itself is readable: `A -->|label| B` means "A sen
 ## Where else to look
 
 - [../ARCHITECTURE.md](../ARCHITECTURE.md): the formal design.
-- [../PLAN.md](../PLAN.md): milestones. [../M2.md](../M2.md), [../M3.md](../M3.md), [../M5.md](../M5.md): detailed decisions.
+- [../PLAN.md](../PLAN.md): milestones. [../M2.md](../M2.md), [../M3.md](../M3.md), [../M5.md](../M5.md), [../M7.md](../M7.md): detailed decisions.
 - [../BRAND.md](../BRAND.md): colours and fonts.
 - [../../CLAUDE.md](../../CLAUDE.md): ground rules for contributors and AI agents.
 - [STYLE.md](STYLE.md): the rules this guide follows.

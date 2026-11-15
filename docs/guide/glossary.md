@@ -17,6 +17,19 @@ per /64, not per single address. See [chapter 2](02-background.md#28-rate-limiti
 
 ## A
 
+**AES-256-GCM.** The cipher central uses to store credential values: a 32-byte key, a fresh random
+12-byte [nonce](#n) per value, and an authentication tag that makes any change to the stored bytes
+detectable. In `internal/secrets`. See [chapter 2.12](02-background.md#212-host-mode-background-secrets-you-can-use-but-not-read-m7).
+
+**Agent forwarding.** `ssh -A`: lets a remote machine use your local ssh-agent through the SSH
+connection. Convenient, but the remote side can ask the agent to sign for as long as you are
+connected (see [signing oracle](#s)). mirafleet does not forward; it starts a restricted agent per
+session on the VM instead. See [chapter 2.12](02-background.md#212-host-mode-background-secrets-you-can-use-but-not-read-m7).
+
+**Associated data (AAD).** Extra bytes that AES-GCM authenticates without encrypting. mirafleet uses
+the credential id and version, so a ciphertext cannot be moved to another row. See
+[chapter 6.17](06-data-model.md#617-host-mode-and-credentials-migration-0004-m7).
+
 **Action.** A named, pre-approved command that a runner may run, defined in `actions.yaml`, for
 example `tail-logs`. An action is an argv array plus optional validated parameters and a timeout.
 See [chapter 3](03-architecture.md) and [chapter 5](05-security.md).
@@ -63,6 +76,16 @@ uses the SQLite store; the runner writes JSON lines to a file. See [chapter 8](0
 
 ## B
 
+**Background job / background shell.** A host-mode command started with `bash {run_in_background:
+true}`. A hidden `mirafleet host-shim job` supervises it in its own process group, logging to files;
+poll with `bash_output`, re-read with `read_output`, stop with `kill_shell`. Survives a runner
+restart. See [flow 27](04-flows.md#27-a-background-job).
+
+**Broker.** The runner-local HTTPS proxy of host mode (`internal/workspace/broker`). For credential
+hosts only it terminates TLS with a per-session CA, injects the stored `Authorization` header and
+does the registry token exchange; other hosts are plain tunnels. See
+[chapter 2.12](02-background.md#212-host-mode-background-secrets-you-can-use-but-not-read-m7) and [5.12](05-security.md#512-host-mode-and-credentials-m7).
+
 **Body frame.** A second length-prefixed frame sent right after a workspace request frame,
 carrying a file or stdin (at most 1 MiB). Central reads it only after the caller has been
 authorised. See [chapter 4](04-flows.md#14-reading-and-writing-files-body-frames) and
@@ -83,6 +106,20 @@ is one). Anyone who copies it can use it, so it is random, hashed at rest and sh
 See [chapter 7](07-protocols.md).
 
 ## C
+
+**Corporate CA.** A company's own certificate authority, which signs the certificates of internal
+servers such as `gitlab.example.com`. Host mode trusts it for upstream TLS (`corporate_ca_file` in
+`workspace.yaml` on the runner; `MIRAFLEET_CORPORATE_CA_FILE` for central's GitLab rotation).
+
+**Credential.** A secret stored on central by name (kind `ssh-key`, `https-token` or `registry`,
+with the hosts it applies to), encrypted at rest, write-only, assigned to runners or fleets. The
+agent can use it but never read it. See [chapter 6.17](06-data-model.md#617-host-mode-and-credentials-migration-0004-m7).
+
+**Credential holder.** The runner's in-memory set of delivered credentials (`internal/runner/creds.go`),
+replaced atomically by each `creds_sync`. Never written to disk.
+
+**`creds_sync`.** The operation central sends on `workspace@mirafleet` to give a host runner its full
+effective credential set, on connect and on every change. See [flow 28](04-flows.md#28-credential-assign-delivery-use-and-rotation).
 
 **Cancel / cancellation.** Telling running work to stop, in Go through a `context`. Revoke
 cancels in-flight actions; the audit outcome is `cancelled`. See
@@ -143,6 +180,11 @@ CVE-2024-45337 in the Go SSH library. See [chapter 5](05-security.md).
 
 ## D
 
+**Dumpable / non-dumpable.** A Linux process flag. A non-dumpable process (`prctl(PR_SET_DUMPABLE, 0)`)
+cannot be `ptrace`d by other non-root processes, its `/proc/<pid>/{mem,environ,fd,...}` are closed to
+them, and it leaves no core dump. The host runner sets it before loading any secret. See
+[chapter 5.12](05-security.md#512-host-mode-and-credentials-m7).
+
 **DACL (discretionary access-control list).** The Windows list of "which account may do what" on
 a file or folder. Windows has no `0600`, so mirafleet creates the operator key and its directory
 with a *protected* DACL (no inheritance) that allows only the current user, SYSTEM and
@@ -177,6 +219,13 @@ methods are absent from the operator method table, and the policy denies them as
 
 ## E
 
+**Effective set.** The credentials a runner holds: its own assignments united with those of its
+fleet. See [chapter 6.17](06-data-model.md#617-host-mode-and-credentials-migration-0004-m7).
+
+**Enrolment key.** A runner's own private key, kept on its disk so it can reconnect. In host mode the
+agent runs as the same user and can read it; this is an accepted open-source gap, with a
+`runner.replaced` audit row as the only trace. See [chapter 5.12](05-security.md#512-host-mode-and-credentials-m7).
+
 **Ed25519.** The public-key signature algorithm mirafleet uses (SSH name `ssh-ed25519`); the only
 key type accepted. See [chapter 2](02-background.md#21-public-key-cryptography-and-ed25519).
 
@@ -209,6 +258,10 @@ host through the guard. In workspace mode, a `workspace.Executor` (Go interface 
 (OpenSandbox, opt-in per fleet). See [chapter 3](03-architecture.md).
 
 ## F
+
+**fsops.** `internal/workspace/fsops`, the pure Go package behind the host-mode file tools (read,
+write, edit, multi_edit, notebook_edit, ls, glob, grep). It runs in the runner process as its OS user.
+See [chapter 3](03-architecture.md#host-mode-the-m7-runner).
 
 **Fail closed.** When something goes wrong, refuse rather than allow. Example: if the `start`
 audit row cannot be written, the action does not run. See [chapter 5](05-security.md).
@@ -252,6 +305,17 @@ See [chapter 5, 5.3.7](05-security.md#537-guarded-fleets-confirm-must-equal-the-
 [flow 23](04-flows.md#23-a-guarded-call-and-the-confirm-prompt).
 
 ## H
+
+**Host binding.** The ssh-agent check using `session-bind@openssh.com` (OpenSSH 8.9 and later): the
+agent signs only if the server's host key, reported by the client, is pinned in the credential's
+`known_hosts`. Can be set `off` per credential. See [chapter 5.12](05-security.md#512-host-mode-and-credentials-m7).
+
+**Host mode.** Workspace mode with `executor: host`: tools run directly as the runner's own OS user on
+a VM, without a container; credentials come from central. See
+[chapter 1.4a](01-what-is-mirafleet.md#14a-host-mode-remote-development-on-a-vm-m7).
+
+**hostx.** `internal/workspace/hostx`, the host executor (hardening, session directories, bash,
+jobs, cleanup). `host-shim` is the hidden `mirafleet host-shim job` that supervises one background shell.
 
 **Harness.** The program that hosts an AI agent loop and connects it to tools: Claude Code,
 opencode, Kilo Code. It launches MCP servers, shows tool results to the model, and asks the human
@@ -317,6 +381,9 @@ use by default, 24 h lifetime, maximum 30 days. Central stores only a SHA-256 of
 
 ## K
 
+**Key-check value.** An HMAC of a constant under the secrets key, stored in `secrets_meta`, so central
+notices a missing or wrong `MIRAFLEET_SECRETS_KEY` and refuses to start.
+
 **Kick.** Closing a live connection from central's side (as part of revoke or operator revoke).
 See [chapter 4](04-flows.md).
 
@@ -336,6 +403,9 @@ actions. See [chapter 6](06-data-model.md).
 never over `api@mirafleet`. See [chapter 5](05-security.md).
 
 ## M
+
+**Master key (secrets key).** The 32-byte key in `MIRAFLEET_SECRETS_KEY` (from `mirafleet central keygen`)
+that encrypts credentials at rest. Never in the database; losing it loses every stored secret.
 
 **MCP (Model Context Protocol).** A standard for an agent harness to discover and call tools,
 spoken as JSON-RPC over stdio. mirafleet's MCP server is `mirafleet mcp` (built in M5). See
@@ -363,6 +433,12 @@ can talk to it. See [chapter 5](05-security.md#59-the-workspace-container-bounda
 
 ## N
 
+**Name constraint.** A certificate-authority restriction listing the only hostnames it may issue
+certificates for. The broker's per-session CA is limited to that session's credential hosts.
+
+**Nonce.** A number used once. AES-GCM needs a different one per value under the same key; mirafleet
+draws 12 random bytes each time.
+
 **NAT.** Network address translation: a router hides many machines behind one address and blocks
 inbound connections. Outbound-only runners work through it. See
 [chapter 1](01-what-is-mirafleet.md#12-what-mirafleet-does).
@@ -371,6 +447,9 @@ inbound connections. Outbound-only runners work through it. See
 scripts (`MIRAFLEET_CTR=nerdctl` on a Linux host with containerd). See [chapter 9](09-dev-setup-and-testing.md).
 
 ## O
+
+**One operator per runner.** A host runner is held by the operator with live workspaces on it; another
+operator gets `runner busy, in use by <name>` until the last one ends. See [flow 24](04-flows.md#24-open-a-host-workspace).
 
 **Operator.** A registered person: in practice, one Ed25519 key on one machine (alice's laptop)
 that central knows by a name such as `alice`. Operators use fleets; they do not manage central.
@@ -408,6 +487,9 @@ result says `truncated: true`. See [chapter 5](05-security.md#511-prompt-injecti
 dials in to a runner. See [chapter 1](01-what-is-mirafleet.md#12-what-mirafleet-does).
 
 ## P
+
+**ptrace.** A Linux system call that lets one process inspect and control another (debuggers use it).
+Blocked against a non-dumpable process.
 
 **Partial index.** A database index that covers only rows matching a condition (for example only
 non-revoked keys), so it can enforce "unique among live rows". See [chapter 6](06-data-model.md).
@@ -456,6 +538,17 @@ operator API. See [chapter 1](01-what-is-mirafleet.md#11-the-problem) and
 
 ## R
 
+**Re-adoption.** After a runner restart, the host executor picks its open sessions and running
+background jobs back up (from session records and each job's `status.json`). See
+[flow 29](04-flows.md#29-runner-restart-re-adoption).
+
+**`ref`.** The handle of a saved foreground `bash` output; pass it to `read_output` to page the full text.
+See [flow 26](04-flows.md#26-bash-with-full-output-and-paging).
+
+**Rotation (credential).** Replacing a credential's value; central pushes it to holders at once. Opt-in
+`rotate: gitlab_self` lets central rotate a GitLab project token itself. See
+[flow 28](04-flows.md#28-credential-assign-delivery-use-and-rotation).
+
 **Rate limit.** A cap on how often something may happen, using a token bucket. See
 [chapter 2](02-background.md#28-rate-limiting-token-bucket).
 
@@ -496,6 +589,16 @@ actions. See [chapter 1](01-what-is-mirafleet.md#13-the-three-roles).
 0600). See [chapter 10](10-operations.md).
 
 ## S
+
+**Session CA.** The throwaway certificate authority the broker makes for one workspace session; its key
+exists only in runner memory and its certificate (`ca.pem`) is added to the tools' trust list.
+
+**Signing oracle.** Something that cannot reveal a key but will sign whatever a caller asks. A forwarded
+ssh-agent is one; mirafleet's restricted agent narrows it to user-auth requests for pinned hosts.
+
+**ssh-agent.** A program holding SSH private keys in memory and signing on request over a Unix socket
+(`SSH_AUTH_SOCK`). mirafleet runs a restricted one (`internal/workspace/sshagent`) per host session:
+`List` and `Sign` only.
 
 **Seam (interface seam).** A Go interface left in the OSS code so an enterprise feature can plug
 in later: `Store`, `AuthProvider`, `PolicyEngine`, `AuditSink`. See
@@ -582,6 +685,9 @@ implementation lives in `internal/store/sqlite`. See [chapter 6](06-data-model.m
 
 ## T
 
+**TLS interception.** A proxy ending a TLS connection itself, with a certificate the client trusts, so it can
+add or read headers. The broker does it for credential hosts only.
+
 **TOFU (trust on first use).** Accepting a server's key the first time and warning only if it
 changes. mirafleet does **not** use it. See
 [chapter 2](02-background.md#23-host-key-pinning-versus-trust-on-first-use).
@@ -623,6 +729,9 @@ lands as a nobody and workspaces cannot touch each other's files. See
 [chapter 2](02-background.md#211-unix-sockets-file-permissions-and-umask).
 
 ## W
+
+**workdir.** Optional `.mirafleet.yaml` field (host fleets only) naming a shared directory
+`<root>/work/<name>` that several sessions use instead of a per-session directory.
 
 **WAL (write-ahead log).** SQLite mode where changes go to a log file first so readers and the
 writer do not block each other. See [chapter 2](02-background.md#26-sqlite-transactions-and-wal).

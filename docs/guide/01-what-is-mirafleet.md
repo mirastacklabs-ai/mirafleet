@@ -8,6 +8,9 @@
 - Which parts are built today (M1, M2, M3 and M5), which platforms are supported (the
   orchestrator works on Windows too), and the milestone plan.
 - How an agent actually drives a fleet: by calling MCP tools such as `exec` and `run_action`.
+- What **host mode** (M7) adds: a developer workspace on a remote VM, where the AI model stays on
+  the Mac, every tool call runs on the VM, and the passwords and keys live on central
+  ([section 1.4a](#14a-host-mode-remote-development-on-a-vm-m7)).
 
 New words are explained the first time they appear and collected in the [glossary](glossary.md).
 
@@ -138,6 +141,7 @@ Each fleet has a **mode**, chosen when the fleet is created:
 |---|---|---|---|
 | `actions` | operations, usually `prod` | only named actions from the runner's `actions.yaml` | **built (M1, M2)** |
 | `workspace` | coding, usually `dev` | any command, but inside a private container for one agent session | **built (M3)** |
+| `workspace` with executor `host` | coding on a dedicated VM | any command and file tool, run directly as the runner's own OS user, with central-held credentials; no container | **built (M7)**, see [1.4a](#14a-host-mode-remote-development-on-a-vm-m7) |
 
 **Actions mode** is like a restaurant menu. The agent cannot ask the kitchen for anything it
 likes; it can order only what is on the menu. An entry looks like this:
@@ -194,6 +198,57 @@ string. The MCP tool `exec` takes either an `argv` list or a `command` string; a
 container is the boundary. In the MCP tools the same story reads: `workspace_open` (or just
 `exec`, which opens one on an unguarded default fleet), `exec` with `go test ./...`,
 `write_file` and `read_file`, then `workspace_close`.
+
+## 1.4a Host mode: remote development on a VM (M7)
+
+<!-- verify: M7 status. Built on branch m7-wave-a; TestM7Done/TestM7DoneIntegration and the user smoke test (S21) were not finished when this was written. Update "built" wording after the reconciliation pass. -->
+
+Containers are a good box, but many teams do not want one. Acme's engineers want what they have
+on a laptop: a real machine with the real tools, the company's private GitLab reachable, caches
+that stay warm, a three-minute build that keeps going. So M7 adds a second *executor* (the part of
+a runner that actually runs the work) for workspace mode, called **host mode**.
+
+**The north star, in one sentence:** the AI model's inference (its "thinking") stays on Alice's
+Mac; every tool call (run a command, read a file, edit a file) runs on a remote VM through
+central; and the credentials (SSH keys, tokens) move from the Mac to central. Before M7, Alice's
+repo, her keys and Claude Code all sat on one laptop. After M7 the code and commands are on the
+VM, the keys are on central, and the Mac holds nothing of the project.
+
+The Acme story ([chapter 4](04-flows.md#24-open-a-host-workspace) tells it step by step):
+
+1. **Dana prepares a VM.** Acme's private GitLab (`gitlab.example.com`) is reachable only from
+   `vm1.example.com`. Dana creates an ordinary Linux user `dev` on it (no root, no sudo) and
+   runs `mirafleet runner join central.example.com:2222 -name vm1-dev -token -` *as `dev`*.
+   The runner, `vm1-dev`, runs as `dev` with the `executor: host` setting.
+2. **Dana stores the secrets once, on central.** A GitLab deploy key (an SSH key that can only
+   touch one repository) and a project access token, entered in the GUI's **Credentials** page
+   or with `mirafleet central credential set`. She **assigns** them to `vm1-dev`. Nobody can read
+   them back: the values are write-only.
+3. **Alice opens a project on her Mac** whose `.mirafleet.yaml` says `remote: true`. Claude Code
+   calls `workspace_open`, then `bash` with `git clone git@gitlab.example.com:acme/app.git`. The
+   clone works, yet the key is nowhere on the VM's disk and the agent never sees it.
+4. **It edits and builds.** `edit`, `multi_edit`, `grep`, `glob` and `read` run on the VM and
+   behave like Claude Code's local tools. A long build starts with `run_in_background`; Claude
+   polls it with `bash_output` while it works on something else. If the runner restarts
+   mid-build, the build keeps going.
+5. **It pushes.** `git push` uses the same hidden key. Alice's Mac never held a project file or
+   ran a project command.
+
+What is different from container mode, in one table:
+
+| | Container mode (M3) | Host mode (M7) |
+|---|---|---|
+| Where tools run | in a private container per session | on the VM, as the runner's OS user |
+| The boundary is | the container (namespaces, seccomp, cgroups) | the VM itself, plus one OS user per runner |
+| Files persist | until the workspace is deleted | yes: a directory per session stays on disk until cleanup |
+| Tools | `exec`, `read_file`, `write_file` | `bash` (with background shells), `read`, `write`, `edit`, `multi_edit`, `grep`, `glob`, `ls`, `notebook_edit`, `upload`, `download` |
+| Secrets | none | central stores them; the runner holds them in memory only |
+| Egress control | a proxy allowlist | the VM's own firewall |
+
+Host mode is a **trade**: you give up the container wall and get a normal, productive machine.
+You buy the safety back with a dedicated VM, a firewall, an unprivileged runner user and secrets
+that the agent can use but not read. [Chapter 5, section 5.12](05-security.md#512-host-mode-and-credentials-m7)
+shows how each of those works, and what is *not* protected.
 
 ## 1.5 What mirafleet is not
 
@@ -291,7 +346,8 @@ the admin CLI already covers the GUI's functions. Full details are in [../PLAN.m
 | **M2** Central core | SQLite store, fleets, join tokens, runner lifecycle, rotating registration codes, `api@mirafleet`, admin socket, admin CLI, `runner join`, `mcp login` / `mcp api` | done (13 Nov 2026); see [../M2.md](../M2.md) |
 | **M3** Workspaces | `workspace.Executor`, containerd executor, optional OpenSandbox executor, scheduling and sticky sessions, TTL reaper, reconcile, `workspace.*` API, egress proxy | done (13 Nov 2026); see [../M3.md](../M3.md) |
 | **M5** Orchestrator | the real `mirafleet mcp` stdio MCP server (nine tools), contexts and project defaults, session handoff, Claude Code plugin and hooks, opencode and generic notes, Windows support, action discovery; see [../M5.md](../M5.md) | **built** (smoke test with real Claude Code pending) |
-| **M4** Admin GUI | web screens on central (built with htmx, a small library that updates page parts from the server) | **planned** |
+| **M4** Admin GUI | web screens on central (built with htmx, a small library that updates page parts from the server) | done (15 Nov 2026; the user's browser check is pending) |
+| **M7** Remote development on a VM | workspace executor `host`; central-held credentials (encrypted at rest); SSH agent and HTTPS broker on the runner; background jobs; full output with paging; Claude Code tool parity (`read`, `edit`, `grep`, ...); upload/download; GUI Credentials page; see [../M7.md](../M7.md) | **built** on branch `m7-wave-a`; user smoke test pending <!-- verify: M7 status wording at merge time --> |
 | **M6** Release | CI, packages (`.deb` and `.rpm` are the install files for Debian/Ubuntu and Red Hat systems; plus a container image), signing, install script, plugin stores | **planned** |
 
 What this means for you today:
@@ -318,7 +374,13 @@ What this means for you today:
   handoff and an extra confirm prompt. It is built but still to be smoke-tested with a real
   Claude Code. Installing it from a plugin store arrives with M6, so for now `mirafleet` must be
   on your `PATH`.
-- There is no GUI yet. Everything the GUI will do is done with `mirafleet central ...`.
+- Central has a web GUI (M4) with a **Credentials** page (M7). Everything the GUI does can also be
+  done with `mirafleet central ...`, except that the GUI never takes a file upload for a secret
+  (the CLI reads it from stdin: `central credential set NAME < file`).
+- With a host-mode fleet, the same MCP tools are joined by `bash` (foreground and background),
+  `read`, `write`, `edit`, `multi_edit`, `grep`, `glob`, `ls`, `notebook_edit`, `bash_output`,
+  `kill_shell`, `job_list`, `read_output`, `upload` and `download`
+  ([section 1.4a](#14a-host-mode-remote-development-on-a-vm-m7)).
 
 ## 1.9 Where to go next
 
@@ -338,6 +400,8 @@ keys, SSH, HMAC, SQLite and Go contexts, skim its headings and move to
    and what happens if Alice opens the same session twice?
 7. Claude Code wants to run `go test ./...`. Which MCP tool does it call, and what does the
    tool send to central?
+8. Alice's `.mirafleet.yaml` says `remote: true`. Name three things that never happen on her Mac.
+9. In host mode, where is the GitLab deploy key stored, and can the agent read it?
 
 <details>
 <summary>Answers</summary>
@@ -359,5 +423,11 @@ keys, SSH, HMAC, SQLite and Go contexts, skim its headings and move to
    server wraps a `command` as `["/bin/sh","-c",command]`, opens a workspace first if none is
    bound (on an unguarded default fleet), and sends one `workspace.exec` request to central over
    its SSH connection.
+8. No project file is stored there, no project command runs there (`bash`, `grep`, `git` all
+   run on the VM), and no project credential is kept there. Only the model's inference, the
+   MCP server and the plugin run locally.
+9. Encrypted in central's SQLite database (the key to decrypt is in central's environment). A
+   runner that is assigned it keeps it in memory only, and the agent can use it through an
+   SSH-agent socket but never read it.
 
 </details>
