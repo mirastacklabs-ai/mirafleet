@@ -16,10 +16,15 @@ const ProjectName = ".mirafleet.yaml"
 // maxProjectBytes bounds the project file.
 const maxProjectBytes = 4 << 10
 
-// Project is the contents of .mirafleet.yaml. Either field may be empty.
+// Project is the contents of .mirafleet.yaml. Every field may be empty. Remote marks a project
+// whose tools all run on the remote workspace (docs/M7.md §3.8); Workdir names a shared
+// directory on the runner instead of a per-session one (Q4) and needs Remote. Still no addresses,
+// keys or caps.
 type Project struct {
 	Fleet   string `yaml:"fleet,omitempty"`
 	Context string `yaml:"context,omitempty"`
+	Remote  bool   `yaml:"remote,omitempty"`
+	Workdir string `yaml:"workdir,omitempty"`
 }
 
 // LoadProject looks for .mirafleet.yaml in start and its parents. It checks a directory first and
@@ -108,13 +113,19 @@ func loadProjectAt(dir string) (Project, string, bool, error) {
 	}
 	var p Project
 	if err := decodeSingle(b, &p); err != nil {
-		return Project{}, "", false, fmt.Errorf("parse %s (only fleet and context are allowed): %w", path, err)
+		return Project{}, "", false, fmt.Errorf("parse %s (only fleet, context, remote and workdir are allowed): %w", path, err)
 	}
 	if p.Fleet != "" && !nameRE.MatchString(p.Fleet) {
 		return Project{}, "", false, fmt.Errorf("%s: invalid fleet name %q", path, p.Fleet)
 	}
 	if p.Context != "" && !nameRE.MatchString(p.Context) {
 		return Project{}, "", false, fmt.Errorf("%s: invalid context name %q", path, p.Context)
+	}
+	if p.Workdir != "" && !nameRE.MatchString(p.Workdir) {
+		return Project{}, "", false, fmt.Errorf("%s: invalid workdir name %q", path, p.Workdir)
+	}
+	if p.Workdir != "" && !p.Remote {
+		return Project{}, "", false, fmt.Errorf("%s: workdir needs remote: true", path)
 	}
 	return p, path, true, nil
 }

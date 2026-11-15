@@ -98,28 +98,34 @@ func (c *Client) CallBody(ctx context.Context, method string, params any, body [
 	if len(body) > api.MaxFileChunk {
 		return fmt.Errorf("apiclient: body exceeds %d bytes", api.MaxFileChunk)
 	}
-	_, err := callOnBody(ctx, c.c, transport.ChanAPI, method, params, body, true, result, false)
+	_, err := callOnBody(ctx, c.c, transport.ChanAPI, method, params, body, true, result, false, nil)
 	return err
+}
+
+// CallReadBodyIf is CallReadBody for a method whose response carries a body frame only
+// sometimes: hasBody is called after the result is decoded into result (workspace.fs: an image).
+func (c *Client) CallReadBodyIf(ctx context.Context, method string, params, result any, hasBody func() bool) ([]byte, error) {
+	return callOnBody(ctx, c.c, transport.ChanAPI, method, params, nil, false, result, true, hasBody)
 }
 
 // CallReadBody is Call for a method whose response is followed by one body frame
 // (workspace.read_file). The body is returned only when the call succeeded; its size is bounded
 // by api.MaxFileChunk before anything is allocated.
 func (c *Client) CallReadBody(ctx context.Context, method string, params, result any) ([]byte, error) {
-	return callOnBody(ctx, c.c, transport.ChanAPI, method, params, nil, false, result, true)
+	return callOnBody(ctx, c.c, transport.ChanAPI, method, params, nil, false, result, true, nil)
 }
 
 // callOn opens one channel of chanType on cl, sends one framed request, reads one framed
 // response and closes the channel.
 func callOn(ctx context.Context, cl *ssh.Client, chanType, method string, params, result any) error {
-	_, err := callOnBody(ctx, cl, chanType, method, params, nil, false, result, false)
+	_, err := callOnBody(ctx, cl, chanType, method, params, nil, false, result, false, nil)
 	return err
 }
 
 // callOnBody is callOn with an optional request body frame (sendBody) and an optional response
 // body frame (wantBody) after the JSON result. One channel per call; ctx cancellation closes it.
 func callOnBody(ctx context.Context, cl *ssh.Client, chanType, method string, params any, body []byte, sendBody bool,
-	result any, wantBody bool) ([]byte, error) {
+	result any, wantBody bool, bodyIf func() bool) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -199,7 +205,7 @@ func callOnBody(ctx context.Context, cl *ssh.Client, chanType, method string, pa
 			return nil, fmt.Errorf("decode result: %w", err)
 		}
 	}
-	if !wantBody {
+	if !wantBody || (bodyIf != nil && !bodyIf()) {
 		return nil, nil
 	}
 	out, err := api.ReadBodyTimeout(ch, ch, api.MaxFileChunk)

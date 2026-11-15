@@ -5,7 +5,7 @@
 # MIRAFLEET_CTR and MIRAFLEET_GO_IMAGE are trusted caller environment (the CTR value is
 # word-split and executed); never derive them from untrusted input.
 #
-# Usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|shell|go <args...>
+# Usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|integration-host|shell|go <args...>
 set -eu
 
 # Pinned by tag and by multi-arch index digest.
@@ -206,9 +206,64 @@ CFG
 		kill $cpid 2>/dev/null || :
 		exit $rc'
 	;;
+integration-host)
+	# M7 host-mode integration tests (docs/M7.md §7.2). No containerd, no --privileged. (1) Build
+	# `-tags integration` test binaries and the mirafleet binary statically, as in `integration`, into
+	# the separate volume mirafleet-itest-host-bin. (2) Run them as root in a throwaway container of
+	# the digest-pinned Go image (Debian bookworm, which ships git and openssh-client), after
+	# creating the unprivileged users `dev` and `qa`; the tests start one runner as each (setuid to
+	# the user, so no runner runs as root). The container's own IP is mapped to gitlab.test and
+	# registry.gitlab.test in /etc/hosts, so the fake GitLab (internal/testfake/gitlab) listens on a
+	# non-loopback address. The tests get:
+	#   MIRAFLEET_TEST_BIN=/itest/mirafleet  MIRAFLEET_TEST_RUNNER_USERS="dev qa"
+	#   MIRAFLEET_TEST_FAKE_IP=<container ip>  (gitlab.test and registry.gitlab.test resolve to it)
+	# Everything is inside the --rm container and vanishes with it. Override the package list with
+	# MIRAFLEET_ITEST_HOST_PKGS (space separated).
+	HOST_PKGS="${MIRAFLEET_ITEST_HOST_PKGS:-./internal/testfake/gitlab ./internal/central}"
+	$CTR volume create mirafleet-itest-host-bin >/dev/null
+	# shellcheck disable=SC2086
+	run ro "" # ensure the cache volumes exist and are owned by the host user
+	# shellcheck disable=SC2086
+	$CTR run -q --rm --user 0:0 -v mirafleet-itest-host-bin:/out "$GO_IMAGE" sh -c 'rm -rf /out/* && chown "$1:$2" /out' sh "$(id -u)" "$(id -g)"
+	# shellcheck disable=SC2086
+	$CTR run -q --rm --user "$(id -u):$(id -g)" \
+		-v "$ROOT":/src:ro -v mirafleet-itest-host-bin:/out \
+		-v mirafleet-gomod:/go/pkg/mod -v mirafleet-gocache:/gocache \
+		-w /src -e HOME=/tmp -e GOCACHE=/gocache -e GOPATH=/gocache/gopath -e GOMODCACHE=/go/pkg/mod \
+		-e GOFLAGS="-buildvcs=false -modcacherw" -e CGO_ENABLED=0 -e GOOS=linux \
+		"$GO_IMAGE" sh -ec 'for p in "$@"; do
+			n=$(echo "$p" | sed "s|^\./||; s|/|_|g")
+			go test -c -tags integration -o "/out/$n.test" "$p"
+		done
+		go build -o /out/mirafleet ./cmd/mirafleet
+		ls /out' sh $HOST_PKGS
+	# shellcheck disable=SC2016
+	$CTR run --rm --user 0:0 --entrypoint sh \
+		-v mirafleet-itest-host-bin:/itest:ro \
+		"$GO_IMAGE" -ec '
+		command -v git >/dev/null && command -v ssh >/dev/null || { echo "image lacks git or openssh-client" >&2; exit 1; }
+		for u in dev qa; do
+			useradd -m -s /bin/bash "$u"
+			chmod 700 "/home/$u"
+		done
+		ip=$(hostname -i | tr " " "\n" | grep -v "^127\." | grep -m1 "\.") || { echo "no non-loopback address" >&2; exit 1; }
+		echo "$ip gitlab.test registry.gitlab.test" >> /etc/hosts
+		export MIRAFLEET_TEST_BIN=/itest/mirafleet MIRAFLEET_TEST_RUNNER_USERS="dev qa" MIRAFLEET_TEST_FAKE_IP="$ip"
+		cd /tmp
+		rc=0
+		for b in /itest/*.test; do
+			echo "== $b"
+			run=""
+			case "$b" in
+			*/internal_central.test) run="-test.run ^TestM7DoneIntegration" ;; # the rest runs in the normal gate
+			esac
+			"$b" -test.v -test.timeout 20m $run || rc=$?
+		done
+		exit $rc'
+	;;
 go) run rw 'exec go "$@"' "$@" ;;
 *)
-	echo "usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|shell|go <args...>" >&2
+	echo "usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|integration-host|shell|go <args...>" >&2
 	exit 2
 	;;
 esac

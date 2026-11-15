@@ -26,6 +26,18 @@ type fakeBackend struct {
 	ContextNamesFn       func() ([]string, error)
 	FleetsListFn         func(ctx context.Context, cname string) (*api.FleetsListResult, error)
 	RunnersListFn        func(ctx context.Context, cname, fleet string) (*api.RunnersListResult, error)
+
+	// M7 dev-workspace calls; the methods live in fake_dev_test.go.
+	WorkspaceCloseWithFn func(ctx context.Context, cname string, p api.WorkspaceCloseParams) (*api.WorkspaceCloseResult, error)
+	WorkspaceFSFn        func(ctx context.Context, cname string, p api.FSParams, data []byte) (*api.FSResult, []byte, error)
+	JobStartFn           func(ctx context.Context, cname string, p api.JobStartParams) (*api.JobStartResult, error)
+	JobStatusFn          func(ctx context.Context, cname string, p api.JobStatusParams) (*api.JobStatusResult, error)
+	JobTailFn            func(ctx context.Context, cname string, p api.JobTailParams) (*api.JobTailResult, error)
+	JobCancelFn          func(ctx context.Context, cname string, p api.JobCancelParams) (*api.JobCancelResult, error)
+	OutputReadFn         func(ctx context.Context, cname string, p api.OutputReadParams) (*api.OutputReadResult, error)
+	UploadFn             func(ctx context.Context, cname, projectDir string, p orch.UploadParams) (*orch.TransferResult, error)
+	DownloadFn           func(ctx context.Context, cname, projectDir string, p orch.DownloadParams) (*orch.TransferResult, error)
+	ProjDir              string
 	ActionRunFn          func(ctx context.Context, cname string, p api.ActionRunParams) (*api.ActionRunResult, error)
 	WorkspaceOpenFn      func(ctx context.Context, cname string, p api.WorkspaceOpenParams) (*api.WorkspaceOpenResult, error)
 	WorkspaceExecFn      func(ctx context.Context, cname string, p api.WorkspaceExecParams, stdin []byte) (*api.WorkspaceExecResult, error)

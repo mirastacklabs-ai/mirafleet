@@ -1,0 +1,6 @@
+*.log
+build/
+/root-only.txt
+!keep.log
+docs/*.tmp
+# comment

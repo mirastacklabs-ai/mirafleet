@@ -121,6 +121,13 @@ type Heartbeat struct {
 	// Actions (M5, additive): the actions an actions-mode runner offers, for discovery only.
 	// <= 128 actions; see ValidateAction. M2/M3 runners omit it.
 	Actions []ActionInfo `json:"actions,omitempty"`
+
+	// M7 (additive; see devws.go): Features lists what the runner supports (fs, jobs, creds,
+	// events, host), Credentials the credentials it holds (names, kinds, hosts, status; never a
+	// value), Busy the number of running background jobs (a workspace with one is in use).
+	Features    []string              `json:"features,omitempty"`
+	Credentials []HeartbeatCredential `json:"credentials,omitempty"`
+	Busy        int                   `json:"busy,omitempty"`
 }
 
 // Validate bounds the optional workspace fields of a heartbeat.
@@ -162,7 +169,7 @@ func (h *Heartbeat) Validate() error {
 	if len(h.Actions) > 0 && ActionsEncodedSize(h.Actions) > MaxActionsBytes {
 		return errors.New("heartbeat actions too large")
 	}
-	return nil
+	return h.validateDev()
 }
 
 // heartbeatCharsOK reports whether s consists only of ASCII letters, digits and the extra bytes.

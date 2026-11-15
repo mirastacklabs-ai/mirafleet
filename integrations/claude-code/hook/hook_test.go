@@ -379,3 +379,107 @@ func TestSessionEndKeepsNewerSessionHandoff(t *testing.T) {
 		t.Fatalf("newer handoff lost: %q %v", s, ok)
 	}
 }
+
+func remoteEnv(t *testing.T, project string) Env {
+	env := testEnv(t, &fakeBackend{})
+	env.ProjectDir = t.TempDir()
+	if project != "" {
+		if err := os.WriteFile(env.ProjectDir+"/.mirafleet.yaml", []byte(project), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return env
+}
+
+func localCall(tool string) string {
+	return `{"hook_event_name":"PreToolUse","tool_name":"` + tool + `","tool_input":{"command":"ls","file_path":"/x"}}`
+}
+
+func TestPreToolUseLocalToolsDecisionTable(t *testing.T) {
+	remoteName := map[string]string{"Bash": "bash", "Read": "read", "Write": "write", "Edit": "edit",
+		"MultiEdit": "multi_edit", "Grep": "grep", "Glob": "glob", "LS": "ls", "NotebookEdit": "notebook_edit"}
+	cases := []struct {
+		name, project string
+		deny, broken  bool
+	}{
+		{"remote true", "remote: true\nfleet: dev\n", true, false},
+		{"remote true with workdir", "remote: true\nworkdir: shared\n", true, false},
+		{"remote false", "remote: false\nfleet: dev\n", false, false},
+		{"no remote key", "fleet: dev\n", false, false},
+		{"no project file", "", false, false},
+		{"broken yaml", "remote: [true\n", true, true},
+		{"unknown key", "remote: true\naddr: 10.0.0.1\n", true, true},
+		{"workdir without remote", "workdir: shared\n", true, true},
+	}
+	for _, c := range cases {
+		for tool, remote := range remoteName {
+			t.Run(c.name+"/"+tool, func(t *testing.T) {
+				code, out, _ := run(t, "pre-tool-use", localCall(tool), remoteEnv(t, c.project))
+				if code != 0 {
+					t.Fatal(code)
+				}
+				if !c.deny {
+					if out != "" {
+						t.Fatalf("want silent, got %q", out)
+					}
+					return
+				}
+				var d decision
+				if err := json.Unmarshal([]byte(out), &d); err != nil {
+					t.Fatalf("%q: %v", out, err)
+				}
+				h := d.HookSpecificOutput
+				if h.HookEventName != "PreToolUse" || h.PermissionDecision != "deny" || strings.Contains(out, `"allow"`) {
+					t.Fatalf("decision %+v", h)
+				}
+				if c.broken {
+					if !strings.Contains(h.PermissionDecisionReason, ".mirafleet.yaml") {
+						t.Fatalf("broken-file reason %q", h.PermissionDecisionReason)
+					}
+				} else if !strings.Contains(h.PermissionDecisionReason, "`"+remote+"`") ||
+					!strings.Contains(h.PermissionDecisionReason, toolPrefix+remote) {
+					t.Fatalf("reason %q does not name %s", h.PermissionDecisionReason, remote)
+				}
+			})
+		}
+	}
+}
+
+func TestPreToolUseLocalToolFallsBackToCwdAndIgnoresOtherTools(t *testing.T) {
+	env := remoteEnv(t, "remote: true\n")
+	dir := env.ProjectDir
+	env.ProjectDir = ""
+	_, out, _ := run(t, "pre-tool-use", `{"cwd":"`+dir+`","tool_name":"Bash","tool_input":{}}`, env)
+	if !strings.Contains(out, `"deny"`) {
+		t.Fatalf("cwd fallback: %q", out)
+	}
+	// No project directory at all: fail open.
+	env.ProjectDir = ""
+	if _, out, _ := run(t, "pre-tool-use", `{"tool_name":"Bash","tool_input":{}}`, env); out != "" {
+		t.Fatalf("no project dir: %q", out)
+	}
+	// Tools that are neither local built-ins nor mirafleet's are never denied, and WebFetch etc. stay allowed.
+	env = remoteEnv(t, "remote: true\n")
+	for _, tool := range []string{"WebFetch", "Task", "TodoWrite", "mcp__other__bash"} {
+		if _, out, _ := run(t, "pre-tool-use", localCall(tool), env); out != "" {
+			t.Errorf("%s: %q", tool, out)
+		}
+	}
+	// A local tool with a stray confirm field is a deny in a remote project, silent otherwise (never an ask).
+	in := `{"tool_name":"Write","tool_input":{"confirm":"prod"}}`
+	if _, out, _ := run(t, "pre-tool-use", in, env); !strings.Contains(out, `"deny"`) {
+		t.Fatalf("remote + confirm: %q", out)
+	}
+	if _, out, _ := run(t, "pre-tool-use", in, remoteEnv(t, "")); mustAsk(t, out) != genericReason {
+		t.Fatalf("local + confirm: %q", out)
+	}
+}
+
+func TestPreToolUseConfirmStillAsksInRemoteProject(t *testing.T) {
+	env := remoteEnv(t, "remote: true\n")
+	in := `{"tool_name":"` + toolPrefix + `bash","tool_input":{"fleet":"prod","confirm":"prod","command":"ls"}}`
+	_, out, _ := run(t, "pre-tool-use", in, env)
+	if r := mustAsk(t, out); r != `Guarded fleet "prod": bash` {
+		t.Fatalf("reason %q", r)
+	}
+}

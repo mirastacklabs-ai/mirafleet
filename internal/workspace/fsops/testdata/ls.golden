@@ -1,0 +1,6 @@
+- <root>/
+  - demo.ipynb
+  - notes.txt
+  - src/
+    - inner/
+      - a.go

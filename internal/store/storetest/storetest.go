@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +50,14 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("GUIEnsureSetup", func(t *testing.T) { guiEnsureSetup(t, newStore(t)) })
 	t.Run("QueryAudit", func(t *testing.T) { queryAudit(t, newStore(t)) })
 	t.Run("SetFleetConfirm", func(t *testing.T) { setFleetConfirm(t, newStore(t)) })
+	t.Run("HostExecutor", func(t *testing.T) { hostExecutor(t, newStore(t)) })
+	t.Run("HostHold", func(t *testing.T) { hostHold(t, newStore(t)) })
+	t.Run("Credentials", func(t *testing.T) { credentials(t, newStore(t)) })
+	t.Run("CredentialAssign", func(t *testing.T) { credentialAssign(t, newStore(t)) })
+	t.Run("CredentialDelete", func(t *testing.T) { credentialDelete(t, newStore(t)) })
+	t.Run("CredentialSecrecy", func(t *testing.T) { credentialSecrecy(t, newStore(t)) })
+	t.Run("CredentialAudit", func(t *testing.T) { credentialAudit(t, newStore(t)) })
+	t.Run("CredentialRekey", func(t *testing.T) { credentialRekey(t, newStore(t)) })
 }
 
 func ev(action string) store.AuditEvent {
@@ -2364,5 +2373,666 @@ func setFleetConfirm(t *testing.T, s store.Store) {
 	}
 	if c := countAction(t, s, "fleet.set_confirm"); c != 3 {
 		t.Fatalf("audit rows = %d", c)
+	}
+}
+
+// ---- M7: host executor and central-held credentials ----
+
+// credFixture enrols runners r1, r2 in fleet cf1 and r3 in cf2 and returns them.
+func credFixture(t *testing.T, s store.Store) (r1, r2, r3 store.Runner) {
+	t.Helper()
+	ctx := context.Background()
+	mkFleet(t, s, "cf1")
+	mkFleet(t, s, "cf2")
+	mkToken(t, s, "cf1", "dddddddddddddddd", "sec", 10, true, t0.Add(time.Hour))
+	mkToken(t, s, "cf2", "eeeeeeeeeeeeeeee", "sec", 10, true, t0.Add(time.Hour))
+	enrolRunner := func(tok, name string, key byte) store.Runner {
+		r, err := s.Enroll(ctx, tok, secretHash("sec"), t0, newRunner(name, key), ev("runner.enrol"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	return enrolRunner("dddddddddddddddd", "r1", 21), enrolRunner("dddddddddddddddd", "r2", 22), enrolRunner("eeeeeeeeeeeeeeee", "r3", 23)
+}
+
+// decoy is a recognisable stand-in for a secret value; it must never reach metadata or audit.
+const decoy = "DECOY-SECRET-VALUE-0123456789"
+
+// sealer returns a CredentialSealer that records the (id, version) it was called with.
+func sealer(secret string, gotID, gotVer *int64) store.CredentialSealer {
+	return func(id, version int64) ([]byte, []byte, error) {
+		if gotID != nil {
+			*gotID, *gotVer = id, version
+		}
+		return make([]byte, 12), []byte(fmt.Sprintf("sealed:%d:%d:%s", id, version, secret)), nil
+	}
+}
+
+func cred(name string) store.Credential {
+	return store.Credential{
+		Name: name, Kind: store.CredSSHKey, Hosts: []string{"gitlab.example.com", "git.example.com:2222"},
+		Meta: map[string]string{"user": "git"}, Fingerprint: "SHA256:abc",
+	}
+}
+
+func setCred(t *testing.T, s store.Store, name string) store.Credential {
+	t.Helper()
+	c, _, err := s.SetCredential(context.Background(), cred(name), sealer(decoy, nil, nil), t0, ev("credential.set"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func names(l []store.Credential) []string {
+	var out []string
+	for _, c := range l {
+		out = append(out, c.Name)
+	}
+	return out
+}
+
+func hostExecutor(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	host := func() *store.WorkspaceConfig {
+		return &store.WorkspaceConfig{
+			Executor: store.ExecutorHost, Pull: store.PullNever, Network: store.NetworkEgress,
+			IdleTTL: 24 * time.Hour, MaxTTL: 168 * time.Hour,
+			ExecDefault: 120 * time.Second, ExecMax: 10 * time.Minute,
+		}
+	}
+	f, err := s.CreateFleet(ctx, store.Fleet{Name: "hostf", Mode: store.ModeWorkspace, Workspace: host()}, t0, ev("fleet.create"))
+	if err != nil || f.Workspace == nil || f.Workspace.Executor != store.ExecutorHost {
+		t.Fatalf("host fleet = %+v, %v", f, err)
+	}
+	got, err := s.GetFleetWorkspace(ctx, "hostf")
+	if err != nil || got.Executor != store.ExecutorHost || got.DefaultImage != "" || len(got.Images) != 0 || got.CPUMilli != 0 {
+		t.Fatalf("GetFleetWorkspace = %+v, %v", got, err)
+	}
+	// Containerd still needs its checks; host takes no images, egress rules or limits.
+	for name, mut := range map[string]func(*store.WorkspaceConfig){
+		"containerd without cpu": func(c *store.WorkspaceConfig) { *c = *wsCfg(); c.CPUMilli = 0 },
+		"host with image":        func(c *store.WorkspaceConfig) { c.DefaultImage = "docker.io/library/golang:1.27" },
+		"host with allowlist":    func(c *store.WorkspaceConfig) { c.Images = []string{"a/b:1"} },
+		"host with egress":       func(c *store.WorkspaceConfig) { c.Egress = []string{"proxy.golang.org:443"} },
+		"host with limit":        func(c *store.WorkspaceConfig) { c.MemoryMB = 1 },
+		"host without ttl":       func(c *store.WorkspaceConfig) { c.IdleTTL = 0 },
+		"unknown executor":       func(c *store.WorkspaceConfig) { c.Executor = "docker" },
+	} {
+		c := host()
+		mut(c)
+		if _, err := s.PutFleetWorkspace(ctx, "hostf", *c, t0, ev("fleet.put")); !errors.Is(err, store.ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+	// A containerd fleet can be reconfigured to host and back.
+	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "cdf", Mode: store.ModeWorkspace, Workspace: wsCfg()}, t0, ev("fleet.create")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PutFleetWorkspace(ctx, "cdf", *host(), t0, ev("fleet.put")); err != nil {
+		t.Fatalf("containerd -> host: %v", err)
+	}
+	if _, err := s.PutFleetWorkspace(ctx, "cdf", *wsCfg(), t0, ev("fleet.put")); err != nil {
+		t.Fatalf("host -> containerd: %v", err)
+	}
+}
+
+func credentials(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	r1, _, _ := credFixture(t, s)
+	_ = r1
+
+	// Create: the sealer sees the row id and version 1; metadata round-trips.
+	var id, ver int64
+	c, created, err := s.SetCredential(ctx, cred("gl-ssh"), sealer(decoy, &id, &ver), t0, ev("credential.set"))
+	if err != nil || !created || c.ID == 0 || c.ID != id || ver != 1 || c.Version != 1 {
+		t.Fatalf("create = %+v created=%v err=%v (sealer id=%d ver=%d)", c, created, err, id, ver)
+	}
+	if c.Name != "gl-ssh" || c.Kind != store.CredSSHKey || len(c.Hosts) != 2 || c.Meta["user"] != "git" ||
+		c.Fingerprint != "SHA256:abc" || !c.CreatedAt.Equal(t0) || !c.RotatedAt.IsZero() || !c.ExpiresAt.IsZero() {
+		t.Fatalf("metadata = %+v", c)
+	}
+	got, err := s.GetCredential(ctx, "gl-ssh")
+	if err != nil || got.ID != c.ID || got.Hosts[1] != "git.example.com:2222" {
+		t.Fatalf("GetCredential = %+v, %v", got, err)
+	}
+	if _, err := s.GetCredential(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing credential: %v", err)
+	}
+
+	// Replace: version bumps, rotated_at and expiry are set, the id and assignments are kept.
+	if _, err := s.AssignCredential(ctx, "gl-ssh", store.CredentialTarget{Fleet: "cf1", Runner: "r1"}, t0, ev("credential.assign")); err != nil {
+		t.Fatal(err)
+	}
+	rep := cred("gl-ssh")
+	rep.Kind, rep.Hosts, rep.ExpiresAt = store.CredHTTPSToken, []string{"registry.example.com"}, t0.Add(48*time.Hour)
+	t1 := t0.Add(time.Hour)
+	c2, created, err := s.SetCredential(ctx, rep, sealer("other", &id, &ver), t1, ev("credential.set"))
+	if err != nil || created || c2.ID != c.ID || id != c.ID || ver != 2 || c2.Version != 2 {
+		t.Fatalf("replace = %+v created=%v err=%v (sealer ver=%d)", c2, created, err, ver)
+	}
+	if c2.Kind != store.CredHTTPSToken || len(c2.Hosts) != 1 || !c2.RotatedAt.Equal(t1) || !c2.ExpiresAt.Equal(t0.Add(48*time.Hour)) ||
+		!c2.CreatedAt.Equal(t0) || len(c2.Runners) != 1 {
+		t.Fatalf("replaced metadata = %+v", c2)
+	}
+	sc, err := s.GetSealedCredential(ctx, "gl-ssh")
+	if err != nil || string(sc.Ciphertext) != fmt.Sprintf("sealed:%d:2:other", c.ID) || len(sc.Nonce) != 12 {
+		t.Fatalf("sealed = %+v, %v", sc, err)
+	}
+
+	// Validation: nothing is written, no audit row.
+	before := auditCount(t, s)
+	for name, mut := range map[string]func(*store.Credential){
+		"empty name":      func(c *store.Credential) { c.Name = "" },
+		"upper-case name": func(c *store.Credential) { c.Name = "Bad" },
+		"bad kind":        func(c *store.Credential) { c.Kind = "password" },
+		"no hosts":        func(c *store.Credential) { c.Hosts = nil },
+		"bad host":        func(c *store.Credential) { c.Hosts = []string{"a b"} },
+		"url as host":     func(c *store.Credential) { c.Hosts = []string{"https://x.example.com"} },
+		"duplicate host":  func(c *store.Credential) { c.Hosts = []string{"a.example.com", "a.example.com"} },
+		"too many hosts": func(c *store.Credential) {
+			c.Hosts = nil
+			for i := 0; i < store.MaxCredentialHosts+1; i++ {
+				c.Hosts = append(c.Hosts, fmt.Sprintf("h%d.example.com", i))
+			}
+		},
+		"bad meta key":   func(c *store.Credential) { c.Meta = map[string]string{"Bad Key": "x"} },
+		"long meta val":  func(c *store.Credential) { c.Meta = map[string]string{"user": strings.Repeat("x", 300)} },
+		"long fingerprt": func(c *store.Credential) { c.Fingerprint = strings.Repeat("f", 200) },
+	} {
+		bad := cred("valid-name")
+		mut(&bad)
+		if _, _, err := s.SetCredential(ctx, bad, sealer(decoy, nil, nil), t0, ev("credential.set")); !errors.Is(err, store.ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+	for name, seal := range map[string]store.CredentialSealer{
+		"short nonce": func(int64, int64) ([]byte, []byte, error) { return make([]byte, 5), []byte("x"), nil },
+		"empty value": func(int64, int64) ([]byte, []byte, error) { return make([]byte, 12), nil, nil },
+		"huge value": func(int64, int64) ([]byte, []byte, error) {
+			return make([]byte, 12), make([]byte, store.MaxCredentialSealed+1), nil
+		},
+	} {
+		if _, _, err := s.SetCredential(ctx, cred("valid-name"), seal, t0, ev("credential.set")); !errors.Is(err, store.ErrInvalid) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+	boom := errors.New("seal failed")
+	if _, _, err := s.SetCredential(ctx, cred("valid-name"), func(int64, int64) ([]byte, []byte, error) { return nil, nil, boom }, t0, ev("credential.set")); !errors.Is(err, boom) {
+		t.Errorf("sealer error: %v", err)
+	}
+	// A failed replace leaves the old row intact.
+	if _, _, err := s.SetCredential(ctx, cred("gl-ssh"), func(int64, int64) ([]byte, []byte, error) { return nil, nil, boom }, t0, ev("credential.set")); !errors.Is(err, boom) {
+		t.Errorf("sealer error on replace: %v", err)
+	}
+	if g, _ := s.GetCredential(ctx, "gl-ssh"); g.Version != 2 {
+		t.Errorf("failed replace changed version to %d", g.Version)
+	}
+	if _, err := s.GetCredential(ctx, "valid-name"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("failed create left a row: %v", err)
+	}
+	if n := auditCount(t, s); n != before {
+		t.Errorf("failed writes added %d audit rows", n-before)
+	}
+}
+
+func credentialAssign(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	r1, r2, r3 := credFixture(t, s)
+	for _, n := range []string{"a-ssh", "b-tok", "c-reg"} {
+		setCred(t, s, n)
+	}
+	asg := func(name string, tg store.CredentialTarget) bool {
+		t.Helper()
+		ch, err := s.AssignCredential(ctx, name, tg, t0, ev("credential.assign"))
+		if err != nil {
+			t.Fatalf("assign %s %+v: %v", name, tg, err)
+		}
+		return ch
+	}
+	eff := func(r store.Runner) []string {
+		t.Helper()
+		l, err := s.EffectiveCredentials(ctx, r.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return names(l)
+	}
+	if got := eff(r1); len(got) != 0 {
+		t.Fatalf("empty effective set = %v", got)
+	}
+
+	// a-ssh -> runner r1 only; b-tok -> fleet cf1; c-reg -> both r1 and cf1 (counted once).
+	if !asg("a-ssh", store.CredentialTarget{Fleet: "cf1", Runner: "r1"}) {
+		t.Error("first assign reported unchanged")
+	}
+	asg("b-tok", store.CredentialTarget{Fleet: "cf1"})
+	asg("c-reg", store.CredentialTarget{Fleet: "cf1", Runner: "r1"})
+	asg("c-reg", store.CredentialTarget{Fleet: "cf1"})
+	asg("c-reg", store.CredentialTarget{Fleet: "cf2", Runner: "r3"})
+
+	if got := fmt.Sprint(eff(r1)); got != "[a-ssh b-tok c-reg]" {
+		t.Errorf("r1 effective = %s", got)
+	}
+	if got := fmt.Sprint(eff(r2)); got != "[b-tok c-reg]" { // fleet-level only
+		t.Errorf("r2 effective = %s", got)
+	}
+	if got := fmt.Sprint(eff(r3)); got != "[c-reg]" { // other fleet: runner-level only
+		t.Errorf("r3 effective = %s", got)
+	}
+
+	// Idempotent: same assignment again changes nothing but still audits.
+	n := countAction(t, s, "credential.assign")
+	if asg("a-ssh", store.CredentialTarget{Fleet: "cf1", Runner: "r1"}) {
+		t.Error("duplicate assign reported changed")
+	}
+	if countAction(t, s, "credential.assign") != n+1 {
+		t.Error("duplicate assign wrote no audit row")
+	}
+	if l, _ := s.EffectiveCredentials(ctx, r1.ID); len(l) != 3 {
+		t.Errorf("duplicate assign changed the set: %v", names(l))
+	}
+
+	// Metadata lists the direct assignments.
+	c, _ := s.GetCredential(ctx, "c-reg")
+	if len(c.Runners) != 2 || c.Runners[0] != (store.Ref{Fleet: "cf1", Runner: "r1"}) || c.Runners[1] != (store.Ref{Fleet: "cf2", Runner: "r3"}) ||
+		len(c.Fleets) != 1 || c.Fleets[0] != "cf1" {
+		t.Errorf("c-reg assignments = runners %v fleets %v", c.Runners, c.Fleets)
+	}
+	all, _ := s.ListCredentials(ctx)
+	if fmt.Sprint(names(all)) != "[a-ssh b-tok c-reg]" || len(all[0].Runners) != 1 || len(all[1].Fleets) != 1 {
+		t.Errorf("ListCredentials = %+v", all)
+	}
+
+	// CredentialRunners: direct union fleet-wide, non-revoked, by fleet then name.
+	rs, err := s.CredentialRunners(ctx, "c-reg")
+	if err != nil || len(rs) != 3 || rs[0].Name != "r1" || rs[1].Name != "r2" || rs[2].Name != "r3" {
+		t.Fatalf("CredentialRunners(c-reg) = %v, %v", rs, err)
+	}
+	if rs, _ := s.CredentialRunners(ctx, "a-ssh"); len(rs) != 1 || rs[0].Name != "r1" {
+		t.Errorf("CredentialRunners(a-ssh) = %v", rs)
+	}
+
+	// Errors.
+	for name, f := range map[string]func() error{
+		"unknown credential": func() error {
+			_, err := s.AssignCredential(ctx, "nope", store.CredentialTarget{Fleet: "cf1"}, t0, ev("x"))
+			return err
+		},
+		"unknown fleet": func() error {
+			_, err := s.AssignCredential(ctx, "a-ssh", store.CredentialTarget{Fleet: "nope"}, t0, ev("x"))
+			return err
+		},
+		"unknown runner": func() error {
+			_, err := s.AssignCredential(ctx, "a-ssh", store.CredentialTarget{Fleet: "cf1", Runner: "nope"}, t0, ev("x"))
+			return err
+		},
+		"runner of another fleet": func() error {
+			_, err := s.AssignCredential(ctx, "a-ssh", store.CredentialTarget{Fleet: "cf2", Runner: "r1"}, t0, ev("x"))
+			return err
+		},
+		"unassign never assigned": func() error {
+			return s.UnassignCredential(ctx, "a-ssh", store.CredentialTarget{Fleet: "cf1", Runner: "r2"}, t0, ev("x"))
+		},
+		"unassign unknown credential": func() error {
+			return s.UnassignCredential(ctx, "nope", store.CredentialTarget{Fleet: "cf1"}, t0, ev("x"))
+		},
+		"effective of unknown runner": func() error { _, err := s.EffectiveCredentials(ctx, 9999); return err },
+		"sealed of unknown runner":    func() error { _, err := s.SealedCredentialsFor(ctx, 9999); return err },
+		"runners of unknown cred":     func() error { _, err := s.CredentialRunners(ctx, "nope"); return err },
+	} {
+		if err := f(); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("%s: err = %v, want ErrNotFound", name, err)
+		}
+	}
+	if countAction(t, s, "x") != 0 {
+		t.Error("a refused call wrote an audit row")
+	}
+
+	// Unassign shrinks the set (runner-level only: the fleet-level one still gives c-reg).
+	if err := s.UnassignCredential(ctx, "c-reg", store.CredentialTarget{Fleet: "cf1", Runner: "r1"}, t0, ev("credential.unassign")); err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(eff(r1)); got != "[a-ssh b-tok c-reg]" {
+		t.Errorf("after runner-level unassign r1 = %s", got)
+	}
+	if err := s.UnassignCredential(ctx, "c-reg", store.CredentialTarget{Fleet: "cf1"}, t0, ev("credential.unassign")); err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(eff(r1)); got != "[a-ssh b-tok]" {
+		t.Errorf("after fleet-level unassign r1 = %s", got)
+	}
+	if err := s.UnassignCredential(ctx, "c-reg", store.CredentialTarget{Fleet: "cf1"}, t0, ev("credential.unassign")); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("second unassign: %v", err)
+	}
+
+	// A revoked runner can neither be assigned to nor receives the credential via CredentialRunners.
+	if _, err := s.SetRunnerStatus(ctx, r2.ID, []store.Status{store.StatusActive, store.StatusPending}, store.StatusRevoked, t0, ev("runner.revoke")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AssignCredential(ctx, "a-ssh", store.CredentialTarget{Fleet: "cf1", Runner: "r2"}, t0, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("assign to revoked runner: %v", err)
+	}
+	if rs, _ := s.CredentialRunners(ctx, "b-tok"); len(rs) != 1 || rs[0].Name != "r1" {
+		t.Errorf("CredentialRunners after revoke = %v", rs)
+	}
+}
+
+func credentialDelete(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	r1, _, r3 := credFixture(t, s)
+	setCred(t, s, "gone")
+	setCred(t, s, "kept")
+	for _, a := range []struct {
+		name string
+		tg   store.CredentialTarget
+	}{{"gone", store.CredentialTarget{Fleet: "cf1", Runner: "r1"}}, {"gone", store.CredentialTarget{Fleet: "cf1"}},
+		{"gone", store.CredentialTarget{Fleet: "cf2"}}, {"kept", store.CredentialTarget{Fleet: "cf1", Runner: "r1"}}} {
+		if _, err := s.AssignCredential(ctx, a.name, a.tg, t0, ev("credential.assign")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n := countAction(t, s, "credential.delete")
+	if err := s.DeleteCredential(ctx, "gone", t0, ev("credential.delete")); err != nil {
+		t.Fatal(err)
+	}
+	if countAction(t, s, "credential.delete") != n+1 {
+		t.Error("delete wrote no audit row")
+	}
+	if _, err := s.GetCredential(ctx, "gone"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted credential still there: %v", err)
+	}
+	if l, _ := s.EffectiveCredentials(ctx, r1.ID); fmt.Sprint(names(l)) != "[kept]" {
+		t.Errorf("r1 after delete = %v", names(l))
+	}
+	if l, _ := s.EffectiveCredentials(ctx, r3.ID); len(l) != 0 {
+		t.Errorf("r3 after delete = %v", names(l))
+	}
+	// The cascade removed every assignment: a re-created credential of the same name starts bare.
+	c := setCred(t, s, "gone")
+	if len(c.Runners) != 0 || len(c.Fleets) != 0 {
+		t.Errorf("re-created credential kept assignments: %+v", c)
+	}
+	if l, _ := s.EffectiveCredentials(ctx, r1.ID); fmt.Sprint(names(l)) != "[kept]" {
+		t.Errorf("r1 after re-create = %v", names(l))
+	}
+	if err := s.DeleteCredential(ctx, "nope", t0, ev("credential.delete")); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("delete missing: %v", err)
+	}
+	if countAction(t, s, "credential.delete") != n+1 {
+		t.Error("a failed delete wrote an audit row")
+	}
+}
+
+func credentialSecrecy(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	r1, _, _ := credFixture(t, s)
+	setCred(t, s, "s1")
+	if _, err := s.AssignCredential(ctx, "s1", store.CredentialTarget{Fleet: "cf1"}, t0, ev("credential.assign")); err != nil {
+		t.Fatal(err)
+	}
+
+	// The metadata types carry no byte slices at all, so listings cannot return ciphertext.
+	for _, ty := range []reflect.Type{reflect.TypeOf(store.Credential{})} {
+		for i := 0; i < ty.NumField(); i++ {
+			if ty.Field(i).Type.Kind() == reflect.Slice && ty.Field(i).Type.Elem().Kind() == reflect.Uint8 {
+				t.Errorf("%s.%s is a byte slice", ty.Name(), ty.Field(i).Name)
+			}
+		}
+	}
+	if !strings.Contains(fmt.Sprintf("%+v", store.SealedCredential{}), "Ciphertext") {
+		t.Error("SealedCredential lost its Ciphertext field")
+	}
+
+	// Only the explicit delivery methods return ciphertext (and the nonce).
+	sealed, err := s.SealedCredentialsFor(ctx, r1.ID)
+	if err != nil || len(sealed) != 1 || len(sealed[0].Ciphertext) == 0 || len(sealed[0].Nonce) != 12 ||
+		!strings.HasSuffix(string(sealed[0].Ciphertext), decoy) {
+		t.Fatalf("SealedCredentialsFor = %+v, %v", sealed, err)
+	}
+	if sealed[0].Name != "s1" || sealed[0].Fleets[0] != "cf1" {
+		t.Errorf("sealed metadata = %+v", sealed[0].Credential)
+	}
+	// What the metadata methods return, rendered in full, never contains the value or the ciphertext.
+	meta, _ := s.ListCredentials(ctx)
+	eff, _ := s.EffectiveCredentials(ctx, r1.ID)
+	one, _ := s.GetCredential(ctx, "s1")
+	for _, v := range []any{meta, eff, one} {
+		out := fmt.Sprintf("%+v %#v", v, v)
+		if strings.Contains(out, decoy) || strings.Contains(out, "sealed:") {
+			t.Errorf("metadata leaks the value: %s", out)
+		}
+	}
+	// And the audit trail has no value either.
+	evs, _ := s.QueryAudit(ctx, store.AuditFilter{Limit: 1000})
+	for _, e := range evs {
+		if out := fmt.Sprintf("%+v", e); strings.Contains(out, decoy) {
+			t.Errorf("audit leaks the value: %s", out)
+		}
+	}
+}
+
+func credentialAudit(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	r1, _, _ := credFixture(t, s)
+	count := func() int { return auditCount(t, s) }
+	n := count()
+	step := func(what string, f func() error) {
+		t.Helper()
+		if err := f(); err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+		n++
+		if count() != n {
+			t.Fatalf("%s: audit rows = %d, want %d", what, count(), n)
+		}
+	}
+	step("set", func() error {
+		_, _, err := s.SetCredential(ctx, cred("au"), sealer(decoy, nil, nil), t0, ev("credential.set"))
+		return err
+	})
+	step("replace", func() error {
+		_, _, err := s.SetCredential(ctx, cred("au"), sealer(decoy, nil, nil), t0, ev("credential.set"))
+		return err
+	})
+	step("assign", func() error {
+		_, err := s.AssignCredential(ctx, "au", store.CredentialTarget{Fleet: "cf1", Runner: "r1"}, t0, ev("credential.assign"))
+		return err
+	})
+	step("unassign", func() error {
+		return s.UnassignCredential(ctx, "au", store.CredentialTarget{Fleet: "cf1", Runner: "r1"}, t0, ev("credential.unassign"))
+	})
+	step("key check", func() error { return s.SetSecretsKeyCheck(ctx, []byte("kc1"), t0, ev("secrets.keycheck")) })
+	step("delete", func() error { return s.DeleteCredential(ctx, "au", t0, ev("credential.delete")) })
+
+	// A refused mutation leaves no audit row behind.
+	if _, err := s.AssignCredential(ctx, "au", store.CredentialTarget{Fleet: "cf1", Runner: "r1"}, t0, ev("credential.assign")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("assign deleted credential: %v", err)
+	}
+	if count() != n {
+		t.Error("refused assign wrote an audit row")
+	}
+	_ = r1
+
+	// Key check: absent -> ErrNotFound, then upsert.
+	if _, err := s.GetSecretsKeyCheck(ctx); err != nil {
+		t.Fatalf("key check after set: %v", err)
+	}
+	if err := s.SetSecretsKeyCheck(ctx, nil, t0, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("empty key check: %v", err)
+	}
+	if kc, _ := s.GetSecretsKeyCheck(ctx); string(kc) != "kc1" {
+		t.Errorf("key check = %q", kc)
+	}
+	if err := s.SetSecretsKeyCheck(ctx, []byte("kc2"), t0, ev("secrets.keycheck")); err != nil {
+		t.Fatal(err)
+	}
+	if kc, _ := s.GetSecretsKeyCheck(ctx); string(kc) != "kc2" {
+		t.Errorf("key check after upsert = %q", kc)
+	}
+}
+
+func credentialRekey(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	credFixture(t, s)
+	if _, err := s.GetSecretsKeyCheck(ctx); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("key check before any set: %v", err)
+	}
+	setCred(t, s, "k1")
+	setCred(t, s, "k2")
+	before, _ := s.GetSealedCredential(ctx, "k1")
+	nAudit := auditCount(t, s)
+
+	// A failure on any row rolls back all rows, the key check and the audit row.
+	calls := 0
+	boom := errors.New("rekey failed")
+	_, err := s.RekeyCredentials(ctx, func(id, version int64, nonce, ct []byte) ([]byte, []byte, error) {
+		calls++
+		if calls == 2 {
+			return nil, nil, boom
+		}
+		return nonce, []byte("new"), nil
+	}, []byte("kcX"), t0, ev("secrets.rekey"))
+	if !errors.Is(err, boom) {
+		t.Fatalf("rekey error = %v", err)
+	}
+	if after, _ := s.GetSealedCredential(ctx, "k1"); string(after.Ciphertext) != string(before.Ciphertext) {
+		t.Error("failed rekey changed a row")
+	}
+	if _, err := s.GetSecretsKeyCheck(ctx); !errors.Is(err, store.ErrNotFound) {
+		t.Error("failed rekey stored a key check")
+	}
+	if auditCount(t, s) != nAudit {
+		t.Error("failed rekey wrote an audit row")
+	}
+
+	var seen []int64
+	n, err := s.RekeyCredentials(ctx, func(id, version int64, nonce, ct []byte) ([]byte, []byte, error) {
+		seen = append(seen, id)
+		if version != 1 || !strings.HasPrefix(string(ct), "sealed:") {
+			t.Errorf("rekey got version=%d ct=%q", version, ct)
+		}
+		return make([]byte, 12), []byte(fmt.Sprintf("re:%d", id)), nil
+	}, []byte("kcY"), t0, ev("secrets.rekey"))
+	if err != nil || n != 2 || len(seen) != 2 {
+		t.Fatalf("rekey = %d, %v (%v)", n, err, seen)
+	}
+	after, _ := s.GetSealedCredential(ctx, "k1")
+	if string(after.Ciphertext) != fmt.Sprintf("re:%d", after.ID) || after.Version != 1 {
+		t.Errorf("after rekey = %+v", after)
+	}
+	if kc, _ := s.GetSecretsKeyCheck(ctx); string(kc) != "kcY" {
+		t.Errorf("key check = %q", kc)
+	}
+	if auditCount(t, s) != nAudit+1 {
+		t.Error("rekey wrote no audit row")
+	}
+	if _, err := s.RekeyCredentials(ctx, nil, []byte("k"), t0, ev("x")); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("nil rekeyer: %v", err)
+	}
+}
+
+// hostHold: a host-fleet runner is held by the operator with live rows on it (docs/M7.md 3.4);
+// other fleets are unaffected, closing still holds, a closed row releases, and concurrent
+// reserves by two operators on one runner admit exactly one.
+func hostHold(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	cd, cdRunners, ops := wsFixture(t, s, 1, 2)
+	cfg := &store.WorkspaceConfig{Executor: store.ExecutorHost, Pull: store.PullNever, Network: store.NetworkNone,
+		IdleTTL: time.Hour, MaxTTL: 2 * time.Hour, ExecDefault: time.Minute, ExecMax: 10 * time.Minute}
+	hf, err := s.CreateFleet(ctx, store.Fleet{Name: "hostf", Mode: store.ModeWorkspace, Workspace: cfg}, t0, ev("fleet.create"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mkToken(t, s, "hostf", "ffffffffffffffff", "sec", 100, true, t0.Add(time.Hour))
+	var hr []store.Runner
+	for i := 0; i < 3; i++ {
+		r, err := s.Enroll(ctx, "ffffffffffffffff", secretHash("sec"), t0, newRunner(fmt.Sprintf("h%d", i), byte(70+i)), ev("runner.enrol"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		hr = append(hr, r)
+	}
+	now := t0.Add(time.Minute)
+	row := func(n int, f store.Fleet, r store.Runner, o store.Operator, sess string) store.Workspace {
+		w := wsRow(n, f, r, o, sess)
+		if f.ID == hf.ID {
+			w.Image = "host"
+		}
+		return w
+	}
+	a1, _, err := s.ReserveWorkspace(ctx, row(0, hf, hr[0], ops[0], "a1"), 8, 0, now, ev("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, row(1, hf, hr[0], ops[0], "a2"), 8, 0, now, ev("x")); err != nil {
+		t.Fatalf("same operator, second session: %v", err)
+	}
+	_, _, err = s.ReserveWorkspace(ctx, row(2, hf, hr[0], ops[1], "b1"), 8, 0, now, ev("x"))
+	var held *store.HeldError
+	if !errors.Is(err, store.ErrRunnerHeld) || !errors.As(err, &held) || held.Operator != ops[0].Name {
+		t.Fatalf("other operator: %v", err)
+	}
+	if wsAudit(t, s, wsID(2)) != 0 {
+		t.Fatal("held reserve audited or inserted")
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, row(3, hf, hr[1], ops[1], "b1"), 8, 0, now, ev("x")); err != nil {
+		t.Fatalf("other runner: %v", err)
+	}
+	// A containerd fleet is not exclusive.
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(4, cd, cdRunners[0], ops[0], "c"), 8, 0, now, ev("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, wsRow(5, cd, cdRunners[0], ops[1], "c"), 8, 0, now, ev("x")); err != nil {
+		t.Fatalf("containerd shares: %v", err)
+	}
+	// Closing still holds; closed (and failed, lost) releases.
+	end := func(id string, to store.WorkspaceState) {
+		t.Helper()
+		if _, err := s.SetWorkspaceState(ctx, id, []store.WorkspaceState{store.WorkspaceOpening, store.WorkspaceOpen},
+			store.WorkspaceClosing, "", now, ev("x")); err != nil {
+			t.Fatal(err)
+		}
+		if to == store.WorkspaceClosed {
+			if _, err := s.SetWorkspaceState(ctx, id, []store.WorkspaceState{store.WorkspaceClosing}, to, "", now, ev("x")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	end(a1.WsID, store.WorkspaceClosing)
+	end(wsID(1), store.WorkspaceClosing)
+	if _, _, err := s.ReserveWorkspace(ctx, row(6, hf, hr[0], ops[1], "b2"), 8, 0, now, ev("x")); !errors.Is(err, store.ErrRunnerHeld) {
+		t.Fatalf("closing must still hold: %v", err)
+	}
+	for _, id := range []string{a1.WsID, wsID(1)} {
+		if _, err := s.SetWorkspaceState(ctx, id, []store.WorkspaceState{store.WorkspaceClosing}, store.WorkspaceClosed, "", now, ev("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.ReserveWorkspace(ctx, row(6, hf, hr[0], ops[1], "b2"), 8, 0, now, ev("x")); err != nil {
+		t.Fatalf("released after the last workspace closed: %v", err)
+	}
+	// Concurrent reserves by two operators on a free runner: exactly one wins.
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, errs[i] = s.ReserveWorkspace(ctx, row(20+i, hf, hr[2], ops[i], "race"), 8, 0, now, ev("x"))
+		}()
+	}
+	wg.Wait()
+	won := 0
+	for _, e := range errs {
+		if e == nil {
+			won++
+		} else if !errors.Is(e, store.ErrRunnerHeld) {
+			t.Errorf("loser error: %v", e)
+		}
+	}
+	if won != 1 {
+		t.Fatalf("%d winners, want 1", won)
 	}
 }

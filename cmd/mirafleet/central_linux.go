@@ -61,8 +61,13 @@ func loadCentral(ctx context.Context, data string) (*centralDeps, error) {
 		return nil, err
 	}
 	ops := central.NewOperatorConns()
+	cc, err := credentialsConfig() // MIRAFLEET_SECRETS_KEY; unset = credentials off
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 	svc, err := service.New(service.Config{Store: db, Policy: policy.TablePolicy{}, Live: reg,
-		HostKey: signer.PublicKey(), Now: time.Now, OperatorConns: ops, Logf: logf})
+		HostKey: signer.PublicKey(), Now: time.Now, OperatorConns: ops, Logf: logf, Credentials: cc})
 	if err != nil {
 		db.Close()
 		return nil, err

@@ -67,6 +67,9 @@ func (s *syncBuf) String() string {
 	return s.b.String()
 }
 
+// chanHook (M7 tests) lets a test accept channels the runner opens toward the fake central.
+var chanHook func(ssh.NewChannel) bool
+
 // wsHarness is a fake central (a real SSH server) driving a real Runner in workspace mode.
 type wsHarness struct {
 	t     *testing.T
@@ -122,6 +125,9 @@ func newHarness(t *testing.T, y string, ex *fake.Executor, mod func(*Config)) *w
 				}
 				go func() {
 					for c := range chans {
+						if chanHook != nil && chanHook(c) {
+							continue
+						}
 						c.Reject(ssh.Prohibited, "")
 					}
 				}()

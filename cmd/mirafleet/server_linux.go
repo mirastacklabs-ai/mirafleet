@@ -41,9 +41,11 @@ func runnerMain(args []string) error {
 			return runnerTLSFront(args[1:])
 		case "workspace":
 			return runnerWorkspace(args[1:], os.Stdout, time.Now())
+		case "host":
+			return runnerHost(args[1:], os.Stdout)
 		}
 	}
-	return errors.New("usage: mirafleet runner join ADDR -name NAME [-data DIR] -token -  |  run [-data DIR] [-actions FILE | -workspace FILE]  |  tls-init  |  tls-front  |  workspace list|prune")
+	return errors.New("usage: mirafleet runner join ADDR -name NAME [-data DIR] -token -  |  run [-data DIR] [-actions FILE | -workspace FILE]  |  tls-init  |  tls-front  |  workspace list|prune  |  host prune [-older-than D] [-yes]")
 }
 
 func runnerJoin(args []string, stdin io.Reader, stdout io.Writer) error {
@@ -65,6 +67,11 @@ func runnerJoin(args []string, stdin io.Reader, stdout io.Writer) error {
 		return errors.New("-token must be - (the token is read from stdin, never from argv or env)")
 	}
 	syscall.Umask(0o077)
+	dataGiven := false
+	var err error
+	if *data, dataGiven, err = runnerDataFlag(fs, *data); err != nil { // XDG default for an ordinary user
+		return err
+	}
 	// Refuse before consuming stdin or touching the network.
 	if _, err := os.Stat(runner.ConfigPath(*data)); err == nil {
 		return runner.ErrAlreadyJoined
@@ -82,6 +89,11 @@ func runnerJoin(args []string, stdin io.Reader, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "joined fleet %q as runner %q: status %s\n", res.Fleet, res.Runner, res.Status)
 	if res.Status != "active" {
 		fmt.Fprintln(stdout, "an admin must approve this runner on central before it can run actions")
+	}
+	if !dataGiven && os.Geteuid() != 0 {
+		fmt.Fprintf(stdout, "next: put workspace.yaml in %s, then start it with `systemctl --user enable --now mirafleet-runner` "+
+			"(unit: packaging/systemd/user/mirafleet-runner.service; once, as an admin: `loginctl enable-linger $USER`)\n", *data)
+		return nil
 	}
 	fmt.Fprintf(stdout, "next: start it with `mirafleet runner run -data %s` (under systemd; the unit ships with the M6 packages)\n", *data)
 	return nil
@@ -102,6 +114,10 @@ func runnerRun(args []string) error {
 	}
 	if given["workspace"] && *wsFile == "" {
 		return errors.New("runner run: -workspace needs a file")
+	}
+	var err error
+	if *data, _, err = runnerDataFlag(fs, *data); err != nil { // XDG default for an ordinary user
+		return err
 	}
 	cfg, err := runner.LoadConfig(*data)
 	if err != nil {

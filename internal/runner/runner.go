@@ -37,9 +37,12 @@ type Config struct {
 	Workspace       workspace.Executor
 	WorkspaceConfig *wsconfig.Config
 	Labels          map[string]string
-	Version         string
-	Audit           *audit.Writer
-	Logf            func(format string, args ...any)
+	// CorporateCA (optional PEM) is added to the system roots the credential broker verifies
+	// upstream servers against (host mode, docs/M7.md 4.4).
+	CorporateCA []byte
+	Version     string
+	Audit       *audit.Writer
+	Logf        func(format string, args ...any)
 
 	HeartbeatEvery time.Duration // default 15s
 	// HeartbeatTimeout is how long to wait for central's heartbeat reply before dropping the
@@ -55,6 +58,8 @@ type Runner struct {
 	cfg    Config
 	sem    chan struct{}
 	ws     *wsState // nil unless workspace mode
+	dev    *devMgr  // nil unless the executor has per-session directories (host mode, M7)
+	hbKick chan struct{}
 	cfgErr error
 }
 
@@ -95,9 +100,13 @@ func New(cfg Config) *Runner {
 	if cfg.MaxExec <= 0 {
 		cfg.MaxExec = 4
 	}
-	r := &Runner{cfg: cfg, sem: make(chan struct{}, cfg.MaxExec), cfgErr: cfg.Validate()}
+	r := &Runner{cfg: cfg, sem: make(chan struct{}, cfg.MaxExec), hbKick: make(chan struct{}, 1), cfgErr: cfg.Validate()}
 	if r.cfgErr == nil && cfg.Workspace != nil {
 		r.ws = newWSState(cfg.Workspace, cfg.WorkspaceConfig)
+		if hooks, ok := cfg.Workspace.(SessionHooks); ok && devCapable(cfg.Workspace) {
+			r.dev = newDevMgr(r, hooks)
+			r.ws.gone = r.dev.close
+		}
 		var hb transport.Heartbeat
 		r.fillHeartbeat(&hb)
 		r.cfgErr = hb.Validate()
@@ -119,6 +128,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	sctx, stopSampler := context.WithCancel(ctx)
 	go func() { defer close(sampler); r.runDiskSampler(sctx) }()
 	defer func() { stopSampler(); <-sampler }()
+	if r.dev != nil {
+		defer r.dev.closeAll() // sockets and proxies go with the runner; secrets were memory only
+	}
 	backoff := r.cfg.BackoffMin
 	for ctx.Err() == nil {
 		healthy, err := r.session(ctx)
@@ -190,13 +202,18 @@ func (r *Runner) session(ctx context.Context) (healthy bool, err error) {
 	dead := make(chan error, 1)
 	go func() { dead <- client.Wait() }()
 	hostname, _ := os.Hostname()
-	hb := transport.Heartbeat{Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, Version: r.cfg.Version, Labels: r.cfg.Labels}
-	r.fillHeartbeat(&hb)
-	r.fillActions(&hb)
-	payload, _ := json.Marshal(hb)
+	base := transport.Heartbeat{Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, Version: r.cfg.Version, Labels: r.cfg.Labels}
+	r.fillActions(&base)
+	if r.dev != nil {
+		go r.runEvents(sctx, client)
+	}
 	tick := time.NewTicker(r.cfg.HeartbeatEvery)
 	defer tick.Stop()
 	for {
+		// Rebuilt every time: credentials (names and status only) and busy jobs change.
+		hb := base
+		r.fillHeartbeat(&hb)
+		payload, _ := json.Marshal(hb)
 		if err := r.heartbeat(ctx, client, payload); err != nil {
 			return false, err
 		}
@@ -207,6 +224,10 @@ func (r *Runner) session(ctx context.Context) (healthy bool, err error) {
 		case err := <-dead:
 			return false, fmt.Errorf("connection lost: %v", err)
 		case <-tick.C:
+			if r.dev != nil {
+				r.dev.tick()
+			}
+		case <-r.hbKick:
 		}
 	}
 }

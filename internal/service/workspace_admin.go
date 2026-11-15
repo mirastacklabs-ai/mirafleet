@@ -46,6 +46,12 @@ func (s *Service) AdminListWorkspaces(ctx context.Context, p auth.Principal, src
 // destroy on the runner -> closed, like CloseWorkspace (an offline runner leaves it closing for
 // the reaper). Admin only (double gate); both audit rows carry the admin as actor.
 func (s *Service) KillWorkspace(ctx context.Context, p auth.Principal, src Source, wsID string) (store.Workspace, error) {
+	return s.KillWorkspaceDelete(ctx, p, src, wsID, false)
+}
+
+// KillWorkspaceDelete is KillWorkspace; with del (host fleets only) the runner also deletes the
+// session directory.
+func (s *Service) KillWorkspaceDelete(ctx context.Context, p auth.Principal, src Source, wsID string, del bool) (store.Workspace, error) {
 	if err := s.authorize(ctx, p, src, api.MethodWorkspaceKill, true); err != nil {
 		return store.Workspace{}, err
 	}
@@ -55,6 +61,11 @@ func (s *Service) KillWorkspace(ctx context.Context, p auth.Principal, src Sourc
 	w, err := s.st.GetWorkspace(ctx, wsID)
 	if err != nil {
 		return store.Workspace{}, s.fail("get workspace", err)
+	}
+	if del && !w.State.Terminal() {
+		if err := s.requireHostFleet(ctx, w.Fleet); err != nil {
+			return store.Workspace{}, err
+		}
 	}
 	if w.State.Terminal() {
 		return w, nil
@@ -66,6 +77,9 @@ func (s *Service) KillWorkspace(ctx context.Context, p auth.Principal, src Sourc
 	start := s.now()
 	ev := s.wsEvent(p, src, api.MethodWorkspaceKill, w.Fleet, w.Runner, w.WsID, rid)
 	ev.Time, ev.Subject, ev.Outcome = start, w.Session, OutcomeStart
+	if del {
+		ev.Params = map[string]string{"delete": "true"}
+	}
 	if w.State == store.WorkspaceOpen || w.State == store.WorkspaceOpening {
 		w, err = s.st.SetWorkspaceState(ctx, w.WsID, []store.WorkspaceState{store.WorkspaceOpen, store.WorkspaceOpening},
 			store.WorkspaceClosing, "killed by admin", start, ev)
@@ -79,7 +93,7 @@ func (s *Service) KillWorkspace(ctx context.Context, p auth.Principal, src Sourc
 
 	dctx, cancel := context.WithTimeout(ctx, workspaceCloseTimeout)
 	res, lerr := s.live.Workspace(dctx, w.RunnerID, transport.WorkspaceRequest{Op: transport.OpDestroy, ID: w.WsID,
-		TimeoutMs: workspaceCloseTimeout.Milliseconds()}, nil, nil)
+		TimeoutMs: workspaceCloseTimeout.Milliseconds(), Delete: del}, nil, nil)
 	cancel()
 
 	end := s.wsEvent(p, src, api.MethodWorkspaceKill, w.Fleet, w.Runner, w.WsID, rid)

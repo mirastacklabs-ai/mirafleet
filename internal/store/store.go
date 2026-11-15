@@ -332,6 +332,8 @@ type Store interface {
 	// = now, ExpiresAt from the caller) on its runner in one immediate transaction.
 	//  1. If a live (opening or open) workspace exists for (operator, fleet, session), return it
 	//     with existing=true and write nothing (the service audits the reuse).
+	//  1b. Else if the fleet's executor is host and the runner has live workspaces (opening, open
+	//     or closing) of another operator -> *HeldError (ErrRunnerHeld) naming that operator.
 	//  2. Else if the operator already holds maxPerOp live workspaces (opening, open or
 	//     closing) -> ErrFull; maxPerOp <= 0 means no cap.
 	//  3. Else if the runner already holds slots live workspaces (opening, open or closing)
@@ -515,8 +517,160 @@ type Store interface {
 	// idle <= 0.
 	PurgeGUISessions(ctx context.Context, idle time.Duration, now time.Time) (int, error)
 
+	// SetCredential creates or replaces (by c.Name) a credential. The value is never passed in
+	// the clear: seal is called inside the transaction with the row's id and the new version (1
+	// on create, previous+1 on replace) and returns the AES-GCM nonce (12 bytes) and ciphertext,
+	// so the AEAD associated data can bind id and version. A replace changes kind, hosts, meta,
+	// fingerprint and expiry, bumps the version, sets RotatedAt = now and keeps the assignments.
+	// c.Name, Kind, Hosts (1 to 32 lowercase host[:port], no duplicates), Meta (small string
+	// map), Fingerprint and ExpiresAt are validated (ErrInvalid); ID, Version, CreatedAt,
+	// RotatedAt, Runners and Fleets are ignored on input. A seal error aborts and is returned.
+	// Atomic with ev, which must not contain the value. created reports a new row.
+	SetCredential(ctx context.Context, c Credential, seal CredentialSealer, now time.Time, ev AuditEvent) (out Credential, created bool, err error)
+	// GetCredential returns the metadata of name (never the ciphertext), with its direct
+	// assignments; ErrNotFound if absent.
+	GetCredential(ctx context.Context, name string) (Credential, error)
+	// ListCredentials returns every credential's metadata ordered by name, with assignments.
+	ListCredentials(ctx context.Context) ([]Credential, error)
+	// DeleteCredential removes the credential and, by cascade, its assignments, atomically with
+	// ev. ErrNotFound if absent.
+	DeleteCredential(ctx context.Context, name string, now time.Time, ev AuditEvent) error
+	// AssignCredential assigns name to t (a runner, or a whole fleet when t.Runner is empty)
+	// atomically with ev. Assigning twice is not an error (changed=false; ev is still written).
+	// ErrNotFound for an unknown credential, fleet or runner; ErrInvalid for a revoked runner.
+	AssignCredential(ctx context.Context, name string, t CredentialTarget, now time.Time, ev AuditEvent) (changed bool, err error)
+	// UnassignCredential removes one assignment atomically with ev; ErrNotFound if the
+	// credential, the target or the assignment does not exist.
+	UnassignCredential(ctx context.Context, name string, t CredentialTarget, now time.Time, ev AuditEvent) error
+	// EffectiveCredentials returns the metadata of the credentials a runner holds: those
+	// assigned to the runner itself union those assigned to its fleet, each once, by name.
+	EffectiveCredentials(ctx context.Context, runnerID int64) ([]Credential, error)
+	// CredentialRunners returns the non-revoked runners that hold name (direct union fleet-wide),
+	// ordered by fleet then name: the set creds_sync must reach when name changes.
+	CredentialRunners(ctx context.Context, name string) ([]Runner, error)
+	// SealedCredentialsFor is the delivery method: the effective set of a runner with nonce and
+	// ciphertext, by name. With GetSealedCredential it is the only way to read ciphertext.
+	SealedCredentialsFor(ctx context.Context, runnerID int64) ([]SealedCredential, error)
+	// GetSealedCredential returns one credential with its ciphertext (delivery and central-side
+	// rotation); ErrNotFound if absent.
+	GetSealedCredential(ctx context.Context, name string) (SealedCredential, error)
+	// GetSecretsKeyCheck returns the stored key-check value, or ErrNotFound if none was set.
+	GetSecretsKeyCheck(ctx context.Context) ([]byte, error)
+	// SetSecretsKeyCheck upserts the key-check value atomically with ev.
+	SetSecretsKeyCheck(ctx context.Context, keyCheck []byte, now time.Time, ev AuditEvent) error
+	// RekeyCredentials re-encrypts every credential with rekey (called per row with its id,
+	// version, nonce and ciphertext; the version is unchanged) and stores keyCheck, all in one
+	// transaction with ev. Any rekey error rolls everything back. Returns the number of rows.
+	RekeyCredentials(ctx context.Context, rekey CredentialRekeyer, keyCheck []byte, now time.Time, ev AuditEvent) (int, error)
+
 	// Close releases resources. Further calls fail.
 	Close() error
+}
+
+// CredentialKind is the type of a central-held credential (docs/M7.md section 4.1).
+type CredentialKind string
+
+const (
+	CredSSHKey     CredentialKind = "ssh-key"
+	CredHTTPSToken CredentialKind = "https-token"
+	CredRegistry   CredentialKind = "registry"
+)
+
+// Valid reports whether k is a known kind.
+func (k CredentialKind) Valid() bool {
+	return k == CredSSHKey || k == CredHTTPSToken || k == CredRegistry
+}
+
+// Bounds on credential metadata and sealed values.
+const (
+	MaxCredentialHosts    = 32
+	MaxCredentialMeta     = 16
+	MaxCredentialMetaVal  = 256
+	MaxCredentialSealed   = 128 << 10 // ciphertext bytes
+	MaxCredentialFPLength = 128
+)
+
+// CredentialNameRE is the allowed shape of a credential name.
+var CredentialNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
+var (
+	credHostRE    = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$`)
+	credMetaKeyRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+)
+
+// Credential is a credential's metadata. It never carries the secret value or the ciphertext.
+// Meta holds small non-secret settings the service defines (SSH user, HTTPS auth style, host
+// binding, rotate mode); the store treats it as opaque strings. Runners and Fleets are the
+// direct assignments (a runner's effective set also includes its fleet's).
+type Credential struct {
+	ID          int64
+	Name        string
+	Kind        CredentialKind
+	Hosts       []string
+	Meta        map[string]string
+	Fingerprint string // of the public part; admin-only in the API
+	Version     int64
+	CreatedAt   time.Time
+	RotatedAt   time.Time // last value replacement; zero until the first
+	ExpiresAt   time.Time // zero = none
+	Runners     []Ref
+	Fleets      []string
+}
+
+// SealedCredential is a Credential with its AES-GCM nonce and ciphertext; only the delivery
+// methods return it.
+type SealedCredential struct {
+	Credential
+	Nonce      []byte
+	Ciphertext []byte
+}
+
+// CredentialSealer seals the value for the row (id, version) and returns the nonce and
+// ciphertext. SetCredential calls it inside its transaction.
+type CredentialSealer func(id, version int64) (nonce, ciphertext []byte, err error)
+
+// CredentialRekeyer re-seals one row for RekeyCredentials.
+type CredentialRekeyer func(id, version int64, nonce, ciphertext []byte) (newNonce, newCiphertext []byte, err error)
+
+// CredentialTarget is an assignment target: one runner, or a whole fleet when Runner is empty.
+type CredentialTarget struct{ Fleet, Runner string }
+
+// Validate checks the caller-supplied fields of c; every error wraps ErrInvalid.
+func (c Credential) Validate() error {
+	bad := func(format string, a ...any) error {
+		return fmt.Errorf("%w: credential: %s", ErrInvalid, fmt.Sprintf(format, a...))
+	}
+	if !CredentialNameRE.MatchString(c.Name) {
+		return bad("name must match %s", CredentialNameRE)
+	}
+	if !c.Kind.Valid() {
+		return bad("kind must be ssh-key, https-token or registry")
+	}
+	if len(c.Hosts) == 0 || len(c.Hosts) > MaxCredentialHosts {
+		return bad("1 to %d hosts required", MaxCredentialHosts)
+	}
+	seen := map[string]bool{}
+	for _, h := range c.Hosts {
+		if !credHostRE.MatchString(h) {
+			return bad("malformed host %q", echo(h))
+		}
+		if seen[h] {
+			return bad("duplicate host %q", echo(h))
+		}
+		seen[h] = true
+	}
+	if len(c.Meta) > MaxCredentialMeta {
+		return bad("at most %d meta entries", MaxCredentialMeta)
+	}
+	for k, v := range c.Meta {
+		if !credMetaKeyRE.MatchString(k) || len(v) > MaxCredentialMetaVal {
+			return bad("malformed meta entry %q", echo(k))
+		}
+	}
+	if len(c.Fingerprint) > MaxCredentialFPLength {
+		return bad("fingerprint too long")
+	}
+	return nil
 }
 
 // SettingRegistrationSecret is the settings key holding the operator registration secret.
@@ -525,6 +679,18 @@ const SettingRegistrationSecret = "registration_secret"
 // ErrFull: a workspace could not be reserved because every slot (or the per-operator cap) is
 // taken. The service maps it to unavailable / the next runner.
 var ErrFull = errors.New("store: no free workspace slot")
+
+// ErrRunnerHeld: a host-fleet runner already has live workspaces of another operator (one operator
+// per runner, docs/M7.md 3.4). The error is a *HeldError naming that operator.
+var ErrRunnerHeld = errors.New("store: runner is in use by another operator")
+
+// HeldError is the ErrRunnerHeld error returned by ReserveWorkspace; Operator holds the runner.
+type HeldError struct{ Operator string }
+
+func (e *HeldError) Error() string { return ErrRunnerHeld.Error() + ": " + e.Operator }
+
+// Unwrap makes errors.Is(err, ErrRunnerHeld) true.
+func (e *HeldError) Unwrap() error { return ErrRunnerHeld }
 
 // MaxExecCeiling is the hard upper bound for a fleet's exec timeout (24 h); the per-fleet
 // exec_max_s can be set up to it, never past it.
@@ -547,10 +713,15 @@ type Executor string
 const (
 	ExecutorContainerd  Executor = "containerd"
 	ExecutorOpenSandbox Executor = "opensandbox"
+	// ExecutorHost runs tool calls as the runner's own unprivileged user on the VM (docs/M7.md
+	// section 3): no images, no resource limits.
+	ExecutorHost Executor = "host"
 )
 
 // Valid reports whether e is a known executor.
-func (e Executor) Valid() bool { return e == ExecutorContainerd || e == ExecutorOpenSandbox }
+func (e Executor) Valid() bool {
+	return e == ExecutorContainerd || e == ExecutorOpenSandbox || e == ExecutorHost
+}
 
 // PullPolicy is when a runner pulls an image.
 type PullPolicy string
@@ -636,13 +807,21 @@ func (c WorkspaceConfig) Validate() error {
 		return fmt.Errorf("%w: workspace config: %s", ErrInvalid, fmt.Sprintf(format, a...))
 	}
 	if !c.Executor.Valid() {
-		return bad("executor must be containerd or opensandbox")
+		return bad("executor must be containerd, opensandbox or host")
 	}
 	if !c.Pull.Valid() {
 		return bad("pull must be if-not-present, always or never")
 	}
 	if !c.Network.Valid() {
 		return bad("network must be none or egress")
+	}
+	if c.Executor == ExecutorHost {
+		// The VM is the boundary: no images, egress rules (use the VM's firewall) or limits.
+		if c.DefaultImage != "" || len(c.Images) > 0 || len(c.Egress) > 0 ||
+			c.CPUMilli != 0 || c.MemoryMB != 0 || c.Pids != 0 || c.TmpfsMB != 0 || c.DiskMB != 0 {
+			return bad("the host executor takes no images, egress rules or resource limits")
+		}
+		return c.validateTimes(bad)
 	}
 	if _, err := workspace.NormalizeImage(c.DefaultImage); err != nil || badEntry(c.DefaultImage) || strings.Contains(c.DefaultImage, "*") {
 		return bad("default image is empty, malformed or a pattern")
@@ -683,6 +862,10 @@ func (c WorkspaceConfig) Validate() error {
 			return bad("%s must be 1 to %d", l.name, l.limit)
 		}
 	}
+	return c.validateTimes(bad)
+}
+
+func (c WorkspaceConfig) validateTimes(bad func(string, ...any) error) error {
 	if c.IdleTTL < time.Second || c.MaxTTL < c.IdleTTL {
 		return bad("need 0 < idle ttl <= max ttl (whole seconds)")
 	}

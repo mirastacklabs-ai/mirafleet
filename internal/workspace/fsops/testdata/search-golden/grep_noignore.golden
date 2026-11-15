@@ -1,0 +1,12 @@
+README.md
+build/out.go
+debug.log
+docs/a.md
+docs/x.tmp
+keep.log
+main.go
+root-only.txt
+src/app.go
+src/local.txt
+src/sub/root-only.txt
+src/util.py

@@ -1,0 +1,20 @@
+# mirafleet host-mode runner as a system unit, one instance per user (docs/M7.md §3.3):
+#   systemctl enable --now mirafleet-runner@dev
+# The runner refuses to run as root; %i is the ordinary user whose files the agent may touch.
+[Unit]
+Description=mirafleet runner for user %i (host mode)
+Documentation=https://github.com/mirastacklabs-ai/mirafleet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/bin/mirafleet runner run -workspace /home/%i/.config/mirafleet/workspace.yaml
+# Background shells (job supervisors) must survive a runner restart.
+KillMode=process
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

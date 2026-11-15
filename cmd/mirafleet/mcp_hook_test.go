@@ -120,3 +120,20 @@ func TestPluginVersionLockstep(t *testing.T) {
 		t.Fatalf("plugin.json version %q != pluginVersion %q: bump both", m.Version, pluginVersion)
 	}
 }
+
+// A local tool in a remote project is denied through the real `mcp hook` entry point.
+func TestMCPHookDeniesLocalToolInRemoteProject(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/.mirafleet.yaml", []byte("remote: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := hook.Env{ProjectDir: dir, Now: time.Now}
+	out, _ := runHook(t, env, "pre-tool-use", `{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/x"}}`)
+	if !strings.Contains(out, `"permissionDecision":"deny"`) || !strings.Contains(out, "multi_edit") && !strings.Contains(out, "`edit`") {
+		t.Fatalf("remote project, Edit: %q", out)
+	}
+	env.ProjectDir = t.TempDir()
+	if out, _ := runHook(t, env, "pre-tool-use", `{"tool_name":"Edit","tool_input":{}}`); out != "" {
+		t.Fatalf("no project file, Edit: %q", out)
+	}
+}

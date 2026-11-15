@@ -13,6 +13,12 @@ one directory each.
 
 Central enforces `confirm` on guarded fleets in every case.
 
+Remote projects (`remote: true` in `.mirafleet.yaml`): all tool calls run on the remote workspace via
+the mirafleet tools (`bash`, `read`, `write`, `edit`, `multi_edit`, `grep`, `glob`, `ls`,
+`notebook_edit`, jobs, `upload`/`download`). The Claude Code plugin also denies the local
+equivalents with a PreToolUse hook; other harnesses rely on the command body and the server
+instructions (no hooks).
+
 - [generic/README.md](generic/README.md): any stdio MCP harness
 - [opencode/README.md](opencode/README.md): opencode commands and MCP config
 - [commands/mirafleet.md](commands/mirafleet.md): shared command body

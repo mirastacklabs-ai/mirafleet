@@ -41,20 +41,22 @@ func WorkspaceDefaults(c store.WorkspaceConfig) store.WorkspaceConfig {
 	if len(c.Images) == 0 && c.DefaultImage != "" {
 		c.Images = []string{c.DefaultImage}
 	}
-	if c.CPUMilli == 0 {
-		c.CPUMilli = 2000
-	}
-	if c.MemoryMB == 0 {
-		c.MemoryMB = 4096
-	}
-	if c.Pids == 0 {
-		c.Pids = 1024
-	}
-	if c.TmpfsMB == 0 {
-		c.TmpfsMB = 512
-	}
-	if c.DiskMB == 0 {
-		c.DiskMB = 10240
+	if host := c.Executor == store.ExecutorHost; !host { // the VM is the boundary: no limits
+		if c.CPUMilli == 0 {
+			c.CPUMilli = 2000
+		}
+		if c.MemoryMB == 0 {
+			c.MemoryMB = 4096
+		}
+		if c.Pids == 0 {
+			c.Pids = 1024
+		}
+		if c.TmpfsMB == 0 {
+			c.TmpfsMB = 512
+		}
+		if c.DiskMB == 0 {
+			c.DiskMB = 10240
+		}
 	}
 	if c.IdleTTL == 0 {
 		c.IdleTTL = 24 * time.Hour
@@ -211,11 +213,19 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		}
 		return store.Workspace{}, false, badRequest(api.MsgConfirmRequired)
 	}
-	if image == "" {
-		image = cfg.DefaultImage
-	}
-	if !cfg.ImageAllowed(image) {
-		return store.Workspace{}, false, badRequest("image is not allowed by the fleet")
+	host := cfg.Executor == store.ExecutorHost
+	if host { // no images in host mode; guarding is the typed confirm above, nothing else (Q10)
+		if image != "" {
+			return store.Workspace{}, false, badRequest("host fleets take no image")
+		}
+		image = hostImage
+	} else {
+		if image == "" {
+			image = cfg.DefaultImage
+		}
+		if !cfg.ImageAllowed(image) {
+			return store.Workspace{}, false, badRequest("image is not allowed by the fleet")
+		}
 	}
 	rid, err := newRequestID()
 	if err != nil {
@@ -241,11 +251,22 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		return store.Workspace{}, false, api.Errorf(api.CodeConflict, "workspace limit reached (%d)", maxPerOp)
 	}
 
-	cands, err := s.candidates(ctx, placementReq{fleet: fleet, cfg: cfg, guarded: f.Confirm, labels: labels, image: image})
+	preq := placementReq{fleet: fleet, cfg: cfg, guarded: f.Confirm && !host, labels: labels, image: image}
+	heldBy := ""
+	if host { // one operator per runner: skip runners another operator holds
+		preq.busyBy = &heldBy
+		if preq.held, err = s.heldRunners(ctx, fleet, p.ID); err != nil {
+			return store.Workspace{}, false, s.fail("place workspace", err)
+		}
+	}
+	cands, err := s.candidates(ctx, preq)
 	if err != nil {
 		return store.Workspace{}, false, s.fail("place workspace", err)
 	}
-	spec := buildSpec(cfg, image, labels, f.Confirm)
+	if len(cands) == 0 && heldBy != "" {
+		return store.Workspace{}, false, s.refuseBusy(ctx, p, src, fleet, session, rid, heldBy)
+	}
+	spec := buildSpec(cfg, image, labels, f.Confirm && !host)
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
 		return store.Workspace{}, false, s.fail("encode spec", err)
@@ -266,6 +287,11 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 		start.Params = map[string]string{"image": image, "session": session}
 		w, existing, err := s.st.ReserveWorkspace(ctx, row, c.info.Slots, maxPerOp, now, start)
 		if errors.Is(err, store.ErrFull) {
+			continue
+		}
+		var held *store.HeldError
+		if errors.As(err, &held) { // lost the race to another operator (the store is the authority)
+			heldBy = held.Operator
 			continue
 		}
 		if err != nil {
@@ -337,6 +363,9 @@ func (s *Service) OpenWorkspace(ctx context.Context, p auth.Principal, src Sourc
 			continue
 		}
 		return store.Workspace{}, false, retErr
+	}
+	if heldBy != "" {
+		return store.Workspace{}, false, s.refuseBusy(ctx, p, src, fleet, session, rid, heldBy)
 	}
 	return store.Workspace{}, false, api.Errorf(api.CodeUnavailable, "no runner can take this workspace right now")
 }
@@ -450,12 +479,23 @@ func (s *Service) ownedWorkspace(ctx context.Context, p auth.Principal, src Sour
 // finishes it; the returned workspace then has state closing. Closing a terminal workspace is a
 // no-op returning it.
 func (s *Service) CloseWorkspace(ctx context.Context, p auth.Principal, src Source, wsID string) (store.Workspace, error) {
+	return s.CloseWorkspaceDelete(ctx, p, src, wsID, false)
+}
+
+// CloseWorkspaceDelete is CloseWorkspace; with del (host fleets only) the runner also deletes the
+// session directory. A close without del keeps it.
+func (s *Service) CloseWorkspaceDelete(ctx context.Context, p auth.Principal, src Source, wsID string, del bool) (store.Workspace, error) {
 	if err := s.requireOperator(ctx, p, src, api.MethodWorkspaceClose); err != nil {
 		return store.Workspace{}, err
 	}
 	w, err := s.ownedWorkspace(ctx, p, src, api.MethodWorkspaceClose, wsID)
 	if err != nil {
 		return store.Workspace{}, err
+	}
+	if del {
+		if err := s.requireHostFleet(ctx, w.Fleet); err != nil {
+			return store.Workspace{}, err
+		}
 	}
 	if w.State.Terminal() {
 		return w, nil
@@ -470,6 +510,9 @@ func (s *Service) CloseWorkspace(ctx context.Context, p auth.Principal, src Sour
 	start := s.now()
 	ev := s.wsEvent(p, src, api.MethodWorkspaceClose, w.Fleet, w.Runner, w.WsID, rid)
 	ev.Time, ev.Subject, ev.Outcome = start, w.Session, OutcomeStart
+	if del {
+		ev.Params = map[string]string{"delete": "true"}
+	}
 	if w.State == store.WorkspaceOpen {
 		w, err = s.st.SetWorkspaceState(ctx, w.WsID, []store.WorkspaceState{store.WorkspaceOpen}, store.WorkspaceClosing, "closed by operator", start, ev)
 		if err != nil {
@@ -482,7 +525,7 @@ func (s *Service) CloseWorkspace(ctx context.Context, p auth.Principal, src Sour
 
 	dctx, cancel := context.WithTimeout(ctx, workspaceCloseTimeout)
 	res, lerr := s.live.Workspace(dctx, w.RunnerID, transport.WorkspaceRequest{Op: transport.OpDestroy, ID: w.WsID,
-		TimeoutMs: workspaceCloseTimeout.Milliseconds()}, nil, nil)
+		TimeoutMs: workspaceCloseTimeout.Milliseconds(), Delete: del}, nil, nil)
 	cancel()
 
 	end := s.wsEvent(p, src, api.MethodWorkspaceClose, w.Fleet, w.Runner, w.WsID, rid)

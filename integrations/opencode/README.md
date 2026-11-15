@@ -33,6 +33,21 @@ Slash commands `/mirafleet` and `/openfleet` plus a local MCP server entry. No h
    To pin a session or context, append `"-session", "<name>"` or `"-context", "<name>"` to `command`.
 4. Restart opencode, run `/mirafleet list my fleets`.
 
+## Remote projects (`remote: true`)
+
+A project whose `.mirafleet.yaml` has `remote: true` does all its work on the remote machine through
+central; the model still runs on your laptop. The MCP server exposes tools that replace opencode's
+local ones: `bash`, `bash_output`, `kill_shell`, `job_list` (use `run_in_background: true` for builds
+over about 2 minutes), `read`, `write`, `edit`, `multi_edit`, `grep`, `glob`, `ls`, `notebook_edit`,
+`read_output` (pages long output) and `upload`/`download` (only when asked).
+
+Workflow: `workspace_open`, clone with a plain `git@` or `https://` URL, edit with the remote tools,
+run long builds as background shells, commit and push from the workspace. Credentials are held by the
+runner and injected; the agent never sees them.
+
+opencode has no hook that blocks its local tools, so nothing stops them in a remote project: the
+`/mirafleet` command body and the MCP server instructions carry the rule (instructions only).
+
 ## No hooks
 
 opencode has no mirafleet hook integration. Consequences:

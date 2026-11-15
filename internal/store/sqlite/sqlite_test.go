@@ -425,6 +425,7 @@ func TestMigrate0001To0002(t *testing.T) {
 	}
 	// Roll the file back to a genuine v1 database holding an audit row.
 	for _, q := range []string{
+		"DROP TABLE secrets_meta", "DROP TABLE credential_assignments", "DROP TABLE credentials",
 		"DROP TABLE gui_sessions", "DROP TABLE gui_setup", "DROP TABLE gui_admins",
 		"DROP INDEX audit_actor", "DROP INDEX audit_request",
 		"DROP TABLE workspaces", "DROP TABLE fleet_workspace", "DROP INDEX audit_workspace",
