@@ -1,0 +1,68 @@
+name: ci
+
+# Release-readiness checks (docs/M6.md section 2.15). gate.yml already runs the build, tests,
+# licenses and the privileged integration harness (and its `gate` job is the required check), so
+# they are not repeated here. This workflow adds what a release needs on top: vulnerability scan,
+# shell and workflow lint, the snapshot with the packaging tests, and the systemd end-to-end test.
+# The release `verify` job requires every job here to be green on the tagged commit.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  vuln:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/release.sh vuln
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/release.sh lint-sh
+      - run: scripts/release.sh lint-actions
+
+  # Snapshot (no publish, no signing), then the tests that read dist/goreleaser.
+  dist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/release.sh snapshot
+      - run: scripts/release.sh pkgtest
+      - run: scripts/release.sh installtest
+      - run: scripts/release.sh image
+      - run: scripts/release.sh lab
+      - run: scripts/release.sh npmtest
+      - run: scripts/release.sh harnesscheck
+
+  # Real systemd as PID 1 in a throwaway privileged container on the runner's ephemeral VM.
+  e2e-systemd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/release.sh snapshot
+      - run: sh scripts/release/e2e-systemd.sh dist/goreleaser
