@@ -170,6 +170,11 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			if hasFeature(hb, transport.FeatureCreds) {
 				s.cfg.Service.ReportCredentialStatus(p.ID, hb.Credentials)
 			}
+			if hb.Busy > 0 { // running background shells keep their workspaces from idling out
+				bctx, bcancel := context.WithTimeout(s.ctx, storeTimeout)
+				s.cfg.Service.TouchBusy(bctx, p.ID, hb.Busy)
+				bcancel()
+			}
 			lastHB = hb
 			if now.Sub(lastTouch) >= s.cfg.TouchInterval {
 				lastTouch = now
@@ -343,9 +348,13 @@ func (s *Server) register(sconn *ssh.ServerConn, p auth.Principal, hb transport.
 	if !ok {
 		return nil, fmt.Errorf("runner status %q", r.Status)
 	}
+	replacing := s.cfg.Registry.Get(r.ID) != nil
 	sess, err := s.cfg.Registry.Register(r.ID, r.Name, r.Fleet, sconn, st, hb)
 	if err != nil {
 		return nil, err
+	}
+	if replacing {
+		s.cfg.Service.RunnerReplaced(ctx, r.ID)
 	}
 	s.cfg.Logf("runner %s (id %d, %s) online (%s/%s)", r.Ref(), r.ID, r.Status, hb.OS, hb.Arch)
 	return sess, nil

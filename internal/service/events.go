@@ -77,6 +77,23 @@ func (s *Service) IngestRunnerEvents(ctx context.Context, runnerID int64, b *tra
 	return nil
 }
 
+// ActionRunnerReplaced is the audit action written when a runner's new connection replaces its
+// live one (docs/M7.md 3.2: the only mitigation of the accepted enrolment-key gap).
+const ActionRunnerReplaced = "runner.replaced"
+
+// RunnerReplaced writes the runner.replaced audit row. Best effort: failures are logged.
+func (s *Service) RunnerReplaced(ctx context.Context, runnerID int64) {
+	r, err := s.st.GetRunnerByID(ctx, runnerID)
+	if err != nil {
+		s.logf("service: runner.replaced for %d: %v", runnerID, err)
+		return
+	}
+	ev := store.AuditEvent{Time: s.now(), Source: SourceRunner, ActorKind: "runner", Actor: r.Name, Fleet: r.Fleet,
+		Runner: r.Name, Action: ActionRunnerReplaced, Outcome: OutcomeOK, Subject: r.Name,
+		Message: "a new connection replaced the live one"}
+	_ = s.recordRunnerEvent(ctx, ev)
+}
+
 func (s *Service) recordRunnerEvent(ctx context.Context, ev store.AuditEvent) error {
 	if _, err := s.st.RecordAudit(ctx, ev); err != nil {
 		s.logf("service: audit of runner event %s failed: %v", ev.Action, err)
