@@ -20,6 +20,9 @@ Its certificate is self-signed and kept in the volume, so its fingerprint surviv
 3. Open `https://127.0.0.1:8443`, accept the certificate after the fingerprint matches, and create
    the admin account.
 
+Token lost or expired (24 h), or password lost: `docker compose exec central mirafleet central gui reset-admin`
+prints a fresh setup token once and ends all GUI sessions.
+
 To reach the GUI from other machines, change the port line to `"8443:8443"` and allow port 8443
 only from your admins' networks, or keep it local and use `ssh -L 8443:127.0.0.1:8443 HOST`.
 To use your own certificate, mount it read-only and add `-gui-cert` and `-gui-key` to the

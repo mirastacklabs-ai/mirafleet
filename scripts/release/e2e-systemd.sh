@@ -8,7 +8,8 @@
 # Usage: scripts/release/e2e-systemd.sh [DIST_DIR]   (default: <repo>/dist/goreleaser)
 # Needs a snapshot first (scripts/release.sh snapshot). Last line: OK e2e-systemd or FAIL ...
 # Env: MIRAFLEET_CTR (container CLI, default docker; trusted caller environment).
-# Late lane (not yet): GUI checks, backup on upgrade, host-mode runners.
+# Also checks the Admin GUI (TLS, fingerprint, setup token, Host, setup, session across restart).
+# Late lane (not yet): backup on upgrade, host-mode runners.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -54,7 +55,7 @@ trap cleanup EXIT INT TERM
 $CTR build -q --label "$LABEL" -t "$IMG" - >/dev/null <<EOF || fail "image build failed"
 FROM $DEBIAN_IMAGE
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-    systemd systemd-sysv procps util-linux ca-certificates >/dev/null && rm -rf /var/lib/apt/lists/*
+    systemd systemd-sysv procps util-linux ca-certificates curl openssl >/dev/null && rm -rf /var/lib/apt/lists/*
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
 EOF
@@ -97,6 +98,38 @@ x systemctl enable --now mirafleet-central.service >/dev/null 2>&1 || fail "cent
 wait_for "central to answer admin commands" 60 adm central fleet list
 x systemctl is-active mirafleet-central.service >/dev/null || fail "central not active"
 say "mirafleet-central.service active, admin socket answers"
+
+# --- Admin GUI (docs/M4.md 2.2, 2.3): TLS, logged fingerprint, setup token file, Host, setup ---
+GUI=https://127.0.0.1:8443
+gcode() { x curl -sk -o /dev/null -w '%{http_code}' "$@"; }
+wait_for "GUI to answer on 8443" 30 x curl -sk -o /dev/null "$GUI/"
+served=$(xs "openssl s_client -connect 127.0.0.1:8443 -servername localhost </dev/null 2>/dev/null | openssl x509 -outform der | openssl dgst -sha256 -binary | od -An -v -tx1 | tr -d ' \n'")
+[ -n "$served" ] || fail "no certificate served on 8443"
+x journalctl --no-pager -u mirafleet-central.service | tr 'A-F' 'a-f' | tr -d ':' | grep -qF "$served" ||
+	fail "GUI certificate fingerprint $served is not in the journal"
+say "GUI over TLS on 8443; certificate fingerprint equals the journal"
+
+[ "$(x stat -c '%a %U' /var/lib/mirafleet/central/gui/setup-token)" = "600 mirafleet" ] ||
+	fail "setup-token file is not 0600 mirafleet at /var/lib/mirafleet/central/gui/setup-token"
+x journalctl --no-pager -u mirafleet-central.service | grep -qF '/var/lib/mirafleet/central/gui/setup-token' ||
+	fail "journal does not name the setup-token file"
+[ "$(gcode -H 'Host: evil.example' "$GUI/")" = 421 ] || fail "foreign Host did not get 421"
+say "setup-token file is 0600 mirafleet and named in the journal; foreign Host -> 421"
+
+xs "
+	jar=/tmp/gui.jar
+	csrf=\$(curl -sk -c \$jar -b \$jar $GUI/setup | grep -o 'name=\"_csrf\" value=\"[^\"]*\"' | head -1 | sed 's/.*value=\"//;s/\"\$//')
+	test -n \"\$csrf\"
+	c=\$(curl -sk -c \$jar -b \$jar -o /dev/null -w '%{http_code}' --data-urlencode \"_csrf=\$csrf\" \
+		--data-urlencode \"token=\$(cat /var/lib/mirafleet/central/gui/setup-token)\" --data-urlencode username=admin \
+		--data-urlencode password=e2e-systemd-password --data-urlencode password2=e2e-systemd-password $GUI/setup)
+	test \"\$c\" = 303" || fail "GUI setup with the token from the file"
+x systemctl restart mirafleet-central.service || fail "central restart"
+wait_for "central after restart" 60 adm central fleet list
+wait_for "GUI after restart" 30 x curl -sk -o /dev/null "$GUI/"
+[ "$(gcode -b /tmp/gui.jar "$GUI/")" = 200 ] || fail "GUI session did not survive a restart"
+[ "$(gcode "$GUI/setup")" = 404 ] || fail "/setup still reachable after setup"
+say "GUI setup with the token; session survives a restart; /setup is 404"
 
 adm central fleet create prod >/dev/null || fail "fleet create"
 tok=$(adm central token create -fleet prod 2>/dev/null)

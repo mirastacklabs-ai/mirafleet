@@ -8,7 +8,7 @@
 #   MIRAFLEET_CTR        container CLI (default docker; Compose is used as `$MIRAFLEET_CTR compose`)
 #   MIRAFLEET_IMAGE      image to test (default: built by imagetest.sh build and removed after)
 #   MIRAFLEET_GO_IMAGE   tool image with curl (default: dev.sh's Go image)
-# The GUI check runs when the binary has -gui-listen.
+# GUI checks: TLS reachable on loopback, 421 on a foreign Host, setup-token file mode.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -86,7 +86,7 @@ out=$(dc run --rm -T operator mcp api action.run '{"fleet":"prod","runner":"lab-
 printf '%s' "$out" | tr -d ' \n' | grep -q '"exit_code":0' || fail "action.run did not exit 0: $out"
 ok "mcp api action.run version -> exit 0"
 
-if dc run --rm -T central central run -h 2>&1 | grep -q -- '-gui-listen'; then
+{
 	gp=$(dc port central 8443)
 	gp=${gp##*:}
 	n=0
@@ -96,10 +96,13 @@ if dc run --rm -T central central run -h 2>&1 | grep -q -- '-gui-listen'; then
 		sleep 1
 	done
 	printf '%s' "$page" | grep -qiE 'login|setup' || fail "GUI page is neither login nor setup"
-	ok "GUI answers over TLS on 127.0.0.1:$gp"
-else
-	echo "skip: this binary has no -gui-listen; the GUI check runs once M4 is merged"
-fi
+	c=$($CTR run --rm --network host "$TOOL_IMAGE" curl -sk -o /dev/null -w '%{http_code}' -H 'Host: evil.example' "https://127.0.0.1:$gp/")
+	[ "$c" = 421 ] || fail "GUI answered $c to a foreign Host, want 421"
+	# The setup-token file the docs tell admins to copy (`compose cp` writes a tar stream).
+	ls=$(dc cp central:/var/lib/mirafleet/central/gui/setup-token - | tar -tv 2>/dev/null) || fail "cannot copy the setup-token file out of central"
+	case "$ls" in -rw-------*) ;; *) fail "setup-token file is not mode 0600: $ls" ;; esac
+	ok "GUI answers over TLS on 127.0.0.1:$gp, 421 on a foreign Host, setup-token file is 0600"
+}
 
 dc --profile runner --profile tools down -v --remove-orphans >/dev/null 2>&1 || fail "compose down -v failed"
 echo "OK labtest"

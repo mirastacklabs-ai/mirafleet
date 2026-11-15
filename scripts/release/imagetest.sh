@@ -11,7 +11,8 @@
 #                         with scripts/dev.sh into dist/imagetest, which is gitignored)
 #   MIRAFLEET_TEST_IMAGE  tag to build (default mirafleet-imagetest:local)
 #   MIRAFLEET_GO_IMAGE    tool image with bash, openssl and curl (default: dev.sh's Go image)
-# The GUI checks (TLS on 8443, fingerprint equals the log) run when the binary has -gui-listen.
+# GUI checks: TLS on 8443, fingerprint equals the log, setup-token file mode, 421 on a foreign
+# Host, setup with the token.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -157,8 +158,8 @@ banner=$($CTR run --rm --network "container:$C" "$TOOL_IMAGE" bash -c 'exec 3<>/
 [ "$banner" = "SSH-" ] || fail "no SSH banner on 2222 (got: $banner)"
 ok "SSH banner on 2222"
 
-# --- GUI (needs the M4 flags in the binary) ---
-if $CTR run --rm "$IMG" central run -h 2>&1 | grep -q -- '-gui-listen'; then
+# --- GUI (docs/M4.md 2.2, 2.3) ---
+{
 	gui_fp() { # prints "hex b64" of the certificate served on 8443
 		$CTR run --rm --network "container:$C" "$TOOL_IMAGE" bash -c '
 			der=$(mktemp)
@@ -191,8 +192,37 @@ if $CTR run --rm "$IMG" central run -h 2>&1 | grep -q -- '-gui-listen'; then
 	done
 	[ "${again% *}" = "$hex" ] || fail "GUI certificate changed across a restart"
 	ok "GUI TLS on 8443, fingerprint equals the log, certificate kept in the volume across a restart"
-else
-	echo "skip: this binary has no -gui-listen; GUI checks run once M4 is merged"
-fi
+
+	# Setup-token file: <data>/gui/setup-token, mode 0600, owned by uid 65532; the log names the
+	# path and never the token.
+	perm=$($CTR run --rm -v "$V:/v:ro" "$TOOL_IMAGE" stat -c '%a %u' /v/central/gui/setup-token) ||
+		fail "no setup-token file at central/gui/setup-token"
+	[ "$perm" = "600 65532" ] || fail "setup-token file mode/owner is '$perm', want '600 65532'"
+	$CTR logs "$C" 2>&1 | grep -qF '/var/lib/mirafleet/central/gui/setup-token' || fail "log does not name the setup-token file"
+	tok=$($CTR run --rm -v "$V:/v:ro" "$TOOL_IMAGE" cat /v/central/gui/setup-token | tr -d '\n')
+	[ -n "$tok" ] || fail "setup-token file is empty"
+	$CTR logs "$C" 2>&1 | grep -qF "$tok" && fail "the setup token is in the log"
+	ok "setup-token file present (0600, uid 65532); the log names its path, not the token"
+
+	# Host allowlist: a foreign Host gets 421; then setup with the token over curl (CSRF form).
+	script='
+		set -eu
+		u=https://127.0.0.1:8443
+		c=$(curl -sk -o /dev/null -w "%{http_code}" -H "Host: evil.example" "$u/")
+		[ "$c" = 421 ] || { echo "foreign Host answered $c, want 421" >&2; exit 1; }
+		jar=$(mktemp)
+		csrf=$(curl -sk -c "$jar" -b "$jar" "$u/setup" | grep -o "name=\"_csrf\" value=\"[^\"]*\"" | head -1 | sed "s/.*value=\"//;s/\"\$//")
+		[ -n "$csrf" ] || { echo "no CSRF token on /setup" >&2; exit 1; }
+		c=$(curl -sk -c "$jar" -b "$jar" -o /dev/null -w "%{http_code}" --data-urlencode "_csrf=$csrf" \
+			--data-urlencode "token=$(cat /v/central/gui/setup-token)" --data-urlencode username=admin \
+			--data-urlencode "password=imagetest-password-1" --data-urlencode "password2=imagetest-password-1" "$u/setup")
+		[ "$c" = 303 ] || { echo "setup answered $c, want 303" >&2; exit 1; }
+		c=$(curl -sk -b "$jar" -o /dev/null -w "%{http_code}" "$u/")
+		[ "$c" = 200 ] || { echo "after setup, / answered $c, want 200" >&2; exit 1; }
+		c=$(curl -sk -o /dev/null -w "%{http_code}" "$u/setup")
+		[ "$c" = 404 ] || { echo "/setup after setup answered $c, want 404" >&2; exit 1; }'
+	$CTR run --rm --network "container:$C" -v "$V:/v:ro" "$TOOL_IMAGE" sh -c "$script" || fail "GUI Host check or setup failed"
+	ok "foreign Host -> 421; setup with the token (CSRF form) -> session; /setup is 404 afterwards"
+}
 
 echo "OK imagetest"
