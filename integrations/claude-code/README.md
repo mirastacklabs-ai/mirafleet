@@ -5,16 +5,45 @@ Gives Claude Code the mirafleet MCP tools (list fleets, workspaces, allowlisted 
 
 ## Install
 
+From the marketplace (inside Claude Code):
+
+```text
+/plugin marketplace add mirastacklabs-ai/mirafleet
+/plugin install mirafleet@mirastacklabs
+```
+
+The marketplace is `mirastacklabs`; its `mirafleet` entry is pinned to the release tag, so the
+plugin version matches the binary release. From a checkout (development):
+
 ```sh
 claude --plugin-dir integrations/claude-code
 ```
 
-A marketplace install arrives in M6. Requirements:
+Requirements:
 
-- `mirafleet` must be on `PATH` (release binary or `go install`). The plugin ships no binary;
-  `.mcp.json` and the hooks run the bare command `mirafleet`.
+- `mirafleet` must be on `PATH`. The plugin ships no binary; `.mcp.json` and the hooks run the
+  bare command `mirafleet`. Install it by any channel in the [README](../../README.md#install):
+  Homebrew (`brew install mirastacklabs-ai/tap/mirafleet`), `install.sh` (macOS, Linux),
+  `install.ps1` (Windows), the release archive, or `go install`. On Windows use `install.ps1` or
+  the zip, not npm: the hooks run in exec form and an npm `.cmd` shim cannot be executed that way.
 - Set up a context once: `mirafleet mcp login ADDR -name NAME -code -` (see the
-  [developer guide](../../docs/guide/README.md)).
+  [quickstart](../../docs/QUICKSTART.md) and the [developer guide](../../docs/guide/README.md)).
+- Update the plugin and the binary together: the plugin version follows the release tag.
+  <!-- verify: plugin.json and pluginVersion are 0.6.0 after relgen bump, carrying M7's skill and hook -->
+
+mirafleet sends no telemetry. The plugin and the binary talk only to the central you logged in to.
+
+## Remote projects (host mode)
+
+If the project's `.mirafleet.yaml` says `remote: true`, the skill tells Claude to use only the
+mirafleet tools (`bash`, `read`, `write`, `edit`, `grep`, `glob`, ...) against the runner VM, and
+a PreToolUse hook denies the local `Bash`, `Read`, `Write`, `Edit`, `Grep` and `Glob` tools with
+a reason that names the remote tool. Without the hooks (other harnesses) the skill and the MCP
+server instructions carry the same rule, but nothing blocks the local tools.
+<!-- verify: the skill text, the deny list and the `remote: true` hook match M7 as merged (M7.md 3.8) -->
+
+Do not use `mirafleet` and the local tools on the same remote project: the files live on the VM,
+not on your laptop.
 
 Commands: `/mirafleet <task>`, `/openfleet <task>`, `/claudefleet <task>`. If another plugin owns the
 bare name, use `/mirafleet:mirafleet`, `/mirafleet:openfleet`, `/mirafleet:claudefleet`.

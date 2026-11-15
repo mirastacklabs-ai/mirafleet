@@ -4,7 +4,11 @@ Slash commands `/mirafleet` and `/openfleet` plus a local MCP server entry. No h
 
 ## Install
 
-1. Put `mirafleet` on your PATH and run `mirafleet mcp login` once in a terminal.
+1. Put `mirafleet` on your PATH (Homebrew, `install.sh`, `install.ps1` or a release archive; see
+   the [main README](../../README.md#install)) and run `mirafleet mcp login` once in a terminal.
+   Without a binary on PATH, set `command` to
+   `["npx", "-y", "@mirastacklabs/mirafleet@0.6.0", "mcp", "-project-dir", "."]` (on Windows,
+   `["cmd", "/c", "npx", ...]`). mirafleet sends no telemetry.
 2. Copy the commands. Project scope: `.opencode/commands/`. Global: `~/.config/opencode/commands/`.
 
    ```sh
