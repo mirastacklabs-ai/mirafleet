@@ -31,6 +31,11 @@ import (
 // session is confined to instead of its own directory.
 const LabelWorkdir = "mirafleet.workdir"
 
+// LabelSession is the spec label central sets from the orchestrator's session id (host fleets).
+// The session directory and state are keyed by it, so reopening the session (a new workspace id)
+// reattaches the same directory; without it the workspace id is the key.
+const LabelSession = "mirafleet.session"
+
 // ExecutorConfig configures an Executor.
 type ExecutorConfig struct {
 	Manager *Manager
@@ -41,6 +46,7 @@ type ExecutorConfig struct {
 }
 
 type hostWS struct {
+	key     string // session key (the LabelSession value, else the workspace id)
 	sd      *SessionDir
 	sess    Session
 	created time.Time
@@ -74,8 +80,8 @@ func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
 		return nil, err
 	}
 	for _, o := range open {
-		if workspace.ValidID(workspace.ID(o.ID)) {
-			_ = e.attach(workspace.ID(o.ID), o.Workdir, nil)
+		if workspace.ValidID(workspace.ID(o.WS)) {
+			_ = e.attach(workspace.ID(o.WS), o.ID, o.Workdir, nil)
 		}
 	}
 	return e, nil
@@ -122,22 +128,34 @@ func (e *Executor) session(id workspace.ID) (Session, *hostWS, error) {
 
 // Create implements workspace.Executor: open (or reattach) the session directory. Idempotent.
 func (e *Executor) Create(ctx context.Context, sp workspace.Spec) error {
-	return e.attach(sp.ID, sp.Labels[LabelWorkdir], sp.Labels)
+	key := sp.Labels[LabelSession]
+	if key == "" {
+		key = string(sp.ID)
+	}
+	return e.attach(sp.ID, key, sp.Labels[LabelWorkdir], sp.Labels)
 }
 
-func (e *Executor) attach(id workspace.ID, workdir string, labels map[string]string) error {
+// attach opens (or reattaches) the session key as workspace id. A second workspace for a session
+// key that is already open here is refused: two live workspaces would share one directory, job
+// table and credential wiring.
+func (e *Executor) attach(id workspace.ID, key, workdir string, labels map[string]string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if _, ok := e.ws[id]; ok {
 		return nil
 	}
+	for other, w := range e.ws {
+		if w.key == key {
+			return fmt.Errorf("%w: session %q is already open here as workspace %s", workspace.ErrRefused, key, other)
+		}
+	}
 	sp := workspace.Spec{ID: id, Labels: labels}
-	sd, err := e.cfg.Manager.Open(string(sp.ID), workdir)
+	sd, err := e.cfg.Manager.OpenFor(key, string(id), workdir)
 	if err != nil {
 		return fmt.Errorf("%w: %v", workspace.ErrRefused, err)
 	}
-	dir := filepath.Join(e.cfg.StateDir, "sessions", Slug(string(sp.ID)))
-	s := Session{ID: string(sp.ID), Dir: dir, WorkDir: sd.Dir}
+	dir := filepath.Join(e.cfg.StateDir, "sessions", Slug(key))
+	s := Session{ID: key, Dir: dir, WorkDir: sd.Dir}
 	if err := e.cfg.Engine.prepare(s); err != nil {
 		sd.Close()
 		return err
@@ -146,7 +164,7 @@ func (e *Executor) attach(id workspace.ID, workdir string, labels map[string]str
 		sd.Close()
 		return err
 	}
-	e.ws[sp.ID] = &hostWS{sd: sd, sess: s, created: time.Now(), labels: sp.Labels}
+	e.ws[sp.ID] = &hostWS{key: key, sd: sd, sess: s, created: time.Now(), labels: sp.Labels}
 	return nil
 }
 
@@ -346,14 +364,15 @@ func (e *Executor) DestroyDelete(ctx context.Context, id workspace.ID) error {
 	e.mu.Lock()
 	w := e.ws[id]
 	e.mu.Unlock()
-	state := filepath.Join(e.cfg.StateDir, "sessions", Slug(string(id)))
+	key := string(id)
+	state := filepath.Join(e.cfg.StateDir, "sessions", Slug(key))
 	if w != nil {
-		state = w.sess.Dir
+		key, state = w.key, w.sess.Dir
 	}
 	if err := e.Destroy(ctx, id); err != nil {
 		return err
 	}
-	if err := e.cfg.Manager.Delete(string(id)); err != nil && !errors.Is(err, ErrNoSession) {
+	if err := e.cfg.Manager.Delete(key); err != nil && !errors.Is(err, ErrNoSession) {
 		return err
 	}
 	return os.RemoveAll(state)

@@ -50,7 +50,7 @@ func TestExecutorReadoptsOpenSessionsAfterRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(base, "work", Slug(string(keep)), "f.txt"), []byte("x"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(base, "work", "sessions", Slug(string(keep)), "f.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := ex1.Destroy(ctx, closed); err != nil {
@@ -93,7 +93,7 @@ func TestWorkdirNameResolvesUnderRoot(t *testing.T) {
 			t.Fatalf("create with workdir name: %v", err)
 		}
 	}
-	dir := filepath.Join(base, "work", "proj-1")
+	dir := filepath.Join(base, "work", "work", "proj-1")
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
 		t.Fatalf("workdir %s: %v %v", dir, fi, err)
 	}

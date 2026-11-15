@@ -408,6 +408,7 @@ func toResult(cfg Config, name string, res any, err error) *mcp.CallToolResult {
 		cfg.logf("tool %s: encode result: %v", name, merr)
 		return errResult("internal", internalMessage)
 	}
+	b = neutralize(b)
 	content := []mcp.Content{&mcp.TextContent{Text: string(b)}}
 	for _, im := range images {
 		content = append(content, &mcp.ImageContent{Data: im.Data, MIMEType: im.MIME})
@@ -432,6 +433,7 @@ type WithImages struct {
 // outputSchema check never rejects it.
 func errResult(code, msg string) *mcp.CallToolResult {
 	b, _ := json.Marshal(map[string]any{"error": map[string]string{"code": code, "message": msg}})
+	b = neutralize(b)
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: string(b)}},
 		IsError: true,
@@ -477,3 +479,13 @@ func logfFrom(ctx context.Context) func(format string, args ...any) {
 	}
 	return func(string, ...any) {}
 }
+
+// controlTagRE matches harness control tags (open, close or cut off) in the JSON text of a
+// result, both as a literal "<" and as the "<" that encoding/json writes.
+var controlTagRE = regexp.MustCompile(`(?i)(?:<|\\u003c)(\s*/?\s*(?:system[-_ ]?reminder|command-(?:name|message|args)|local-command-(?:stdout|caveat)|user-prompt-submit-hook|function_calls|function_results|antml:))`)
+
+// neutralize is the last line of defence for every result (success and error): remote text is
+// data and must never carry a harness control tag into the orchestrator's context. The leading
+// "<" becomes the visible "&lt;". Individual tools also scrub their fields (see scrub); this
+// catches what they miss, such as error text.
+func neutralize(b []byte) []byte { return controlTagRE.ReplaceAll(b, []byte("&lt;$1")) }

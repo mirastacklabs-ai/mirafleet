@@ -132,10 +132,10 @@ func TestHostExecutorOpsAreNotUnsupported(t *testing.T) {
 	}
 
 	// close keeps the directory; close with delete removes it.
-	work := filepath.Join(base, "w", hostx.Slug(sid))
+	work := filepath.Join(base, "w", "sessions", hostx.Slug(sid))
 	id2 := h.create()
 	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: string(id2)}, nil, transport.CodeOK)
-	if _, err := os.Stat(filepath.Join(base, "w", hostx.Slug(string(id2)))); err != nil {
+	if _, err := os.Stat(filepath.Join(base, "w", "sessions", hostx.Slug(string(id2)))); err != nil {
 		t.Fatalf("plain destroy must keep the dir: %v", err)
 	}
 	h.want(transport.WorkspaceRequest{Op: transport.OpDestroy, ID: sid, Delete: true}, nil, transport.CodeOK)

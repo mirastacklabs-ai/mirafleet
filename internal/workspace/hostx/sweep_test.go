@@ -62,11 +62,11 @@ func TestSweepAndWarning(t *testing.T) {
 	if !removed["old"] || !removed["shared"] || len(removed) != 2 {
 		t.Fatalf("removed: %v errs %v", removed, rep.Errors)
 	}
-	if _, err := os.Stat(filepath.Join(m.cfg.Root, "old")); err == nil {
+	if _, err := os.Stat(filepath.Join(m.cfg.sessionsDir(), "old")); err == nil {
 		t.Fatal("old dir remains")
 	}
 	for _, id := range []string{"job", "live", "fresh", "warn"} {
-		if _, err := os.Stat(filepath.Join(m.cfg.Root, id)); err != nil {
+		if _, err := os.Stat(filepath.Join(m.cfg.sessionsDir(), id)); err != nil {
 			t.Fatalf("%s must remain: %v", id, err)
 		}
 	}
@@ -153,14 +153,14 @@ func TestPrune(t *testing.T) {
 	if len(rep.Candidates) != 1 || rep.Candidates[0].ID != "a" || rep.Candidates[0].Size != 5 || len(rep.Removed) != 0 {
 		t.Fatalf("dry run: %+v", rep)
 	}
-	if _, err := os.Stat(filepath.Join(m.cfg.Root, "a", "f")); err != nil {
+	if _, err := os.Stat(filepath.Join(m.cfg.sessionsDir(), "a", "f")); err != nil {
 		t.Fatal("dry run deleted")
 	}
 	rep = m.Prune(PruneOptions{OlderThan: 7 * day, Yes: true})
 	if len(rep.Removed) != 1 {
 		t.Fatalf("%+v", rep)
 	}
-	if _, err := os.Stat(filepath.Join(m.cfg.Root, "a")); err == nil {
+	if _, err := os.Stat(filepath.Join(m.cfg.sessionsDir(), "a")); err == nil {
 		t.Fatal("a remains")
 	}
 	// b is held (live): matched by age 0 but skipped.
@@ -168,7 +168,7 @@ func TestPrune(t *testing.T) {
 	if len(rep.Skipped) != 1 || rep.Skipped[0].ID != "b" {
 		t.Fatalf("%+v", rep)
 	}
-	if _, err := os.Stat(filepath.Join(m.cfg.Root, "b", "f")); err != nil {
+	if _, err := os.Stat(filepath.Join(m.cfg.sessionsDir(), "b", "f")); err != nil {
 		t.Fatal("live dir pruned")
 	}
 	if _, err := os.Stat(wd); err != nil {

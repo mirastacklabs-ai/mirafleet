@@ -37,6 +37,10 @@ import (
 // the host executor reads it (hostx.LabelWorkdir) and resolves the name under its root.
 const LabelWorkdir = "mirafleet.workdir"
 
+// LabelSession is the spec label central sets from the orchestrator's session id (host fleets);
+// the host executor keys the session directory by it (hostx.LabelSession).
+const LabelSession = "mirafleet.session"
+
 // LabelCredentials is the spec label that carries the credential names a workspace_open asked
 // for: a comma-separated list; absent means every held credential, empty means none. Central
 // sets it; the runner checks every name is held and removes the label before the executor sees it.

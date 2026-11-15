@@ -183,6 +183,10 @@ var workdirRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 // (hostx.LabelWorkdir).
 const labelWorkdir = "mirafleet.workdir"
 
+// labelSession is the reserved spec label carrying the session id to the host executor
+// (hostx.LabelSession), which keys the session directory by it so a reopen reattaches.
+const labelSession = "mirafleet.session"
+
 // OpenWorkspaceIn is OpenWorkspace with an optional shared workdir name (host fleets only, Q4).
 func (s *Service) OpenWorkspaceIn(ctx context.Context, p auth.Principal, src Source, fleet, session, image string,
 	labels map[string]string, confirm, workdir string) (store.Workspace, bool, error) {
@@ -245,14 +249,15 @@ func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src S
 			return store.Workspace{}, false, badRequest("host fleets take no image")
 		}
 		image = hostImage
+		if workdir != "" && !workdirRE.MatchString(workdir) {
+			return store.Workspace{}, false, badRequest("invalid workdir name")
+		}
+		specLabels = make(map[string]string, len(labels)+3)
+		for k, v := range labels {
+			specLabels[k] = v
+		}
+		specLabels[labelSession] = session // reserved: the runner keys the session dir by it
 		if workdir != "" {
-			if !workdirRE.MatchString(workdir) {
-				return store.Workspace{}, false, badRequest("invalid workdir name")
-			}
-			specLabels = make(map[string]string, len(labels)+1)
-			for k, v := range labels {
-				specLabels[k] = v
-			}
 			specLabels[labelWorkdir] = workdir // reserved: not a placement label
 		}
 		if len(credentials) > 0 {
@@ -262,12 +267,6 @@ func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src S
 					return store.Workspace{}, false, badRequest("invalid credentials list")
 				}
 				seen[n] = true
-			}
-			if len(specLabels) == len(labels) { // not copied yet
-				specLabels = make(map[string]string, len(labels)+1)
-				for k, v := range labels {
-					specLabels[k] = v
-				}
 			}
 			joined := strings.Join(credentials, ",")
 			if len(joined) > transport.MaxSpecLabelBytes {

@@ -53,6 +53,7 @@ type meta struct {
 	Own      bool      `json:"own"` // Dir is the session's own directory (deleted with it); false for a workdir
 	Created  time.Time `json:"created"`
 	LastUsed time.Time `json:"last_used"`
+	WS       string    `json:"ws,omitempty"`       // workspace id of the live open (ID is the session key)
 	HeldPID  int       `json:"held_pid,omitempty"` // process holding a live handle
 	// Open is true while the workspace is open: set by Open, cleared by Close. A runner restart
 	// (Detach, or a crash) leaves it set, so the executor re-adopts the session on start.
@@ -86,7 +87,7 @@ func NewManager(cfg SessionsConfig) (*Manager, error) {
 		cfg.Now = time.Now
 	}
 	cfg.Root, cfg.StateDir = filepath.Clean(cfg.Root), filepath.Clean(cfg.StateDir)
-	for _, d := range []string{cfg.Root, cfg.metaDir()} {
+	for _, d := range []string{cfg.Root, cfg.sessionsDir(), cfg.workDir(), cfg.metaDir()} {
 		if err := ensureDir(d); err != nil {
 			return nil, err
 		}
@@ -95,6 +96,11 @@ func NewManager(cfg SessionsConfig) (*Manager, error) {
 }
 
 func (c SessionsConfig) metaDir() string { return filepath.Join(c.StateDir, "sessions") }
+
+// Own session directories and named workdirs live in separate subdirectories of Root, so a
+// workdir name can never equal (and share a directory with) a session slug.
+func (c SessionsConfig) sessionsDir() string { return filepath.Join(c.Root, "sessions") }
+func (c SessionsConfig) workDir() string     { return filepath.Join(c.Root, "work") }
 
 // WorkdirName is the grammar of a project-file workdir name (same as api's).
 var WorkdirName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
@@ -167,9 +173,14 @@ type SessionDir struct {
 	closed sync.Once
 }
 
-// Open creates or reattaches the session. workdir is "" for the session's own directory, else an
+// Open is OpenFor with the workspace id equal to the session key.
+func (m *Manager) Open(id, workdir string) (*SessionDir, error) { return m.OpenFor(id, id, workdir) }
+
+// OpenFor creates or reattaches the session key (the orchestrator's session id, or the workspace
+// id when there is none); ws is the workspace id recorded so a runner restart can re-adopt it.
+// workdir is "" for the session's own directory, a name (a shared directory under Root/work), or an
 // absolute path of an existing directory (a shared checkout) the tools are confined to.
-func (m *Manager) Open(id, workdir string) (*SessionDir, error) {
+func (m *Manager) OpenFor(id, ws, workdir string) (*SessionDir, error) {
 	if id == "" || len(id) > 256 || strings.ContainsRune(id, 0) {
 		return nil, errors.New("hostx: invalid session id")
 	}
@@ -188,7 +199,7 @@ func (m *Manager) Open(id, workdir string) (*SessionDir, error) {
 	warn := m.warningFor(mt, now)
 
 	if workdir == "" {
-		dir := filepath.Join(m.cfg.Root, slug)
+		dir := filepath.Join(m.cfg.sessionsDir(), slug)
 		if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 			return nil, err
 		}
@@ -207,7 +218,7 @@ func (m *Manager) Open(id, workdir string) (*SessionDir, error) {
 			if !WorkdirName.MatchString(workdir) {
 				return nil, errors.New("hostx: workdir must be a name (a-z, 0-9, . _ -) or an absolute path")
 			}
-			workdir = filepath.Join(m.cfg.Root, workdir)
+			workdir = filepath.Join(m.cfg.workDir(), workdir)
 			if err := os.Mkdir(workdir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 				return nil, err
 			}
@@ -229,6 +240,7 @@ func (m *Manager) Open(id, workdir string) (*SessionDir, error) {
 		mt.Dir, mt.Own = real, false
 	}
 	mt.LastUsed = now
+	mt.WS = ws
 	mt.HeldPID = os.Getpid()
 	mt.Open = true
 	if err := m.save(slug, mt); err != nil {
@@ -391,7 +403,8 @@ func (m *Manager) list(withSize bool) ([]Info, error) {
 
 // OpenSession is a stored session that was still open when the previous runner process ended.
 type OpenSession struct {
-	ID      string
+	ID      string // the session key
+	WS      string // the workspace id it was opened as
 	Workdir string // "" for the session's own directory, else the shared directory (absolute)
 }
 
@@ -413,7 +426,10 @@ func (m *Manager) OpenSessions() ([]OpenSession, error) {
 		if err != nil || !mt.Open || m.held[slug] > 0 {
 			continue
 		}
-		o := OpenSession{ID: mt.ID}
+		o := OpenSession{ID: mt.ID, WS: mt.WS}
+		if o.WS == "" {
+			o.WS = mt.ID
+		}
 		if !mt.Own {
 			o.Workdir = mt.Dir
 		}
@@ -443,8 +459,8 @@ func (m *Manager) Delete(id string) error {
 // remove deletes the data of one session. Caller holds m.mu and has checked busy.
 func (m *Manager) remove(slug string, mt *meta) error {
 	if mt.Own {
-		// The path is Root/slug by construction; never follow a symlink swapped in.
-		dir := filepath.Join(m.cfg.Root, slug)
+		// The path is Root/sessions/slug by construction; never follow a symlink swapped in.
+		dir := filepath.Join(m.cfg.sessionsDir(), slug)
 		if mt.Dir != dir {
 			return fmt.Errorf("hostx: session %s records an unexpected directory", slug)
 		}

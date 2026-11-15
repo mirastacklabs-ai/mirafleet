@@ -153,7 +153,7 @@ func TestConfinement(t *testing.T) {
 	}
 	// A symlink planted in place of the session dir is refused on reattach.
 	m2, _, _ := newMgr(t, nil)
-	if err := os.Symlink(base, filepath.Join(m2.cfg.Root, "evil")); err != nil {
+	if err := os.Symlink(base, filepath.Join(m2.cfg.sessionsDir(), "evil")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m2.Open("evil", ""); err == nil {

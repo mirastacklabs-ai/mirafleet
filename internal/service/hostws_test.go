@@ -82,6 +82,9 @@ func TestOpenWithWorkdir(t *testing.T) {
 	if !strings.Contains(w.Spec, `"mirafleet.workdir":"shared-1"`) {
 		t.Fatalf("spec lacks the workdir label: %s", w.Spec)
 	}
+	if !strings.Contains(w.Spec, `"mirafleet.session":"s9"`) {
+		t.Fatalf("spec lacks the session label: %s", w.Spec)
+	}
 	for _, bad := range []string{"../etc", "/abs", "A B"} {
 		if _, _, err := e.svc.OpenWorkspaceIn(e.ctx, bob, SourceAPI, "vm2", "s10", "", nil, "", bad); code(t, err) != api.CodeBadRequest {
 			t.Errorf("workdir %q accepted", bad)

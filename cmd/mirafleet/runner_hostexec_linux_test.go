@@ -38,7 +38,7 @@ func TestNewExecutorHost(t *testing.T) {
 	if err := ex.Create(context.Background(), workspace.Spec{ID: id, Labels: map[string]string{hostx.LabelWorkdir: "proj"}}); err != nil {
 		t.Fatal(err)
 	}
-	if fi, err := os.Stat(filepath.Join(home, "sessions", "proj")); err != nil || !fi.IsDir() {
+	if fi, err := os.Stat(filepath.Join(home, "sessions", "work", "proj")); err != nil || !fi.IsDir() {
 		t.Fatalf("workdir not under host.root: %v", err)
 	}
 	if err := ex.Close(); err != nil { // stops the sweeper

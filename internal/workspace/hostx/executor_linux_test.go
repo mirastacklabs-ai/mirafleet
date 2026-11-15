@@ -257,7 +257,7 @@ func TestExecutorDestroyKeepsDirDestroyDeleteRemoves(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir, _ := ex.SessionDir(id)
-	work := filepath.Join(base, "work", Slug(string(id)))
+	work := filepath.Join(base, "work", "sessions", Slug(string(id)))
 	if err := ex.Destroy(ctx, id); err != nil {
 		t.Fatal(err)
 	}

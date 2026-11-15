@@ -436,6 +436,13 @@ func (s *wsState) prepare(req *transport.WorkspaceRequest) (*wsOp, *opErr) {
 				labels[k] = v
 				continue
 			}
+			if k == LabelSession { // reserved label for the host executor, which reads it
+				if h, ok := s.ex.(HostModer); !ok || !h.HostMode() {
+					return nil, refuse("session label needs a host runner")
+				}
+				labels[k] = v
+				continue
+			}
 			if strings.HasPrefix(strings.ToLower(k), "mirafleet.") {
 				return nil, refuse("label names starting with mirafleet. are reserved")
 			}
