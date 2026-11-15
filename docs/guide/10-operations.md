@@ -1903,7 +1903,7 @@ verified the same way with `cosign verify` on both registries; the digests must 
 `install.sh` always verifies the SHA-256 and refuses if the archive is not listed, on a mismatch,
 or if the machine has no SHA-256 tool. It verifies the signature when `cosign` is present and
 **requires** it with `--verify-signature`. It uses HTTPS only, extracts only the binary and runs
-`sudo` only if you pass `--sudo`. `install.ps1` does the same on Windows and changes your PATH only
+never runs `sudo` (for a system-wide install run `sudo sh install.sh -b /usr/local/bin` yourself). `install.ps1` does the same on Windows and changes your PATH only
 with `-AddToPath`.
 
 **Quarantine.** mirafleet is not code-signed by Apple or Microsoft (no accounts, no fee, and

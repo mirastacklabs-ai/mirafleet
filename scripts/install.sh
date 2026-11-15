@@ -2,12 +2,12 @@
 # Install the mirafleet binary from a GitHub release.
 #
 #   curl -fsSL https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.sh | sh
-#   sh install.sh [-v vX.Y.Z | vX.Y.Z] [-b DIR] [--sudo] [--verify-signature]
+#   sh install.sh [-v vX.Y.Z | vX.Y.Z] [-b DIR] [--verify-signature]
 #
 # linux/darwin, amd64/arm64. HTTPS only. The SHA-256 of the archive is always verified against
 # checksums.txt; the cosign signature of checksums.txt is verified when cosign is installed, and
-# required with --verify-signature. Installs to ~/.local/bin unless -b is given; sudo is used only
-# with --sudo (then the default directory is /usr/local/bin).
+# required with --verify-signature. Installs to ~/.local/bin unless -b is given. It never runs sudo;
+# for a system-wide install run it yourself: sudo sh install.sh -b /usr/local/bin
 set -eu
 
 REPO="mirastacklabs-ai/mirafleet"
@@ -22,10 +22,9 @@ die() {
 
 usage() {
 	cat <<'USAGE'
-usage: install.sh [-v vX.Y.Z | vX.Y.Z] [-b DIR] [--sudo] [--verify-signature]
+usage: install.sh [-v vX.Y.Z | vX.Y.Z] [-b DIR] [--verify-signature]
   -v VERSION          release tag to install (default: latest)
-  -b DIR              install directory (default: ~/.local/bin, or /usr/local/bin with --sudo)
-  --sudo              run mkdir/install through sudo (only when you ask for it)
+  -b DIR              install directory (default: ~/.local/bin)
   --verify-signature  require a valid cosign signature on checksums.txt (needs cosign)
 Environment: MIRAFLEET_INSTALL_BASE_URL (https only; the directory holding the release files,
 requires an explicit version) is for tests and mirrors.
@@ -34,7 +33,6 @@ USAGE
 
 version=""
 bindir=""
-use_sudo=0
 need_sig=0
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -47,10 +45,6 @@ while [ $# -gt 0 ]; do
 		[ $# -ge 2 ] || die "-b needs a value"
 		bindir=$2
 		shift 2
-		;;
-	--sudo)
-		use_sudo=1
-		shift
 		;;
 	--verify-signature)
 		need_sig=1
@@ -122,7 +116,7 @@ printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z.-]
 archive="mirafleet_${version#v}_${os}_${arch}.tar.gz"
 
 if [ -z "$bindir" ]; then
-	if [ "$use_sudo" -eq 1 ]; then bindir=/usr/local/bin; else bindir="${HOME:?HOME is not set}/.local/bin"; fi
+	bindir="${HOME:?HOME is not set}/.local/bin"
 fi
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/mirafleet-install.XXXXXX") || die "cannot create a temp dir"
@@ -157,11 +151,8 @@ mkdir "$tmp/x"
 tar -xzf "$tmp/$archive" -C "$tmp/x" mirafleet || die "$archive does not contain a mirafleet binary"
 if [ ! -f "$tmp/x/mirafleet" ] || [ -L "$tmp/x/mirafleet" ]; then die "unexpected archive content"; fi
 
-if [ "$use_sudo" -eq 1 ]; then run="sudo"; else run=""; fi
-# shellcheck disable=SC2086
-$run mkdir -p "$bindir"
-# shellcheck disable=SC2086
-$run install -m 0755 "$tmp/x/mirafleet" "$bindir/mirafleet"
+mkdir -p "$bindir"
+install -m 0755 "$tmp/x/mirafleet" "$bindir/mirafleet"
 echo "Installed $bindir/mirafleet"
 case ":$PATH:" in
 *":$bindir:"*) ;;

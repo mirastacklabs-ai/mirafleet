@@ -338,7 +338,7 @@ ls-remote` on the project's GitLab remote through the mirafleet tools; it should
 | OS | Command |
 |---|---|
 | macOS, Linux (Homebrew) | `brew install mirastacklabs-ai/tap/mirafleet` |
-| macOS, Linux (script) | `curl -fsSL https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.sh \| sh` (installs to `~/.local/bin`; add `-b DIR` or `--sudo` to change) |
+| macOS, Linux (script) | `curl -fsSL https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.sh \| sh` (installs to `~/.local/bin`; add `-b DIR` to change; system-wide: `sudo sh install.sh -b /usr/local/bin`) |
 | Windows (PowerShell 5.1 or 7) | `irm https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.ps1 \| iex` (user install, add `-AddToPath` to change your PATH) |
 | Any OS, Node 18+ | `npx -y @mirastacklabs/mirafleet@0.6.0 version` (for MCP configs; not for the Claude Code plugin on Windows) |
 | Archive | download `mirafleet_0.6.0_<os>_<arch>.tar.gz` (`.zip` on Windows) from the release page, check it against `checksums.txt`, put the binary on `PATH` |
