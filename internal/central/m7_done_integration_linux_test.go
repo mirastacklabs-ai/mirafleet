@@ -575,15 +575,10 @@ func TestM7DoneIntegration(t *testing.T) {
 	// ---- 3. commit and push over both remotes; the fake records the credentials ----
 	// The restarted runner must wire the sessions it adopted (agent socket, broker, env) again.
 	if so := devRun("echo SOCK=$SSH_AUTH_SOCK PROXY=${HTTPS_PROXY:+set}"); !strings.Contains(so, "SOCK=/") || !strings.Contains(so, "PROXY=set") {
-		// Known bug (reported): devMgr.open runs only on workspace create (internal/runner/hostops.go
-		// devOpen), never for workspaces adopted at start, and a sticky workspace_open does not
-		// reach the runner. Close and reopen (reattaches the directory) so the rest still runs.
-		t.Errorf("after a runner restart the adopted session has no credential wiring: %q", so)
-		mcp.call(fleetDev, "workspace_close", nil)
-		mcp.call(fleetDev, "workspace_open", nil)
+		t.Fatalf("after a runner restart the adopted session has no credential wiring: %q", so)
 	}
-	// (Pre-restart usage events are in runner memory and are lost on restart: finding, see report.
-	// A second pull after it, so that central's audit has a registry row to check in point 6.)
+	// Known P2: pre-restart usage events live in runner memory and are lost on restart. A second
+	// pull after the restart makes sure central's audit has a registry row to check in point 6.
 	devRun("curl -sS -o /dev/null -H 'Accept: application/vnd.oci.image.manifest.v1+json' https://registry.gitlab.test/v2/acme/app/manifests/1.0")
 	devRun("cd app-ssh && git -c user.name=dev -c user.email=dev@x.test commit -qam 'edit over ssh' && git push -q origin HEAD:refs/heads/from-ssh")
 	devRun("cd app-https && echo https >> README.md && git -c user.name=dev -c user.email=dev@x.test commit -qam 'edit over https' && git push -q origin HEAD:refs/heads/from-https")
