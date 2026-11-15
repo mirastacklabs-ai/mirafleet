@@ -74,7 +74,11 @@ func (s *Server) accountPage(w http.ResponseWriter, r *http.Request, status int,
 		return
 	}
 	d := AccountData{Username: p.Name, Errors: errs}
+	now := s.now()
 	for _, g := range list {
+		if !g.ExpiresAt.After(now) {
+			continue // expired, not yet purged
+		}
 		d.Sessions = append(d.Sessions, SessionRow{ID: g.ID, Created: viewTime(g.CreatedAt), Active: viewTime(g.LastActiveAt),
 			Remote: g.Remote, Browser: g.UserAgent, Current: g.ID == cur})
 		if g.ID != cur {

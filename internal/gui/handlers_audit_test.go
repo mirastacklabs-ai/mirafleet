@@ -499,3 +499,18 @@ func TestAuditExportTimeout(t *testing.T) {
 		t.Errorf("route timeout %v", s.timeouts["GET /audit/export"])
 	}
 }
+
+// G-33: the filter form is a plain GET (no htmx swap), so the export links and the address bar
+// always match the filter shown.
+func TestAuditFilterFormIsPlainGet(t *testing.T) {
+	h := newAdminHarness(t)
+	body := h.get("/audit?fleet=prod").Body.String()
+	i := strings.Index(body, `<form class="filters"`)
+	if i < 0 {
+		t.Fatal("no filter form")
+	}
+	form := body[i : i+strings.Index(body[i:], ">")]
+	if strings.Contains(form, "hx-") || !strings.Contains(form, `method="get"`) {
+		t.Errorf("filter form = %s", form)
+	}
+}

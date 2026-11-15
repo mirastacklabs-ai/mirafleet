@@ -7,7 +7,7 @@
 </div>{{end}}
 
 {{define "audit/list"}}<section class="panel" id="audit-list" aria-label="Audit log">
-<form class="filters" method="get" action="/audit" hx-get="/audit" hx-target="#audit-list" hx-swap="outerHTML">
+<form class="filters" method="get" action="/audit">
 {{with .Data}}
 <div class="field{{if .Q.Errs.from}} has-error{{end}}"><label for="a-from">From (UTC)</label><input type="text" id="a-from" name="from" value="{{.Q.From}}" placeholder="2026-11-14T09:30" autocomplete="off"{{if .Q.Errs.from}} aria-invalid="true"{{end}}>{{template "ui/field-error" .Q.Errs.from}}</div>
 <div class="field{{if .Q.Errs.to}} has-error{{end}}"><label for="a-to">To (UTC)</label><input type="text" id="a-to" name="to" value="{{.Q.To}}" placeholder="2026-11-14" autocomplete="off"{{if .Q.Errs.to}} aria-invalid="true"{{end}}>{{template "ui/field-error" .Q.Errs.to}}</div>

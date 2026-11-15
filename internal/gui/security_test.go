@@ -440,7 +440,7 @@ func TestSecurityBeforeSetupEverythingGoesToSetup(t *testing.T) {
 		t.Fatal(created, err)
 	}
 	routes := secRoutes(t)
-	leaks := []string{testUser, "central-01", "192.0.2.10", "central.example.org:2222", "SHA256:hostkeyfp"}
+	leaks := []string{testUser, "central-01", "192.0.2.10", "central.example.org:2222", "SHA256:hostkeyfp", "test-1.2.3"}
 	for _, r := range routes {
 		if r.path == "/setup" || strings.HasPrefix(r.path, "/static/") {
 			continue
@@ -474,6 +474,9 @@ func TestSecurityBeforeSetupEverythingGoesToSetup(t *testing.T) {
 		if !strings.HasPrefix(loc, "/setup") && !strings.HasPrefix(loc, "/login") {
 			t.Errorf("%s before setup redirects to %q", r.pattern, loc)
 		}
+		if strings.Contains(final.Body.String(), leaks[5]) {
+			t.Errorf("%s: the setup page shows the version", r.pattern)
+		}
 		if final.Code != 200 || !strings.Contains(final.Body.String(), `action="/setup"`) {
 			t.Errorf("%s before setup does not end on the setup form (status %d)", r.pattern, final.Code)
 		}
@@ -484,7 +487,7 @@ func TestSecurityBeforeSetupEverythingGoesToSetup(t *testing.T) {
 	if rec.Code != 404 {
 		t.Errorf("unknown path = %d", rec.Code)
 	}
-	for _, l := range leaks[:4] {
+	for _, l := range append(leaks[:4:4], leaks[5:]...) {
 		if strings.Contains(rec.Body.String(), l) {
 			t.Errorf("404 page leaks %q", l)
 		}

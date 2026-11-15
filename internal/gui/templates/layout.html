@@ -32,7 +32,7 @@
 </main>
 <footer class="site-footer">
 <div class="footer-inner">
-<span>mirafleet {{.Version}}</span>
+{{if .Authed}}<span>mirafleet {{.Version}}</span>{{end}}
 {{if .RequestID}}<span>request {{.RequestID}}</span>{{end}}
 <span class="header-spacer"></span>
 {{if .Authed}}<form class="row" method="post" action="/account/theme">{{template "ui/csrf" .}}<span class="label">Theme</span>

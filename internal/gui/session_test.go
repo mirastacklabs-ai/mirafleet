@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -153,4 +154,65 @@ func TestSessionStartPurgeStopsOnCancel(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+// purgeSpy counts PurgeGUISessions calls.
+type purgeSpy struct {
+	Backend
+	n atomic.Int32
+}
+
+func (b *purgeSpy) PurgeGUISessions(ctx context.Context) (int, error) {
+	b.n.Add(1)
+	return b.Backend.PurgeGUISessions(ctx)
+}
+
+// G-32: Start purges once at startup.
+func TestServerStartPurgesSessions(t *testing.T) {
+	var spy *purgeSpy
+	h := newGUIHarness(t, withBackend(func(be Backend) Backend { spy = &purgeSpy{Backend: be}; return spy }))
+	if err := h.srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = h.srv.Close() })
+	if spy.n.Load() != 1 {
+		t.Fatalf("purges after Start = %d, want 1", spy.n.Load())
+	}
+}
+
+// G-32: Account hides a session past its absolute expiry that no purge has removed yet.
+func TestAccountSkipsExpiredSessions(t *testing.T) {
+	h := newAdminHarness(t)
+	if rec := h.get("/account"); !strings.Contains(rec.Body.String(), "this session") {
+		t.Fatalf("live session not listed: %.300s", rec.Body.String())
+	}
+	list, err := h.svc.ListGUISessions(context.Background(), h.adm)
+	if err != nil || len(list) != 1 {
+		t.Fatal(list, err)
+	}
+	// Past the absolute expiry the cookie is dead, so render the page directly with the
+	// session in the context and a server clock ahead of the row.
+	h.srv.now = func() time.Time { return list[0].ExpiresAt.Add(time.Second) }
+	req := httptest.NewRequest("GET", "/account", nil)
+	req = req.WithContext(WithSession(req.Context(), h.adm, list[0].ID))
+	rec := httptest.NewRecorder()
+	h.srv.accountPage(rec, req, 200, nil)
+	if strings.Contains(rec.Body.String(), "this session") {
+		t.Errorf("expired session listed: %.600s", rec.Body.String())
+	}
+}
+
+// G-34: the footer shows the version only to a signed-in admin.
+func TestFooterVersionOnlyWhenAuthed(t *testing.T) {
+	h := newGUIHarness(t)
+	h.loginDirect()
+	if !strings.Contains(h.get("/account").Body.String(), "mirafleet test-1.2.3") {
+		t.Error("authed footer lacks the version")
+	}
+	h.tok = ""
+	for _, p := range []string{"/login", "/no/such/page"} {
+		if b := h.get(p).Body.String(); strings.Contains(b, "test-1.2.3") {
+			t.Errorf("%s shows the version before auth", p)
+		}
+	}
 }

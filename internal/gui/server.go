@@ -287,6 +287,13 @@ func (s *Server) Start() error {
 			s.logf("gui: serve: %v", err)
 		}
 	}()
+	// Housekeeping: purge expired GUI sessions now and every PurgeInterval until Shutdown/Close.
+	if s.cfg.Backend != nil {
+		StartPurge(baseCtx, s.now, func(ctx context.Context, _ time.Time) error {
+			_, err := s.cfg.Backend.PurgeGUISessions(ctx)
+			return err
+		}, func(err error) { s.logf("gui: purge sessions: %v", err) })
+	}
 	go func() {
 		t := time.NewTicker(s.cfg.HostRefresh)
 		defer t.Stop()
