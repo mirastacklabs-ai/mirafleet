@@ -105,15 +105,25 @@ jobs:
       # Runs a throwaway --privileged container on the runner's ephemeral VM.
       - run: scripts/dev.sh integration
 
+  integration-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Host-mode runners as users dev and qa in a throwaway container (not privileged).
+      - run: scripts/dev.sh integration-host
+
   gate:
     if: always()
-    needs: [fmt-vet, build, test-race, test-nocgo, cross, licenses, integration]
+    needs: [fmt-vet, build, test-race, test-nocgo, cross, licenses, integration, integration-host]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: all gate jobs succeeded
         env:
-          RESULT: ${{ needs.fmt-vet.result }} ${{ needs.build.result }} ${{ needs.test-race.result }} ${{ needs.test-nocgo.result }} ${{ needs.cross.result }} ${{ needs.licenses.result }} ${{ needs.integration.result }}
+          RESULT: ${{ needs.fmt-vet.result }} ${{ needs.build.result }} ${{ needs.test-race.result }} ${{ needs.test-nocgo.result }} ${{ needs.cross.result }} ${{ needs.licenses.result }} ${{ needs.integration.result }} ${{ needs.integration-host.result }}
         run: |
           echo "$RESULT"
           for r in $RESULT; do [ "$r" = success ] || exit 1; done

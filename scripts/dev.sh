@@ -239,9 +239,13 @@ integration-host)
 		ls /out' sh $HOST_PKGS
 	# shellcheck disable=SC2016
 	$CTR run --rm --user 0:0 --entrypoint sh \
+		-e MIRAFLEET_TEST_M7_BUILD_STEPS \
 		-v mirafleet-itest-host-bin:/itest:ro \
 		"$GO_IMAGE" -ec '
 		command -v git >/dev/null && command -v ssh >/dev/null || { echo "image lacks git or openssh-client" >&2; exit 1; }
+		# ripgrep so the grep tool is exercised with rg (the test also runs a runner whose PATH has none).
+		# Best effort: the test logs and carries on without it. Needs network, like the Go modules.
+		(apt-get update -qq && apt-get install -y -qq --no-install-recommends ripgrep perl) >/tmp/apt.log 2>&1 || { echo "warning: could not install ripgrep:" >&2; tail -n 3 /tmp/apt.log >&2; }
 		for u in dev qa; do
 			useradd -m -s /bin/bash "$u"
 			chmod 700 "/home/$u"
