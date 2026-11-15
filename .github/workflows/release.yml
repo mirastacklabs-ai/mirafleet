@@ -11,6 +11,9 @@ name: release
 #   DOCKERHUB_USERNAME (variable), DOCKERHUB_TOKEN   image
 #   HOMEBREW_TAP_TOKEN                               brew
 #   NPM_TOKEN (optional, first publish only)         npm
+# NPM_TOKEN is a stage-only granular token ("Read and write (stage only)"), no 2FA bypass: the
+# npm job only stages packages (`npm stage publish`); the maintainer approves them on npmjs.com
+# with 2FA. Delete the token once per-package trusted publishers (stage publish only) are set.
 # ghcr, cosign, attestations, npm provenance and the MCP Registry use GitHub OIDC or the job's
 # GITHUB_TOKEN. No long-lived token is stored in the repository. Every Action is pinned by SHA.
 # Untrusted input (the tag name) reaches `run:` only through env: and is validated first.
@@ -336,6 +339,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
+      - name: npm with staged publishing (needs >= 11.15.0, pinned)
+        run: |
+          npm install -g npm@12.2.2
+          npm --version
       - name: generate the seven packages from the verified archives
         env:
           VERSION: ${{ needs.verify.outputs.version }}
@@ -343,11 +350,12 @@ jobs:
           (cd dist/release && sha256sum -c checksums.txt)
           scripts/dev.sh go run ./tools/relgen npm -dist dist/release -out dist/npm "$VERSION" >dist/npm-dirs.txt
           cat dist/npm-dirs.txt
-      - name: publish the platform packages, then the wrapper (trusted publishing, provenance)
+      - name: stage the platform packages, then the wrapper, for maintainer approval
         env:
           VERSION: ${{ needs.verify.outputs.version }}
           PRERELEASE: ${{ needs.verify.outputs.prerelease }}
-          # Only for a first publish that npm trusted publishing cannot do; delete the secret after.
+          # Stage-only granular token for the first publish, before trusted publishers can exist;
+          # empty afterwards (OIDC trusted publishing is used then). Delete the secret after.
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -n "${NPM_TOKEN:-}" ]; then
@@ -363,11 +371,13 @@ jobs:
               echo "$name@$VERSION is already published; skipping"
               return 0
             fi
-            npm publish "./$dir" --provenance --access public --tag "$disttag"
+            npm stage publish "./$dir" --provenance --access public --tag "$disttag"
           }
           # relgen prints the wrapper first; it goes last so its optionalDependencies exist.
           for d in $(tail -n +2 dist/npm-dirs.txt); do publish "$d"; done
           publish "$(head -n 1 dist/npm-dirs.txt)"
+          echo "Staged, not live. Approve the 7 staged versions (one 2FA) at https://www.npmjs.com/settings/mirastacklabs/staged-packages"
+          echo "For a release (not an rc), approve them before running the mcp-registry job."
 
   brew:
     name: brew
@@ -425,6 +435,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: npm packages are live (staged versions must be approved first)
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          if ! npm view "@mirastacklabs/mirafleet@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::@mirastacklabs/mirafleet@$VERSION is not live on npm: approve the staged npm packages first, then re-run this job."
+            exit 1
+          fi
       - name: mcp-publisher v1.8.9 (pinned by sha256)
         run: |
           curl --proto '=https' --tlsv1.2 -fsSL -o "$RUNNER_TEMP/mcp-publisher.tar.gz" \

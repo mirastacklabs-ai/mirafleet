@@ -2,7 +2,7 @@
 # published on 127.0.0.1 only. See README.md.
 name: mirafleet-lab
 
-x-image: &image ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.6.0-rc.2}
+x-image: &image ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.6.0-rc.3}
 
 services:
   central-init:

@@ -6,12 +6,12 @@
     "url": "https://github.com/mirastacklabs-ai/mirafleet",
     "source": "github"
   },
-  "version": "0.6.0-rc.2",
+  "version": "0.6.0-rc.3",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@mirastacklabs/mirafleet",
-      "version": "0.6.0-rc.2",
+      "version": "0.6.0-rc.3",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

@@ -15,7 +15,7 @@ One git tag `vX.Y.Z` (or `vX.Y.Z-rc.N`) on `main` produces every channel from th
 |---|---|---|
 | GitHub release: archives (6 targets), `.deb` `.rpm` `.apk`, `checksums.txt` (+ `checksums.txt.sigstore.json`), SBOMs, `install.sh`, `install.ps1`, `THIRD_PARTY_LICENSES.txt` | `build`, `draft`, `publish-release` | cosign keyless signature of `checksums.txt`; build provenance for every archive and package |
 | OCI image `docker.io/mirastack/mirafleet` and `ghcr.io/mirastacklabs-ai/mirafleet` | `image` | one multi-arch build, same digest in both; cosign + provenance for both. Tags `X.Y.Z`, `X.Y`, `latest`; a pre-release gets only `X.Y.Z-rc.N` |
-| npm `@mirastacklabs/mirafleet` + six platform packages | `npm` | trusted publishing with provenance; pre-releases go to dist-tag `next` |
+| npm `@mirastacklabs/mirafleet` + six platform packages | `npm` | stages the 7 packages (`npm stage publish`); the maintainer approves them on npmjs.com with 2FA; provenance; pre-releases go to dist-tag `next` |
 | Homebrew tap `mirastacklabs-ai/homebrew-tap` | `brew` | not for pre-releases |
 | MCP Registry `io.github.mirastacklabs-ai/mirafleet` | `mcp-registry` | after `npm`; not for pre-releases |
 
@@ -41,8 +41,8 @@ ever does, use the git-ignored `.env.local`.
 | Secret `HOMEBREW_TAP_TOKEN`: fine-grained PAT, contents read/write on the tap only, with an expiry | `release` environment secret | `brew` only |
 | Docker Hub namespace `mirastack`, public repo `mirafleet` | hub.docker.com | `image` |
 | Variable `DOCKERHUB_USERNAME` and secret `DOCKERHUB_TOKEN`: a personal access token with Read & Write scope (works on the free plan; an Organization Access Token is an option only if the org's plan has it, never a requirement) | `release` environment | `image` only |
-| npm account with 2FA and org `mirastacklabs`; a trusted publisher for each of the 7 packages (repository `mirastacklabs-ai/mirafleet`, workflow `release.yml`, environment `release`) | npmjs.com | `npm` |
-| Secret `NPM_TOKEN`: only if npm will not let you set up trusted publishing before a package exists; use it for the first publish, then delete it | `release` environment secret | `npm` |
+| npm account with 2FA and org `mirastacklabs`. After the first publish, a trusted publisher for each of the 7 packages (repository `mirastacklabs-ai/mirafleet`, workflow `release.yml`, environment `release`, allowed action `npm stage publish` only), then package publishing access "Require 2FA and disallow tokens" | npmjs.com | `npm` |
+| Secret `NPM_TOKEN` (first publish only, packages do not exist yet so no trusted publisher can be set): a granular token with "Read and write (stage only)", no 2FA bypass. Delete it once the trusted publishers exist | `release` environment secret | `npm` |
 | ghcr, cosign, provenance, MCP Registry | none | GitHub OIDC and the job's `GITHUB_TOKEN`; no secret |
 | Anthropic plugin directory, galleries, Docker-Sponsored OSS | each site | steps P9 to P11 |
 
@@ -73,17 +73,25 @@ maintainer's explicit go-ahead.
    `gh release download v0.6.0-rc.1 -D /tmp/rc` (in a scratch directory), then
    `sha256sum -c checksums.txt`, `gh attestation verify <file> --repo mirastacklabs-ai/mirafleet`
    and `install.sh -v v0.6.0-rc.1 --verify-signature` (it runs `cosign verify-blob` with the exact identity).
-8. **yes** Approve `publish-release`, then `image` and `npm`. npm versions are burned once
-   published (unpublish works only within 72 hours), so check the draft first. `brew` and
-   `mcp-registry` are skipped for a pre-release.
+8. **yes** Approve `publish-release`, then `image` and `npm`. `npm` only stages the 7 packages.
+   **yes** Approve the staged versions at <https://www.npmjs.com/settings/mirastacklabs/staged-packages>
+   (batch approve, one 2FA), or `npm stage approve <id>`. npm versions are burned once published
+   (unpublish works only within 72 hours), so check the draft first. A package that did not exist
+   gets a public placeholder `0.0.0-stage` on its first stage. `brew` and `mcp-registry` are
+   skipped for a pre-release.
 9. Verify: `install.sh -v v0.6.0-rc.1 --verify-signature` in a fresh container;
    `cosign verify` on both image names and compare the digests; `npx -y @mirastacklabs/mirafleet@0.6.0-rc.1 version`.
 
 **Release: `v0.6.0`**
 10. Fix anything the rehearsal found, merge it, and merge `relgen bump X.Y.Z` (step 3).
 11. **yes** Tag and push `v0.6.0` (P4), same commands as step 5.
-12. **yes** Approve the jobs in order (P5): `draft`, `publish-release`, `image`, `npm`, `brew`,
-    `mcp-registry`. The registry version is effectively permanent.
+12. **yes** Approve the jobs in order (P5): `draft`, `publish-release`, `image`, `npm`, `brew`.
+    Then **yes** approve the staged npm packages on npmjs.com (step 8). Only after that, approve
+    `mcp-registry`: it fails with a clear message if the npm version is not live yet, and you
+    re-run it. The registry version is effectively permanent.
+    After the first publish, add a trusted publisher to each of the 7 packages (allowed action
+    `npm stage publish` only), delete `NPM_TOKEN`, and set each package's publishing access to
+    "Require 2FA and disallow tokens".
 13. Post-publish checks: `install.sh --verify-signature`; `gh attestation verify`;
     `cosign verify` on both registries with the same digest; `brew install mirastacklabs-ai/tap/mirafleet`;
     `npx` on three operating systems; `docker compose` from the published image;
@@ -98,7 +106,8 @@ maintainer's explicit go-ahead.
 17. `scripts/release.sh clean`.
 
 If a job fails, fix the cause and re-run the failed job from the Actions page. A re-run of `npm`
-skips versions that are already published; the other publishing jobs are safe to repeat only
+skips versions that are already published (staged but unapproved versions are not published yet,
+so approve or reject them on npmjs.com first); the other publishing jobs are safe to repeat only
 before they have pushed anything, so read the log first.
 
 ## 4. Pull requests and auto-merge

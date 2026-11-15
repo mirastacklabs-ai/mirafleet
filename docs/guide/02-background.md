@@ -883,8 +883,10 @@ is a Go program. `@mirastacklabs/mirafleet` is a tiny launcher script; the real 
 **optional dependencies**: npm installs the one whose `os` and `cpu` fields match the machine
 and skips the others without an error. The packages have no install scripts, so nothing runs at
 install time. A **scope** (`@mirastacklabs/`) is the owner's prefix; only that organisation can
-publish under it. **Trusted publishing** lets the GitHub workflow publish without a stored
-password and attaches provenance to the package.
+publish under it. **Staged publishing** lets the GitHub workflow upload a package without
+making it live: the maintainer approves it on npmjs.com with two-factor authentication.
+**Trusted publishing** lets the workflow do this without a stored password and attaches
+provenance to the package.
 
 ### Homebrew, plugin marketplaces and the MCP Registry
 

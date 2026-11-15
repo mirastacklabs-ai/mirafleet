@@ -28,15 +28,19 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
 
 ## Next steps, in order
 1. **User (in progress, in another Claude session):** npm org `mirastacklabs`; a granular token
-   (read/write packages, scope `@mirastacklabs`, 1-day expiry) stored with
+   with "Read and write (stage only)" and no 2FA bypass, stored with
    `gh secret set NPM_TOKEN --env release --repo mirastacklabs-ai/mirafleet`.
    Trusted publishing cannot be set up before a package exists, so the first publish uses this token.
-2. **Agent:** once `NPM_TOKEN` exists, re-run the failed `npm` job:
-   `gh run rerun 43718452505 --failed`. The user approves the `release` deployment. Then check
-   `npx -y @mirastacklabs/mirafleet@0.6.0-rc.2 version` in a container.
+2. **Agent:** the rc.2 tag's `npm` job still has the old `npm publish`; it is not re-run. After the
+   staged-publish PR (version 0.6.0-rc.3) merges, tag `v0.6.0-rc.3` (user's yes) and the user
+   approves the `release` deployments. The `npm` job only stages: the **user** approves the 7 staged
+   versions at https://www.npmjs.com/settings/mirastacklabs/staged-packages (2FA). Then check
+   `npx -y @mirastacklabs/mirafleet@0.6.0-rc.3 version` in a container.
 3. **User:** on npmjs.com add a trusted publisher to each of the 7 `@mirastacklabs/...` packages
-   (repo `mirastacklabs-ai/mirafleet`, workflow `release.yml`, environment `release`); delete the
-   npm token; `gh secret delete NPM_TOKEN --env release --repo mirastacklabs-ai/mirafleet`.
+   (repo `mirastacklabs-ai/mirafleet`, workflow `release.yml`, environment `release`, allowed action
+   `npm stage publish` only); delete the npm token;
+   `gh secret delete NPM_TOKEN --env release --repo mirastacklabs-ai/mirafleet`; set publishing
+   access to "Require 2FA and disallow tokens".
 4. **User:** `HOMEBREW_TAP_TOKEN` (fine-grained PAT, contents read/write on the tap only, with an
    expiry) on the `release` environment, before `v0.6.0`.
 5. **Agent:** PR `relgen bump 0.6.0` (branch, `git commit -s`, `gh pr merge --auto --squash
