@@ -30,6 +30,10 @@ type Config struct {
 	KeyFile  string   //
 	GUIHosts []string // -gui-host names that the Host allowlist and the certificate accept
 
+	// Shown in the Account screen's About section when non-empty.
+	HostKeyFingerprint string // central's SSH host-key fingerprint
+	SSHAdvertise       string // the SSH advertise address
+
 	Now         func() time.Time       // default time.Now
 	Hostname    func() (string, error) // default os.Hostname
 	Interfaces  InterfaceLister        // default SystemInterfaces
@@ -59,6 +63,8 @@ type Server struct {
 	// PageDefaults, when set, fills the session-dependent Page fields (Authed, CSRF, Nav for error
 	// pages) for every page including error pages. S7 sets it. It is not called for 421 and 503.
 	PageDefaults func(r *http.Request, pg *Page)
+
+	auth *authState // login limiter, hash semaphore, CSRF checker, setup state (handlers_auth.go)
 
 	mu     sync.Mutex
 	srv    *http.Server

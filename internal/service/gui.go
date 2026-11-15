@@ -419,3 +419,32 @@ func (s *Service) PurgeGUISessions(ctx context.Context) (int, error) {
 	}
 	return n, nil
 }
+
+// ActionGUILockout is the audit action written when the login limiter locks an address out.
+const ActionGUILockout = "gui.lockout"
+
+// GUISetupOpen reports whether no active GUI admin exists, i.e. whether /setup may be offered.
+// It reveals nothing else and writes nothing.
+func (s *Service) GUISetupOpen(ctx context.Context) (bool, error) {
+	_, err := s.st.GetGUIAdmin(ctx)
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, store.ErrNotFound):
+		return true, nil
+	}
+	return false, s.fail("load gui admin", err)
+}
+
+// RecordGUILockout writes one gui.lockout audit row for a client address the GUI login limiter
+// has just locked out (docs/M4.md 2.5). The caller calls it once per lockout window.
+func (s *Service) RecordGUILockout(ctx context.Context, remote string) error {
+	ev := s.systemEvent(ActionGUILockout)
+	ev.Source = string(SourceGUI)
+	ev.Remote = remote
+	ev.Outcome = OutcomeDenied
+	if _, err := s.st.RecordAudit(ctx, ev); err != nil {
+		return s.fail("record gui lockout", err)
+	}
+	return nil
+}

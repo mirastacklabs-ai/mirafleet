@@ -124,14 +124,16 @@ func doCentralInit(ctx context.Context, data, listen string, out io.Writer) erro
 
 // runningCentral is a started central: SSH server, admin socket and the data-dir lock.
 type runningCentral struct {
-	Addr  string // actual SSH listen address
-	Close func()
+	Addr    string // actual SSH listen address
+	GUIAddr string // actual GUI listen address ("" when the GUI is off)
+	Close   func()
 }
 
 // startCentral takes the data-dir lock, opens the database, starts the SSH server and then the
 // admin socket (which is safe to clean up stale sockets only under that lock). The lock is held
-// until Close.
-func startCentral(ctx context.Context, data, listen string) (*runningCentral, error) {
+// until Close. The GUI starts only when gui[0] enables it (no argument: no GUI); Close stops it
+// before the store closes.
+func startCentral(ctx context.Context, data, listen string, gui ...guiOptions) (*runningCentral, error) {
 	release, err := prepareDataDir(data)
 	if err != nil {
 		return nil, err
@@ -159,27 +161,37 @@ func startCentral(ctx context.Context, data, listen string) (*runningCentral, er
 		closeAll()
 		return nil, err
 	}
-	return &runningCentral{Addr: addr, Close: func() { cancel(); srv.Close(); d.db.Close(); release() }}, nil
+	var g *runningGUI
+	if len(gui) > 0 && gui[0].enabled() {
+		if g, err = startGUI(ctx, data, d.svc, gui[0]); err != nil {
+			srv.Close()
+			closeAll()
+			return nil, err
+		}
+	}
+	rc := &runningCentral{Addr: addr, Close: func() { cancel(); g.stop(); srv.Close(); d.db.Close(); release() }}
+	if g != nil {
+		rc.GUIAddr = g.addr
+	}
+	return rc, nil
 }
 
 func centralRun(args []string) error {
-	f := flag.NewFlagSet("central run", flag.ContinueOnError)
-	data := f.String("data", defaultCentralData, "data directory")
-	listen := f.String("listen", "0.0.0.0:2222", "SSH listen address")
-	if err := f.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", errAdminUsage, err)
-	}
-	if f.NArg() > 0 {
-		return fmt.Errorf("%w: central run takes no arguments", errAdminUsage)
+	cfg, err := parseCentralRun(args, os.Stderr)
+	if err != nil {
+		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	rc, err := startCentral(ctx, *data, *listen)
+	rc, err := startCentral(ctx, cfg.Data, cfg.Listen, cfg.GUI)
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
-	logf("central listening on %s, admin socket %s", rc.Addr, adminSock(*data))
+	logf("central listening on %s, admin socket %s", rc.Addr, adminSock(cfg.Data))
+	if rc.GUIAddr == "" {
+		logf("GUI is off (-gui-listen off)")
+	}
 	<-ctx.Done()
 	return nil
 }

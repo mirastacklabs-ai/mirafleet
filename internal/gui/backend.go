@@ -26,6 +26,8 @@ type Backend interface {
 	RevokeGUISession(ctx context.Context, p auth.Principal, id int64) error
 	RevokeOtherGUISessions(ctx context.Context, p auth.Principal, keepID int64) (int, error)
 	PurgeGUISessions(ctx context.Context) (int, error)
+	GUISetupOpen(ctx context.Context) (bool, error)
+	RecordGUILockout(ctx context.Context, remote string) error
 
 	// Audit.
 	ListAudit(ctx context.Context, p auth.Principal, src service.Source, f store.AuditFilter) ([]store.AuditEvent, error)
