@@ -29,7 +29,8 @@ const (
 	lineClip         = 2000    // bytes kept of one line
 	maxReadOutput    = 1 << 20 // bytes of numbered text returned by one read
 	sniffLen         = 8192
-	emptyWarning     = "<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>"
+	// Notices are plain text: fsops never emits harness-control tags such as <system-reminder>.
+	emptyWarning = "[Warning: the file exists but the contents are empty.]"
 )
 
 // ReadOptions select a line range. Offset is the 1-based first line (0 means 1); Limit is the
@@ -157,7 +158,7 @@ func readText(br *bufio.Reader, res *ReadResult, opt ReadOptions) (*ReadResult, 
 			res.StartLine = n
 		}
 		res.EndLine = n
-		s := strings.ToValidUTF8(string(line), "\xef\xbf\xbd")
+		s := decodeLine(line)
 		if clipped {
 			s += " ... [line truncated]"
 		}
@@ -167,7 +168,7 @@ func readText(br *bufio.Reader, res *ReadResult, opt ReadOptions) (*ReadResult, 
 	case res.TotalLines == 0 && !res.More:
 		res.Text = emptyWarning
 	case res.StartLine == 0 && !res.More:
-		res.Text = fmt.Sprintf("<system-reminder>Warning: the file exists but is shorter than the provided offset (%d). The file has %d lines.</system-reminder>", off, res.TotalLines)
+		res.Text = fmt.Sprintf("[Warning: the file exists but is shorter than the provided offset (%d). The file has %d lines.]", off, res.TotalLines)
 	default:
 		res.Text = sb.String()
 	}
@@ -209,20 +210,37 @@ func readLine(br *bufio.Reader) (line []byte, clipped, ok bool, err error) {
 	return buf, clipped, true, nil
 }
 
-// isBinary reports a NUL byte or invalid UTF-8 in the first bytes of a file.
-func isBinary(b []byte) bool {
-	if bytes.IndexByte(b, 0) >= 0 {
-		return true
+// decodeLine returns line as UTF-8. A line that is not valid UTF-8 is taken to be Latin-1
+// (ISO 8859-1) and converted byte by byte.
+func decodeLine(line []byte) string {
+	if utf8.Valid(line) {
+		return string(line)
 	}
-	if len(b) == sniffLen { // the cut may split a rune
-		for i := 1; i <= 3 && i <= len(b); i++ {
-			if utf8.RuneStart(b[len(b)-i]) {
-				if !utf8.FullRune(b[len(b)-i:]) {
-					b = b[:len(b)-i]
-				}
-				break
-			}
+	rs := make([]rune, len(line))
+	for i, c := range line {
+		rs[i] = rune(c)
+	}
+	return string(rs)
+}
+
+// maxControlRatio is the share of control bytes in the sniffed head above which a file is binary.
+const maxControlRatio = 0.05
+
+// isBinary reports a NUL byte or a high ratio of control characters (other than tab, newline,
+// carriage return, form feed and escape) in the first bytes of a file. Valid UTF-8 and
+// Latin-1-like text are both text.
+func isBinary(b []byte) bool {
+	if len(b) == 0 {
+		return false
+	}
+	ctl := 0
+	for _, c := range b {
+		switch {
+		case c == 0:
+			return true
+		case c < 0x20 && c != '\t' && c != '\n' && c != '\r' && c != '\f' && c != 0x1b, c == 0x7f:
+			ctl++
 		}
 	}
-	return !utf8.Valid(b)
+	return float64(ctl)/float64(len(b)) > maxControlRatio
 }

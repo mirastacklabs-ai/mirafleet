@@ -78,3 +78,29 @@ func TestGlobMaxFiles(t *testing.T) {
 		t.Errorf("%+v %v", r, err)
 	}
 }
+
+func TestGlobIncludesHiddenByDefault(t *testing.T) {
+	root, _ := searchFixture(t)
+	r, err := Glob(context.Background(), root, GlobOptions{Pattern: "**/*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hidden bool
+	for _, p := range r.Paths {
+		if strings.HasPrefix(p, ".git/") {
+			t.Errorf(".git searched: %s", p)
+		}
+		for _, seg := range strings.Split(p, "/") {
+			if strings.HasPrefix(seg, ".") && seg != ".gitignore" {
+				hidden = true
+			}
+		}
+	}
+	if !hidden {
+		t.Errorf("no hidden path in %v", r.Paths)
+	}
+	r, _ = Glob(context.Background(), root, GlobOptions{Pattern: ".*"})
+	if len(r.Paths) == 0 {
+		t.Error("pattern .* matched no dotfile")
+	}
+}

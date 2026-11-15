@@ -155,8 +155,42 @@ func TestReadImageBinary(t *testing.T) {
 		t.Errorf("binary: %+v", r)
 	}
 	os.WriteFile(filepath.Join(dir, "badutf"), []byte("caf\xe9\n"), 0o644)
-	if r, _ := f.Read("badutf", ReadOptions{}); r.Kind != KindBinary {
-		t.Errorf("invalid utf-8 kind %s", r.Kind)
+	// Latin-1 text is text, converted to UTF-8.
+	if r, _ := f.Read("badutf", ReadOptions{}); r.Kind != KindText || !strings.Contains(r.Text, "café") {
+		t.Errorf("latin-1 read: %+v", r)
+	}
+	// A high ratio of control characters is binary.
+	os.WriteFile(filepath.Join(dir, "ctl"), []byte("\x01\x02\x03\x04\x05\x06abc\n"), 0o644)
+	if r, _ := f.Read("ctl", ReadOptions{}); r.Kind != KindBinary {
+		t.Errorf("control-heavy kind %s", r.Kind)
+	}
+}
+
+func TestReadMixedEncodingLines(t *testing.T) {
+	f, dir := newFS(t)
+	os.WriteFile(filepath.Join(dir, "mix"), []byte("ok ü\nna\xefve \xe9\n"), 0o644)
+	r, _ := f.Read("mix", ReadOptions{})
+	if r.Kind != KindText || !strings.Contains(r.Text, "ok ü") || !strings.Contains(r.Text, "naïve é") {
+		t.Errorf("mixed: %+v", r)
+	}
+}
+
+func TestOwnTextHasNoControlTags(t *testing.T) {
+	f, dir := newFS(t)
+	os.WriteFile(filepath.Join(dir, "empty"), nil, 0o644)
+	os.WriteFile(filepath.Join(dir, "two"), []byte("a\nb\n"), 0o644)
+	for _, c := range []struct {
+		name string
+		opt  ReadOptions
+	}{{"empty", ReadOptions{}}, {"two", ReadOptions{Offset: 99}}} {
+		r, err := f.Read(c.name, c.opt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		low := strings.ToLower(r.Text)
+		if r.Text == "" || strings.Contains(low, "system-reminder") || strings.Contains(low, "<") {
+			t.Errorf("%s: %q", c.name, r.Text)
+		}
 	}
 }
 

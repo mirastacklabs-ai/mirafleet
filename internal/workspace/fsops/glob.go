@@ -13,7 +13,7 @@ import (
 type GlobOptions struct {
 	Pattern  string // doublestar pattern relative to Path, e.g. "**/*.go" or "src/*.{ts,tsx}"
 	Path     string // directory below the root to search ("" or "." is the root)
-	Hidden   bool   // include dot files and directories (.git is never searched)
+	Hidden   bool   // ignored: Glob always includes dot files and directories, like Claude Code (.git is never searched)
 	NoIgnore bool   // do not honour .gitignore, .ignore and .rgignore
 	Limit    int    // most paths returned (default 1000)
 	Limits   SearchLimits
@@ -57,7 +57,7 @@ func Glob(ctx context.Context, root *os.Root, o GlobOptions) (GlobResult, error)
 	if start == "." {
 		prefix = ""
 	}
-	reason, err := walkTree(ctx, fsys, start, walkOpts{hidden: o.Hidden, noIgnore: o.NoIgnore, maxFiles: lim.MaxFiles}, func(rel string) error {
+	reason, err := walkTree(ctx, fsys, start, walkOpts{hidden: true, noIgnore: o.NoIgnore, maxFiles: lim.MaxFiles}, func(rel string) error {
 		name := strings.Split(strings.TrimPrefix(rel, prefix), "/")
 		for _, a := range alts {
 			if segsMatch(a, name) {
