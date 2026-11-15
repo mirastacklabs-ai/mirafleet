@@ -691,9 +691,9 @@ the licence files and three systemd units:
 - `mirafleet-runner-workspace.service`: container workspaces, root, after `containerd`, no sandbox
   directives (the runner creates namespaces and cgroups).
 
-<!-- verify: M7 host-mode units (mirafleet-runner@.service, the user unit packaged under packaging/systemd/user/) are decided in M7.md but not yet packaged; late-lane step L3 adds them to .goreleaser.yaml and pkgtest -->
-Host mode (M7) adds a per-user runner unit and a template unit; `pkgtest` runs `systemd-analyze
-verify` on all of them.
+Host mode (M7) adds a per-user runner unit (`/usr/lib/systemd/user/mirafleet-runner.service`) and
+a template unit (`mirafleet-runner@.service`, `User=%i`); `pkgtest` runs `systemd-analyze verify`
+on all five units, and on the user unit with `--user`.
 
 ### The OCI image
 

@@ -52,6 +52,7 @@ elif [ "$fam" = rpm ]; then
 fi
 
 S=/usr/lib/systemd/system
+U=/usr/lib/systemd/user
 case $mode in
 static)
 	[ -d /src/packaging ] || fail "packaging dir not mounted"
@@ -62,11 +63,13 @@ static)
 		for u in mirafleet-central mirafleet-runner mirafleet-runner-workspace; do
 			install -D -m 0644 "$P/systemd/$u.service" "$S/$u.service"
 		done
+		install -D -m 0644 "$P/systemd/mirafleet-runner@.service" "$S/mirafleet-runner@.service"
+		install -D -m 0644 "$P/systemd/user/mirafleet-runner.service" "$U/mirafleet-runner.service"
 	fi
 	install -D -m 0600 "$P/env/central.env" /etc/mirafleet/central.env
 	install -D -m 0644 "$P/env/runner.env" /etc/mirafleet/runner.env
 	install -d -m 0755 /usr/share/doc/mirafleet/examples
-	install -m 0644 "$P/examples/actions.yaml" "$P/examples/workspace.yaml" /usr/share/doc/mirafleet/examples/
+	install -m 0644 "$P/examples/actions.yaml" "$P/examples/workspace.yaml" "$P/examples/workspace-host.yaml" /usr/share/doc/mirafleet/examples/
 	sh "$P/scripts/preinstall.sh"
 	out=$(sh "$P/scripts/postinstall.sh") || fail "postinstall failed"
 	echo "$out" | grep -q 8443 || fail "postinstall prints no firewall note"
@@ -104,6 +107,8 @@ want /etc/mirafleet/central.env 600 root:root
 want /etc/mirafleet/runner.env 644 root:root
 want /usr/share/doc/mirafleet/examples/actions.yaml 644 root:root
 want /usr/share/doc/mirafleet/examples/workspace.yaml 644 root:root
+want /usr/share/doc/mirafleet/examples/workspace-host.yaml 644 root:root
+grep -q '^executor: host' /usr/share/doc/mirafleet/examples/workspace-host.yaml || fail "workspace-host.yaml is not a host config"
 absent /etc/mirafleet/actions.yaml
 absent /etc/mirafleet/workspace.yaml
 say "files, directories, modes; no live actions.yaml/workspace.yaml"
@@ -111,14 +116,21 @@ grep -q '^MIRAFLEET_LISTEN=0.0.0.0:2222' /etc/mirafleet/central.env || fail "cen
 grep -q -- '-gui-listen 127.0.0.1:8443' /etc/mirafleet/central.env || fail "central.env gui-listen note"
 grep -q -- '-gui-cert' /etc/mirafleet/central.env || fail "central.env gui-cert note"
 grep -q '8443' /etc/mirafleet/central.env || fail "central.env firewall note"
-if grep -q '^MIRAFLEET_SECRETS_KEY' /etc/mirafleet/central.env; then fail "secrets key must stay commented (late lane)"; fi
-say "central.env GUI defaults and firewall note"
+grep -q '^#MIRAFLEET_SECRETS_KEY=$' /etc/mirafleet/central.env || fail "central.env has no commented secrets-key line"
+if grep -q '^MIRAFLEET_SECRETS_KEY' /etc/mirafleet/central.env; then fail "the package must not ship a key (generate with central keygen)"; fi
+grep -q 'central keygen' /etc/mirafleet/central.env || fail "central.env does not name central keygen"
+say "central.env GUI defaults, firewall note, secrets-key placeholder (no key shipped)"
 
 if [ "$fam" = apk ]; then
 	for u in central runner runner-workspace; do absent "$S/mirafleet-$u.service"; done
+	absent "$S/mirafleet-runner@.service"
+	absent "$U/mirafleet-runner.service"
 	say "apk ships no units"
 else
 	for u in central runner runner-workspace; do want "$S/mirafleet-$u.service" 644 root:root; done
+	want "$S/mirafleet-runner@.service" 644 root:root
+	want "$U/mirafleet-runner.service" 644 root:root
+	grep -q '^KillMode=process' "$S/mirafleet-runner@.service" "$U/mirafleet-runner.service" || fail "host-mode units need KillMode=process"
 	# verify wants every referenced unit to exist: stand in for containerd when absent
 	if [ ! -e "$S/containerd.service" ] && [ ! -e /etc/systemd/system/containerd.service ]; then
 		mkdir -p /run/systemd/system
@@ -126,7 +138,14 @@ else
 	fi
 	systemd-analyze verify "$S/mirafleet-central.service" "$S/mirafleet-runner.service" \
 		"$S/mirafleet-runner-workspace.service" || fail "systemd-analyze verify"
-	say "systemd-analyze verify"
+	# The template needs an instance name; the user unit is verified against the user manager's
+	# unit set. systemd-analyze is a dev-only tool here: it runs in the test container, never ships.
+	systemd-analyze verify "$S/mirafleet-runner@.service" || fail "systemd-analyze verify (template)"
+	# --user needs a runtime dir to start its offline manager.
+	mkdir -m 0700 -p /tmp/xdg-verify
+	XDG_RUNTIME_DIR=/tmp/xdg-verify systemd-analyze --user verify "$U/mirafleet-runner.service" ||
+		fail "systemd-analyze --user verify"
+	say "systemd-analyze verify (five units; user unit with --user)"
 	if ls /etc/systemd/system/*.wants/mirafleet-* >/dev/null 2>&1; then fail "a unit was enabled on install"; fi
 	say "units not enabled"
 fi

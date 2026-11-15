@@ -1857,8 +1857,6 @@ stops when `dev` logs out), then as `dev` joins the runner and enables the **use
 The alternative is the system unit `mirafleet-runner@dev`. See
 [QUICKSTART section 4](../QUICKSTART.md#4-remote-development-on-a-vm-host-mode).
 
-<!-- verify: host-mode units (/usr/lib/systemd/user/mirafleet-runner.service, mirafleet-runner@.service), workspace-host.yaml and `central keygen` / MIRAFLEET_SECRETS_KEY are M7 files, absent on m6-now; confirm names and QUICKSTART anchor after L3 -->
-
 ### 10.12.3 Firewalling and the GUI
 
 Port 2222 must be reachable by runners and operators. The Admin GUI listens on **all interfaces**
@@ -2009,18 +2007,18 @@ machine; the runner itself never does.
 that it reads from the environment variable `MIRAFLEET_SECRETS_KEY`.
 
 ```bash
-# on the central host, as root
-umask 077
-mirafleet central keygen > /etc/mirafleet/central.env     # one line: MIRAFLEET_SECRETS_KEY=...
-chmod 600 /etc/mirafleet/central.env
+# on the central host, as root: append the line to the packaged env file (do not overwrite it)
+mirafleet central keygen >> /etc/mirafleet/central.env    # one line: MIRAFLEET_SECRETS_KEY=...
+ls -l /etc/mirafleet/central.env                          # must stay -rw------- root root
 ```
 
-Load that file into central's environment (for a systemd unit: `EnvironmentFile=/etc/mirafleet/central.env`)
-and restart central. **Back the key up somewhere other than the central host.** If the key is lost,
+The package ships that file as `0600` root with a commented `#MIRAFLEET_SECRETS_KEY=` placeholder,
+and `mirafleet-central.service` loads it with `EnvironmentFile=/etc/mirafleet/central.env`. Restart
+central. (With Compose, append the line to `deploy/compose/central/central.env`; with a plain
+container, pass it with `--env-file`.) **Back the key up somewhere other than the central host.** If the key is lost,
 every stored credential is lost (central refuses to start without the right key once credentials
 exist, so a lost key never silently corrupts anything). The key is shown once, by `keygen`, on
-standard output; the warning goes to standard error so `>` does not capture it.
-<!-- verify: M6 changes /etc/mirafleet/central.env to 0600 root and ships the central unit with EnvironmentFile=; until then wire it into your own unit -->
+standard output; the warning goes to standard error so `>>` does not capture it.
 
 **2. Central: create a host-mode fleet and a join token.**
 

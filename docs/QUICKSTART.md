@@ -85,7 +85,6 @@ sudo ls -l /etc/mirafleet/central.env        # must be -rw------- root root
 `/etc/mirafleet/central.env` must stay mode `0600`, owner root (systemd reads it before dropping
 to the `mirafleet` user). With Compose, append the printed `MIRAFLEET_SECRETS_KEY=...` line to
 `deploy/compose/central/central.env` (mode 0600). Plain container: pass it with `--env-file`.
-<!-- verify: `central keygen` prints `MIRAFLEET_SECRETS_KEY=<base64>` on stdout; central.env has the commented placeholder line; the Compose central.env carries the same line (L3) -->
 
 **Back this key up somewhere apart from the data directory** (a password manager). If you lose
 it you lose every stored credential, and central will refuse to start with credentials present
@@ -164,7 +163,7 @@ the same package as in section 1 (no need to start central). Then:
 
 ```bash
 sudo cp /usr/share/doc/mirafleet/examples/actions.yaml /etc/mirafleet/actions.yaml   # edit it: this file is the security boundary
-echo 'PASTE-THE-JOIN-TOKEN' | sudo -u mirafleet mirafleet runner join central.example.com:2222 -name web-1 -token -
+echo 'PASTE-THE-JOIN-TOKEN' | sudo -u mirafleet mirafleet runner join central.example.com:2222 -name web-1 -data /var/lib/mirafleet/runner -token -
 ```
 
 The token carries a hash of central's host key, so the runner pins central before sending
@@ -244,7 +243,6 @@ in order.
    mkdir -p ~/.config/mirafleet
    cp /usr/share/doc/mirafleet/examples/workspace-host.yaml ~/.config/mirafleet/workspace.yaml
    ```
-   <!-- verify: examples/workspace-host.yaml is packaged (L3) -->
 
    It looks like this; edit `root` and `job_max` to taste:
 
@@ -267,7 +265,6 @@ in order.
 
    Alternative, as root: the system unit with `User=`, one instance per user:
    `sudo systemctl enable --now mirafleet-runner@dev`.
-   <!-- verify: unit paths /usr/lib/systemd/user/mirafleet-runner.service and mirafleet-runner@.service (L3); user unit reads %h/.config/mirafleet/workspace.yaml -->
    Background shells survive a runner restart (`KillMode=process`).
 
 6. **The VM firewall is the egress control.** mirafleet adds no egress allowlist in host mode.

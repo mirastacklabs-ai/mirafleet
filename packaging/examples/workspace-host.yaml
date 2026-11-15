@@ -1,0 +1,12 @@
+# Example workspace.yaml for a host-mode runner (docs/M7.md section 3). Copy to
+# ~/.config/mirafleet/workspace.yaml as the runner's own user (not root) and edit. Unknown
+# fields are errors. Tool calls run as that user on this VM; the VM is the boundary, so there
+# are no images or resource limits. The VM firewall is the egress control.
+executor: host
+concurrent: 8
+host:
+  root: ~/work                  # session and workdir directories live here (0700)
+  cleanup: {delete_after: 720h} # unused directories are deleted after 30 days; 0 = never
+  job_max: 12h                  # longest background job (24h at most)
+  # corporate_ca_file: /etc/ssl/corp-ca.pem   # extra CA for a private GitLab (absolute path)
+env_allow: [LANG, LC_ALL, TERM, CI, GOFLAGS, NODE_ENV]

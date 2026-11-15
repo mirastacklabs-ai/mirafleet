@@ -11,7 +11,7 @@ docker compose cp central:/var/lib/mirafleet/central/gui/setup-token -   # one-t
 M="docker compose exec -T central mirafleet"
 $M central fleet create prod
 $M central token create -fleet prod 2>/dev/null |
-  docker compose run --rm -T runner runner join central:2222 -name lab-1 -token -
+  docker compose run --rm -T runner runner join central:2222 -name lab-1 -data /var/lib/mirafleet/runner -token -
 $M central runner approve prod/lab-1
 docker compose up -d runner               # the runner stays offline until it has joined
 

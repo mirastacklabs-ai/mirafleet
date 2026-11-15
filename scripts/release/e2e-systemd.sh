@@ -9,7 +9,10 @@
 # Needs a snapshot first (scripts/release.sh snapshot). Last line: OK e2e-systemd or FAIL ...
 # Env: MIRAFLEET_CTR (container CLI, default docker; trusted caller environment).
 # Also checks the Admin GUI (TLS, fingerprint, setup token, Host, setup, session across restart).
-# Late lane (not yet): backup on upgrade, host-mode runners.
+# Also: host-mode runners `dev` and `qa` (separate OS users with linger, the packaged user unit),
+# and the pre-migration backup on upgrade (a schema-3 database is rebuilt, the package is
+# reinstalled, central migrates to 4 and keeps a schema-3 backup). sqlite3, libpam-systemd and
+# dbus are dev-only tools of this throwaway test image; they are not part of the package.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -55,7 +58,7 @@ trap cleanup EXIT INT TERM
 $CTR build -q --label "$LABEL" -t "$IMG" - >/dev/null <<EOF || fail "image build failed"
 FROM $DEBIAN_IMAGE
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-    systemd systemd-sysv procps util-linux ca-certificates curl openssl >/dev/null && rm -rf /var/lib/apt/lists/*
+    systemd systemd-sysv libpam-systemd dbus procps util-linux ca-certificates curl openssl sqlite3 >/dev/null && rm -rf /var/lib/apt/lists/*
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
 EOF
@@ -135,7 +138,7 @@ adm central fleet create prod >/dev/null || fail "fleet create"
 tok=$(adm central token create -fleet prod 2>/dev/null)
 [ -n "$tok" ] || fail "no join token"
 x cp /usr/share/doc/mirafleet/examples/actions.yaml /etc/mirafleet/actions.yaml
-printf '%s\n' "$tok" | $CTR exec -i "$NAME" runuser -u mirafleet -- $M runner join 127.0.0.1:2222 -name e2e-1 -token - >/dev/null ||
+printf '%s\n' "$tok" | $CTR exec -i "$NAME" runuser -u mirafleet -- $M runner join 127.0.0.1:2222 -name e2e-1 -data /var/lib/mirafleet/runner -token - >/dev/null ||
 	fail "runner join"
 adm central runner approve prod/e2e-1 >/dev/null || fail "runner approve"
 x systemctl enable --now mirafleet-runner.service >/dev/null 2>&1 || fail "runner enable --now"
@@ -160,6 +163,63 @@ printf '%s' "$resp" | grep -q '"id":2' || fail "no tools/call response: [$resp]"
 printf '%s' "$resp" | tr -d ' ' | grep -q '"isError":true' && fail "tools/call run_action returned an error: [$resp]"
 printf '%s' "$resp" | tr -d ' \n' | grep -q 'exit_code' || fail "tools/call run_action has no exit_code: [$resp]"
 say "MCP tools/call run_action ok"
+
+# --- Host mode (docs/M7.md section 3.3): runners `dev` and `qa`, two OS users, user unit, linger ---
+x test -f /usr/lib/systemd/user/mirafleet-runner.service || fail "user unit not installed"
+x test -f /usr/lib/systemd/system/mirafleet-runner@.service || fail "system template not installed"
+x test -f /usr/share/doc/mirafleet/examples/workspace-host.yaml || fail "workspace-host.yaml not installed"
+adm central fleet create vms -mode workspace -executor host >/dev/null || fail "host fleet create"
+for u in dev qa; do
+	x useradd -m -s /bin/bash "$u" || fail "useradd $u"
+	x loginctl enable-linger "$u" || fail "enable-linger $u"
+	uid=$(x id -u "$u")
+	wait_for "user manager of $u" 60 x test -S "/run/user/$uid/systemd/private"
+	[ "$(x loginctl show-user "$u" -p Linger --value)" = yes ] || fail "linger of $u is not on"
+	# Runs as the runner's own user, never root: join (state in the XDG dirs), workspace file, unit.
+	utok=$(adm central token create -fleet vms 2>/dev/null)
+	[ -n "$utok" ] || fail "no join token for $u"
+	printf '%s\n' "$utok" | $CTR exec -i -e HOME=/home/$u "$NAME" runuser -u "$u" -- $M runner join 127.0.0.1:2222 -name "$u" -token - >/dev/null ||
+		fail "runner join as $u"
+	adm central runner approve "vms/$u" >/dev/null || fail "approve vms/$u"
+	x runuser -u "$u" -- sh -ec 'mkdir -p ~/.config/mirafleet && cp /usr/share/doc/mirafleet/examples/workspace-host.yaml ~/.config/mirafleet/workspace.yaml' ||
+		fail "workspace.yaml for $u"
+	x runuser -u "$u" -- env "HOME=/home/$u" "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user enable --now mirafleet-runner >/dev/null 2>&1 ||
+		fail "systemctl --user enable --now as $u"
+done
+for u in dev qa; do
+	uid=$(x id -u "$u")
+	userctl() { x runuser -u "$u" -- env "HOME=/home/$u" "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user "$@"; }
+	wait_for "user unit of $u active" 60 userctl is-active mirafleet-runner
+	x pgrep -u "$uid" -f 'mirafleet runner run' >/dev/null || fail "no runner process owned by $u"
+	wait_for "runner vms/$u active on central" 60 sh -c "$CTR exec $NAME runuser -u mirafleet -- $M central runner list | grep -w $u | grep -q active"
+done
+x pgrep -u 0 -f 'mirafleet runner run' >/dev/null 2>&1 && fail "a host-mode runner is running as root"
+say "host-mode runners dev and qa: separate users with linger, packaged user unit, active on central"
+
+# --- Backup on upgrade (docs/M6.md section 2.3) ---
+# Only one snapshot exists, so rebuild a schema-3 database (undo migration 0004), reinstall the
+# package (the upgrade), and start central: it must back the schema-3 database up, then migrate.
+db=/var/lib/mirafleet/central/mirafleet.db
+x systemctl stop mirafleet-central.service || fail "central stop"
+x test ! -e /var/lib/mirafleet/central/backups || fail "a fresh install already has backups"
+x runuser -u mirafleet -- sqlite3 "$db" 'DROP TABLE credential_assignments; DROP TABLE credentials; DROP TABLE secrets_meta; PRAGMA user_version=3;' ||
+	fail "cannot rebuild a schema-3 database"
+before=$(x runuser -u mirafleet -- sqlite3 "$db" 'select count(*) from runners')
+[ "$before" -ge 3 ] || fail "expected the e2e-1, dev and qa runners in the database, found $before"
+x apt-get install -y -qq --reinstall "/dist/$deb" >/dev/null 2>&1 || fail "package upgrade (reinstall)"
+x systemctl start mirafleet-central.service || fail "central start after upgrade"
+wait_for "central after upgrade" 60 adm central fleet list
+bak=$(x sh -c 'ls /var/lib/mirafleet/central/backups/mirafleet-schema3-*.db' 2>/dev/null | head -1)
+[ -n "$bak" ] || fail "no pre-migration backup mirafleet-schema3-*.db after the upgrade"
+[ "$(x stat -c '%a %U' "$bak")" = "600 mirafleet" ] || fail "backup $bak is not 0600 mirafleet"
+[ "$(x stat -c '%a' /var/lib/mirafleet/central/backups)" = 700 ] || fail "backups dir is not 0700"
+[ "$(x runuser -u mirafleet -- sqlite3 "$bak" 'PRAGMA user_version')" = 3 ] || fail "backup is not schema 3"
+[ "$(x runuser -u mirafleet -- sqlite3 "$bak" 'select count(*) from runners')" = "$before" ] || fail "backup lost runner rows"
+[ "$(x runuser -u mirafleet -- sqlite3 "$db" 'PRAGMA user_version')" = 4 ] || fail "database was not migrated to schema 4"
+[ "$(x runuser -u mirafleet -- sqlite3 "$db" 'select count(*) from runners')" = "$before" ] || fail "runner rows lost by the upgrade"
+adm central fleet list | grep -qw prod || fail "fleet prod lost by the upgrade"
+x systemctl is-active mirafleet-central.service >/dev/null || fail "central not active after upgrade"
+say "upgrade: schema-3 backup (0600) kept, database migrated to 4, data survives"
 
 # Uninstall keeps data, user and configuration (docs/M6.md section 2.5).
 x sh -c 'echo keep >/var/lib/mirafleet/central/e2e-marker; chown mirafleet:mirafleet /var/lib/mirafleet/central/e2e-marker'

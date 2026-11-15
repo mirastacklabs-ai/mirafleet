@@ -91,6 +91,23 @@ nfpms:
         dst: /usr/lib/systemd/system/mirafleet-runner-workspace.service
         file_info: {mode: 0644, owner: root, group: root}
         packager: rpm
+      # M7 host mode: the user unit (shown first in the docs) and the system template (User=%i).
+      - src: packaging/systemd/user/mirafleet-runner.service
+        dst: /usr/lib/systemd/user/mirafleet-runner.service
+        file_info: {mode: 0644, owner: root, group: root}
+        packager: deb
+      - src: packaging/systemd/user/mirafleet-runner.service
+        dst: /usr/lib/systemd/user/mirafleet-runner.service
+        file_info: {mode: 0644, owner: root, group: root}
+        packager: rpm
+      - src: packaging/systemd/mirafleet-runner@.service
+        dst: /usr/lib/systemd/system/mirafleet-runner@.service
+        file_info: {mode: 0644, owner: root, group: root}
+        packager: deb
+      - src: packaging/systemd/mirafleet-runner@.service
+        dst: /usr/lib/systemd/system/mirafleet-runner@.service
+        file_info: {mode: 0644, owner: root, group: root}
+        packager: rpm
       # Config: kept on upgrade. central.env holds secrets (M7): 0600 root.
       - src: packaging/env/central.env
         dst: /etc/mirafleet/central.env
@@ -118,14 +135,14 @@ nfpms:
       - src: packaging/examples/workspace.yaml
         dst: /usr/share/doc/mirafleet/examples/workspace.yaml
         file_info: {mode: 0644, owner: root, group: root}
+      - src: packaging/examples/workspace-host.yaml
+        dst: /usr/share/doc/mirafleet/examples/workspace-host.yaml
+        file_info: {mode: 0644, owner: root, group: root}
     scripts:
       preinstall: packaging/scripts/preinstall.sh
       postinstall: packaging/scripts/postinstall.sh
       preremove: packaging/scripts/preremove.sh
       postremove: packaging/scripts/postremove.sh
-    # Late lane (L3, M7): add the host-mode units
-    # (/usr/lib/systemd/user/mirafleet-runner.service, mirafleet-runner@.service) and
-    # examples/workspace-host.yaml here once M7 creates the files.
 
 checksum:
   name_template: checksums.txt
