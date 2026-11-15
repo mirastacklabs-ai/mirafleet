@@ -43,7 +43,7 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
    access to "Require 2FA and disallow tokens".
 4. **User:** `HOMEBREW_TAP_TOKEN` (fine-grained PAT, contents read/write on the tap only, with an
    expiry) on the `release` environment, before `v0.6.0`.
-5. **Agent:** PR `relgen bump 0.6.0` (branch, `git commit -s`, `gh pr merge --auto --squash
+5. **Agent:** (bump PR done, version files at 0.6.0) PR `relgen bump 0.6.0` (branch, `git commit -s`, `gh pr merge --auto --squash
    --delete-branch`), then tag `v0.6.0` on the merge commit (P4). The user approves each job (P5):
    `draft`, `publish-release`, `image`, `npm`, `brew`, `mcp-registry`. Agent verifies after each
    (RELEASING.md §3 step 13).

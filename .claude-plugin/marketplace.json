@@ -18,7 +18,7 @@
         "source": "git-subdir",
         "url": "https://github.com/mirastacklabs-ai/mirafleet.git",
         "path": "integrations/claude-code",
-        "ref": "v0.6.0-rc.3"
+        "ref": "v0.6.0"
       }
     }
   ]
