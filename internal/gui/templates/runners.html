@@ -70,6 +70,11 @@ already made inert in Go (inertRunnerText) and is only ever printed as text here
 <tbody>{{range .Workspaces}}<tr><td class="mono">{{.ID}}</td><td class="mono">{{.Operator}}</td><td class="mono clip" title="{{.Image}}">{{.Image}}</td><td>{{.State}}</td></tr>{{end}}</tbody></table></div>
 {{else}}<div class="panel-body"><p class="muted">None.</p></div>{{end}}</section>
 
+<section class="panel" aria-labelledby="rn-creds"><div class="panel-head"><h2 id="rn-creds">Credentials held</h2><a class="btn btn-quiet btn-sm" href="/credentials">All</a></div>
+{{if .Credentials}}<div class="scroll"><table class="data"><thead><tr><th scope="col">Name</th><th scope="col">Kind</th><th scope="col">Hosts</th><th scope="col">Status</th></tr></thead>
+<tbody>{{range .Credentials}}<tr><td class="mono"><a href="{{.URL}}">{{.Name}}</a></td><td class="mono">{{.Kind}}</td><td>{{range .Hosts}}<span class="chip" title="{{.}}">{{.}}</span> {{end}}</td><td>{{template "ui/badge" .Status}}</td></tr>{{end}}</tbody></table></div>
+{{else}}<div class="panel-body"><p class="muted">None. Assign a credential to this runner or its fleet from the Credentials page.</p></div>{{end}}</section>
+
 <section class="panel" aria-labelledby="rn-audit"><div class="panel-head"><h2 id="rn-audit">Recent audit rows</h2><a class="btn btn-quiet btn-sm" href="/audit?fleet={{.Fleet}}&amp;runner={{.Name}}">All</a></div>
 {{if .Audit}}<div class="scroll"><table class="data"><thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">Action</th><th scope="col">Outcome</th></tr></thead>
 <tbody>{{range .Audit}}<tr><td class="nowrap">{{template "ui/time" .Time}}</td><td class="mono clip" title="{{.Actor}}">{{.Actor}} <span class="muted">{{.Source}}</span></td><td class="mono">{{.Action}}</td><td>{{template "ui/badge" .Badge}}</td></tr>{{end}}</tbody></table></div>

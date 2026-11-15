@@ -829,6 +829,13 @@ func htmlSamples(t *testing.T) map[string]string {
 			out[p] = c.get(p).Body.String()
 		}
 	}
+	// Credentials: the pages that need a real credential (detail, replace, delete, invalid form).
+	if rec := c.post("/credentials/new", "/credentials", tokenCredForm("lint-cred")); isRedirect(rec.Code) {
+		for _, p := range []string{"/credentials/lint-cred", "/credentials/lint-cred/replace", "/credentials/lint-cred/delete"} {
+			out[p] = c.get(p).Body.String()
+		}
+		out["credential form 422"] = c.post("/credentials/new", "/credentials", url.Values{"name": {"x"}}).Body.String()
+	}
 	return out
 }
 

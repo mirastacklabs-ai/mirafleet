@@ -62,6 +62,15 @@ type Backend interface {
 	// Workspaces.
 	AdminListWorkspaces(ctx context.Context, p auth.Principal, src service.Source, fleet string) ([]store.Workspace, error)
 	KillWorkspace(ctx context.Context, p auth.Principal, src service.Source, wsID string) (store.Workspace, error)
+
+	// Credentials (docs/M7.md 4.1). The value goes in through SetCredential only; every view is masked.
+	SetCredential(ctx context.Context, p auth.Principal, src service.Source, params api.CredentialSetParams, value []byte) (api.CredentialSetResult, error)
+	ListCredentials(ctx context.Context, p auth.Principal, src service.Source, name string) ([]api.CredentialInfo, error)
+	DeleteCredential(ctx context.Context, p auth.Principal, src service.Source, name string) error
+	AssignCredential(ctx context.Context, p auth.Principal, src service.Source, params api.CredentialAssignParams) (api.CredentialInfo, error)
+	UnassignCredential(ctx context.Context, p auth.Principal, src service.Source, params api.CredentialUnassignParams) (api.CredentialInfo, error)
+	RotateCredential(ctx context.Context, p auth.Principal, src service.Source, name string) (api.CredentialInfo, error)
+	RunnerCredentials(ctx context.Context, p auth.Principal, src service.Source, ref store.Ref) ([]api.RunnerCredential, error)
 }
 
 var _ Backend = (*service.Service)(nil)

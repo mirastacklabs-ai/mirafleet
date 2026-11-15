@@ -31,6 +31,7 @@ func (s *Server) routes() {
 	s.routesFleets(am)
 	s.routesRunners(am)
 	s.routesTokens(am)
+	s.routesCredentials(am)
 	s.routesOperators(am)
 	s.routesWorkspaces(am)
 	s.routesAudit(mux)
