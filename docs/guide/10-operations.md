@@ -1543,8 +1543,8 @@ Facts to hold on to before you start:
   use a VM that holds nothing you would mind the agent reading.
 - **More runners** means another VM or another user on the same VM (`qa`), enrolled separately and
   isolated by ordinary Unix permissions (home directories 0700).
-- **A runner serves one operator at a time.** While `alice` has an open workspace on `vm1-dev`,
-  `bob`'s `workspace_open` there is refused (`runner busy, in use by alice`) and placement picks
+- **A runner serves one operator at a time.** While `durga` has an open workspace on `vm1-dev`,
+  `kalyan`'s `workspace_open` there is refused (`runner busy, in use by durga`) and placement picks
   another runner. Any registered operator may use any runner otherwise.
 - **Containers are not involved.** There is no containerd and no root. M3's container mode is
   unchanged and still available on other fleets.
@@ -1558,7 +1558,7 @@ Facts to hold on to before you start:
 ### 10.11.2 Step by step
 
 Names follow the running example: central `central.example.com:2222`, fleet `dev`, VM `vm1`, runner
-`vm1-dev`, runner user `dev`, admin Dana, operator `alice`. Steps marked **root** need root on that
+`vm1-dev`, runner user `dev`, admin aarvee (who runs central), raj (who owns the spare VM and enrols its runner), operators `durga` and `kalyan`. Steps marked **root** need root on that
 machine; the runner itself never does.
 
 **1. Central: create the secrets key (once).** Central encrypts credentials with a 32-byte key
@@ -1621,7 +1621,7 @@ host:
   root: /home/dev/work         # session directories live in <root>/sessions/<slug>
   cleanup: {delete_after: 720h}
   job_max: 12h
-  corporate_ca_file: /etc/ssl/corp/acme-root.pem   # only if your GitLab uses a private CA
+  corporate_ca_file: /etc/ssl/corp/mirastack-root.pem   # only if your GitLab uses a private CA
 env_allow: [LANG, LC_ALL, TERM, CI, GOFLAGS, NODE_ENV]
 ```
 
@@ -1685,7 +1685,7 @@ workdir: app          # optional: share one directory between sessions
 `workdir` is a **name** (`^[a-z0-9][a-z0-9._-]{0,62}$`), never a path; central refuses it on a
 non-host fleet. It resolves to `<root>/work/app` (0700, symlinks refused), so two Claude sessions
 can work in the same checkout. Without it each session gets its own directory
-`<root>/sessions/<slug>`. Then in Claude Code the model runs `git clone git@gitlab.example.com:acme/app.git`
+`<root>/sessions/<slug>`. Then in Claude Code the model runs `git clone git@gitlab.example.com:mirastack/app.git`
 with a **plain URL**: the credential is injected, so the model must never put a token in a URL.
 
 **10. A second runner.** For a second user on the same VM: `useradd -m qa && chmod 700 /home/qa`,
@@ -1752,7 +1752,7 @@ GitLab gives it; mirafleet adds no path or branch rules.
 - **Expiry warnings** start 14 days ahead: status `expiring` in the GUI, the runner list, the
   heartbeat and in tool results that name the credential. `expired` stops being useful on its own
   schedule (GitLab will refuse it).
-- **Automatic GitLab rotation (opt in)**: `-rotate gitlab_self -rotate-project acme/app -expires
+- **Automatic GitLab rotation (opt in)**: `-rotate gitlab_self -rotate-project mirastack/app -expires
   DATE` on an `https-token`. When fewer than 7 days remain, **central** calls GitLab's
   `POST /projects/:id/access_tokens/self/rotate` (the token needs the `self_rotate` scope), stores
   the new value in the same transaction as its audit row, and pushes it. That needs central to reach
@@ -1800,7 +1800,7 @@ carries the recipe) and use `JAVA_TOOL_OPTIONS`.
 - `workspace_close {delete: true}` (the owner), or on central `mirafleet central workspace kill ID
   -delete` (admin).
 
-One practical consequence: if `bob` uses the runner after `alice`, `alice`'s directories are still
+One practical consequence: if `kalyan` uses the runner after `durga`, `durga`'s directories are still
 there and readable by the same Unix user. Prune between operators if that matters to you.
 <!-- verify: the API method workspace.kill has `delete`, but the CLI `central workspace kill` has no -delete flag yet; check admin_workspace.go before release -->
 <!-- verify: `central fleet create -mode workspace -executor host` with no image flag (step 2); try it once on a real build -->
@@ -1828,7 +1828,7 @@ there and readable by the same Unix user. Prune between operators if that matter
 |---|---|---|
 | Runner exits at start: "refusing to run as root" or "capabilities" | started as root or with ambient capabilities | run as the ordinary user (`User=` or a user unit); no `AmbientCapabilities=` |
 | Runner exits: state dir not private | `~/.local/state/mirafleet` or `$HOME` is group/world-writable | `chmod 700` the directory; fix the home permissions |
-| `workspace_open`: `runner busy, in use by alice` | another operator has live workspaces there | wait for her to close or be reaped, or use another runner; an admin can `workspace kill` |
+| `workspace_open`: `runner busy, in use by durga` | another operator has live workspaces there | wait for her to close or be reaped, or use another runner; an admin can `workspace kill` |
 | `workspace_open`: no runner holds credential `gl-token` | not assigned to a runner of that fleet, or the runner has not synced yet | `credential assign`; check delivery status in `credential list`; the runner must be online |
 | `workspace_open` with `credentials` on a container fleet | credentials exist only on host fleets | use a host-mode fleet |
 | Background job stops when the runner restarts | unit has the default `KillMode` | `KillMode=process` in the unit (shipped units have it) |
@@ -1869,14 +1869,14 @@ and broker) closes the other doors. Root on the VM sees everything. The enterpri
 ### Check your understanding (M7)
 
 1. Why `KillMode=process` in the runner unit?
-2. Alice has a workspace on `vm1-dev`; what happens when Bob opens one there?
+2. durga has a workspace on `vm1-dev`; what happens when kalyan opens one there?
 3. You lost `central.env`. What is lost, and what does central do at start?
 
 <details>
 <summary>Answers</summary>
 
 1. Otherwise systemd kills background jobs when the runner restarts.
-2. It is refused with `runner busy, in use by alice` and placement tries other runners.
+2. It is refused with `runner busy, in use by durga` and placement tries other runners.
 3. Every stored credential is unreadable; central refuses to start rather than run without the right key. Restore the key from the backup.
 
 </details>

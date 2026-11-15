@@ -1150,7 +1150,7 @@ printf 'not-a-real-token\n' | mf central credential set gl-token -kind https-tok
 mf central credential assign gl-token -runner dev/vm1-dev -data /tmp/c
 mf central credential list -data /tmp/c          # masked: no value anywhere
 
-# 4. register alice (as in 9.11) and use the tools as an agent would
+# 4. register durga (as in 9.11) and use the tools as an agent would
 mf mcp api workspace.open '{"fleet":"dev","session":"try1"}'
 ```
 

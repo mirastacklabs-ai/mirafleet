@@ -156,11 +156,11 @@ directory outlives every step except the last.
 
 ## credential-flow.svg
 Caption: the value moves left to right once (central to runner memory) and never reaches the agent.
-1. Dana runs `central credential set gl-token < file`; central seals the value with AES-256-GCM.
-2. She assigns it to a runner or a whole fleet; a runner gets the union of both.
+1. aarvee runs `central credential set gl-token < file`; central seals the value with AES-256-GCM.
+2. aarvee assigns it to a runner or a whole fleet; a runner gets the union of both.
 3. Central pushes the set with `creds_sync` over the runner's own SSH connection; the runner keeps it in memory only.
 4. At session open the runner starts a restricted ssh-agent and an HTTPS broker for that session.
 5. `git` over SSH: the agent signs. `git` over HTTPS: the broker adds the header on credential hosts only.
 6. Each use is logged on the runner and sent to central as aggregated `credential.use` events.
-7. Dana replaces the value, or central rotates an opted-in GitLab token itself.
+7. aarvee replaces the value, or central rotates an opted-in GitLab token itself.
 8. `creds_sync` again: the runner swaps the whole set atomically, so the new value is used at once.

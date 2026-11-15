@@ -34,7 +34,7 @@ text{font:400 12px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <g class="st" style="--i:1">
 <rect class="pn" x="10" y="72" width="188" height="108" rx="4"/>
 <circle class="bdg" cx="178" cy="90" r="11"/><text class="bt" x="178" y="94.5">1</text>
-<text class="b" x="18" y="92">agent (alice's Mac)</text>
+<text class="b" x="18" y="92">agent (durga's Mac)</text>
 <text x="18" y="112">workspace_open</text>
 <text class="to" x="18" y="130">session cc:abc</text>
 <text class="m" x="18" y="148">no fleet path, no dir</text>

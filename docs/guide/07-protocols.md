@@ -1543,7 +1543,7 @@ Other additive changes:
   four fields, no value) and `busy` (running background jobs; a workspace with one is "in use" and is
   not reaped as idle).
 - A host runner is held by one operator at a time: `workspace.open` by another operator is refused
-  with `conflict`, message `runner busy, in use by alice`, and placement skips held runners. The
+  with `conflict`, message `runner busy, in use by durga`, and placement skips held runners. The
   hold ends when that operator's last live workspace there is closed, reaped, expired, killed or
   lost.
   <!-- verify: error code is conflict in service/workspace_sched.go; M7.md wrote "busy:" -->

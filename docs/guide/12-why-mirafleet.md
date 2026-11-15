@@ -419,7 +419,10 @@ Researched 13 Nov 2026. Star counts are approximate and change daily.
 
 ## 12.7 Remote development on a VM: how host mode compares (M7)
 
-M7 makes mirafleet a way to develop on a remote VM with Claude Code. Two other setups do the
+MIRASTACK LABS has spare servers and VMs sitting idle, and its engineers want to use them for AI
+coding sessions without handing out server logins or Git tokens. M7 is that case: durga's Claude
+Code stays on her Mac, raj's spare VM runs the tool calls, and aarvee's central holds the
+credentials. Two other setups do the
 nearest job. This section compares them. **Statements about other products are general knowledge
 about how they usually work, not checked against their current documentation; verify before you
 decide.** Statements about mirafleet come from the code and [docs/M7.md](../M7.md).
