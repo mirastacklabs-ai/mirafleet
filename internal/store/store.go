@@ -241,6 +241,60 @@ type AuditEvent struct {
 	Workspace  string // ws_id of the workspace the event concerns, "" if none
 }
 
+// GUI admin statuses.
+const (
+	GUIAdminActive = "active"
+	GUIAdminReset  = "reset"
+)
+
+// MaxGUIUserAgent bounds the stored user-agent summary, in bytes.
+const MaxGUIUserAgent = 128
+
+// GUIAdmin is the single admin account of the web GUI. PwHash is the PHC string; it never
+// leaves the store/service boundary. Generation is the credential generation: a password
+// change bumps it and every session bound to the old one dies.
+type GUIAdmin struct {
+	ID         int64
+	Username   string
+	PwHash     string
+	Generation int64
+	Status     string // GUIAdminActive or GUIAdminReset
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// GUISession is one browser session. Only SHA-256(token) is stored (TokenHash, 32 bytes);
+// store methods return sessions with it nil unless stated.
+type GUISession struct {
+	ID           int64
+	TokenHash    []byte
+	AdminID      int64
+	Generation   int64
+	CreatedAt    time.Time
+	LastActiveAt time.Time
+	ExpiresAt    time.Time // absolute expiry
+	Remote       string
+	UserAgent    string
+}
+
+// AuditFilter selects audit rows for QueryAudit. Zero fields match everything. String fields
+// are exact matches on their column (Action too, unless ActionPrefix). AfterID and BeforeID are
+// keyset bounds (id > AfterID, id < BeforeID); From and To bound the time inclusively. Desc
+// orders by id descending. Limit <= 0 means 100; it is capped at 1000.
+type AuditFilter struct {
+	AfterID, BeforeID int64
+	From, To          time.Time
+	Fleet, Runner     string
+	Actor, Source     string
+	Outcome           string
+	Workspace         string
+	RequestID         string
+	Action            string
+	ActionPrefix      bool
+	Desc              bool
+	Limit             int
+}
+
 // Store is the persistence interface. All methods are safe for concurrent use. Every
 // state-changing method writes its audit event in the same transaction as the change: either
 // both commit or neither does. The event's ID is ignored; a zero ev.Time is set to the
@@ -398,6 +452,68 @@ type Store interface {
 	// ListAudit returns events with id > sinceID in ascending id order, at most limit rows
 	// (implementations cap limit).
 	ListAudit(ctx context.Context, sinceID int64, limit int) ([]AuditEvent, error)
+	// QueryAudit returns events matching f (see AuditFilter), ordered by id (descending when
+	// f.Desc), at most f.Limit rows (default 100, capped at 1000).
+	QueryAudit(ctx context.Context, f AuditFilter) ([]AuditEvent, error)
+
+	// SetFleetConfirm sets the fleet's guard flag (confirm) and returns the fleet, atomically
+	// with ev. ErrNotFound if the fleet is unknown; ErrInvalid on a malformed name. Setting the
+	// value it already has is not an error and still writes ev.
+	SetFleetConfirm(ctx context.Context, name string, confirm bool, now time.Time, ev AuditEvent) (Fleet, error)
+
+	// GetGUIAdmin returns the active GUI admin (PwHash included), or ErrNotFound.
+	GetGUIAdmin(ctx context.Context) (GUIAdmin, error)
+	// PutGUISetup upserts the single setup row (SHA-256 of the setup token, 32 bytes, and its
+	// expiry; created_at = now), atomically with ev. ErrInvalid on a bad hash or an expiry not
+	// after now; ErrConflict if an active admin exists.
+	PutGUISetup(ctx context.Context, hash []byte, expires, now time.Time, ev AuditEvent) error
+	// EnsureGUISetup is PutGUISetup that writes only if the setup row is missing or expired at
+	// now, decided in the same transaction (token rotation without a check-then-act window).
+	// created=false: a live token exists, nothing was written (no audit row), err is nil.
+	// Same errors as PutGUISetup otherwise.
+	EnsureGUISetup(ctx context.Context, hash []byte, expires, now time.Time, ev AuditEvent) (created bool, err error)
+	// CompleteGUISetup, in one transaction: the setup row exists, hash matches it (constant
+	// time), it has not expired at now and no active admin exists -> insert a (Username,
+	// PwHash; generation 1, status active), delete the setup row, write ev. A missing, wrong
+	// or expired token is ErrStale (the row is kept); an existing active admin is ErrConflict.
+	// ErrInvalid on a bad hash, username (OperatorNameRE shape) or empty PwHash, checked first.
+	CompleteGUISetup(ctx context.Context, hash []byte, a GUIAdmin, now time.Time, ev AuditEvent) (GUIAdmin, error)
+	// SetGUIPassword, in one transaction: compare-and-swap the active admin's generation
+	// (must equal generation), store hash, bump the generation, delete every session of the
+	// admin and insert keep (AdminID and Generation are forced to the admin's and the new
+	// generation), write ev. ErrConflict on a generation mismatch; ErrNotFound if id is not the
+	// active admin; ErrInvalid on an empty hash or a bad keep. The returned GUIAdmin is the
+	// updated one.
+	SetGUIPassword(ctx context.Context, id, generation int64, hash string, keep GUISession, now time.Time, ev AuditEvent) (GUIAdmin, error)
+	// ResetGUIAdmin, in one transaction: the active admin (if any) becomes status reset, every
+	// session row is deleted, ev is written (also when there was no admin).
+	ResetGUIAdmin(ctx context.Context, now time.Time, ev AuditEvent) error
+	// CreateGUISession inserts s (token hash 32 bytes, user agent clipped to 128 bytes) for
+	// the active admin s.AdminID, whose generation must equal s.Generation, then deletes that
+	// admin's oldest rows beyond maxPerAdmin (must be >= 1, else ErrInvalid), atomically with ev. ErrNotFound
+	// if the admin is not active; ErrConflict on a generation mismatch or duplicate token hash;
+	// ErrInvalid on a malformed s. The result has ID set and TokenHash nil.
+	CreateGUISession(ctx context.Context, s GUISession, maxPerAdmin int, now time.Time, ev AuditEvent) (GUISession, error)
+	// GetGUISession returns the session with that token hash joined to its admin, which must be
+	// active; otherwise ErrNotFound. It does not judge expiry or generation: the service does.
+	// The returned session has TokenHash nil.
+	GetGUISession(ctx context.Context, tokenHash []byte) (GUISession, GUIAdmin, error)
+	// TouchGUISession sets last_active_at = now. Not audited; ErrNotFound if id is unknown.
+	TouchGUISession(ctx context.Context, id int64, now time.Time) error
+	// DeleteGUISession deletes session id if it belongs to adminID, atomically with ev (a
+	// zero ev.Action writes no audit row, for housekeeping of dead rows). ErrNotFound if there
+	// is no such row for that admin; nothing is written then.
+	DeleteGUISession(ctx context.Context, adminID, id int64, now time.Time, ev AuditEvent) error
+	// DeleteOtherGUISessions deletes every session of adminID except keepID and returns how
+	// many, atomically with ev (written even when none; ErrInvalid if ev.Action is empty).
+	DeleteOtherGUISessions(ctx context.Context, adminID, keepID int64, now time.Time, ev AuditEvent) (int, error)
+	// ListGUISessions returns the admin's sessions, oldest first, with TokenHash nil.
+	ListGUISessions(ctx context.Context, adminID int64) ([]GUISession, error)
+	// PurgeGUISessions deletes sessions past their absolute expiry (expires_at <= now), idle
+	// for idle or longer (last_active_at <= now-idle), or whose admin is not active or whose
+	// generation differs from the admin's. Not audited. Returns the number deleted. ErrInvalid if
+	// idle <= 0.
+	PurgeGUISessions(ctx context.Context, idle time.Duration, now time.Time) (int, error)
 
 	// Close releases resources. Further calls fail.
 	Close() error

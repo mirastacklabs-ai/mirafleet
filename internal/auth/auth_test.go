@@ -287,3 +287,14 @@ func TestStoreErrorsLoggedServerSideOnly(t *testing.T) {
 		t.Fatalf("err = %v logged = %v", err, logged)
 	}
 }
+
+func TestGUIAdmin(t *testing.T) {
+	p := GUIAdmin("alice", "203.0.113.7:51234")
+	if p.Kind != KindAdmin || p.Name != "alice" || p.Remote != "203.0.113.7:51234" || p.ID != 0 {
+		t.Fatalf("GUIAdmin = %+v", p)
+	}
+	// Never accepted back from SSH permissions.
+	if _, err := Decode(Encode(p)); err == nil {
+		t.Fatal("admin principal must not decode from SSH permissions")
+	}
+}

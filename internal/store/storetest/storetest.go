@@ -41,6 +41,14 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("Settings", func(t *testing.T) { settings(t, newStore(t)) })
 	t.Run("Validation", func(t *testing.T) { validation(t, newStore(t)) })
 	t.Run("ContextCancelled", func(t *testing.T) { ctxCancelled(t, newStore(t)) })
+	t.Run("GUISetup", func(t *testing.T) { guiSetup(t, newStore(t)) })
+	t.Run("GUISetupRace", func(t *testing.T) { guiSetupRace(t, newStore(t)) })
+	t.Run("GUIPassword", func(t *testing.T) { guiPassword(t, newStore(t)) })
+	t.Run("GUISessions", func(t *testing.T) { guiSessions(t, newStore(t)) })
+	t.Run("GUIPurge", func(t *testing.T) { guiPurge(t, newStore(t)) })
+	t.Run("GUIEnsureSetup", func(t *testing.T) { guiEnsureSetup(t, newStore(t)) })
+	t.Run("QueryAudit", func(t *testing.T) { queryAudit(t, newStore(t)) })
+	t.Run("SetFleetConfirm", func(t *testing.T) { setFleetConfirm(t, newStore(t)) })
 }
 
 func ev(action string) store.AuditEvent {
@@ -1747,5 +1755,614 @@ func workspaceListLimit(t *testing.T, s store.Store) {
 		if err != nil || len(l) != c.want {
 			t.Errorf("limit %d: got %d rows, want %d (%v)", c.limit, len(l), c.want, err)
 		}
+	}
+}
+
+// ---- M4: GUI admin, sessions, audit queries, fleet guard ----
+
+func guiEv(action string) store.AuditEvent {
+	return store.AuditEvent{Source: "gui", ActorKind: "admin", Actor: "boss", Action: action, Outcome: "ok"}
+}
+
+func countAction(t *testing.T, s store.Store, action string) int {
+	t.Helper()
+	evs, err := s.QueryAudit(context.Background(), store.AuditFilter{Action: action, Limit: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(evs)
+}
+
+// guiAdmin runs the setup flow and returns the active admin.
+func guiAdmin(t *testing.T, s store.Store, name string) store.GUIAdmin {
+	t.Helper()
+	ctx := context.Background()
+	if err := s.PutGUISetup(ctx, secretHash("setup-"+name), t0.Add(24*time.Hour), t0, guiEv("gui.setup_token")); err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.CompleteGUISetup(ctx, secretHash("setup-"+name), store.GUIAdmin{Username: name, PwHash: "$argon2id$x"}, t0, guiEv("gui.setup"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func guiSess(a store.GUIAdmin, tok string, at time.Time) store.GUISession {
+	return store.GUISession{
+		TokenHash: secretHash(tok), AdminID: a.ID, Generation: a.Generation,
+		CreatedAt: at, LastActiveAt: at, ExpiresAt: at.Add(12 * time.Hour), Remote: "10.0.0.1", UserAgent: "ua",
+	}
+}
+
+func guiSetup(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	if _, err := s.GetGUIAdmin(ctx); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetGUIAdmin empty: %v", err)
+	}
+	cand := store.GUIAdmin{Username: "boss", PwHash: "$argon2id$x"}
+	if _, err := s.CompleteGUISetup(ctx, secretHash("t"), cand, t0, guiEv("gui.setup")); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("no setup row: %v", err)
+	}
+	if err := s.PutGUISetup(ctx, []byte("short"), t0.Add(time.Hour), t0, guiEv("gui.setup_token")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("short hash: %v", err)
+	}
+	if err := s.PutGUISetup(ctx, secretHash("t"), t0, t0, guiEv("gui.setup_token")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("expiry not after now: %v", err)
+	}
+	if n := auditCount(t, s); n != 0 {
+		t.Fatalf("failed calls wrote %d audit rows", n)
+	}
+	// A second Put replaces the first token.
+	if err := s.PutGUISetup(ctx, secretHash("old"), t0.Add(time.Hour), t0, guiEv("gui.setup_token")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutGUISetup(ctx, secretHash("t"), t0.Add(24*time.Hour), t0, guiEv("gui.setup_token")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CompleteGUISetup(ctx, secretHash("old"), cand, t0, guiEv("gui.setup")); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("replaced token: %v", err)
+	}
+	if _, err := s.CompleteGUISetup(ctx, secretHash("nope"), cand, t0, guiEv("gui.setup")); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("wrong token: %v", err)
+	}
+	if _, err := s.CompleteGUISetup(ctx, secretHash("t"), cand, t0.Add(24*time.Hour), guiEv("gui.setup")); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("expired token: %v", err)
+	}
+	for _, bad := range []store.GUIAdmin{{Username: "Bad Name", PwHash: "x"}, {Username: "", PwHash: "x"}, {Username: "ok", PwHash: ""}} {
+		if _, err := s.CompleteGUISetup(ctx, secretHash("t"), bad, t0, guiEv("gui.setup")); !errors.Is(err, store.ErrInvalid) {
+			t.Fatalf("%+v: %v", bad, err)
+		}
+	}
+	if _, err := s.CompleteGUISetup(ctx, []byte{1}, cand, t0, guiEv("gui.setup")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("short token hash: %v", err)
+	}
+	if countAction(t, s, "gui.setup") != 0 {
+		t.Fatal("failed setups were audited")
+	}
+	// A failed attempt does not burn the token.
+	a, err := s.CompleteGUISetup(ctx, secretHash("t"), cand, t0.Add(time.Hour), guiEv("gui.setup"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ID == 0 || a.Username != "boss" || a.Generation != 1 || a.Status != store.GUIAdminActive || a.PwHash != "$argon2id$x" || !a.CreatedAt.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("admin = %+v", a)
+	}
+	got, err := s.GetGUIAdmin(ctx)
+	if err != nil || got != a {
+		t.Fatalf("GetGUIAdmin = %+v, %v", got, err)
+	}
+	if countAction(t, s, "gui.setup") != 1 {
+		t.Fatal("setup not audited once")
+	}
+	if _, err := s.CompleteGUISetup(ctx, secretHash("t"), cand, t0, guiEv("gui.setup")); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("token reuse: %v", err)
+	}
+	if err := s.PutGUISetup(ctx, secretHash("again"), t0.Add(time.Hour), t0, guiEv("gui.setup_token")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("Put with active admin: %v", err)
+	}
+
+	// Reset: admin becomes non-active; a new setup creates a new admin.
+	if err := s.ResetGUIAdmin(ctx, t0.Add(2*time.Hour), guiEv("gui.reset_admin")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetGUIAdmin(ctx); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("after reset: %v", err)
+	}
+	if err := s.ResetGUIAdmin(ctx, t0.Add(2*time.Hour), guiEv("gui.reset_admin")); err != nil {
+		t.Fatalf("reset without admin: %v", err)
+	}
+	if countAction(t, s, "gui.reset_admin") != 2 {
+		t.Fatal("resets not audited")
+	}
+	if err := s.PutGUISetup(ctx, secretHash("t2"), t0.Add(48*time.Hour), t0.Add(2*time.Hour), guiEv("gui.setup_token")); err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.CompleteGUISetup(ctx, secretHash("t2"), store.GUIAdmin{Username: "boss", PwHash: "$argon2id$y"}, t0.Add(3*time.Hour), guiEv("gui.setup"))
+	if err != nil || b.ID == a.ID || b.Generation != 1 {
+		t.Fatalf("second admin = %+v, %v", b, err)
+	}
+}
+
+func guiSetupRace(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	if err := s.PutGUISetup(ctx, secretHash("race"), t0.Add(time.Hour), t0, guiEv("gui.setup_token")); err != nil {
+		t.Fatal(err)
+	}
+	const n = 20
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		wins int
+		bad  []error
+	)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := s.CompleteGUISetup(ctx, secretHash("race"),
+				store.GUIAdmin{Username: fmt.Sprintf("admin%d", i), PwHash: "h"}, t0, guiEv("gui.setup"))
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				wins++
+			case errors.Is(err, store.ErrStale), errors.Is(err, store.ErrConflict):
+			default:
+				bad = append(bad, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if wins != 1 || len(bad) != 0 {
+		t.Fatalf("wins = %d, unexpected errors = %v", wins, bad)
+	}
+	if _, err := s.GetGUIAdmin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c := countAction(t, s, "gui.setup"); c != 1 {
+		t.Fatalf("gui.setup audit rows = %d", c)
+	}
+}
+
+func guiPassword(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	a := guiAdmin(t, s, "boss")
+	for _, tok := range []string{"s1", "s2", "s3"} {
+		if _, err := s.CreateGUISession(ctx, guiSess(a, tok, t0), 16, t0, guiEv("gui.login")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keep := guiSess(a, "kept", t0.Add(time.Minute))
+	keep.Generation = 99 // forced to the new generation by the store
+	before := auditCount(t, s)
+	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation+5, "$new", keep, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("generation mismatch: %v", err)
+	}
+	if _, err := s.SetGUIPassword(ctx, a.ID+100, a.Generation, "$new", keep, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown admin: %v", err)
+	}
+	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "", keep, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("empty hash: %v", err)
+	}
+	badKeep := keep
+	badKeep.TokenHash = []byte{1}
+	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$new", badKeep, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("bad keep: %v", err)
+	}
+	if l, _ := s.ListGUISessions(ctx, a.ID); len(l) != 3 || auditCount(t, s) != before {
+		t.Fatalf("failed changes altered state: %d sessions, audit %d->%d", len(l), before, auditCount(t, s))
+	}
+	if g, _ := s.GetGUIAdmin(ctx); g.PwHash != "$argon2id$x" || g.Generation != 1 {
+		t.Fatalf("failed changes altered admin: %+v", g)
+	}
+
+	b, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$new", keep, t0.Add(time.Hour), guiEv("gui.password_change"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Generation != 2 || b.PwHash != "$new" || !b.UpdatedAt.Equal(t0.Add(time.Hour)) || b.ID != a.ID {
+		t.Fatalf("updated admin = %+v", b)
+	}
+	l, err := s.ListGUISessions(ctx, a.ID)
+	if err != nil || len(l) != 1 || l[0].Generation != 2 || l[0].AdminID != a.ID {
+		t.Fatalf("sessions after change = %+v, %v", l, err)
+	}
+	for _, tok := range []string{"s1", "s2", "s3"} {
+		if _, _, err := s.GetGUISession(ctx, secretHash(tok)); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("old session %s survived: %v", tok, err)
+		}
+	}
+	gs, ga, err := s.GetGUISession(ctx, secretHash("kept"))
+	if err != nil || gs.Generation != 2 || ga.Generation != 2 || gs.ID != l[0].ID {
+		t.Fatalf("kept session = %+v %+v, %v", gs, ga, err)
+	}
+	if countAction(t, s, "gui.password_change") != 1 {
+		t.Fatal("password change not audited once")
+	}
+	// The old generation can no longer be used.
+	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$again", guiSess(b, "k2", t0), t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("CAS replay: %v", err)
+	}
+
+	// ResetGUIAdmin deletes every session.
+	if _, err := s.CreateGUISession(ctx, guiSess(b, "extra", t0), 16, t0, guiEv("gui.login")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResetGUIAdmin(ctx, t0.Add(2*time.Hour), guiEv("gui.reset_admin")); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := s.ListGUISessions(ctx, a.ID); len(l) != 0 {
+		t.Fatalf("sessions after reset = %+v", l)
+	}
+	for _, tok := range []string{"kept", "extra"} {
+		if _, _, err := s.GetGUISession(ctx, secretHash(tok)); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("session %s after reset: %v", tok, err)
+		}
+	}
+	if _, err := s.CreateGUISession(ctx, guiSess(b, "late", t0), 16, t0, guiEv("gui.login")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("session for reset admin: %v", err)
+	}
+}
+
+func guiSessions(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	a := guiAdmin(t, s, "boss")
+
+	if _, err := s.CreateGUISession(ctx, store.GUISession{TokenHash: []byte{1}, AdminID: a.ID, Generation: 1, ExpiresAt: t0}, 16, t0, guiEv("gui.login")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("bad hash: %v", err)
+	}
+	other := guiSess(a, "x", t0)
+	other.AdminID = a.ID + 100
+	if _, err := s.CreateGUISession(ctx, other, 16, t0, guiEv("gui.login")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown admin: %v", err)
+	}
+	stale := guiSess(a, "x", t0)
+	stale.Generation = 7
+	if _, err := s.CreateGUISession(ctx, stale, 16, t0, guiEv("gui.login")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("generation mismatch: %v", err)
+	}
+	if countAction(t, s, "gui.login") != 0 {
+		t.Fatal("failed logins were audited")
+	}
+
+	// Insert; the user agent is clipped to 128 bytes on a rune boundary; hashes never come back.
+	first := guiSess(a, "first", t0)
+	first.UserAgent = strings.Repeat("\xc3\xa9", 100) // 200 bytes
+	c1, err := s.CreateGUISession(ctx, first, 3, t0, guiEv("gui.login"))
+	if err != nil || c1.ID == 0 || c1.TokenHash != nil || len(c1.UserAgent) > 128 || len(c1.UserAgent) < 126 ||
+		strings.ToValidUTF8(c1.UserAgent, "?") != c1.UserAgent || !c1.ExpiresAt.Equal(t0.Add(12*time.Hour)) {
+		t.Fatalf("created = %+v, %v", c1, err)
+	}
+	if _, err := s.CreateGUISession(ctx, first, 3, t0, guiEv("gui.login")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate token: %v", err)
+	}
+	gs, ga, err := s.GetGUISession(ctx, secretHash("first"))
+	if err != nil || gs.ID != c1.ID || gs.TokenHash != nil || ga.Username != "boss" || ga.Status != store.GUIAdminActive ||
+		gs.Remote != "10.0.0.1" || !gs.LastActiveAt.Equal(t0) {
+		t.Fatalf("GetGUISession = %+v %+v, %v", gs, ga, err)
+	}
+	if _, _, err := s.GetGUISession(ctx, secretHash("unknown")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown token: %v", err)
+	}
+	if _, _, err := s.GetGUISession(ctx, []byte("short")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("short token hash: %v", err)
+	}
+
+	// Per-admin cap: the oldest rows go.
+	for i := 2; i <= 5; i++ {
+		if _, err := s.CreateGUISession(ctx, guiSess(a, fmt.Sprintf("s%d", i), t0.Add(time.Duration(i)*time.Minute)), 3, t0, guiEv("gui.login")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, err := s.ListGUISessions(ctx, a.ID)
+	if err != nil || len(l) != 3 {
+		t.Fatalf("after cap: %d sessions, %v", len(l), err)
+	}
+	for i, x := range l {
+		if x.TokenHash != nil {
+			t.Fatal("ListGUISessions leaked a hash")
+		}
+		if i > 0 && l[i-1].ID >= x.ID {
+			t.Fatal("ListGUISessions not oldest first")
+		}
+	}
+	for _, tok := range []string{"first", "s2"} {
+		if _, _, err := s.GetGUISession(ctx, secretHash(tok)); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("%s not evicted: %v", tok, err)
+		}
+	}
+	for _, tok := range []string{"s3", "s4", "s5"} {
+		if _, _, err := s.GetGUISession(ctx, secretHash(tok)); err != nil {
+			t.Fatalf("%s evicted: %v", tok, err)
+		}
+	}
+	if countAction(t, s, "gui.login") != 5 {
+		t.Fatal("logins not audited")
+	}
+
+	// Touch.
+	if err := s.TouchGUISession(ctx, l[0].ID, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if g, _, _ := s.GetGUISession(ctx, secretHash("s3")); !g.LastActiveAt.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("touch: %v", g.LastActiveAt)
+	}
+	if err := s.TouchGUISession(ctx, 99999, t0); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("touch unknown: %v", err)
+	}
+
+	// Delete: only within the admin's own rows; nothing is audited on failure.
+	before := auditCount(t, s)
+	if err := s.DeleteGUISession(ctx, a.ID+100, l[0].ID, t0, guiEv("gui.session_revoke")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("delete another admin's row: %v", err)
+	}
+	if err := s.DeleteGUISession(ctx, a.ID, 99999, t0, guiEv("gui.session_revoke")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("delete unknown: %v", err)
+	}
+	if l2, _ := s.ListGUISessions(ctx, a.ID); len(l2) != 3 || auditCount(t, s) != before {
+		t.Fatal("failed deletes changed state")
+	}
+	if err := s.DeleteGUISession(ctx, a.ID, l[0].ID, t0, guiEv("gui.session_revoke")); err != nil {
+		t.Fatal(err)
+	}
+	if countAction(t, s, "gui.session_revoke") != 1 {
+		t.Fatal("delete not audited")
+	}
+	// A zero Action deletes without an audit row (housekeeping of dead rows).
+	if err := s.DeleteGUISession(ctx, a.ID, l[1].ID, t0, store.AuditEvent{}); err != nil {
+		t.Fatal(err)
+	}
+	if countAction(t, s, "gui.session_revoke") != 1 || auditCount(t, s) != before+1 {
+		t.Fatal("silent delete wrote an audit row")
+	}
+
+	// Delete the others.
+	for i := 6; i <= 8; i++ {
+		if _, err := s.CreateGUISession(ctx, guiSess(a, fmt.Sprintf("s%d", i), t0), 16, t0, guiEv("gui.login")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keepSess, _, err := s.GetGUISession(ctx, secretHash("s7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.DeleteOtherGUISessions(ctx, a.ID, keepSess.ID, t0, guiEv("gui.session_revoke"))
+	if err != nil || n != 3 { // s5, s6, s8 (s3 and s4 were deleted above)
+		t.Fatalf("DeleteOthers = %d, %v", n, err)
+	}
+	if l3, _ := s.ListGUISessions(ctx, a.ID); len(l3) != 1 || l3[0].ID != keepSess.ID {
+		t.Fatalf("after DeleteOthers: %+v", l3)
+	}
+	if n, err := s.DeleteOtherGUISessions(ctx, a.ID+100, 0, t0, guiEv("gui.session_revoke")); err != nil || n != 0 {
+		t.Fatalf("DeleteOthers of another admin = %d, %v", n, err)
+	}
+	if l3, _ := s.ListGUISessions(ctx, a.ID); len(l3) != 1 {
+		t.Fatal("DeleteOthers touched another admin's rows")
+	}
+}
+
+func guiPurge(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	a := guiAdmin(t, s, "boss")
+	now := t0.Add(10 * time.Hour)
+	idle := 30 * time.Minute
+	mk := func(tok string, last, exp time.Time) {
+		x := guiSess(a, tok, now)
+		x.LastActiveAt, x.ExpiresAt = last, exp
+		if _, err := s.CreateGUISession(ctx, x, 16, now, guiEv("gui.login")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("fresh", now, now.Add(11*time.Hour))
+	mk("edge", now.Add(-29*time.Minute), now.Add(time.Second))
+	mk("idle", now.Add(-31*time.Minute), now.Add(time.Hour))
+	mk("expired", now, now.Add(-time.Second))
+	before := auditCount(t, s)
+	n, err := s.PurgeGUISessions(ctx, idle, now)
+	if err != nil || n != 2 {
+		t.Fatalf("purge = %d, %v", n, err)
+	}
+	for tok, want := range map[string]bool{"fresh": true, "edge": true, "idle": false, "expired": false} {
+		_, _, err := s.GetGUISession(ctx, secretHash(tok))
+		if (err == nil) != want {
+			t.Fatalf("%s present=%v, want %v (%v)", tok, err == nil, want, err)
+		}
+	}
+	if auditCount(t, s) != before {
+		t.Fatal("purge was audited")
+	}
+	if n, err := s.PurgeGUISessions(ctx, idle, now); err != nil || n != 0 {
+		t.Fatalf("second purge = %d, %v", n, err)
+	}
+	for _, bad := range []time.Duration{0, -time.Minute} {
+		if _, err := s.PurgeGUISessions(ctx, bad, now); !errors.Is(err, store.ErrInvalid) {
+			t.Fatalf("purge idle %v: %v", bad, err)
+		}
+	}
+	// Invalid-argument guards that would otherwise silently uncap or skip the audit row.
+	for _, bad := range []int{0, -1} {
+		if _, err := s.CreateGUISession(ctx, guiSess(a, "cap", now), bad, now, guiEv("gui.login")); !errors.Is(err, store.ErrInvalid) {
+			t.Fatalf("maxPerAdmin %d: %v", bad, err)
+		}
+	}
+	if _, err := s.DeleteOtherGUISessions(ctx, a.ID, 0, now, store.AuditEvent{}); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("delete others without action: %v", err)
+	}
+}
+
+func guiEnsureSetup(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	made, err := s.EnsureGUISetup(ctx, secretHash("a"), t0.Add(time.Hour), t0, guiEv("gui.setup_token"))
+	if err != nil || !made {
+		t.Fatalf("first ensure = %v, %v", made, err)
+	}
+	before := auditCount(t, s)
+	made, err = s.EnsureGUISetup(ctx, secretHash("b"), t0.Add(2*time.Hour), t0.Add(time.Minute), guiEv("gui.setup_token"))
+	if err != nil || made || auditCount(t, s) != before {
+		t.Fatalf("live ensure = %v, %v, audit %d->%d", made, err, before, auditCount(t, s))
+	}
+	cand := store.GUIAdmin{Username: "boss", PwHash: "$argon2id$x"}
+	if _, err := s.CompleteGUISetup(ctx, secretHash("b"), cand, t0.Add(time.Minute), guiEv("gui.setup")); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("untouched row accepted new token: %v", err)
+	}
+	// Expired row is replaced.
+	made, err = s.EnsureGUISetup(ctx, secretHash("c"), t0.Add(3*time.Hour), t0.Add(time.Hour), guiEv("gui.setup_token"))
+	if err != nil || !made {
+		t.Fatalf("expired ensure = %v, %v", made, err)
+	}
+	if _, err := s.CompleteGUISetup(ctx, secretHash("c"), cand, t0.Add(time.Hour), guiEv("gui.setup")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnsureGUISetup(ctx, secretHash("d"), t0.Add(5*time.Hour), t0.Add(2*time.Hour), guiEv("gui.setup_token")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("ensure with active admin: %v", err)
+	}
+	if _, err := s.EnsureGUISetup(ctx, []byte("x"), t0.Add(5*time.Hour), t0, guiEv("gui.setup_token")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("ensure bad hash: %v", err)
+	}
+}
+
+func queryAudit(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	rec := func(sec int, f func(*store.AuditEvent)) int64 {
+		e := store.AuditEvent{Time: t0.Add(time.Duration(sec) * time.Second), Source: "cli", ActorKind: "admin", Actor: "root", Action: "x.y", Outcome: "ok"}
+		f(&e)
+		id, err := s.RecordAudit(ctx, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	ids := []int64{
+		rec(0, func(e *store.AuditEvent) {
+			e.Fleet, e.Runner, e.Actor, e.Source, e.Action, e.Workspace, e.RequestID = "web", "r1", "alice", "api", "runner.approve", "w1", "q1"
+		}),
+		rec(1, func(e *store.AuditEvent) {
+			e.Fleet, e.Runner, e.Actor, e.Source, e.Action, e.Outcome, e.RequestID = "web", "r2", "bob", "cli", "runner.revoke", "denied", "q1"
+		}),
+		rec(2, func(e *store.AuditEvent) { e.Fleet, e.Actor, e.Source, e.Action = "db", "alice", "gui", "fleet.create" }),
+		rec(3, func(e *store.AuditEvent) { e.Action = "100%_done" }),
+		rec(4, func(e *store.AuditEvent) { e.Action = "100xAdone" }),
+		rec(5, func(e *store.AuditEvent) { e.Action = `a\b` }),
+		rec(6, func(e *store.AuditEvent) { e.Action = "Runner.upper" }),
+	}
+	q := func(f store.AuditFilter) []int64 {
+		t.Helper()
+		evs, err := s.QueryAudit(ctx, f)
+		if err != nil {
+			t.Fatalf("%+v: %v", f, err)
+		}
+		out := make([]int64, 0, len(evs))
+		for _, e := range evs {
+			out = append(out, e.ID)
+		}
+		return out
+	}
+	eq := func(name string, got []int64, want ...int64) {
+		t.Helper()
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("%s: got %v, want %v", name, got, want)
+		}
+	}
+	eq("empty filter", q(store.AuditFilter{}), ids...)
+	eq("fleet", q(store.AuditFilter{Fleet: "web"}), ids[0], ids[1])
+	eq("runner", q(store.AuditFilter{Runner: "r2"}), ids[1])
+	eq("actor", q(store.AuditFilter{Actor: "alice"}), ids[0], ids[2])
+	eq("source", q(store.AuditFilter{Source: "gui"}), ids[2])
+	eq("outcome", q(store.AuditFilter{Outcome: "denied"}), ids[1])
+	eq("workspace", q(store.AuditFilter{Workspace: "w1"}), ids[0])
+	eq("request id", q(store.AuditFilter{RequestID: "q1"}), ids[0], ids[1])
+	eq("action exact", q(store.AuditFilter{Action: "runner.revoke"}), ids[1])
+	eq("action exact is not a prefix", q(store.AuditFilter{Action: "runner."}))
+	eq("action prefix", q(store.AuditFilter{Action: "runner.", ActionPrefix: true}), ids[0], ids[1])
+	eq("prefix is case sensitive", q(store.AuditFilter{Action: "RUNNER.", ActionPrefix: true}))
+	eq("prefix escapes %", q(store.AuditFilter{Action: "100%", ActionPrefix: true}), ids[3])
+	eq("prefix escapes _", q(store.AuditFilter{Action: "100%_", ActionPrefix: true}), ids[3])
+	eq("prefix escapes _ alone", q(store.AuditFilter{Action: "1_0", ActionPrefix: true}))
+	eq("prefix escapes backslash", q(store.AuditFilter{Action: `a\`, ActionPrefix: true}), ids[5])
+	eq("prefix, no wildcard leak", q(store.AuditFilter{Action: "%", ActionPrefix: true}))
+	eq("time from", q(store.AuditFilter{From: t0.Add(5 * time.Second)}), ids[5], ids[6])
+	eq("time to", q(store.AuditFilter{To: t0.Add(1 * time.Second)}), ids[0], ids[1])
+	eq("time range inclusive", q(store.AuditFilter{From: t0.Add(2 * time.Second), To: t0.Add(3 * time.Second)}), ids[2], ids[3])
+	eq("combined", q(store.AuditFilter{Fleet: "web", Actor: "alice"}), ids[0])
+	eq("combined empty", q(store.AuditFilter{Fleet: "db", Actor: "bob"}))
+	eq("injection is data", q(store.AuditFilter{Fleet: "web' OR '1'='1"}))
+
+	// Keyset paging, ascending then descending.
+	eq("asc page 1", q(store.AuditFilter{Limit: 3}), ids[0], ids[1], ids[2])
+	eq("asc page 2", q(store.AuditFilter{Limit: 3, AfterID: ids[2]}), ids[3], ids[4], ids[5])
+	eq("asc page 3", q(store.AuditFilter{Limit: 3, AfterID: ids[5]}), ids[6])
+	eq("desc page 1", q(store.AuditFilter{Limit: 3, Desc: true}), ids[6], ids[5], ids[4])
+	eq("desc page 2", q(store.AuditFilter{Limit: 3, Desc: true, BeforeID: ids[4]}), ids[3], ids[2], ids[1])
+	eq("desc page 3", q(store.AuditFilter{Limit: 3, Desc: true, BeforeID: ids[1]}), ids[0])
+	eq("both bounds", q(store.AuditFilter{AfterID: ids[1], BeforeID: ids[4]}), ids[2], ids[3])
+	eq("both bounds desc", q(store.AuditFilter{AfterID: ids[1], BeforeID: ids[4], Desc: true}), ids[3], ids[2])
+	eq("keyset with filter", q(store.AuditFilter{Fleet: "web", Desc: true, BeforeID: ids[1]}), ids[0])
+
+	// Decoding matches ListAudit.
+	evs, _ := s.QueryAudit(ctx, store.AuditFilter{Fleet: "web", Limit: 1})
+	old, _ := s.ListAudit(ctx, 0, 1)
+	if len(evs) != 1 || evs[0].ID != ids[0] || evs[0].RequestID != "q1" || !evs[0].Time.Equal(t0) || fmt.Sprint(evs[0]) != fmt.Sprint(old[0]) {
+		t.Fatalf("decoded = %+v vs %+v", evs, old)
+	}
+
+	// Limit: default 100, cap 1000.
+	for i := 0; i < 1100-len(ids); i++ {
+		rec(10+i, func(e *store.AuditEvent) { e.Action = "bulk" })
+	}
+	if n := len(q(store.AuditFilter{})); n != 100 {
+		t.Fatalf("default limit = %d", n)
+	}
+	if n := len(q(store.AuditFilter{Limit: 1 << 30})); n != 1000 {
+		t.Fatalf("capped limit = %d", n)
+	}
+	if n := len(q(store.AuditFilter{Limit: 250, Action: "bulk"})); n != 250 {
+		t.Fatalf("limit 250 = %d", n)
+	}
+}
+
+func setFleetConfirm(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	if _, err := s.SetFleetConfirm(ctx, "nope", true, t0, ev("fleet.set_confirm")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown fleet: %v", err)
+	}
+	if _, err := s.SetFleetConfirm(ctx, "Bad Name", true, t0, ev("fleet.set_confirm")); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("bad name: %v", err)
+	}
+	if auditCount(t, s) != 0 {
+		t.Fatal("failed calls wrote audit rows")
+	}
+	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "web", Mode: store.ModeActions}, t0, ev("fleet.create")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateFleet(ctx, store.Fleet{Name: "ws", Mode: store.ModeWorkspace, Workspace: wsCfg()}, t0, ev("fleet.create")); err != nil {
+		t.Fatal(err)
+	}
+	f, err := s.SetFleetConfirm(ctx, "web", true, t0.Add(time.Minute), ev("fleet.set_confirm"))
+	if err != nil || !f.Confirm || f.Name != "web" || f.Mode != store.ModeActions || f.ID == 0 {
+		t.Fatalf("set true = %+v, %v", f, err)
+	}
+	if g, _ := s.GetFleet(ctx, "web"); !g.Confirm {
+		t.Fatal("not persisted")
+	}
+	if c := countAction(t, s, "fleet.set_confirm"); c != 1 {
+		t.Fatalf("audit rows = %d", c)
+	}
+	evs, _ := s.QueryAudit(ctx, store.AuditFilter{Action: "fleet.set_confirm"})
+	if !evs[0].Time.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("zero ev.Time should default to now: %v", evs[0].Time)
+	}
+	w, err := s.SetFleetConfirm(ctx, "ws", true, t0, ev("fleet.set_confirm"))
+	if err != nil || !w.Confirm || w.Workspace == nil || w.Workspace.DefaultImage == "" {
+		t.Fatalf("workspace fleet = %+v, %v", w, err)
+	}
+	f, err = s.SetFleetConfirm(ctx, "web", false, t0, ev("fleet.set_confirm"))
+	if err != nil || f.Confirm {
+		t.Fatalf("set false = %+v, %v", f, err)
+	}
+	if g, _ := s.GetFleet(ctx, "web"); g.Confirm {
+		t.Fatal("off not persisted")
+	}
+	if c := countAction(t, s, "fleet.set_confirm"); c != 3 {
+		t.Fatalf("audit rows = %d", c)
 	}
 }

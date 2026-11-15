@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
@@ -62,17 +64,74 @@ func (d *DB) RecordAudit(ctx context.Context, ev store.AuditEvent) (int64, error
 }
 
 // ListAudit returns events with id > sinceID ascending, capped at maxAuditLimit rows
-// (limit <= 0 means the default of 100).
+// (limit <= 0 means the default of 100). It is QueryAudit{AfterID: sinceID, Limit: limit}.
 func (d *DB) ListAudit(ctx context.Context, sinceID int64, limit int) ([]store.AuditEvent, error) {
+	return d.QueryAudit(ctx, store.AuditFilter{AfterID: sinceID, Limit: limit})
+}
+
+// likeEscaper escapes the LIKE wildcards and the escape character itself.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// QueryAudit returns events matching f in id order (descending when f.Desc), at most
+// f.Limit rows (default 100, cap 1000). All values are bound parameters.
+func (d *DB) QueryAudit(ctx context.Context, f store.AuditFilter) ([]store.AuditEvent, error) {
+	limit := f.Limit
 	if limit <= 0 {
 		limit = defaultAuditLimit
 	}
 	if limit > maxAuditLimit {
 		limit = maxAuditLimit
 	}
-	rows, err := d.reader.QueryContext(ctx, `SELECT id, ts, source, actor_kind, actor, remote, fleet, runner,
- subject, action, params, outcome, exit_code, duration_ms, message, request_id, workspace
- FROM audit WHERE id > ? ORDER BY id LIMIT ?`, sinceID, limit)
+	var (
+		where []string
+		args  []any
+	)
+	add := func(cond string, a ...any) {
+		where = append(where, cond)
+		args = append(args, a...)
+	}
+	if f.AfterID > 0 {
+		add("id > ?", f.AfterID)
+	}
+	if f.BeforeID > 0 {
+		add("id < ?", f.BeforeID)
+	}
+	if !f.From.IsZero() {
+		add("ts >= ?", f.From.UnixMilli())
+	}
+	if !f.To.IsZero() {
+		add("ts <= ?", f.To.UnixMilli())
+	}
+	for _, c := range []struct{ col, v string }{
+		{"fleet", f.Fleet}, {"runner", f.Runner}, {"actor", f.Actor}, {"source", f.Source},
+		{"outcome", f.Outcome}, {"workspace", f.Workspace}, {"request_id", f.RequestID},
+	} {
+		if c.v != "" {
+			add(c.col+" = ?", c.v)
+		}
+	}
+	if f.Action != "" {
+		if f.ActionPrefix {
+			// LIKE is ASCII case-insensitive in SQLite, so a case-sensitive substr check backs it.
+			add(`action LIKE ? ESCAPE '\' AND substr(action, 1, ?) = ?`,
+				likeEscaper.Replace(f.Action)+"%", utf8.RuneCountInString(f.Action), f.Action)
+		} else {
+			add("action = ?", f.Action)
+		}
+	}
+	q := `SELECT id, ts, source, actor_kind, actor, remote, fleet, runner,
+ subject, action, params, outcome, exit_code, duration_ms, message, request_id, workspace FROM audit`
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	if f.Desc {
+		q += " ORDER BY id DESC"
+	} else {
+		q += " ORDER BY id"
+	}
+	q += " LIMIT ?"
+	args = append(args, limit)
+	rows, err := d.reader.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

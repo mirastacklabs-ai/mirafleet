@@ -130,3 +130,41 @@ func (d *DB) ListFleets(ctx context.Context) ([]store.Fleet, error) {
 	}
 	return out, nil
 }
+
+// SetFleetConfirm sets the fleet's guard flag and returns the fleet, atomically with ev.
+func (d *DB) SetFleetConfirm(ctx context.Context, name string, confirm bool, now time.Time, ev store.AuditEvent) (store.Fleet, error) {
+	if !store.ValidFleetName(name) {
+		return store.Fleet{}, fmt.Errorf("%w: fleet name must match %s", store.ErrInvalid, store.FleetNameRE)
+	}
+	if ev.Time.IsZero() {
+		ev.Time = now
+	}
+	var out store.Fleet
+	err := d.withTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE fleets SET confirm = ? WHERE name = ?`, confirm, name)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return fmt.Errorf("%w: fleet", store.ErrNotFound)
+		}
+		out, err = scanFleet(tx.QueryRowContext(ctx,
+			`SELECT id, name, mode, confirm, created_at FROM fleets WHERE name = ?`, name), false)
+		if err != nil {
+			return err
+		}
+		if out.Mode == store.ModeWorkspace {
+			if out.Workspace, err = getFleetWorkspace(ctx, tx, out.ID); err != nil {
+				return err
+			}
+		}
+		_, err = insertAuditTx(ctx, tx, ev)
+		return err
+	})
+	if err != nil {
+		return store.Fleet{}, err
+	}
+	return out, nil
+}

@@ -1,0 +1,161 @@
+{{/* Styleguide: every component of app.css in one page, with the markup the partials produce.
+Used by the S16 UX pass and the screenshots. Page data as in partials.html. Plain markup is used for
+components whose partial takes a struct, so this file needs no extra data. */}}
+{{define "content"}}
+<div class="container">
+<header class="page-head">
+<div>{{template "ui/crumbs" .}}<h1>Styleguide</h1></div>
+<div class="actions"><a class="btn" href="#buttons">Primary action</a></div>
+</header>
+
+<h2 class="section-title">Colour tokens</h2>
+<div class="sw-grid">
+<div class="sw"><i class="sw-bg"></i>--bg</div>
+<div class="sw"><i class="sw-band"></i>--bg-band</div>
+<div class="sw"><i class="sw-surface"></i>--surface</div>
+<div class="sw"><i class="sw-ink"></i>--ink</div>
+<div class="sw"><i class="sw-text"></i>--text</div>
+<div class="sw"><i class="sw-muted"></i>--muted</div>
+<div class="sw"><i class="sw-line"></i>--line</div>
+<div class="sw"><i class="sw-accent"></i>--accent</div>
+<div class="sw"><i class="sw-signal"></i>--signal</div>
+<div class="sw"><i class="sw-btn"></i>--btn-bg</div>
+<div class="sw"><i class="sw-ok"></i>--ok</div>
+<div class="sw"><i class="sw-warn"></i>--warn</div>
+<div class="sw"><i class="sw-off"></i>--off</div>
+<div class="sw"><i class="sw-bad"></i>--bad</div>
+</div>
+
+<h2 class="section-title">Type</h2>
+<div class="panel"><div class="panel-body stack">
+<h1>Heading one</h1>
+<h2>Heading two</h2>
+<h3>Heading three</h3>
+<p>Body text in Oswald 300 to 400, sixteen pixels, line height 1.55. A <a href="#type">link</a> and <strong>strong text</strong>.</p>
+<p class="muted">Muted secondary text.</p>
+<p><span class="label">Label</span> <code>code and ids: prod/db-1</code></p>
+</div></div>
+
+<h2 class="section-title" id="buttons">Buttons</h2>
+<div class="btn-group">
+<button class="btn" type="button">Primary</button>
+<button class="btn btn-secondary" type="button">Secondary</button>
+<button class="btn btn-quiet" type="button">Quiet</button>
+<button class="btn btn-danger" type="button">Revoke</button>
+<button class="btn btn-sm" type="button">Small</button>
+<button class="btn" type="button" disabled>Disabled</button>
+<a class="btn btn-secondary" href="#buttons">Link button</a>
+</div>
+
+<h2 class="section-title">Badges, dots, chips</h2>
+<div class="row">
+<span class="badge ok">Active</span>
+<span class="badge warn">Pending</span>
+<span class="badge off">Disabled</span>
+<span class="badge bad">Revoked</span>
+<span class="dot on">online <span class="muted">3s ago</span></span>
+<span class="dot off">offline <span class="muted">2h ago</span></span>
+<span class="chip">env=prod</span>
+<span class="chip informational">os=linux</span>
+</div>
+
+<h2 class="section-title">Flash messages</h2>
+<div class="stack">
+<div class="flash ok" role="status"><strong>Done</strong>Runner prod/db-1 approved.</div>
+<div class="flash warn" role="status"><strong>Note</strong>Runner is offline; the reaper will finish closing the workspace.</div>
+<div class="flash bad" role="status"><strong>Error</strong>Wrong username or password.</div>
+<div class="flash info" role="status"><strong>Info</strong>GUI is reachable on all interfaces.</div>
+</div>
+
+<h2 class="section-title">Cards and stats</h2>
+<div class="grid">
+<div class="card"><span class="label">Fleets</span><span class="stat">3</span><span class="stat-note">2 actions, 1 workspace</span></div>
+<div class="card is-attention"><span class="label">Pending runners</span><span class="stat">2</span><span class="stat-note"><a href="#cards">2 waiting for approval</a></span></div>
+<div class="card"><span class="label">Online</span><span class="stat">7 / 9</span><span class="stat-note">runners</span></div>
+<div class="card"><span class="label">Live workspaces</span><span class="stat">4</span></div>
+</div>
+
+<h2 class="section-title">Form</h2>
+<div class="panel"><div class="panel-body">
+<form class="form" method="post" action="/styleguide">
+{{template "ui/csrf" .}}
+<div class="field"><label for="sg-name">Fleet name</label><input type="text" id="sg-name" name="name" value="prod" autocomplete="off" aria-describedby="sg-name-hint"><p class="hint" id="sg-name-hint">Lowercase letters, digits and dashes.</p></div>
+<div class="field has-error"><label for="sg-bad">Fleet name (with error)</label><input type="text" id="sg-bad" name="bad" value="Prod!" aria-invalid="true" aria-describedby="sg-bad-err">{{template "ui/field-error" "Name must be 1 to 63 lowercase letters, digits or dashes."}}</div>
+<div class="field"><label for="sg-pw">Password</label><input type="password" id="sg-pw" name="password" autocomplete="new-password"></div>
+<div class="field"><label for="sg-sel">Executor</label><select id="sg-sel" name="executor"><option>containerd</option><option>opensandbox</option></select></div>
+<div class="field"><label for="sg-ta">Images allowlist</label><textarea id="sg-ta" name="images"></textarea></div>
+<fieldset><legend>Mode</legend>
+<div class="choice"><input type="radio" id="sg-m1" name="mode" value="actions" checked><label for="sg-m1">Actions</label></div>
+<div class="choice"><input type="radio" id="sg-m2" name="mode" value="workspace"><label for="sg-m2">Workspace</label></div>
+</fieldset>
+<div class="choice"><input type="checkbox" id="sg-g" name="guarded" checked><label for="sg-g">Guarded: ask for confirmation on risky actions</label></div>
+<div class="kv-rows"><span class="label">Labels</span>
+<div class="kv-row"><input type="text" name="key" value="env" aria-label="Label key"><input type="text" name="val" value="prod" aria-label="Label value"></div></div>
+<div class="form-actions"><button class="btn" type="submit">Create fleet</button><a class="btn btn-quiet" href="#">Cancel</a></div>
+</form>
+</div></div>
+
+<h2 class="section-title">Table with filters, row actions and pager</h2>
+<div class="panel">
+<form class="filters" method="get" action="/styleguide">
+<div class="field"><label for="sg-f1">Fleet</label><select id="sg-f1" name="fleet"><option value="">All</option><option>prod</option></select></div>
+<div class="field"><label for="sg-f2">Status</label><select id="sg-f2" name="status"><option value="">All</option><option>pending</option></select></div>
+<button class="btn btn-secondary btn-sm" type="submit">Filter</button>
+</form>
+<div class="scroll">
+<table class="data">
+<caption class="visually-hidden">Runners</caption>
+<thead><tr><th scope="col">Fleet</th><th scope="col">Runner</th><th scope="col">Status</th><th scope="col">Heartbeat</th><th scope="col">Labels</th><th scope="col" class="num">Slots</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+<tbody>
+<tr><td>prod</td><td><a href="#">db-1</a></td><td><span class="badge ok">Active</span></td><td><span class="dot on">online</span> <time datetime="2026-11-14T10:00:00Z" title="2026-11-14T10:00:00Z" data-rel>3s ago</time></td><td><span class="chip">env=prod</span></td><td class="num">2 / 4</td><td class="row-actions"><button class="btn btn-quiet btn-sm" type="button">Disable</button> <button class="btn btn-danger btn-sm" type="button">Revoke</button></td></tr>
+<tr><td>prod</td><td><a href="#">db-2</a></td><td><span class="badge warn">Pending</span></td><td><span class="dot off">offline</span></td><td><span class="chip">env=prod</span></td><td class="num">0 / 0</td><td class="row-actions"><button class="btn btn-sm" type="button">Approve</button> <button class="btn btn-danger btn-sm" type="button">Revoke</button></td></tr>
+<tr><td>dev</td><td><a href="#">ci-3</a></td><td><span class="badge off">Disabled</span></td><td><span class="dot off">offline</span></td><td class="clip" title="a very long label value that is clipped to keep the row compact">a very long label value that is clipped to keep the row compact</td><td class="num">0 / 4</td><td class="row-actions"><button class="btn btn-quiet btn-sm" type="button">Enable</button></td></tr>
+<tr><td>dev</td><td><a href="#">ci-4</a></td><td><span class="badge bad">Revoked</span></td><td><span class="dot off">offline</span></td><td></td><td class="num">-</td><td class="row-actions"></td></tr>
+</tbody>
+</table>
+</div>
+<nav class="pager" aria-label="Paging"><a class="btn btn-quiet btn-sm" href="#">Newer</a><a class="btn btn-quiet btn-sm" href="#">Older</a></nav>
+</div>
+
+<h2 class="section-title">Panels, key-value lists, expanding rows</h2>
+<div class="cols-2">
+<section class="panel" aria-labelledby="sg-p1"><div class="panel-head"><h2 id="sg-p1">Identity</h2><a class="btn btn-quiet btn-sm" href="#">Edit</a></div>
+<div class="panel-body"><dl class="kv"><dt>Fingerprint</dt><dd class="mono">SHA256:abcd1234efgh5678</dd><dt>Joined</dt><dd><time datetime="2026-11-13T09:00:00Z" data-rel>1d ago</time></dd><dt>Token</dt><dd class="mono">tok_01H</dd></dl></div></section>
+<section class="panel" aria-labelledby="sg-p2"><div class="panel-head"><h2 id="sg-p2">Audit row</h2><span class="updating htmx-indicator" id="sg-upd">updating</span></div>
+<div class="panel-body"><details><summary>runner.approve prod/db-1</summary><dl class="kv"><dt>Params</dt><dd class="mono">fleet=prod runner=db-1</dd><dt>Request</dt><dd class="mono">r-7f3a <a href="#">same request</a></dd></dl></details></div></section>
+</div>
+
+<h2 class="section-title">Empty state</h2>
+<div class="panel"><div class="empty"><h3>No join tokens yet</h3><p>Create a token, then run the join command on the machine you want to add.</p><pre class="codeblock">mirafleet central token create -fleet prod</pre></div></div>
+
+<h2 class="section-title">Code and copy blocks, secret shown once</h2>
+<div class="stack">
+<div class="copy-row"><pre class="codeblock" id="sg-cmd">mirafleet runner join central.example.com:2222 -name db-1 -token -</pre><button type="button" class="btn btn-secondary btn-sm copy-btn js-only" data-copy="sg-cmd">Copy</button></div>
+<div class="secret-once">
+<p><strong>Copy this token now. It cannot be shown again.</strong> Expires in <span class="countdown" data-countdown="300" data-expired-text="expired">300s</span>.</p>
+<div class="copy-row"><pre class="codeblock" id="sg-secret">mfj1.EXAMPLE-NOT-A-REAL-TOKEN</pre><button type="button" class="btn btn-secondary btn-sm copy-btn js-only" data-copy="sg-secret">Copy</button></div>
+</div>
+</div>
+
+<h2 class="section-title">Confirmation page (dialog as a page)</h2>
+<div class="dialog danger" role="group" aria-labelledby="sg-dlg">
+<div class="dialog-head"><h2 id="sg-dlg">Revoke prod/db-1</h2></div>
+<form class="dialog-body" method="post" action="/styleguide">
+{{template "ui/csrf" .}}
+<ul class="effects"><li>The connection is closed now.</li><li>In-flight work is cancelled.</li><li>Workspaces on this runner are closed.</li><li>The key can never enrol again.</li></ul>
+<div class="field"><label for="sg-confirm">Type <code>prod/db-1</code> to confirm</label><input type="text" id="sg-confirm" name="confirm" autocomplete="off"></div>
+<div class="form-actions"><button class="btn btn-danger" type="submit">Revoke runner</button><a class="btn btn-quiet" href="#">Cancel</a></div>
+</form>
+</div>
+
+<h2 class="section-title">Narrow form (login)</h2>
+<div class="panel narrow"><div class="panel-body">
+<form class="form" method="post" action="/styleguide">
+{{template "ui/csrf" .}}
+<div class="field"><label for="sg-u">Username</label><input type="text" id="sg-u" name="username" autocomplete="username"></div>
+<div class="field"><label for="sg-p">Password</label><input type="password" id="sg-p" name="password" autocomplete="current-password"></div>
+<button class="btn" type="submit">Sign in</button>
+</form>
+</div></div>
+</div>
+{{end}}

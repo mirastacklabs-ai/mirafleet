@@ -1,0 +1,89 @@
+{{/*
+mirafleet GUI shared partials. Reference for screen authors (S7..S11) and render.go (S5).
+
+PARSING. Each screen is its own template set: layout.html + partials.html + <screen>.html, so every
+screen may define its own "content". Full page: execute "layout". Fragment (HX-Request): execute
+the "<screen>/<part>" template the route names, with the same data. A screen file defines:
+    "content"          the page body (goes inside <main>), required for a full page
+    "<screen>/<part>"  fragments that htmx swaps (tables, panels, forms)
+Template funcs required: asset (name string) (string, error) (Assets.TemplateFuncs; an unknown name fails the render). It maps a path under static/ ("app.css",
+"app.js", "vendor/htmx.min.js") to its hashed URL. Fonts are referenced relatively from app.css, so
+the static handler must serve /static/<hash>/fonts/... for the same hash it gives app.css.
+
+PAGE DATA (every screen's root value; struct or map, these exact names):
+    .Title      string      page title, also <title>
+    .Nav        string      active nav key: overview fleets runners tokens operators workspaces audit account, or ""
+    .Authed     bool        false on setup/login: header shows no nav, no sign-out, no theme switch
+    .CSRF       string      token for forms and hx-headers (the pre-session token on setup/login)
+    .Theme      string      light | dark | system (renders data-theme)
+    .Flash      nil or {Kind, Text}   Kind: ok | warn | bad | info
+    .Crumbs     []{Text, URL}         optional; URL empty for the current page
+    .RequestID  string      shown in the footer and on error pages
+    .Version    string
+
+LAYOUT (layout.html)
+    layout              the full document
+
+NAV, CHROME
+    ui/mark             the three-bar mark (inline SVG), arg ignored
+    ui/nav-links        the 8 nav links, arg = page data (.Nav)
+    ui/flash            the flash message, arg = page data ($); also used for the aria-live region
+    ui/crumbs           breadcrumb list, arg = page data ($)
+    ui/csrf             hidden _csrf input, arg = page data ($), inside a form
+
+COMPONENTS (arg is a struct or map with the listed fields)
+    ui/badge            {Kind: ok|warn|off|bad, Text}      status badge, always shows the word
+    ui/online           {Online bool, Age string}          online dot with text "online"/"offline" + age
+    ui/time             {ISO, Text}                        <time datetime>; app.js refreshes the relative text
+    ui/copy             {ID, Value, Label}                 mono block with a copy button (button hidden without JS)
+    ui/field-error      string                             error text for a field ("" renders nothing)
+    ui/empty            {Title, Body, CLI}                 empty state; CLI is the equivalent command ("" omits it)
+    ui/pager            {NewerURL, OlderURL}               Newer/Older links ("" omits that side)
+    ui/countdown        {Seconds int}                      "Ns" with data-countdown for app.js (caller adds "left")
+
+CSS CLASSES (static/app.css): .container .narrow .page-head .actions .crumbs .section-title .stack .row
+.grid .cols-2 .panel .panel-head .panel-body .card .stat .stat-note .scroll table.data (.num .clip
+.row-actions) .badge.ok|warn|off|bad .dot.on|off .chip .btn (.btn-secondary .btn-quiet .btn-danger
+.btn-sm) .btn-group .form .field(.has-error) .field-error .hint fieldset .choice .filters
+.form-actions .kv-rows .kv-row dl.kv .flash.ok|warn|bad|info .empty .codeblock .copy-row .js-only
+.secret-once .countdown .dialog(.danger) .dialog-head .dialog-body .effects .pager .htmx-indicator
+.updating .label .mono .muted .right .nowrap .visually-hidden. Live examples: styleguide.html.
+
+CONFIRMATION PAGES (dialogs as pages, no JS needed): a GET renders ".dialog" with the effects list
+and a POST form; destructive ones use ".dialog.danger" and a ".btn-danger" submit.
+*/}}
+
+{{define "ui/mark"}}<svg viewBox="0 0 32 26" role="img" aria-label="mirafleet" focusable="false"><polygon points="0,26 7,0 12,0 5,26" fill="var(--logo-teal)"/><polygon points="9,26 16,0 21,0 14,26" fill="#FF671F"/><polygon points="18,26 25,0 30,0 23,26" fill="#CED4DA"/></svg>{{end}}
+
+{{define "ui/nav-links"}}<ul class="nav-list">
+<li><a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>Overview</a></li>
+<li><a href="/fleets"{{if eq .Nav "fleets"}} aria-current="page"{{end}}>Fleets</a></li>
+<li><a href="/runners"{{if eq .Nav "runners"}} aria-current="page"{{end}}>Runners</a></li>
+<li><a href="/tokens"{{if eq .Nav "tokens"}} aria-current="page"{{end}}>Join tokens</a></li>
+<li><a href="/operators"{{if eq .Nav "operators"}} aria-current="page"{{end}}>Operators</a></li>
+<li><a href="/workspaces"{{if eq .Nav "workspaces"}} aria-current="page"{{end}}>Workspaces</a></li>
+<li><a href="/audit"{{if eq .Nav "audit"}} aria-current="page"{{end}}>Audit</a></li>
+<li><a href="/account"{{if eq .Nav "account"}} aria-current="page"{{end}}>Account</a></li>
+</ul>{{end}}
+
+{{define "ui/flash"}}{{with .Flash}}<div class="flash {{.Kind}}" role="status"><strong>{{if eq .Kind "ok"}}Done{{else if eq .Kind "warn"}}Note{{else if eq .Kind "bad"}}Error{{else}}Info{{end}}</strong>{{.Text}}</div>{{end}}{{end}}
+
+{{define "ui/crumbs"}}{{if .Crumbs}}<nav aria-label="Breadcrumb"><ol class="crumbs">{{range .Crumbs}}{{if .URL}}<li><a href="{{.URL}}">{{.Text}}</a></li>{{else}}<li aria-current="page">{{.Text}}</li>{{end}}{{end}}</ol></nav>{{end}}{{end}}
+
+{{define "ui/csrf"}}<input type="hidden" name="_csrf" value="{{.CSRF}}">{{end}}
+
+{{define "ui/badge"}}<span class="badge {{.Kind}}">{{.Text}}</span>{{end}}
+
+{{define "ui/online"}}{{if .Online}}<span class="dot on">online{{if .Age}} <span class="muted">{{.Age}}</span>{{end}}</span>{{else}}<span class="dot off">offline{{if .Age}} <span class="muted">{{.Age}}</span>{{end}}</span>{{end}}{{end}}
+
+{{define "ui/time"}}<time datetime="{{.ISO}}" title="{{.ISO}}" data-rel>{{.Text}}</time>{{end}}
+
+{{define "ui/copy"}}<div class="copy-row"><pre class="codeblock" id="{{.ID}}">{{.Value}}</pre><button type="button" class="btn btn-secondary btn-sm copy-btn js-only" data-copy="{{.ID}}">{{if .Label}}{{.Label}}{{else}}Copy{{end}}</button></div>{{end}}
+
+{{define "ui/field-error"}}{{if .}}<p class="field-error">{{.}}</p>{{end}}{{end}}
+
+{{define "ui/empty"}}<div class="empty"><h3>{{.Title}}</h3><p>{{.Body}}</p>{{if .CLI}}<pre class="codeblock">{{.CLI}}</pre>{{end}}</div>{{end}}
+
+{{define "ui/pager"}}<nav class="pager" aria-label="Paging">{{if .NewerURL}}<a class="btn btn-quiet btn-sm" href="{{.NewerURL}}">Newer</a>{{else}}<span></span>{{end}}{{if .OlderURL}}<a class="btn btn-quiet btn-sm" href="{{.OlderURL}}">Older</a>{{end}}</nav>{{end}}
+
+{{define "ui/countdown"}}<span class="countdown" data-countdown="{{.Seconds}}" data-expired-text="expired">{{.Seconds}}s</span>{{end}}

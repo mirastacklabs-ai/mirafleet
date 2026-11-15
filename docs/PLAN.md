@@ -70,7 +70,8 @@ design: [ARCHITECTURE.md](ARCHITECTURE.md#workspace-mode). The "M3 done when" sc
   cannot run actions.
 
 ## M5 — Orchestrator
-**Status: built; closing hardening and docs in progress.** Detailed plan, decisions and steps:
+**Status: done (14 Nov 2026).** The Claude Code smoke test (S17) runs in the full-product test
+after M6. Detailed plan, decisions and steps:
 [M5.md](M5.md) (approved 13 Nov 2026; Q1-Q6 resolved there).
 - `mirafleet mcp` stdio server on go-sdk v1.8.0 with nine tools (`list_fleets`, `list_runners`,
   `run_action`, `workspace_open`, `exec`, `read_file`, `write_file`, `workspace_close`,

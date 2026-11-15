@@ -115,6 +115,12 @@ func LocalAdmin(uid int) Principal {
 	return Principal{Kind: KindAdmin, Name: "uid:" + strconv.Itoa(uid), Remote: "local"}
 }
 
+// GUIAdmin is the principal for the web admin GUI. remote is the TCP peer ip:port. The policy
+// is the same as for LocalAdmin; the service source (SourceGUI) tells the two apart.
+func GUIAdmin(username, remote string) Principal {
+	return Principal{Kind: KindAdmin, Name: username, Remote: remote}
+}
+
 const (
 	extKind   = "mirafleet-kind"
 	extID     = "mirafleet-id"

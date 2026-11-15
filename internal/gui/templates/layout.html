@@ -1,0 +1,45 @@
+{{define "layout"}}<!doctype html>
+<html lang="en" data-theme="{{.Theme}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"historyCacheSize":0,"refreshOnHistoryMiss":true,"selfRequestsOnly":true,"defaultSwapStyle":"outerHTML","responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+<title>{{.Title}} - mirafleet</title>
+<link rel="stylesheet" href="{{asset "app.css"}}">
+<script src="{{asset "vendor/htmx.min.js"}}" defer></script>
+<script src="{{asset "app.js"}}" defer></script>
+</head>
+<body hx-headers='{"X-CSRF-Token":"{{.CSRF}}"}'>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="progress htmx-indicator" id="progress" aria-hidden="true"></div>
+<header class="site-header">
+<div class="header-inner">
+<a class="brand" href="/">{{template "ui/mark" .}}<span class="brand-name">MIRAFLEET</span><span class="brand-by">BY MIRASTACK LABS</span></a>
+{{if .Authed}}<nav class="nav-wide" aria-label="Main">{{template "ui/nav-links" .}}</nav>
+<span class="header-spacer"></span>
+<div class="header-tools">
+<form method="post" action="/logout">{{template "ui/csrf" .}}<button class="btn btn-secondary btn-sm" type="submit">Sign out</button></form>
+</div>
+<details class="menu"><summary>Menu</summary><nav aria-label="Main (menu)">{{template "ui/nav-links" .}}</nav></details>{{end}}
+</div>
+</header>
+<div class="flash-region" id="flash" aria-live="polite">{{template "ui/flash" .}}</div>
+<main id="main" tabindex="-1">
+{{template "content" .}}
+</main>
+<footer class="site-footer">
+<div class="footer-inner">
+<span>mirafleet {{.Version}}</span>
+{{if .RequestID}}<span>request {{.RequestID}}</span>{{end}}
+<span class="header-spacer"></span>
+{{if .Authed}}<form class="row" method="post" action="/account/theme">{{template "ui/csrf" .}}<span class="label">Theme</span>
+<button class="btn btn-quiet btn-sm" type="submit" name="theme" value="light"{{if eq .Theme "light"}} aria-pressed="true"{{end}}>Light</button>
+<button class="btn btn-quiet btn-sm" type="submit" name="theme" value="dark"{{if eq .Theme "dark"}} aria-pressed="true"{{end}}>Dark</button>
+<button class="btn btn-quiet btn-sm" type="submit" name="theme" value="system"{{if eq .Theme "system"}} aria-pressed="true"{{end}}>System</button></form>{{end}}
+</div>
+</footer>
+</body>
+</html>
+{{end}}
