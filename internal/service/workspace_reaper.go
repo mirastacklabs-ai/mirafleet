@@ -146,6 +146,7 @@ func (s *Service) ReapOnce(ctx context.Context) {
 	// every goroutine has finished (RunReaper's "stops before store close" guarantee).
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, reapParallel)
+	launched := map[int64]bool{}
 	for _, si := range s.live.Snapshot() {
 		if ctx.Err() != nil {
 			break
@@ -153,6 +154,7 @@ func (s *Service) ReapOnce(ctx context.Context) {
 		if !si.Online {
 			continue
 		}
+		launched[si.ID] = true
 		sem <- struct{}{}
 		wg.Add(1)
 		go func(runnerID int64) {
@@ -163,6 +165,22 @@ func (s *Service) ReapOnce(ctx context.Context) {
 		}(si.ID)
 	}
 	wg.Wait()
+	// F-48: stale rows of runners that were offline (or never reached) get a destroy row too.
+	for id, rows := range stale {
+		if !launched[id] {
+			s.auditStaleSkipped(ctx, rows, "stale opening: runner offline; reconcile will retry")
+		}
+	}
+}
+
+// auditStaleSkipped writes the workspace.destroy row (outcome error) for stale rows whose
+// container could not be destroyed this sweep (F-48).
+func (s *Service) auditStaleSkipped(ctx context.Context, rows []store.Workspace, msg string) {
+	for _, w := range rows {
+		ev := s.sysEvent(actionDestroy, w, msg)
+		ev.Outcome = OutcomeError
+		s.recordBestEffort(ctx, ev)
+	}
 }
 
 // reapParallel bounds the runners destroyed against concurrently; reapRunnerBudget bounds one
@@ -176,8 +194,9 @@ const (
 // of this runner just failed by failStaleOpening (F-28): their containers get a best-effort
 // destroy here, with the result audited.
 func (s *Service) reapRunner(ctx context.Context, runnerID int64, staleFailed []store.Workspace) {
-	for _, w := range staleFailed {
+	for i, w := range staleFailed {
 		if ctx.Err() != nil {
+			s.auditStaleSkipped(ctx, staleFailed[i:], "stale opening: sweep budget exhausted; reconcile will retry")
 			return
 		}
 		ev := s.sysEvent(actionDestroy, w, "stale opening: destroyed")

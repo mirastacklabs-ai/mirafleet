@@ -1,0 +1,40 @@
+# Text is LF in the repository and in every checkout (F-45): the integrations tests compare file
+# bytes and break on a CRLF checkout (Windows CI, core.autocrlf=true).
+* text=auto eol=lf
+
+*.go text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.sql text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.svg text eol=lf
+*.txt text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+
+# Binary: never converted.
+*.woff2 binary
+*.woff binary
+*.ttf binary
+*.otf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.gz binary
+*.zip binary
+
+# Vendored assets are byte-exact and SHA-pinned in internal/gui/static/ASSETS.md: never normalise
+# line endings. These rules come after the extension rules above (last match wins). app.css, app.js
+# and favicon.svg stay LF-enforced by the rules above.
+internal/gui/static/LICENSES/** -text
+internal/gui/static/vendor/** -text
+# licenses/extra holds byte copies (Oswald-OFL.txt has CRLF) that relgen compares byte-for-byte.
+licenses/extra/** -text
