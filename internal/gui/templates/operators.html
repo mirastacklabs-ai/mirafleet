@@ -1,0 +1,55 @@
+{{/* Operators screen. Page.Data is operatorsData; .Data.View picks the body: list, rotate, revoke.
+Fragments: operators/code (the registration-code panel, the answer to the Show code POST; never
+polled, never served to a GET), operators/dialog (rotate and revoke confirmations). */}}
+{{define "content"}}<div class="container">
+{{if eq .Data.View "list"}}
+<header class="page-head"><div><h1>Operators</h1></div><div class="actions"><a class="btn btn-secondary" href="/operators/rotate">Rotate secret</a></div></header>
+<div class="stack">
+{{template "operators/code" .}}
+<section class="panel" aria-labelledby="op-list">
+<div class="panel-head"><h2 id="op-list">Registered operators</h2></div>
+{{if .Data.Rows}}<div class="scroll"><table class="data">
+<caption class="visually-hidden">Operators</caption>
+<thead><tr><th scope="col">Name</th><th scope="col">Fingerprint</th><th scope="col">Status</th><th scope="col">Registered</th><th scope="col">Last seen</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+<tbody>{{range .Data.Rows}}<tr><td class="mono">{{.Name}}</td><td class="mono clip" title="{{.Fingerprint}}">{{.Fingerprint}}</td><td>{{template "ui/badge" .Status}}</td><td class="nowrap">{{template "ui/time" .Registered}}</td><td class="nowrap">{{template "ui/time" .LastSeen}}</td><td class="row-actions">{{if .CanRevoke}}<a class="btn btn-danger btn-sm" href="{{.RevokeURL}}">Revoke</a>{{end}}</td></tr>{{end}}</tbody>
+</table></div>
+{{else}}{{template "ui/empty" .Data.Empty}}{{end}}
+</section>
+</div>
+{{else}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>{{.Title}}</h1></div></header>
+{{template "operators/dialog" .}}
+{{end}}
+</div>{{end}}
+
+{{define "operators/code"}}<section class="panel" id="operators-code" aria-labelledby="op-code">
+<div class="panel-head"><h2 id="op-code">Registration code</h2></div>
+<div class="panel-body stack">
+{{with .Data.Code}}<div class="secret-once">
+<p><strong>This code is valid for a short time and is not shown again.</strong> <span class="muted">Left:</span> {{template "ui/countdown" .}}</p>
+{{template "ui/copy" .CodeCopy}}
+<p class="hint">Central's host-key fingerprint. Check that the operator machine shows the same one:</p>
+{{template "ui/copy" .FPCopy}}
+<p class="hint">On the operator machine, pipe the code in:</p>
+{{template "ui/copy" .CmdCopy}}
+</div>
+<form method="post" action="/operators/code" hx-post="/operators/code" hx-target="#operators-code" hx-swap="outerHTML">{{template "ui/csrf" $}}<button class="btn btn-secondary" type="submit">Show the next code</button></form>
+{{else}}<p>The code is hidden. Showing it is recorded in the audit log, and it changes every minute.</p>
+<form method="post" action="/operators/code" hx-post="/operators/code" hx-target="#operators-code" hx-swap="outerHTML">{{template "ui/csrf" $}}<button class="btn" type="submit">Show code</button></form>{{end}}
+</div></section>{{end}}
+
+{{define "operators/dialog"}}{{if eq .Data.View "rotate"}}<div class="dialog" role="group" aria-labelledby="dlg-title" id="op-dialog">
+<div class="dialog-head"><h2 id="dlg-title">Rotate the registration secret</h2></div>
+<form class="dialog-body" method="post" action="{{.Data.Action}}">
+{{template "ui/csrf" .}}
+<ul class="effects"><li>Every code shown so far stops working, including one an operator is about to use.</li><li>Operators that are already registered are not affected.</li><li>The rotation is recorded in the audit log.</li></ul>
+<div class="form-actions"><button class="btn" type="submit">Rotate secret</button><a class="btn btn-quiet" href="{{.Data.CancelU}}">Cancel</a></div>
+</form></div>
+{{else}}<div class="dialog danger" role="group" aria-labelledby="dlg-title" id="op-dialog">
+<div class="dialog-head"><h2 id="dlg-title">Revoke operator {{.Data.Name}}</h2></div>
+<form class="dialog-body" method="post" action="{{.Data.Action}}" hx-post="{{.Data.Action}}" hx-target="#op-dialog" hx-swap="outerHTML">
+{{template "ui/csrf" .}}
+<ul class="effects"><li>Its connections to central are dropped.</li><li>Commands it is running are cancelled.</li><li>Its workspaces are closed and reaped.</li><li>It cannot register again with the same key.</li></ul>
+<div class="field{{if .Data.Err}} has-error{{end}}"><label for="revoke-confirm">Type <code>{{.Data.Name}}</code> to confirm</label><input type="text" id="revoke-confirm" name="confirm" value="{{.Data.Typed}}" autocomplete="off"{{if .Data.Err}} aria-invalid="true"{{end}}>{{template "ui/field-error" .Data.Err}}</div>
+<div class="form-actions"><button class="btn btn-danger" type="submit">Revoke operator</button><a class="btn btn-quiet" href="{{.Data.CancelU}}">Cancel</a></div>
+</form></div>{{end}}{{end}}

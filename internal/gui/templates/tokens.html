@@ -1,0 +1,68 @@
+{{/* Join tokens screens. Page.Data is tokensData; .Data.View picks the page body (list, new,
+result, revoke). Fragments: tokens/list, tokens/form, tokens/result, tokens/revoke. The token is
+printed only in tokens/result, the direct response of the create POST (Cache-Control: no-store). */}}
+{{define "content"}}<div class="container">
+{{if eq .Data.View "list"}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>Join tokens</h1></div><div class="actions"><a class="btn" href="/tokens/new">New join token</a></div></header>
+{{template "tokens/list" .}}
+{{else if eq .Data.View "new"}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>New join token</h1></div></header>
+{{template "tokens/form" .}}
+{{else if eq .Data.View "result"}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>{{if .Data.Res.Replay}}Join token{{else}}Join token created{{end}}</h1></div></header>
+{{template "tokens/result" .}}
+{{else if eq .Data.View "revoke"}}
+<header class="page-head"><div>{{template "ui/crumbs" .}}<h1>Revoke join token</h1></div></header>
+{{template "tokens/revoke" .}}
+{{end}}
+</div>{{end}}
+
+{{define "tokens/list"}}<section class="panel" id="tokens-list" aria-label="Join tokens">
+<form class="filters" method="get" action="/tokens">
+<div class="field"><label for="t-fleet">Fleet</label><select id="t-fleet" name="fleet"><option value="">All fleets</option>{{$ff := .Data.FFleet}}{{range .Data.Fleets}}<option value="{{.}}"{{if eq . $ff}} selected{{end}}>{{.}}</option>{{end}}</select></div>
+<div class="choice"><input type="checkbox" id="t-finished" name="finished" value="1"{{if .Data.ShowFinished}} checked{{end}}><label for="t-finished">Show finished (used up, expired, revoked)</label></div>
+<div class="form-actions"><button class="btn btn-secondary btn-sm" type="submit">Filter</button><a class="btn btn-quiet btn-sm" href="/tokens">Reset</a></div>
+</form>
+{{if .Data.Rows}}<div class="scroll"><table class="data">
+<caption class="visually-hidden">Join tokens</caption>
+<thead><tr><th scope="col">Token</th><th scope="col">Fleet</th><th scope="col">Labels</th><th scope="col">Auto-approve</th><th scope="col" class="num">Uses</th><th scope="col">Expires</th><th scope="col">State</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+<tbody>{{range .Data.Rows}}<tr><td class="mono">{{.ID}}</td><td class="mono">{{.Fleet}}</td><td>{{range .Labels}}<span class="chip" title="{{.}}">{{.}}</span> {{end}}</td><td>{{if .Auto}}yes{{else}}no{{end}}</td><td class="num mono">{{.Uses}}</td><td>{{template "ui/time" .Expires}}</td><td><span class="badge {{.Kind}}">{{.State}}</span></td><td class="row-actions">{{if .RevokeURL}}<a class="btn btn-quiet btn-sm" href="{{.RevokeURL}}">Revoke...</a>{{end}}</td></tr>{{end}}</tbody>
+</table></div>
+{{else if .Data.NoMatch}}<div class="empty"><h3>No usable tokens</h3><p>Every token here is used up, expired or revoked. Tick "Show finished" to see them.</p></div>
+{{else}}<div class="empty"><h3>No join tokens yet</h3><p>A runner needs a join token to enrol.</p><pre class="codeblock">mirafleet central token create -fleet NAME</pre><p><a class="btn" href="/tokens/new">New join token</a></p></div>{{end}}
+</section>{{end}}
+
+{{define "tokens/form"}}{{if .Data.NoFleets}}<div class="empty"><h3>No fleets yet</h3><p>A join token belongs to a fleet. Create a fleet first.</p><p><a class="btn" href="/fleets/new">New fleet</a></p></div>
+{{else}}<form class="form" id="token-form" method="post" action="/tokens">
+{{template "ui/csrf" .}}<input type="hidden" name="nonce" value="{{.Data.Nonce}}">
+{{if .Data.Errs.form}}<p class="field-error" role="alert">{{.Data.Errs.form}}</p>{{end}}
+<div class="panel"><div class="panel-body stack">
+<div class="field{{if .Data.Errs.fleet}} has-error{{end}}"><label for="tk-fleet">Fleet</label><select id="tk-fleet" name="fleet"{{if .Data.Errs.fleet}} aria-invalid="true"{{end}}>{{range .Data.FleetOpt}}<option value="{{.Value}}"{{if .Sel}} selected{{end}}>{{.Label}}</option>{{end}}</select>{{template "ui/field-error" .Data.Errs.fleet}}</div>
+<div class="field{{if .Data.Errs.labels}} has-error{{end}}"><label for="tk-labels">Labels</label><textarea id="tk-labels" name="labels" rows="3" autocomplete="off"{{if .Data.Errs.labels}} aria-invalid="true"{{end}}>{{.Data.Labels}}</textarea><p class="hint">One key=value per line. The runner gets these as trusted labels.</p>{{template "ui/field-error" .Data.Errs.labels}}</div>
+<div class="choice"><input type="checkbox" id="tk-approve" name="approve" value="1"{{if .Data.Approve}} checked{{end}}><label for="tk-approve">Auto-approve: a runner joining with this token is active at once</label></div>
+<div class="field{{if .Data.Errs.uses}} has-error{{end}}"><label for="tk-uses">Uses</label><input type="text" inputmode="numeric" id="tk-uses" name="uses" value="{{.Data.Uses}}" autocomplete="off" maxlength="4"{{if .Data.Errs.uses}} aria-invalid="true"{{end}}><p class="hint">How many runners may join with it (1 to 1000).</p>{{template "ui/field-error" .Data.Errs.uses}}</div>
+<div class="field{{if .Data.Errs.ttl}} has-error{{end}}"><label for="tk-ttl">Valid for</label><select id="tk-ttl" name="ttl"{{if .Data.Errs.ttl}} aria-invalid="true"{{end}}>{{range .Data.TTLOpt}}<option value="{{.Value}}"{{if .Sel}} selected{{end}}>{{.Label}}</option>{{end}}</select>{{template "ui/field-error" .Data.Errs.ttl}}</div>
+</div></div>
+<div class="form-actions"><button class="btn" type="submit">Create token</button><a class="btn btn-quiet" href="/tokens">Cancel</a></div>
+</form>{{end}}{{end}}
+
+{{define "tokens/result"}}{{with .Data.Res}}{{if .Replay}}<div class="flash warn" role="status"><strong>Note</strong>This token was already created. It is not shown again.</div>
+<p><a class="btn btn-secondary" href="/tokens">Back to join tokens</a></p>
+{{else}}<div class="secret-once" role="group" aria-labelledby="tk-once">
+<h2 id="tk-once">Copy this token now</h2>
+<p>It cannot be shown again. Leave this page and it is gone; create another token if you lose it.</p>
+{{template "ui/copy" .Copy}}
+<dl class="kv"><dt>Token id</dt><dd class="mono">{{.ID}}</dd><dt>Fleet</dt><dd class="mono">{{.Fleet}}</dd><dt>Uses</dt><dd>{{.Uses}}</dd><dt>Expires</dt><dd>{{template "ui/time" .Expires}}</dd></dl>
+<h3>Run on the runner</h3>
+<p>Run this command, replace NAME, then paste the token on standard input.</p>
+<pre class="codeblock">{{.Command}}</pre>
+</div>
+<p><a class="btn btn-secondary" href="/tokens">Back to join tokens</a></p>{{end}}{{end}}{{end}}
+
+{{define "tokens/revoke"}}<div class="dialog" role="group" aria-labelledby="tr-title" id="token-revoke">
+<div class="dialog-head"><h2 id="tr-title">Revoke join token {{.Data.TokenID}}</h2></div>
+<form class="dialog-body" method="post" action="{{.Data.ActionURL}}">
+{{template "ui/csrf" .}}
+<ul class="effects"><li>No runner can join with this token any more.</li><li>Runners that already joined with it are not affected.</li></ul>
+<div class="form-actions"><button class="btn btn-danger" type="submit">Revoke token</button><a class="btn btn-quiet" href="/tokens">Cancel</a></div>
+</form></div>{{end}}

@@ -172,17 +172,3 @@ func TestCentralGUIOff(t *testing.T) {
 		t.Fatal("gui dir created with the GUI off")
 	}
 }
-
-func TestWriteSetupTokenReplacesStale(t *testing.T) {
-	data := centralTestDir(t)
-	if _, err := writeSetupToken(data, "mfs1.old"); err != nil {
-		t.Fatal(err)
-	}
-	p, err := writeSetupToken(data, "mfs1.new")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(p); strings.TrimSpace(string(b)) != "mfs1.new" {
-		t.Fatalf("token file: %q", b)
-	}
-}

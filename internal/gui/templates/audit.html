@@ -1,0 +1,41 @@
+{{/* Audit screen. Page.Data is auditData. Fragment: audit/list (filters, table, pager; the htmx swap target). */}}
+{{define "content"}}<div class="container">
+<header class="page-head"><div><h1>Audit</h1></div>
+<div class="actions"><a class="btn btn-secondary" href="{{.Data.ExportCSV}}" download>Export CSV</a><a class="btn btn-secondary" href="{{.Data.ExportJSONL}}" download>Export JSON Lines</a></div></header>
+<p class="hint">Exports cover the current filter, oldest first, at most {{.Data.ExportCap}} rows.</p>
+{{template "audit/list" .}}
+</div>{{end}}
+
+{{define "audit/list"}}<section class="panel" id="audit-list" aria-label="Audit log">
+<form class="filters" method="get" action="/audit" hx-get="/audit" hx-target="#audit-list" hx-swap="outerHTML" hx-push-url="true">
+{{with .Data}}
+<div class="field{{if .Q.Errs.from}} has-error{{end}}"><label for="a-from">From (UTC)</label><input type="text" id="a-from" name="from" value="{{.Q.From}}" placeholder="2026-11-14T09:30" autocomplete="off"{{if .Q.Errs.from}} aria-invalid="true"{{end}}>{{template "ui/field-error" .Q.Errs.from}}</div>
+<div class="field{{if .Q.Errs.to}} has-error{{end}}"><label for="a-to">To (UTC)</label><input type="text" id="a-to" name="to" value="{{.Q.To}}" placeholder="2026-11-14" autocomplete="off"{{if .Q.Errs.to}} aria-invalid="true"{{end}}>{{template "ui/field-error" .Q.Errs.to}}</div>
+<div class="field{{if .Q.Errs.fleet}} has-error{{end}}"><label for="a-fleet">Fleet</label><input type="text" id="a-fleet" name="fleet" value="{{.Q.Fleet}}" autocomplete="off">{{template "ui/field-error" .Q.Errs.fleet}}</div>
+<div class="field{{if .Q.Errs.runner}} has-error{{end}}"><label for="a-runner">Runner</label><input type="text" id="a-runner" name="runner" value="{{.Q.Runner}}" autocomplete="off">{{template "ui/field-error" .Q.Errs.runner}}</div>
+<div class="field{{if .Q.Errs.actor}} has-error{{end}}"><label for="a-actor">Actor</label><input type="text" id="a-actor" name="actor" value="{{.Q.Actor}}" autocomplete="off">{{template "ui/field-error" .Q.Errs.actor}}</div>
+{{$src := .Q.Source}}<div class="field{{if .Q.Errs.source}} has-error{{end}}"><label for="a-source">Source</label><select id="a-source" name="source"><option value="">any</option>{{range .Sources}}<option value="{{.}}"{{if eq . $src}} selected{{end}}>{{.}}</option>{{end}}</select>{{template "ui/field-error" .Q.Errs.source}}</div>
+{{$out := .Q.Outcome}}<div class="field{{if .Q.Errs.outcome}} has-error{{end}}"><label for="a-outcome">Outcome</label><select id="a-outcome" name="outcome"><option value="">any</option>{{range .Outcomes}}<option value="{{.}}"{{if eq . $out}} selected{{end}}>{{.}}</option>{{end}}</select>{{template "ui/field-error" .Q.Errs.outcome}}</div>
+<div class="field{{if .Q.Errs.action}} has-error{{end}}"><label for="a-action">Action</label><input type="text" id="a-action" name="action" value="{{.Q.Action}}" placeholder="runner." autocomplete="off">{{template "ui/field-error" .Q.Errs.action}}<div class="choice"><input type="checkbox" id="a-prefix" name="prefix" value="1"{{if .Q.Prefix}} checked{{end}}><label for="a-prefix">Prefix match (always on when it ends with a dot)</label></div></div>
+<div class="field{{if .Q.Errs.workspace}} has-error{{end}}"><label for="a-workspace">Workspace</label><input type="text" id="a-workspace" name="workspace" value="{{.Q.Workspace}}" autocomplete="off">{{template "ui/field-error" .Q.Errs.workspace}}</div>
+<div class="field{{if .Q.Errs.request}} has-error{{end}}"><label for="a-request">Request id</label><input type="text" id="a-request" name="request" value="{{.Q.Request}}" autocomplete="off">{{template "ui/field-error" .Q.Errs.request}}</div>
+<div class="form-actions"><button class="btn" type="submit">Filter</button>{{if .Filtered}}<a class="btn btn-quiet" href="/audit">Clear</a>{{end}}</div>
+{{end}}
+</form>
+{{if .Data.Invalid}}<div class="empty"><h3>Fix the filter</h3><p>A filter value above is not valid, so no rows are shown.</p></div>
+{{else if .Data.Rows}}<div class="scroll"><table class="data">
+<caption class="visually-hidden">Audit rows, newest first</caption>
+<thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">Action</th><th scope="col">Subject</th><th scope="col">Outcome</th><th scope="col">Details</th></tr></thead>
+<tbody>{{range .Data.Rows}}<tr><td class="nowrap">{{template "ui/time" .Time}}</td><td class="mono clip" title="{{.Actor}}">{{.Actor}} <span class="muted">{{.Source}}</span></td><td class="mono">{{.Action}}</td><td class="mono clip" title="{{.Target}}">{{.Target}}</td><td>{{template "ui/badge" .Badge}}</td>
+<td><details><summary>Row {{.ID}}</summary><dl class="kv">
+<dt>Actor kind</dt><dd class="mono">{{.ActorKind}}</dd>
+{{range .Details}}<dt>{{.K}}</dt><dd class="mono">{{.V}}</dd>
+{{end}}{{if .HasMessage}}<dt>Message</dt><dd>{{.Message}}</dd>
+{{end}}{{if .ExitCode}}<dt>Exit code</dt><dd class="mono">{{.ExitCode}}</dd>
+{{end}}<dt>Duration</dt><dd class="mono">{{.Dur}}</dd>
+{{if .HasRequest}}<dt>Request id</dt><dd class="mono">{{.RequestID}} <a href="{{.RequestURL}}">same request</a></dd>
+{{end}}</dl></details></td></tr>{{end}}</tbody>
+</table></div>
+{{template "ui/pager" .Data.Pager}}
+{{else}}{{template "ui/empty" .Data.Empty}}{{end}}
+</section>{{end}}

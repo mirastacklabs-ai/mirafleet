@@ -250,7 +250,7 @@ func capital(s string) string {
 // wsForm holds the workspace fields as typed text, so a rejected form is shown back as typed.
 type wsForm struct {
 	Executor, Image, Images, Pull, Network, Egress, CPUs, Memory, Pids, Tmpfs, Disk string
-	IdleTTL, MaxTTL, ExecDefault, ExecMax                                            string
+	IdleTTL, MaxTTL, ExecDefault, ExecMax                                           string
 }
 
 func wsFormFromConfig(c store.WorkspaceConfig) wsForm {
@@ -264,7 +264,9 @@ func wsFormFromConfig(c store.WorkspaceConfig) wsForm {
 	}
 }
 
-func defaultWSForm() wsForm { return wsFormFromConfig(service.WorkspaceDefaults(store.WorkspaceConfig{})) }
+func defaultWSForm() wsForm {
+	return wsFormFromConfig(service.WorkspaceDefaults(store.WorkspaceConfig{}))
+}
 
 func wsFormFromValues(v url.Values) wsForm {
 	g := func(k string) string { return strings.TrimSpace(v.Get(k)) }

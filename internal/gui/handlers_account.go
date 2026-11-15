@@ -13,9 +13,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 )
 
-// timeView feeds the ui/time partial.
-type timeView struct{ ISO, Text string }
-
+// viewTime renders an absolute UTC time for the ui/time partial (timeView is in handlers_fleets.go).
 func viewTime(t time.Time) timeView {
 	t = t.UTC()
 	return timeView{ISO: t.Format(time.RFC3339), Text: t.Format("2006-01-02 15:04") + " UTC"}

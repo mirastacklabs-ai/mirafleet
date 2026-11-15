@@ -5,14 +5,10 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -120,15 +116,11 @@ func startGUI(ctx context.Context, data string, svc *service.Service, o guiOptio
 	if err != nil {
 		return nil, err
 	}
-	tok, created, err := svc.EnsureGUISetup(ctx)
+	path, created, err := srv.PrepareSetup(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("gui setup: %w", err)
 	}
 	if created {
-		path, err := writeSetupToken(data, tok)
-		if err != nil {
-			return nil, fmt.Errorf("write GUI setup token: %w", err)
-		}
 		lg("GUI setup: no admin account yet. The one-time setup token (valid 24h) is in %s; open the GUI URL below and paste it.", path)
 	}
 	if err := srv.Start(); err != nil {
@@ -148,33 +140,4 @@ func (g *runningGUI) stop() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = g.srv.Shutdown(ctx)
-}
-
-// writeSetupToken writes tok to <data>/gui/setup-token (dir 0700, file 0600, O_EXCL) through an
-// os.Root on the data dir, replacing a stale file from an expired token. It returns the path.
-func writeSetupToken(data, tok string) (string, error) {
-	root, err := os.OpenRoot(data)
-	if err != nil {
-		return "", err
-	}
-	defer root.Close()
-	if err := root.Mkdir("gui", 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
-		return "", err
-	}
-	const rel = "gui/setup-token"
-	if err := root.Remove(rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", err
-	}
-	f, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return "", err
-	}
-	if _, err := f.WriteString(tok + "\n"); err != nil {
-		f.Close()
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		return "", err
-	}
-	return filepath.Join(data, rel), nil
 }

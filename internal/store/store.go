@@ -280,7 +280,9 @@ type GUISession struct {
 // AuditFilter selects audit rows for QueryAudit. Zero fields match everything. String fields
 // are exact matches on their column (Action too, unless ActionPrefix). AfterID and BeforeID are
 // keyset bounds (id > AfterID, id < BeforeID); From and To bound the time inclusively. Desc
-// orders by id descending. Limit <= 0 means 100; it is capped at 1000.
+// orders by id descending. Limit <= 0 means 100; it is capped at 1000. Desc with AfterID returns
+// the newest rows overall, not the page just after AfterID: to page toward newer rows, query
+// ascending with AfterID and reverse the result.
 type AuditFilter struct {
 	AfterID, BeforeID int64
 	From, To          time.Time

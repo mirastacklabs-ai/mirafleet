@@ -44,11 +44,11 @@ func (s8Live) Exec(context.Context, int64, transport.ExecRequest) (*transport.Ex
 func (s8Live) Workspace(context.Context, int64, transport.WorkspaceRequest, io.Reader, io.Writer) (*transport.WorkspaceResult, error) {
 	return nil, nil
 }
-func (s8Live) Kick(int64, string)                       {}
-func (s8Live) Tombstone(int64)                          {}
-func (s8Live) ClearTombstone(int64)                     {}
-func (s8Live) SetStatus(int64, registry.Status) error   { return nil }
-func (s8Live) Snapshot() []registry.SessionInfo         { return nil }
+func (s8Live) Kick(int64, string)                     {}
+func (s8Live) Tombstone(int64)                        {}
+func (s8Live) ClearTombstone(int64)                   {}
+func (s8Live) SetStatus(int64, registry.Status) error { return nil }
+func (s8Live) Snapshot() []registry.SessionInfo       { return nil }
 
 type s8Conns struct{}
 
@@ -299,5 +299,141 @@ func TestFleetsCreate422CreatesNothing(t *testing.T) {
 	wantBody(t, h.post("/fleets", url.Values{"name": {"prod"}, "mode": {"actions"}}), 422, "A fleet with this name already exists")
 	if n := len(h.fleets()); n != 1 {
 		t.Fatalf("%d fleets, want 1", n)
+	}
+}
+
+func TestFleetGuardToggleOffNeedsName(t *testing.T) {
+	h := newS8(t)
+	h.post("/fleets", url.Values{"name": {"prod"}, "mode": {"actions"}, "guarded": {"1"}})
+
+	// The detail page offers the dialog as a plain link (works without JS).
+	wantBody(t, h.get("/fleets/prod"), 200, `href="/fleets/prod/guard"`)
+	wantBody(t, h.get("/fleets/prod/guard"), 200, `name="confirm"`, "Turn the guard off for prod")
+
+	for _, typed := range []string{"", "prd", "PROD"} {
+		wantBody(t, h.post("/fleets/prod/guard", url.Values{"to": {"off"}, "confirm": {typed}}), 422, "Type the fleet name exactly")
+		if f, _ := h.fleet("prod"); !f.Confirm {
+			t.Fatalf("guard turned off with confirm %q", typed)
+		}
+	}
+	rec := h.post("/fleets/prod/guard", url.Values{"to": {"off"}, "confirm": {"prod"}})
+	wantBody(t, h.follow(rec), 200, "Not guarded")
+	if f, _ := h.fleet("prod"); f.Confirm {
+		t.Fatal("guard still on")
+	}
+	// Turning it on needs no name.
+	rec = h.post("/fleets/prod/guard", url.Values{"to": {"on"}})
+	wantBody(t, h.follow(rec), 200, "Guarded")
+	if f, _ := h.fleet("prod"); !f.Confirm {
+		t.Fatal("guard not back on")
+	}
+	wantBody(t, h.post("/fleets/prod/guard", url.Values{"to": {"maybe"}}), 400)
+	if n := len(h.audit(api.MethodFleetSetConfirm)); n != 2 {
+		t.Errorf("confirm audit rows = %d, want 2", n)
+	}
+}
+
+func TestFleetWorkspaceEditRoundTrip(t *testing.T) {
+	h := newS8(t)
+	h.post("/fleets", wsValues(nil))
+	wantBody(t, h.get("/fleets/dev/workspace"), 200, `value="docker.io/library/debian:12"`, `value="4GiB"`)
+
+	rec := h.post("/fleets/dev/workspace", wsValues(map[string]string{"memory": "2GiB", "cpus": "1", "idle_ttl": "30m"}))
+	wantBody(t, h.follow(rec), 200, "2GiB")
+	f, err := h.fleet("dev")
+	if err != nil || f.Workspace.MemoryMB != 2048 || f.Workspace.CPUMilli != 1000 || f.Workspace.IdleTTL != 30*time.Minute {
+		t.Fatalf("saved = %+v %v", f.Workspace, err)
+	}
+	// The edit form shows the saved values.
+	wantBody(t, h.get("/fleets/dev/workspace"), 200, `value="2GiB"`, `value="30m"`)
+
+	// Bad input: 422, nothing changed.
+	wantBody(t, h.post("/fleets/dev/workspace", wsValues(map[string]string{"memory": "junk"})), 422, `class="field-error"`)
+	if g, _ := h.fleet("dev"); g.Workspace.MemoryMB != 2048 {
+		t.Error("config changed by a rejected edit")
+	}
+	// An actions fleet has no workspace settings.
+	h.post("/fleets", url.Values{"name": {"prod"}, "mode": {"actions"}})
+	if rec := h.get("/fleets/prod/workspace"); rec.Code != 404 && rec.Code != 400 {
+		t.Errorf("actions fleet workspace form status %d", rec.Code)
+	}
+	for _, e := range h.audit(api.MethodFleetWorkspaceSet) {
+		if e.Source != "gui" || e.Actor != s8User {
+			t.Errorf("audit row = %+v", e)
+		}
+	}
+}
+
+func TestFleetsCSRFAndAuth(t *testing.T) {
+	h := newS8(t)
+	// POST without a token is refused and creates nothing.
+	rec := h.do("POST", "/fleets", url.Values{"name": {"x"}, "mode": {"actions"}}, nil)
+	if rec.Code < 400 || len(h.fleets()) != 0 {
+		t.Fatalf("status %d, fleets %d", rec.Code, len(h.fleets()))
+	}
+	h.post("/fleets", url.Values{"name": {"prod"}, "mode": {"actions"}, "guarded": {"1"}})
+	rec = h.do("POST", "/fleets/prod/guard", url.Values{"to": {"off"}, "confirm": {"prod"}}, nil)
+	if rec.Code < 400 {
+		t.Fatalf("guard POST without token status %d", rec.Code)
+	}
+	if f, _ := h.fleet("prod"); !f.Confirm {
+		t.Fatal("guard changed without CSRF token")
+	}
+	// Signed out: redirected to login, not rendered.
+	h.tok = ""
+	if rec := h.get("/fleets"); rec.Code != http.StatusSeeOther && rec.Code != http.StatusUnauthorized {
+		t.Errorf("signed-out status %d", rec.Code)
+	}
+}
+
+func TestFleetsHostileDataInert(t *testing.T) {
+	h := newS8(t)
+	evil := `<script>alert(1)</script>`
+	h.post("/fleets", wsValues(map[string]string{"images": evil, "egress": evil}))
+	b := h.post("/fleets", wsValues(map[string]string{"images": evil})).Body.String()
+	if strings.Contains(b, evil) {
+		t.Error("raw script in 422 page")
+	}
+	// A hostile name is rejected by validation and echoed escaped.
+	b = h.post("/fleets", url.Values{"name": {`"><img src=x onerror=alert(1)>`}, "mode": {"actions"}}).Body.String()
+	if strings.Contains(b, "<img src=x") {
+		t.Error("raw markup echoed")
+	}
+	// Hostile text in the audit log shows on the overview inert.
+	h.post("/fleets", url.Values{"name": {"ok"}, "mode": {"actions"}})
+	b = wantBody(t, h.get("/"), 200)
+	for _, bad := range []string{"<script>alert", "onerror=", " onclick="} {
+		if strings.Contains(b, bad) {
+			t.Errorf("overview contains %q", bad)
+		}
+	}
+	if !strings.Contains(b, "fleet.create") {
+		t.Error("overview lacks the recent audit row")
+	}
+}
+
+func TestOverviewCountsAndPassive(t *testing.T) {
+	h := newS8(t)
+	wantBody(t, h.get("/"), 200, "Overview", "No runners waiting")
+	h.post("/fleets", url.Values{"name": {"prod"}, "mode": {"actions"}})
+	h.post("/fleets", wsValues(nil))
+	b := wantBody(t, h.get("/"), 200, "1 actions, 1 workspace", `hx-get="/overview/live"`, "fleet.create")
+	if strings.Contains(b, "<script>") || strings.Contains(b, "style=") || strings.Contains(b, "onclick=") {
+		t.Error("inline script or style on overview")
+	}
+
+	// The polled fragment has no layout and is authenticated as Passive.
+	h.spy.mu.Lock()
+	h.spy.passive = nil
+	h.spy.mu.Unlock()
+	fr := wantBody(t, h.do("GET", "/overview/live", nil, func(r *http.Request) { r.Header.Set("HX-Request", "true") }),
+		200, `id="overview-live"`)
+	if strings.Contains(fr, "<html") {
+		t.Error("fragment carries the full layout")
+	}
+	h.spy.mu.Lock()
+	defer h.spy.mu.Unlock()
+	if len(h.spy.passive) == 0 || !h.spy.passive[len(h.spy.passive)-1] {
+		t.Errorf("passive flags = %v", h.spy.passive)
 	}
 }

@@ -181,9 +181,15 @@ const guiPkg = "github.com/mirastacklabs-ai/mirafleet/internal/gui"
 
 // forbiddenForGUI lists what internal/gui must never import (docs/M4.md 2.1): the GUI talks to
 // central only through gui.Backend (*service.Service), never to the store, registry or SSH side.
-func forbiddenForGUI(pkg string) bool {
+// direct is true for its own imports; the transitive closure (through internal/service, which
+// legitimately uses internal/central/registry) only keeps SQLite, containerd and grpc out.
+func forbiddenForGUI(pkg string, direct bool) bool {
 	const mod = "github.com/mirastacklabs-ai/mirafleet/"
-	for _, p := range []string{"internal/store/sqlite", "internal/central", "internal/apiclient", "internal/orch", "internal/mcpserver"} {
+	paths := []string{"internal/store/sqlite"}
+	if direct {
+		paths = append(paths, "internal/central", "internal/apiclient", "internal/orch", "internal/mcpserver")
+	}
+	for _, p := range paths {
 		if pkg == mod+p || strings.HasPrefix(pkg, mod+p+"/") {
 			return true
 		}
@@ -197,9 +203,14 @@ func forbiddenForGUI(pkg string) bool {
 func TestGUIDeps(t *testing.T) {
 	requireGo(t)
 	for _, goos := range []string{"linux", "darwin", "windows"} {
+		for _, dep := range goListPkgs(t, goos, "amd64", "-f", `{{join .Imports "\n"}}`, "./../../internal/gui") {
+			if forbiddenForGUI(dep, true) {
+				t.Errorf("%s: internal/gui imports %s", goos, dep)
+			}
+		}
 		sawSelf, sawService := false, false
 		for _, dep := range goListPkgs(t, goos, "amd64", "-deps", "-f", "{{.ImportPath}}", "./../../internal/gui") {
-			if forbiddenForGUI(dep) {
+			if forbiddenForGUI(dep, false) {
 				t.Errorf("%s: internal/gui links %s", goos, dep)
 			}
 			sawSelf = sawSelf || dep == guiPkg

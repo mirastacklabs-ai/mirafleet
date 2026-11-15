@@ -242,15 +242,15 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 				s.Redirect(w, r, "/setup", "", "")
 				return
 			}
-			s.toLogin(w, r)
+			s.loginRedirect(w, r)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(WithSession(r.Context(), p, id)))
 	})
 }
 
-// toLogin sends the client to /login, carrying a local GET path as next.
-func (s *Server) toLogin(w http.ResponseWriter, r *http.Request) {
+// loginRedirect sends the client to /login, carrying a local GET path as next.
+func (s *Server) loginRedirect(w http.ResponseWriter, r *http.Request) {
 	target := "/login"
 	if r.Method == http.MethodGet && r.Header.Get("HX-Request") != "true" {
 		if u := r.URL.RequestURI(); u != "/" && localPath(u) {
