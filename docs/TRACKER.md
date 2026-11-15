@@ -27,7 +27,10 @@ Status: `done` · `running` · `next` · `waiting on user`.
 |---|---|
 | DCO sign-off for agent commits (M6.md §2.15) | decided 15 Nov 2026: `-s` as the user, no Claude trailer |
 | P1 repo side: rulesets, `release` environment, auto-merge, vulnerability reporting, homebrew-tap repo | done 15 Nov 2026 |
-| P1 accounts: Docker Hub token, npm org + trusted publishers, `HOMEBREW_TAP_TOKEN` (RELEASING.md §2) | waiting on user |
-| P2 rc tag (`v0.6.0-rc.1` failed `verify`, unbumped; rehearsal is `v0.6.0-rc.2`) → P3 approve rc jobs → P4 tag `v0.6.0` → P5 approve → P6 package visibility → P9–P12 directory, galleries, Docker OSS, one-pager | go-ahead given; approvals are the user's |
+| P1 Docker Hub: org `mirastack`, public repo `mirafleet`, `DOCKERHUB_USERNAME=mirastack` + `DOCKERHUB_TOKEN` (org access token, Image Push) | done 15 Nov 2026 |
+| P1 npm: org `mirastacklabs`, one-time `NPM_TOKEN` for the first publish, then trusted publishers on all 7 packages, then delete the token | user doing it (in progress) |
+| P1 `HOMEBREW_TAP_TOKEN` (fine-grained PAT, tap contents read/write) | waiting on user; needed before `v0.6.0` |
+| P2/P3 rehearsal `v0.6.0-rc.2` (run 43718452505): release published (pre-release), images pushed and verified; `npm` job failed `ENEEDAUTH` (no npm auth yet) | re-run `npm` after `NPM_TOKEN` is set |
+| P4 tag `v0.6.0` → P5 approve → P6 package visibility → P9–P12 directory, galleries, Docker OSS, one-pager | go-ahead given; approvals are the user's |
 | Full-product test: M4 GUI browser check, M5 S17, M7 S21 (Mac + Claude Code + VM with GitLab), quickstart, harness spot checks | after `v0.6.0` |
 | A week of own use, then launch posts (drafts on request) | after the test |
