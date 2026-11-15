@@ -29,7 +29,7 @@ mirafleet central runner approve uat/jump1
 mirafleet central operator code                  # rotating code, valid for 60 seconds
 
 # On the operator's machine
-echo "$REGISTRATION_CODE" | mirafleet mcp login central.example.com:2222 -name alice -code -
+echo "$REGISTRATION_CODE" | mirafleet mcp login central.example.com:2222 -name durga -code -
 mirafleet mcp api fleets.list
 mirafleet mcp api action.run '{"fleet":"uat","runner":"jump1","action":"hello"}'
 ```

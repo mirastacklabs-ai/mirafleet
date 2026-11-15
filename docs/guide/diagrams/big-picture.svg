@@ -45,7 +45,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <text x="30" y="175">LLM API key</text>
 <text x="30" y="192">operator ssh key</text>
 <text class="m" x="30" y="207">known_hosts (pins)</text>
-<text class="m" x="22" y="238">one laptop each: alice, bob</text>
+<text class="m" x="22" y="238">one laptop each: durga, kalyan</text>
 
 <!-- central -->
 <rect class="pn" x="330" y="56" width="190" height="290" rx="4"/>
@@ -64,7 +64,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- admin -->
 <rect class="pn" x="330" y="376" width="190" height="46" rx="4"/>
-<text x="342" y="396">admin CLI (Dana)</text>
+<text x="342" y="396">admin CLI (aarvee)</text>
 <text class="m" x="342" y="413">runs on central host</text>
 
 <!-- fleets -->
@@ -122,5 +122,5 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <g class="st" style="--i:3"><text x="10" y="512"><tspan class="b">3</tspan> Central checks the key and the policy against SQLite, then acts.</text></g>
 <g class="st" style="--i:4"><text x="10" y="532"><tspan class="b">4</tspan> Runners dial OUT to central (user runner). Nothing listens on a runner.</text></g>
 <g class="st" style="--i:5"><text x="10" y="552"><tspan class="b">5</tspan> Central sends work back down that same connection: exec@ (actions) or workspace@ (containers).</text></g>
-<g class="st" style="--i:6"><text x="10" y="572"><tspan class="b">6</tspan> Dana runs the admin CLI on central. It uses a local unix socket, never the network.</text></g>
+<g class="st" style="--i:6"><text x="10" y="572"><tspan class="b">6</tspan> aarvee runs the admin CLI on central. It uses a local unix socket, never the network.</text></g>
 </svg>

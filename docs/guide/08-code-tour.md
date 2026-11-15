@@ -596,7 +596,7 @@ a 5 s bound; `mcp_context.go` is `context list|use|remove`; `mcp_hook.go` hands 
 
 ## 8.4 Follow one request: `action.run`
 
-alice's agent runs this on her laptop. `prod` is a guarded fleet (created with `-confirm`), so
+durga's agent runs this on their laptop. `prod` is a guarded fleet (created with `-confirm`), so
 the call must carry `"confirm":"prod"`:
 
 ```bash
@@ -608,7 +608,7 @@ mirafleet mcp api action.run '{"fleet":"prod","runner":"db-1","action":"tail-log
 *Look at: the request goes down through central into the runner and back up; both audit rows
 (`start` and the outcome) share one `request_id`.*
 
-1. alice's agent calls `action.run` (`prod/db-1`, `tail-logs`, `lines=200`) through `mirafleet mcp`.
+1. durga's agent calls `action.run` (`prod/db-1`, `tail-logs`, `lines=200`) through `mirafleet mcp`.
 2. `mcp` sends one frame (4-byte length + JSON) on an `api@` channel. The operator method table routes it.
 3. `service.RunAction` checks policy, fleet mode, confirm "prod" (guarded fleet's name), runner active.
 4. The audit row "start" is written first. If that fails, nothing runs (fail closed).
@@ -622,7 +622,7 @@ mirafleet mcp api action.run '{"fleet":"prod","runner":"db-1","action":"tail-log
 
 The list below is the same journey with function names. Follow it with the files open.
 
-**On alice's laptop**
+**On durga's laptop**
 
 1. `main` in `cmd/mirafleet/main.go` sees `mcp` and calls `mcpMain`, which calls `mcpAPI`
    (`cmd/mirafleet/mcp_api.go`).
@@ -703,20 +703,20 @@ checks (policy, service rules, registry status, runner guard) for one command.
 
 ## 8.5 Follow a runner join
 
-Dana (the Acme admin) has created a token on central with
+aarvee (the MIRASTACK LABS admin) has created a token on central with
 `mirafleet central token create -fleet dev` and pipes it into `runner join` on `build-1`.
 
 ![Runner join: token, pinning, pending, approve](diagrams/runner-join.svg)
 
 *Look at: the host-key hash inside the token pins central before anything secret is sent.*
 
-1. Dana runs `token create` on central. It prints `mfj1.ID.SECRET.HASH` once (HASH pins central).
-2. Dana hands the token to the build-1 host by any channel, never through central.
+1. aarvee runs `token create` on central. It prints `mfj1.ID.SECRET.HASH` once (HASH pins central).
+2. aarvee hands the token to the build-1 host by any channel, never through central.
 3. `runner join` dials `:2222` as user `enroll`. A host key not matching HASH is refused (no TOFU).
 4. It sends one `join@mirafleet` frame: token, runner name, labels.
 5. `Store.Enroll`, one transaction: look up by ID, constant-time compare, check stale, insert.
 6. Status is `pending` (`active` only if the token auto-approves). The enroll connection closes.
-7. Dana runs `runner approve dev/build-1`: status becomes `active`.
+7. aarvee runs `runner approve dev/build-1`: status becomes `active`.
 8. The runner reconnects as user `runner` with its own key and sends heartbeats.
 
 ### In detail
@@ -776,7 +776,7 @@ Dana (the Acme admin) has created a token on central with
 
 ## 8.6 Follow a revoke
 
-Dana revokes `dev/build-1` while an action is running on it:
+aarvee revokes `dev/build-1` while an action is running on it:
 
 ```bash
 mirafleet central runner revoke dev/build-1
@@ -787,7 +787,7 @@ mirafleet central runner revoke dev/build-1
 *Look at: the tombstone and kick happen before the database commit, so nothing can slip through
 the gap.*
 
-1. Dana runs `central runner revoke dev/build-1`. The CLI sends `runner.lifecycle` (op `revoke`) over the admin socket.
+1. aarvee runs `central runner revoke dev/build-1`. The CLI sends `runner.lifecycle` (op `revoke`) over the admin socket.
 2. Tombstone: build-1's id goes into the registry, so no new session can slip in during the commit.
 3. Kick: the session context is cancelled and the runner's SSH connection is closed.
 4. In-flight action cancelled: the runner kills the process group; the outcome row says `cancelled`.
@@ -1068,16 +1068,16 @@ point of the three gates in [chapter 5](05-security.md#536-lifecycle-only-on-cen
 
 ## 8.9 Follow one `workspace.exec`
 
-alice's agent runs a command in the workspace it opened earlier. This is the M3 counterpart of
+durga's agent runs a command in the workspace it opened earlier. This is the M3 counterpart of
 section 8.4; read them side by side. Watch for two things that are new: the **body frame** is read
 late, and the runner **re-validates everything**.
 
-![alice's workspace.exec travelling through api@, the service checks, a start audit row, workspace@ to the runner, re-validation, container exec and an outcome audit row](diagrams/workspace-exec.svg)
+![durga's workspace.exec travelling through api@, the service checks, a start audit row, workspace@ to the runner, re-validation, container exec and an outcome audit row](diagrams/workspace-exec.svg)
 
 *Look at: the start audit row is written before the runner is contacted; the runner trusts nothing
 central sent.*
 
-1. alice's agent calls `workspace.exec` (argv `go test ./...`) through `mirafleet mcp`.
+1. durga's agent calls `workspace.exec` (argv `go test ./...`) through `mirafleet mcp`.
 2. One `api@` frame arrives; the method table routes it to `service.ExecWorkspace`.
 3. Operator, ownership (`not_found` for others), state `open`, argv, cwd, env (denylist), confirm and
    timeout are checked; then the `start` audit row is written FIRST. No row, no exec.
@@ -1088,7 +1088,7 @@ central sent.*
 6. The command runs inside the container as an unprivileged user, with no shell. Output is captured
    head and tail, trimmed to the budget; timeout or cancel sends SIGKILL.
 7. The runner writes one result frame: exit code, stdout, stderr, `truncated`, `timed_out`.
-8. Central writes the `outcome` audit row (same `request_id`) and replies to alice.
+8. Central writes the `outcome` audit row (same `request_id`) and replies to durga.
 
 ### In detail
 
@@ -1096,7 +1096,7 @@ central sent.*
 mirafleet mcp api workspace.exec '{"workspace":"3f9a6c1e5b7d4820a1c3e5f708192a4b","argv":["go","test","./..."],"cwd":"src","env":{"CI":"1"},"timeout_s":300}'
 ```
 
-**On alice's laptop** (`cmd/mirafleet/mcp_api.go`, `internal/apiclient/client.go`)
+**On durga's laptop** (`cmd/mirafleet/mcp_api.go`, `internal/apiclient/client.go`)
 
 1. `mcpAPI` parses `METHOD [JSON] [-in FILE] [-out FILE]`. For `workspace.exec`, `orch.CallLimit`
    computes the client deadline: `timeout_s` plus a 30 s margin, and when `timeout_s` is absent
@@ -1180,14 +1180,14 @@ The same skeleton serves `workspace.read_file` (the result frame, then the body 
 `workspace.write_file` (body read late, SHA-256 verified in the service before the start row).
 `workspace.open` has a different shape, because it has to *choose* a runner first:
 
-![alice's workspace.open: placement, sticky reuse, reserve, create on the runner](diagrams/workspace-open.svg)
+![durga's workspace.open: placement, sticky reuse, reserve, create on the runner](diagrams/workspace-open.svg)
 
 *Look at: the unique index makes the second `open` of `s1` return the same workspace.*
 
-1. alice's agent calls `workspace.open` (fleet `dev`, session `s1`) through `mirafleet mcp`.
+1. durga's agent calls `workspace.open` (fleet `dev`, session `s1`) through `mirafleet mcp`.
 2. The `api@` frame reaches `service.OpenWorkspace`: active operator, workspace-mode fleet, image on
    the allowlist, `confirm` on a guarded fleet, valid session id.
-3. Sticky reuse: a live workspace for (alice, `dev`, `s1`) is returned with `reused:true`. If its
+3. Sticky reuse: a live workspace for (durga, `dev`, `s1`) is returned with `reused:true`. If its
    runner is offline the answer is `unavailable`; a fresh workspace is never created elsewhere.
 4. Placement: active, online runners whose executor, trusted labels and image patterns fit, with
    free slots (heartbeat slots minus live rows). The most free slots wins, random tie-break.
@@ -1208,9 +1208,9 @@ The code for that picture: `OpenWorkspace` (checks, sticky `reuse`, the 3-try lo
 ## 8.10 Follow one `exec` tool call
 
 Section 8.9 started at `mirafleet mcp api`, the hand-driven way in. This is the same command from
-the real front door: Claude Code, with the plugin installed, running in alice's project. The
+the real front door: Claude Code, with the plugin installed, running in durga's project. The
 model has decided to call the `exec` tool with `{"command":"go test ./..."}`. The project's
-`.mirafleet.yaml` says `fleet: dev`; alice's `contexts.yaml` has one context, `work`, pointing at
+`.mirafleet.yaml` says `fleet: dev`; durga's `contexts.yaml` has one context, `work`, pointing at
 `central.example.com:2222`. No workspace is open yet.
 
 1. **Harness.** Claude Code asks its tool-approval prompt (and the plugin's `PreToolUse` hook
@@ -1274,7 +1274,7 @@ model has decided to call the `exec` tool with `{"command":"go test ./..."}`. Th
     "ask the user" text.
 12. The SDK writes one JSON line to stdout. Claude Code shows the tool result to the model. Nothing
     else was ever printed on stdout. On the other side, central's audit log has the `start` and
-    `outcome` rows with alice as the operator: it cannot tell (and does not need to tell) that the
+    `outcome` rows with durga as the operator: it cannot tell (and does not need to tell) that the
     command came from an agent rather than from `mirafleet mcp api`.
 
 What to look at first when debugging: `mirafleet mcp context list` and the `where` in the result

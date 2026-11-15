@@ -127,7 +127,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- steps -->
 <text class="h" x="10" y="368">Steps</text>
-<g class="st" style="--i:1"><text x="10" y="392"><tspan class="b">1</tspan> alice's agent calls action.run (prod/db-1, tail-logs, lines=200) through mirafleet mcp.</text></g>
+<g class="st" style="--i:1"><text x="10" y="392"><tspan class="b">1</tspan> durga's agent calls action.run (prod/db-1, tail-logs, lines=200) through mirafleet mcp.</text></g>
 <g class="st" style="--i:2"><text x="10" y="412"><tspan class="b">2</tspan> mcp sends one frame (4-byte length + JSON) on an api@ channel. The operator method table routes it.</text></g>
 <g class="st" style="--i:3"><text x="10" y="432"><tspan class="b">3</tspan> service.RunAction checks policy, fleet mode, confirm "prod" (guarded fleet's name), runner active.</text></g>
 <g class="st" style="--i:4"><text x="10" y="452"><tspan class="b">4</tspan> The audit row "start" is written first. If that fails, nothing runs (fail closed).</text></g>

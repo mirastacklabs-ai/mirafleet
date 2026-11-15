@@ -21,11 +21,11 @@
 
 ## 12.1 Why mirafleet exists
 
-Recall the problem from [chapter 1](01-what-is-mirafleet.md#11-the-problem): alice at Acme wants
+Recall the problem from [chapter 1](01-what-is-mirafleet.md#11-the-problem): durga at MIRASTACK LABS wants
 Claude Code to help run the `dev` and `prod` fleets. The two obvious ways to do that both have
 trouble.
 
-**Plain SSH.** Give the agent (or alice's laptop) a login on every server.
+**Plain SSH.** Give the agent (or durga's laptop) a login on every server.
 - Anything the agent can type, the server runs. A wrong guess or a prompt-injected log line
   (text in the data the agent reads that tricks it into following the text as an instruction)
   becomes `rm -rf`.
@@ -65,12 +65,12 @@ When Claude Code (or any agent) talks to a language model, it sends each request
 provider's web service. The request carries a secret string, the **API key**. The provider uses
 the key to decide who to bill, which models the caller may use and how fast it may call them.
 
-Whoever holds the key *is* you, as far as the provider is concerned. Acme's key is valuable
+Whoever holds the key *is* you, as far as the provider is concerned. MIRASTACK LABS's key is valuable
 because it gives:
 
-- **Billing.** Every token the key spends is charged to Acme's account.
-- **Model access.** Access to expensive models and to any special access Acme negotiated.
-- **Rate limits.** The key's quota is shared. An attacker using it can starve Acme's real work.
+- **Billing.** Every token the key spends is charged to MIRASTACK LABS's account.
+- **Model access.** Access to expensive models and to any special access MIRASTACK LABS negotiated.
+- **Rate limits.** The key's quota is shared. An attacker using it can starve MIRASTACK LABS's real work.
 - **Organisation data.** Depending on the provider's features, keys can reach stored files,
   fine-tuned models, conversation or usage history and org settings.
 
@@ -109,14 +109,14 @@ These rows describe the **typical setup** of each kind of tool, not something th
 | **MCP SSH servers** (ssh-mcp and similar) | On the agent host, with the harness. The same place as in mirafleet | Whatever compromises the agent host. The command guard also runs there, so the same compromise can switch the guard off |
 | **mirafleet** | With the harness, on the operator's own machine. Central, runners and workspaces **never receive it** | Only a compromise of the operator's machine. Even a fully compromised runner or sandbox cannot read it |
 
-Why mirafleet can do this: the model call happens in the harness (Claude Code) on alice's laptop.
+Why mirafleet can do this: the model call happens in the harness (Claude Code) on durga's laptop.
 What crosses to central is a small JSON request such as "run `tail-logs` on `db-1`", not a model
 request. Nothing on the server side needs the model key, so it is never sent. Workspace mode (M3,
 built) goes further, on **both** executors: a workspace is never handed credentials. The environment
 a command may carry is limited by an allowlist on the runner **and** a hard denylist (credential-
 looking names, proxy settings and code-injection variables; the source of truth is
 `workspace.EnvDenied`) that is enforced on central and again on the runner. The MCP server (M5)
-adds a third layer: it **forwards nothing** from its own environment, so a key in alice's shell
+adds a third layer: it **forwards nothing** from its own environment, so a key in durga's shell
 never reaches a workspace even by accident; the tests plant decoy keys to prove it. The
 agent's own process is not in the container at all. With the optional OpenSandbox executor,
 OpenSandbox's own API key stays on the runner host in a mode-0600 file, is never logged and never
@@ -140,7 +140,7 @@ See [chapter 5](05-security.md) for the details of each defence.
 ### Limits, stated plainly
 
 - If the **operator's laptop itself is compromised**, the AI API key is exposed. mirafleet cannot
-  prevent that, because the key lives there by design. What mirafleet adds is that Dana can
+  prevent that, because the key lives there by design. What mirafleet adds is that aarvee can
   revoke that operator on central at once, so the thief cannot use the laptop's mirafleet
   identity to touch the fleets. The AI key must still be **rotated with the provider**.
 - A compromised central weakens the central audit log and central revoke. The runner's own
@@ -152,7 +152,7 @@ See [chapter 5](05-security.md) for the details of each defence.
 
 ```mermaid
 flowchart LR
-    subgraph OP["alice's machine (operator)"]
+    subgraph OP["durga's machine (operator)"]
         H["Claude Code harness"]
         LK["AI API key"]
         OK["Operator private key"]
@@ -180,7 +180,7 @@ flowchart LR
     AY -.->|"guard checks every request"| R
 ```
 
-Look at the dotted lines and the subgraph boxes. The AI API key is drawn inside alice's box
+Look at the dotted lines and the subgraph boxes. The AI API key is drawn inside durga's box
 only. The arrows that leave it toward central carry requests, not the key. Nothing crosses the
 box around the sandbox with credentials, and every connection to central points toward central.
 
@@ -421,7 +421,7 @@ Researched 13 Nov 2026. Star counts are approximate and change daily.
 
 MIRASTACK LABS has spare servers and VMs sitting idle, and its engineers want to use them for AI
 coding sessions without handing out server logins or Git tokens. M7 is that case: durga's Claude
-Code stays on her Mac, raj's spare VM runs the tool calls, and aarvee's central holds the
+Code stays on durga's Mac, raj's spare VM runs the tool calls, and aarvee's central holds the
 credentials. Two other setups do the
 nearest job. This section compares them. **Statements about other products are general knowledge
 about how they usually work, not checked against their current documentation; verify before you
@@ -497,7 +497,7 @@ how your AI tool stores its API key. Sections 12.2 and 12.6 list how this chapte
 1. Why does a CI-style runner design fit an agent-driven fleet better than plain SSH?
 2. Name three ways an AI API key can leak, and say which ones mirafleet's design removes from
    the server side.
-3. alice's laptop is stolen. What does Dana do in mirafleet, and what must she still do outside
+3. durga's laptop is stolen. What does aarvee do in mirafleet, and what must they still do outside
    mirafleet?
 4. Give one reason ssh-mcp can be the better choice than mirafleet.
 5. Why is the command guard "on the node" a stronger place than on the agent host?
@@ -506,7 +506,7 @@ how your AI tool stores its API key. Sections 12.2 and 12.6 list how this chapte
    OpenSandbox does better.
 7. Name two features you give up by choosing the OpenSandbox executor, and say why the runner
    needs a TLS front in front of it.
-8. Both an MCP SSH server and `mirafleet mcp` run on alice's laptop, and a prompt-injected model
+8. Both an MCP SSH server and `mirafleet mcp` run on durga's laptop, and a prompt-injected model
    can drive either. Name two things that limit what a tricked model can do through mirafleet that
    do not depend on the laptop's MCP process being honest.
 9. Why does mirafleet's `exec` tool not count as "running a shell on the server"?
@@ -521,8 +521,8 @@ how your AI tool stores its API key. Sections 12.2 and 12.6 list how this chapte
    logs or crash dumps, a stolen laptop, malicious code in a sandbox. In mirafleet central,
    runners and workspaces never receive the key, so the first three cannot expose it from the
    server side. Only a compromise of the operator's own machine can.
-3. She revokes alice's operator key on central; it takes effect at once, including for
-   in-flight work, so the thief cannot drive the fleets. She must also rotate alice's AI API
+3. aarvee revokes durga's operator key on central; it takes effect at once, including for
+   in-flight work, so the thief cannot drive the fleets. aarvee must also rotate durga's AI API
    key with the model provider, because mirafleet cannot protect a key stored on the stolen
    machine.
 4. It needs nothing installed on the nodes, so it is simpler when every node is already
@@ -545,7 +545,7 @@ how your AI tool stores its API key. Sections 12.2 and 12.6 list how this chapte
    policy live on the node, which the laptop cannot change); central's checks (policy, ownership of
    workspaces, `confirm` on guarded fleets, the audit); the fixed operator-only tool table (no
    tool and no code path reaches approve, disable or revoke); instant revoke of the operator key.
-   The most a tricked model can do is what alice's operator key may do, and Dana can end that.
+   The most a tricked model can do is what durga's operator key may do, and aarvee can end that.
 9. The command runs inside a disposable container on a runner: an unprivileged user, no
    capabilities, a read-only root file system, limited resources and (by default) no network, with
    its own files deleted when the workspace closes. The shell is `sh` in the container image, not

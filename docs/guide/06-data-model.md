@@ -827,9 +827,9 @@ Where the config and state directories are on each OS is in the table in
 `context` of chapter 2). MIRASTACK LABS's version:
 
 ```yaml
-current: acme
+current: mirastack
 contexts:
-  - name: acme
+  - name: mirastack
     addr: central.example.com:2222
     default_fleet: dev        # optional
   - name: lab
@@ -849,7 +849,7 @@ repository targets the right fleet without being told:
 
 ```yaml
 fleet: dev
-context: acme
+context: mirastack
 ```
 
 Only those two keys exist, and `opconf.LoadProject` is strict about them (unknown keys, a symlink,
@@ -1021,7 +1021,7 @@ ciphertext, names, hosts, assignments and audit.
 5. You open the database with an older mirafleet binary after upgrading. What happens, and why is
    that better than letting it try?
 6. How does the database itself stop durga from holding two live workspaces for session `s1` on
-   `dev`? And can she use `s1` again after closing?
+   `dev`? And can durga use `s1` again after closing?
 7. A workspace row is `closing` and its runner is offline. Does it still count against the
    runner's slots? Why is that the right choice?
 8. Why does the audit table need a `workspace` column when `subject` already holds the session?

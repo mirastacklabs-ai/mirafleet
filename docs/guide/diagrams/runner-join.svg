@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 600" width="840" height="600" role="img" aria-labelledby="t d">
 <title id="t">Runner join: token, pinned enroll connection, pending, approve</title>
-<desc id="d">Dana, the admin, creates a join token, hands it to the runner host, the runner opens an enroll SSH connection that checks central's host key against the hash inside the token, sends a join frame, Store.Enroll inserts the runner as pending, Dana approves, and the runner reconnects as runner and heartbeats.</desc>
+<desc id="d">aarvee, the admin, creates a join token, hands it to the runner host, the runner opens an enroll SSH connection that checks central's host key against the hash inside the token, sends a join frame, Store.Enroll inserts the runner as pending, aarvee approves, and the runner reconnects as runner and heartbeats.</desc>
 <style>
 :root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
 @media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
@@ -43,7 +43,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- admin -->
 <rect class="pn" x="10" y="56" width="230" height="110" rx="4"/>
-<text class="h" x="22" y="78">Dana on central</text>
+<text class="h" x="22" y="78">aarvee on central</text>
 <text x="22" y="98">central token create</text>
 <text class="m" x="22" y="118">prints once:</text>
 <text class="b" x="22" y="136">mfj1.ID.SECRET.HASH</text>
@@ -120,12 +120,12 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- steps -->
 <text class="h" x="10" y="410">Steps</text>
-<g class="st" style="--i:1"><text x="10" y="434"><tspan class="b">1</tspan> Dana runs token create on central. It prints mfj1.ID.SECRET.HASH once (HASH pins central).</text></g>
-<g class="st" style="--i:2"><text x="10" y="454"><tspan class="b">2</tspan> Dana hands the token to the build-1 host by any channel, never through central.</text></g>
+<g class="st" style="--i:1"><text x="10" y="434"><tspan class="b">1</tspan> aarvee runs token create on central. It prints mfj1.ID.SECRET.HASH once (HASH pins central).</text></g>
+<g class="st" style="--i:2"><text x="10" y="454"><tspan class="b">2</tspan> aarvee hands the token to the build-1 host by any channel, never through central.</text></g>
 <g class="st" style="--i:3"><text x="10" y="474"><tspan class="b">3</tspan> runner join dials :2222 as user enroll. A host key not matching HASH is refused (no TOFU).</text></g>
 <g class="st" style="--i:4"><text x="10" y="494"><tspan class="b">4</tspan> It sends one join@mirafleet frame: token, runner name, labels.</text></g>
 <g class="st" style="--i:5"><text x="10" y="514"><tspan class="b">5</tspan> Store.Enroll, one transaction: look up by ID, constant-time compare, check stale, insert.</text></g>
 <g class="st" style="--i:6"><text x="10" y="534"><tspan class="b">6</tspan> Status is pending (active only if the token auto-approves). The enroll connection closes.</text></g>
-<g class="st" style="--i:7"><text x="10" y="554"><tspan class="b">7</tspan> Dana runs runner approve dev/build-1: status becomes active.</text></g>
+<g class="st" style="--i:7"><text x="10" y="554"><tspan class="b">7</tspan> aarvee runs runner approve dev/build-1: status becomes active.</text></g>
 <g class="st" style="--i:8"><text x="10" y="574"><tspan class="b">8</tspan> The runner reconnects as user runner with its own key and sends heartbeats.</text></g>
 </svg>

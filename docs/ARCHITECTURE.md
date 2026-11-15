@@ -517,7 +517,7 @@ mirafleet central runner approve uat/jump1                                # unle
 # on central, or in the GUI: current operator registration code (rotates every 60 s)
 mirafleet central operator code
 # operator, on their machine (code on stdin; pins central's host key from the code)
-mirafleet mcp login central.example.com:2222 -name alice -code -
+mirafleet mcp login central.example.com:2222 -name durga -code -
 ```
 
 Join tokens and registration codes are described under

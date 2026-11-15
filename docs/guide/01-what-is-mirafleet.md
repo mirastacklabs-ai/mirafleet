@@ -22,9 +22,15 @@ MIRASTACK LABS is a small company. It runs two groups of servers:
 - `prod`: the customer-facing machines, including a database server.
 
 Durga is a MIRASTACK LABS engineer. Durga uses **Claude Code**, an AI coding agent, to speed up the work.
-Today the agent edits code on her laptop. Durga would like it to do more: "restart the CI
+Today the agent edits code on their laptop. Durga would like it to do more: "restart the CI
 service on `build-1`", "tail the last 200 log lines on `db-1`", "build my branch on a dev
 machine and run the tests there".
+
+MIRASTACK LABS also has spare compute (servers and VMs) sitting idle, and it built mirafleet to
+put that compute to work for its engineers' AI coding sessions without compromising the security
+of those sessions and without sharing credentials: engineers never receive server credentials
+or Git tokens. Central holds them, assigns them to runners, and the runner-side guard and broker
+use them on the engineer's behalf.
 
 The simple way to allow that is to give the agent an SSH login (a remote shell: a text terminal
 on another machine, opened with a key) on every server.
@@ -121,9 +127,9 @@ ever reaches a runner directly.*
    local CLI, which talks to the running central through a private Unix socket.
 - A **runner** on `db-1` starts. It dials out to `central.example.com:2222` over SSH and keeps
    the connection open, sending a heartbeat (a small "I am alive" message) every 15 seconds.
-- An **operator**, durga's `mirafleet mcp`, also dials out to central over SSH, using her own
+- An **operator**, durga's `mirafleet mcp`, also dials out to central over SSH, using their own
    key.
-- Durga's agent asks central to run an action on `db-1`. Central checks her identity and the
+- Durga's agent asks central to run an action on `db-1`. Central checks their identity and the
    policy, writes the first audit row, and sends the request *down the runner's existing
    connection*.
 - The runner's guard checks the action against `actions.yaml`, runs it without a shell, and
@@ -213,7 +219,7 @@ a runner that actually runs the work) for workspace mode, called **host mode**.
 **The north star, in one sentence:** the AI model's inference (its "thinking") stays on Durga's
 Mac; every tool call (run a command, read a file, edit a file) runs on a remote VM through
 central; and the credentials (SSH keys, tokens) move from the Mac to central. Before M7, Durga's
-repo, her keys and Claude Code all sat on one laptop. After M7 the code and commands are on the
+repo, their keys and Claude Code all sat on one laptop. After M7 the code and commands are on the
 VM, the keys are on central, and the Mac holds nothing of the project.
 
 The MIRASTACK LABS story ([chapter 4](04-flows.md#24-open-a-host-workspace) tells it step by step):
@@ -226,7 +232,7 @@ The MIRASTACK LABS story ([chapter 4](04-flows.md#24-open-a-host-workspace) tell
    touch one repository) and a project access token, entered in the GUI's **Credentials** page
    or with `mirafleet central credential set`. aarvee then **assigns** them to `vm1-dev`. Nobody can read
    them back: the values are write-only.
-3. **Durga opens a project on her Mac** whose `.mirafleet.yaml` says `remote: true`. Claude Code
+3. **Durga opens a project on their Mac** whose `.mirafleet.yaml` says `remote: true`. Claude Code
    calls `workspace_open`, then `bash` with `git clone git@gitlab.example.com:mirastack/app.git`. The
    clone works, yet the key is nowhere on the VM's disk and the agent never sees it.
 4. **It edits and builds.** `edit`, `multi_edit`, `grep`, `glob` and `read` run on the VM and
@@ -280,7 +286,7 @@ flowchart TD
     A["aarvee (admin) on central:<br/>init, create fleet prod,<br/>create join token"]
     B["db-1 runner joins:<br/>pins central by the token,<br/>status = pending"]
     C["aarvee approves db-1:<br/>status = active"]
-    D["aarvee shows the registration code,<br/>durga registers her key"]
+    D["aarvee shows the registration code,<br/>durga registers their key"]
     E["Durga's Claude Code asks<br/>central to run an action on db-1"]
     F["Central: auth, policy, audit start,<br/>forward to runner"]
     G["Runner guard: allowlist, regex,<br/>run without a shell"]
@@ -307,7 +313,7 @@ In words:
    token*. It arrives as `pending`: connected, but unable to run anything.
 3. **Admin approves.** aarvee approves `prod/db-1`. It becomes `active`.
 4. **Operator registers.** aarvee reads the current registration code (valid for 60 seconds).
-   Durga pastes it into `mirafleet mcp login`. Her key is now an active operator key.
+   Durga pastes it into `mirafleet mcp login`. Their key is now an active operator key.
 5. **Claude runs an action.** Claude asks for `tail-logs` on `db-1`. Central checks, audits,
    forwards. The guard validates and runs it. The output comes back.
 6. **Admin revokes.** If `db-1` is decommissioned (or its key leaks), aarvee revokes it. The live
@@ -402,7 +408,7 @@ keys, SSH, HMAC, SQLite and Go contexts, skim its headings and move to
    and what happens if Durga opens the same session twice?
 7. Claude Code wants to run `go test ./...`. Which MCP tool does it call, and what does the
    tool send to central?
-8. Durga's `.mirafleet.yaml` says `remote: true`. Name three things that never happen on her Mac.
+8. Durga's `.mirafleet.yaml` says `remote: true`. Name three things that never happen on their Mac.
 9. In host mode, where is the GitLab deploy key stored, and can the agent read it?
 
 <details>

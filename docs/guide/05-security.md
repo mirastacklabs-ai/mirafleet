@@ -200,7 +200,7 @@ Imagine the buggy pattern: the callback stores the identity in a variable shared
 ("`currentUser = lookup(key)`") and the connection handler reads that variable later. An attacker
 who knows Durga's *public* key (public keys are not secrets) offers Durga's key first, so the
 callback runs for Durga, then actually authenticates with their own key. The server's variable
-still says "Durga". The attacker is now logged in as Durga without ever having her private key.
+still says "Durga". The attacker is now logged in as Durga without ever having durga's private key.
 That is **CVE-2024-45337** (2024), and it hit real products.
 
 mirafleet's rule: **identity travels only inside the `ssh.Permissions` value returned for the
@@ -591,7 +591,7 @@ read the registration code, add an action, or run anything outside `actions.yaml
 
 ## 5.7 Worked example: a leaked join token
 
-aarvee pastes a `prod` join token into a team chat. Someone copies it before she deletes the
+aarvee pastes a `prod` join token into a team chat. Someone copies it before aarvee deletes the
 message.
 
 - If aarvee already ran the join, the token is **used up** (single use): a second join gets
@@ -608,19 +608,19 @@ message.
 
 ## 5.8 Worked example: durga's laptop is stolen (a trace across the chapters)
 
-Durga's laptop is stolen. It holds her operator private key (`~/.config/mirafleet/`, mode `0600`,
+Durga's laptop is stolen. It holds their operator private key (`~/.config/mirafleet/`, mode `0600`,
 no passphrase). Follow what happens, chapter by chapter.
 
 1. **The thief's view (5.3.1).** The key file is a valid Ed25519 key for user
    `operator`. Until aarvee acts, the thief can dial central and call the ten operator methods (actions and
    workspaces), exactly like Durga's agent. That includes `workspace.list` and any workspace Durga
    still has open: the revoke closes those too (flow 18).
-2. **aarvee revokes (chapter 4).** On the central host she runs
+2. **aarvee revokes (chapter 4).** On the central host they run
    `mirafleet central operator revoke durga`. The CLI sends `operator.revoke` over the admin
    socket (chapter 7, 7.6).
 3. **Commit (chapter 6, 6.6 and 6.11).** `RevokeOperator` sets `status = revoked` and writes the
    audit row `operator.revoke` in **one transaction**, flushed to disk (`synchronous=FULL`). A
-   power cut right after still leaves her revoked.
+   power cut right after still leaves durga revoked.
 4. **Kick (5.3.14).** `KickOperator` closes every live SSH connection of `durga`. Each request
    context is tied to its connection, so an in-flight `action.run` is cancelled: the runner kills
    the process group and the audit outcome is `cancelled`.
@@ -628,7 +628,7 @@ no passphrase). Follow what happens, chapter by chapter.
    in the `operators` table, finds `revoked`, and answers the same opaque "access denied" as for
    an unknown key.
 6. **Durga comes back.** The stolen key can never return (its `pubkey` is `UNIQUE` over revoked
-   rows). On a new laptop she makes a new key and registers with a fresh code (the name `durga`
+   rows). On a new laptop durga makes a new key and registers with a fresh code (the name `durga`
    is free again, thanks to the partial unique index, 6.6).
 7. **Belt and braces.** `operator rotate-secret` invalidates any registration code the thief may
    have seen. It costs nothing.
@@ -1057,7 +1057,7 @@ secrets by construction:
   `GITHUB_TOKEN` in the server's environment and check that they reach neither a workspace spec
   nor an `exec`, nor any result.
 - **Setup errors give a fix, not a path.** "not set up: run `mirafleet mcp login …`" tells durga
-  what to do and tells an attacker nothing about her disk.
+  what to do and tells an attacker nothing about durga's disk.
 - **The server never registers a key.** `mcp login` is a human command that reads the code from
   standard input; the model cannot trigger it.
 - Anything *you* put through a tool is not protected this way: file contents you `write_file` pass

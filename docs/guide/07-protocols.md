@@ -25,8 +25,8 @@ Unfamiliar terms (SSH channel, global request, framing, envelope) are in the
 `internal/central` (server side) and `internal/apiclient` (client side).
 
 All examples use the running example: central at `central.example.com:2222`, fleets `dev` and
-`prod`, runners `build-1` (in `dev`) and `db-1` (in `prod`), operators `alice` and `bob`, and
-Dana, the admin who uses the local admin socket. Tokens and codes are obviously fake (the secret
+`prod`, runners `build-1` (in `dev`) and `db-1` (in `prod`), operators `durga` and `kalyan`, and
+aarvee, the admin who uses the local admin socket. Tokens and codes are obviously fake (the secret
 and host-key-hash placeholders are exactly 43 characters long, like the real ones). Timestamps
 are made up. M1, M2, M3 and M5 are done (M4, the GUI, and M6, release, are not); everything here is implemented, except where
 a paragraph says "planned". Workspace ids are 32 lowercase hex characters; the examples use
@@ -139,7 +139,7 @@ Rules (`internal/api/frame.go`, `ReadFrame` / `WriteFrame`):
 
 ### A hex example
 
-The numbers below are the same as in the picture. Alice's client sends `hello`. The JSON is:
+The numbers below are the same as in the picture. Durga's client sends `hello`. The JSON is:
 
 ```
 {"v":1,"id":"1","method":"hello"}
@@ -284,7 +284,7 @@ Request:
 ```
 Response:
 ```json
-{"v":1,"id":"a1b2c3d4e5f60718","result":{"operator":"alice","versions":[1],"server":"mirafleet"}}
+{"v":1,"id":"a1b2c3d4e5f60718","result":{"operator":"durga","versions":[1],"server":"mirafleet"}}
 ```
 `client` is an optional hint of at most 32 printable ASCII characters. It is **logged, not
 trusted** (a longer or non-printable hint is silently dropped).
@@ -384,16 +384,16 @@ If the runner itself reports that the action timed out (the action's own `timeou
 ### Workspace methods (M3)
 
 Six more operator methods drive workspaces. They exist only on `api@mirafleet` (the admin socket
-does **not** serve them: Dana manages workspaces with the admin methods in section 7.6, she never
+does **not** serve them: aarvee manages workspaces with the admin methods in section 7.6, they never
 runs commands in them). All six go through the same policy check as every other method, plus a
 direct check that the caller is an *operator*. They only work on a fleet in `workspace` mode;
 `action.run` on such a fleet, and `workspace.*` on an actions fleet, answer `conflict`.
 
 Ownership is the main rule: every call that names a `workspace` loads the row and requires that
 the caller is its owner. Anyone else, and any unknown or malformed id, gets the **same**
-`not_found`. bob cannot even learn that alice's workspace exists.
+`not_found`. kalyan cannot even learn that durga's workspace exists.
 
-The running example: alice's agent works in fleet `dev`, session `s1` (see the
+The running example: durga's agent works in fleet `dev`, session `s1` (see the
 [M3 flow diagrams](diagrams/README.md): `workspace-open.svg` and `workspace-exec.svg`).
 
 #### `workspace.open`
@@ -641,15 +641,15 @@ merged on the server. Workspaces that already exist keep the spec they were open
 {"v":1,"id":"13","method":"workspace.admin_list","params":{"fleet":"dev"}}
 {"v":1,"id":"13","result":{"workspaces":[{"id":"3f9a6c1e5b7d4820a1c3e5f708192a4b","fleet":"dev",
  "runner":"build-1","session":"s1","image":"docker.io/library/golang@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
- "state":"open","operator":"alice","created":"2026-11-13T09:41:07.512Z",
+ "state":"open","operator":"durga","created":"2026-11-13T09:41:07.512Z",
  "last_used":"2026-11-13T09:44:50.101Z","expires":"2026-11-20T09:41:07.512Z"}]}}
 {"v":1,"id":"14","method":"workspace.kill","params":{"id":"3f9a6c1e5b7d4820a1c3e5f708192a4b"}}
 {"v":1,"id":"14","result":{"state":"closed"}}
 ```
 `workspace.kill` destroys the workspace on its runner. If the runner is offline the state comes
 back `closing`: the row keeps its slot and the reaper finishes the job when the runner returns.
-`workspace.admin_list` shows live and recent workspaces of every operator, which is how Dana
-finds a session to kill. Dana can see and kill workspaces but has **no** method to read or write
+`workspace.admin_list` shows live and recent workspaces of every operator, which is how aarvee
+finds a session to kill. aarvee can see and kill workspaces but has **no** method to read or write
 inside one.
 ```json
 {"v":1,"id":"2","method":"token.create","params":{"fleet":"prod","labels":{"role":"db"},"approve":false,"uses":1,"ttl_s":86400}}
@@ -683,20 +683,20 @@ inside one.
 ```json
 {"v":1,"id":"8","method":"operator.list"}
 {"v":1,"id":"8","result":{"operators":[
- {"name":"alice","fingerprint":"SHA256:EXAMPLE_ALICE_FP","status":"active","last_seen":"2026-11-13T09:40:12.004Z"},
- {"name":"bob","fingerprint":"SHA256:EXAMPLE_BOB_FP","status":"revoked"}]}}
+ {"name":"durga","fingerprint":"SHA256:EXAMPLE_DURGA_FP","status":"active","last_seen":"2026-11-13T09:40:12.004Z"},
+ {"name":"kalyan","fingerprint":"SHA256:EXAMPLE_KALYAN_FP","status":"revoked"}]}}
 ```
 ```json
-{"v":1,"id":"9","method":"operator.revoke","params":{"name":"bob"}}
+{"v":1,"id":"9","method":"operator.revoke","params":{"name":"kalyan"}}
 {"v":1,"id":"9","result":{}}
 ```
 ```json
 {"v":1,"id":"10","method":"audit.list","params":{"since_id":1040,"limit":2}}
 {"v":1,"id":"10","result":{"events":[
- {"id":1041,"time":"2026-11-13T09:41:07.512Z","source":"api","actor_kind":"operator","actor":"alice",
+ {"id":1041,"time":"2026-11-13T09:41:07.512Z","source":"api","actor_kind":"operator","actor":"durga",
   "remote":"203.0.113.7:51514","fleet":"prod","runner":"db-1","subject":"tail-logs","action":"action.run",
   "params":{"lines":"200"},"outcome":"start","request_id":"9f1c0a5be2d84c7790a1b3c4d5e6e07a"},
- {"id":1042,"time":"2026-11-13T09:41:07.561Z","source":"api","actor_kind":"operator","actor":"alice",
+ {"id":1042,"time":"2026-11-13T09:41:07.561Z","source":"api","actor_kind":"operator","actor":"durga",
   "remote":"203.0.113.7:51514","fleet":"prod","runner":"db-1","subject":"tail-logs","action":"action.run",
   "outcome":"ok","exit_code":0,"duration_ms":41,"request_id":"9f1c0a5be2d84c7790a1b3c4d5e6e07a"}]}}
 ```
@@ -730,8 +730,8 @@ Both clients pin central's host key from the credential before sending it
 ```json
 {"v":1,"id":"r1","method":"enroll.register","params":{
  "code":"mfr1.EXAMPLECODEEXAMPLECODEEXAM.EXAMPLE_HOSTKEY_HASH_NOT_REAL_EXAMPLE_HOSTK",
- "name":"alice"}}
-{"v":1,"id":"r1","result":{"operator":"alice","status":"active"}}
+ "name":"durga"}}
+{"v":1,"id":"r1","result":{"operator":"durga","status":"active"}}
 ```
 
 ### Enrol failures
@@ -1614,17 +1614,17 @@ guide.
 
 ## Check your understanding
 
-1. Alice's client sends a frame whose 4-byte prefix is `00 10 00 00`. What happens, and what has
+1. Durga's client sends a frame whose 4-byte prefix is `00 10 00 00`. What happens, and what has
    central allocated by then?
 2. Why does an `enroll` connection have a 30 s lifetime and exactly one channel?
 3. What is different about how the runner returns its result on `exec@mirafleet` compared with how
    central answers on `api@mirafleet`?
-4. A registration code is shown with `seconds_left = 2`. Bob copies it, but it takes him 5 seconds to
-   paste. What does he see, and what should he do?
+4. A registration code is shown with `seconds_left = 2`. Kalyan copies it, but it takes kalyan 5 seconds to
+   paste. What does kalyan see, and what should they do?
 5. Which of these requests is accepted by a v1 server: (a) `{"v":1,"id":"x","method":"hello","extra":1}`,
    (b) `{"v":1,"id":"x","method":"hello"}`, (c) `{"id":"x","method":"hello"}`?
-6. bob sends `workspace.exec` for alice's workspace id, with `stdin: true` and a 1 MiB body frame
-   already queued behind the request. What does he get back, and how much did central buffer?
+6. kalyan sends `workspace.exec` for durga's workspace id, with `stdin: true` and a 1 MiB body frame
+   already queued behind the request. What does kalyan get back, and how much did central buffer?
 7. A client writes a 3 MiB file with `workspace.write_file`. How, and what does each call carry?
 8. Why does a workspace runner reject a `workspace@` channel before accepting it when it is full?
 9. A model calls `exec` with `{"Confirm":"prod","command":"ls"}`. What happens and why does the
@@ -1647,7 +1647,7 @@ guide.
    end-of-stream (`CloseWrite`); central reads until EOF with a size cap. On `api@mirafleet` every message
    is a length-prefixed frame and there is exactly one request frame and one response frame.
 4. The code is only valid within its own 60 s step, so the step has ended and central answers
-   `unauthenticated: registration refused` (the same text as for a wrong code). He runs
+   `unauthenticated: registration refused` (the same text as for a wrong code). Kalyan runs
    `mirafleet central operator code` again and registers promptly.
 5. Only (b). (a) has an unknown field, so it is `bad_request`. (c) has no `v`, so it is
    `bad_request` "missing or invalid protocol version".

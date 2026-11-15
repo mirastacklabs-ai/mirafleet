@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 492" width="840" height="492" role="img" aria-labelledby="t d">
 <title id="t">Revoking a runner</title>
-<desc id="d">Dana, the admin, revokes dev/build-1. Central adds a tombstone, kicks the connection, cancels the in-flight action so the runner kills its process group, commits status revoked with an audit row, and then refuses the runner when it reconnects.</desc>
+<desc id="d">aarvee, the admin, revokes dev/build-1. Central adds a tombstone, kicks the connection, cancels the in-flight action so the runner kills its process group, commits status revoked with an audit row, and then refuses the runner when it reconnects.</desc>
 <style>
 :root{--bg:#FFFFFF;--surface:#FFFFFF;--band:#F6F5F1;--ink:#0A0A0A;--text:#1C1C1C;--muted:#5E5E5E;--line:#E4E2DC;--accent:#00695F;--signal:#FF671F;--ok:#00695F;--okbg:#E0F0EE;--warn:#8A5300;--warnbg:#FBEFDC;--bad:#B42318;--badbg:#FDE8E6}
 @media (prefers-color-scheme:dark){:root{--bg:#0A0A0A;--surface:#191919;--band:#000000;--ink:#FFFFFF;--text:#E6E6E6;--muted:#8F8F8F;--line:#272727;--accent:#2BD4BF;--signal:#FF671F;--ok:#2BD4BF;--okbg:#0F2C29;--warn:#F0B45A;--warnbg:#2E2410;--bad:#FF8A7A;--badbg:#3A1715}}
@@ -42,7 +42,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- admin -->
 <rect class="pn" x="10" y="56" width="150" height="110" rx="4"/>
-<text class="h" x="20" y="78">Dana's CLI</text>
+<text class="h" x="20" y="78">aarvee's CLI</text>
 <text x="20" y="100">central runner</text>
 <text x="20" y="118">revoke</text>
 <text class="b" x="20" y="138">dev/build-1</text>
@@ -104,7 +104,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 
 <!-- steps -->
 <text class="h" x="10" y="346">Steps</text>
-<g class="st" style="--i:1"><text x="10" y="370"><tspan class="b">1</tspan> Dana runs central runner revoke dev/build-1; the CLI sends runner.lifecycle (revoke) to central.</text></g>
+<g class="st" style="--i:1"><text x="10" y="370"><tspan class="b">1</tspan> aarvee runs central runner revoke dev/build-1; the CLI sends runner.lifecycle (revoke) to central.</text></g>
 <g class="st" style="--i:2"><text x="10" y="390"><tspan class="b">2</tspan> Tombstone: build-1's id goes into the registry, so no new session can slip in during the commit.</text></g>
 <g class="st" style="--i:3"><text x="10" y="410"><tspan class="b">3</tspan> Kick: the session context is cancelled and the runner's SSH connection is closed.</text></g>
 <g class="st" style="--i:4"><text x="10" y="430"><tspan class="b">4</tspan> In-flight action cancelled: the runner kills the process group; the outcome row says cancelled.</text></g>

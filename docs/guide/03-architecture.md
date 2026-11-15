@@ -776,8 +776,8 @@ jump hosts per context.
 2. Why can the firewall in front of `db-1` block all inbound traffic and mirafleet still work?
 3. A developer wires the admin handler for `token.create` into the operator handler map by
    mistake. Which checks would still stop an operator from creating a join token?
-4. Where is the registration secret stored, and what does `durga` actually receive when she
-   registers?
+4. Where is the registration secret stored, and what does `durga` actually receive when they
+   register?
 5. If central is fully compromised, what stops the attacker from running any command on `db-1`?
 6. Why can a compromised central not make `build-1` start a privileged container with the host's
    `/etc` mounted? And why must the `build-1` host still be treated as sensitive?
@@ -801,7 +801,7 @@ jump hosts per context.
    requires `p.Kind == auth.KindAdmin` directly, independent of the policy.
 4. In the central database, in the `settings` table under `registration_secret`, mode `0600`.
    Durga never receives the secret. Durga types or pipes a 60-second *code* derived from it and
-   gets back the status `active`; her own private key never leaves her machine.
+   gets back the status `active`; their own private key never leaves their machine.
 5. The runner's actions guard. It only runs actions defined in the runner's own `actions.yaml`,
    as an argv list without a shell, with parameters that fully match their regex. Central cannot
    change that file.

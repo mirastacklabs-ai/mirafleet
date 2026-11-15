@@ -131,7 +131,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <g class="st" style="--i:1"><text x="10" y="424"><tspan class="b">1</tspan> Claude Code starts session abc and runs the SessionStart hook (reads session_id, no network).</text></g>
 <g class="st" style="--i:2"><text x="10" y="442"><tspan class="b">2</tspan> The hook writes cc:abc to the state dir, keyed by parent pid + project dir (file 0600).</text></g>
 <g class="st" style="--i:3"><text x="10" y="460"><tspan class="b">3</tspan> mirafleet mcp, a child of the same Claude Code, re-reads the file at every open.</text></g>
-<g class="st" style="--i:4"><text x="10" y="478"><tspan class="b">4</tspan> workspace.open carries session cc:abc; central opens or returns alice's workspace.</text></g>
+<g class="st" style="--i:4"><text x="10" y="478"><tspan class="b">4</tspan> workspace.open carries session cc:abc; central opens or returns durga's workspace.</text></g>
 <g class="st" style="--i:5"><text x="10" y="496"><tspan class="b">5</tspan> Claude Code exits. Nothing is closed: the workspace is idle and the 24 h TTL reaps it later.</text></g>
 <g class="st" style="--i:6"><text x="10" y="514"><tspan class="b">6</tspan> claude --resume: same session id, new pids. The hook runs again and rewrites the file.</text></g>
 <g class="st" style="--i:7"><text x="10" y="532"><tspan class="b">7</tspan> The server reads cc:abc again; central answers reused: true (same container and files).</text></g>

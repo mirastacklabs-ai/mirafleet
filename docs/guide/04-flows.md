@@ -39,7 +39,7 @@ dead" mark), **step** (one 60-second window of the registration code).
 | `dev`, `prod` | Fleets. `prod` is created with `-confirm` (a guarded fleet). |
 | `build-1` (in `dev`), `db-1` (in `prod`) | Runners. |
 | `durga`, `kalyan` | Operators. |
-| aarvee | The admin: she has a shell on the central host and runs as the same user as central. |
+| aarvee | The admin: they have a shell on the central host and runs as the same user as central. |
 
 All the admin commands below (`mirafleet central fleet create ...` and friends) are clients of the
 running central: each one connects to `<data>/admin.sock`, sends one request, prints the answer and
@@ -525,7 +525,7 @@ current one.*
 
 1. Central keeps a 32-byte secret in SQLite, never logged. Only aarvee (the admin) can read codes.
 2. Each 60 s window `s` (unix seconds / 60) has its own code: base32(HMAC-SHA256(secret, s)) + HASH.
-3. durga runs `mcp login` with the code aarvee gave her. Central recomputes this window's code and compares.
+3. durga runs `mcp login` with the code aarvee gave durga. Central recomputes this window's code and compares.
 4. kalyan uses the same code in the same window and is accepted too. Codes are not single-use.
 5. The window ends. The next window `s+1` has a brand-new code.
 6. kalyan tries the old code in the next window: refused, with the same error as any wrong code.
@@ -585,7 +585,7 @@ no clock to keep in sync with the laptop.*
    step)) + `.` + the host-key hash, plus `SecondsLeft` and central's host-key fingerprint. Showing a
    code is **audited** (`operator.code`: who, when) and the audit write happens first: if it fails,
    the code is **not** returned. The code itself is never put in the audit row.
-2. aarvee passes the code to `durga` in any way she likes (chat, voice). A leaked code is
+2. aarvee passes the code to `durga` in any way they like (chat, voice). A leaked code is
    useless once its 60-second window ends.
 3. **`mcpLogin`** on Durga's laptop (`mirafleet mcp login central.example.com:2222 -name durga -code -`)
    requires `-code -`, validates the address and name, refuses on Windows (the key loader fails
@@ -759,8 +759,8 @@ keys as cheaply as possible.
 | 6 | Operator is *still* active | `serveOperator`: `GetOperatorByID` after `OperatorConns.add` (closes the add-after-kick window) | Connection closed |
 #### B. Protocol shape (gates 7 to 11)
 
-The connection is trusted as "durga", but the bytes she sends are not: are they the right kind of
-channel, the right size, valid JSON, and a method her kind of caller may use?
+The connection is trusted as "durga", but the bytes durga sends are not: are they the right kind of
+channel, the right size, valid JSON, and a method durga's kind of caller may use?
 
 | # | Gate | Where | If it fails |
 |---|---|---|---|
@@ -982,7 +982,7 @@ channel on the runner, and the closed connection. Any one is enough.*
    returns `context.Cause(sess.ctx)`, the `*KickError`.
 5. **`RunAction`** recognises the `KickError` (`errors.As`) and writes the outcome row
    `cancelled` with the message "runner revoked", then returns `unavailable: runner revoked` to Durga.
-   Her tool sees why it stopped.
+   Durga's tool sees why it stopped.
 6. **On the runner**, the connection drop ends `session`; its deferred `cancel()` cancels the context
    that every `serveExec` derives from. Also, the closed channel ends the goroutine copying
    `io.Copy(io.Discard, ch)`, which cancels the action. `exec.Cmd.Cancel` calls `killTree`:
@@ -1011,10 +1011,10 @@ channel on the runner, and the closed connection. Any one is enough.*
 
 ## 9. Revoking an operator
 
-**In one sentence:** aarvee revokes `kalyan` while he has a long action running, and central commits the
-change first and only then cuts his connections.
+**In one sentence:** aarvee revokes `kalyan` while kalyan has a long action running, and central commits the
+change first and only then cuts kalyan's connections.
 
-She runs `mirafleet central operator revoke kalyan`.
+aarvee runs `mirafleet central operator revoke kalyan`.
 
 ```mermaid
 sequenceDiagram
@@ -1055,7 +1055,7 @@ sequenceDiagram
    *after* the kick. Then the kick would find nothing to close. That is why `serveOperator` re-reads
    the operator by id right after `add` and closes the connection if it is no longer active. Revoke
    commits before it kicks, so either the kick or this check catches every connection.
-6. After revoke, `KeyAuth.Authenticate` (user `operator`) returns `ErrDenied` for Kalyan's key. If he
+6. After revoke, `KeyAuth.Authenticate` (user `operator`) returns `ErrDenied` for Kalyan's key. If kalyan
    registers again with the same key, the store answers `conflict` (the key belongs to a revoked
    operator). A new key under the name `kalyan` is allowed, because the unique index on names covers only
    non-revoked operators.
@@ -1315,7 +1315,7 @@ sequenceDiagram
 
 ## 13. `workspace.exec`, end to end
 
-**In one sentence:** durga's agent runs `go test ./...` inside her workspace; the command runs in the
+**In one sentence:** durga's agent runs `go test ./...` inside their workspace; the command runs in the
 container, the result comes back as one buffered answer, and two audit rows record exactly what
 ran.
 
@@ -1396,7 +1396,7 @@ sequenceDiagram
 10. **Audit `outcome`.** Central writes the second row with the same `request_id`, the exit code,
     duration and an outcome of `ok`, `error`, `cancelled` or `timeout`, and returns
     `{exit_code, stdout, stderr, truncated, timed_out, duration_ms, request_id}`.
-11. **Cancel.** If durga's channel closes (or central shuts down, or her operator key is
+11. **Cancel.** If durga's channel closes (or central shuts down, or their operator key is
     revoked), the context is cancelled, the channel to the runner closes, and the executor kills the
     exec. One caveat: a daemonised child that double-forks can outlive an exec timeout, until the
     workspace is destroyed. The pids and memory limits bound the damage.
@@ -1601,10 +1601,10 @@ their own transaction with their own audit row, with the reaper as a backstop.
 ## MCP flows (M5)
 
 Flows 19 to 23 are the orchestrator story (new in M5): what happens on durga's laptop between
-her harness and central. Chapter 3 draws the [packages](03-architecture.md#operator-side);
+their harness and central. Chapter 3 draws the [packages](03-architecture.md#operator-side);
 chapter 2 explains [MCP](02-background.md#210-mcp-and-harnesses). The cast: durga runs Claude
 Code with the mirafleet plugin in a project that has a `.mirafleet.yaml` saying `fleet: dev`,
-and her `contexts.yaml` has one context, `acme`, pointing at `central.example.com:2222`. A
+and durga's `contexts.yaml` has one context, `mirastack`, pointing at `central.example.com:2222`. A
 **session** is still the client-chosen name from flow 12; here the client is Claude Code, so the
 session is `cc:` plus Claude Code's own session id.
 
@@ -1663,7 +1663,7 @@ sequenceDiagram
    obviously bad request never costs a network round trip. `stdin` is text, at most 1 MiB.
 3. **Resolve the target.** `Orch.Resolve` picks the context and fleet in this order: the tool
    argument, then the `-context`/`-fleet` flags, then `.mirafleet.yaml`, then the context's
-   `default_fleet`. For durga that is `acme` and `dev` (source "project file"). A guarded fleet
+   `default_fleet`. For durga that is `mirastack` and `dev` (source "project file"). A guarded fleet
    that came from a default (the project file or `default_fleet`) is refused: it must be named
    explicitly (flow 23). Every result carries a `where` object naming the context and fleet and
    where each came from, because a cloned repository's `.mirafleet.yaml` can steer unqualified
@@ -1709,7 +1709,7 @@ session id, not a secret.*
 1. Claude Code starts session `abc` and runs the SessionStart hook. The hook reads `session_id` from its stdin and makes no network call.
 2. The hook writes `cc:abc` to a handoff file in the state directory, keyed by the parent PID (Claude Code) and the project directory. The file is mode 0600 in a 0700 directory.
 3. `mirafleet mcp`, another child of the same Claude Code process, re-reads the file at every workspace open.
-4. `workspace.open` carries session `cc:abc`; central opens durga's workspace or returns the one she already has.
+4. `workspace.open` carries session `cc:abc`; central opens durga's workspace or returns the one durga already has.
 5. Claude Code exits. Nothing is closed: the workspace stays `open` and the 24 h idle TTL reaps it later.
 6. `claude --resume`: same session id, new PIDs. The hook runs again and rewrites the file for the new PID.
 7. The server reads `cc:abc` again and central answers `reused: true`: same container, same files.
@@ -1807,7 +1807,7 @@ question from the harness.
    and the call proceeds.)
 2. `Orch` sends `action.run`. Central refuses: `bad_request`, "fleet requires confirm to equal the
    fleet name", and writes a `denied` audit row (flow 7).
-3. `mcpserver` (`guardedRewrite`) replaces central's text with: "fleet `prod` in context `acme`
+3. `mcpserver` (`guardedRewrite`) replaces central's text with: "fleet `prod` in context `mirastack`
    (...) is guarded. Ask the user. Only after the user explicitly agrees, repeat the call with
    `confirm` set to the fleet name." The model is told to stop and ask.
 4. durga reads the model's question and agrees. The model repeats the call with
@@ -1924,7 +1924,7 @@ requested credentials (`unavailable`); `workdir` is invalid or the runner is a c
 **Summary:** closing keeps the directory, and opening the same session (or `workdir`) later finds it
 again, with its files, even after a runner restart.
 
-1. Durga closes her laptop. Claude Code exits, `SessionEnd` or the idle reaper closes the
+1. Durga closes their laptop. Claude Code exits, `SessionEnd` or the idle reaper closes the
    workspace (flows 21 and 22). `workspace_close` stops every process group of the session, closes
    the agent socket and broker session, and **keeps the directory**. The `workspaces` row becomes
    `closed`; a record of the directory (`<slug>.json`: dir, created, last used) stays in the
@@ -1934,7 +1934,7 @@ again, with its files, even after a runner restart.
 3. `workspace_open` runs flow 24 again. The sticky-session rule from flow 12 finds no live row (the
    old one is `closed`), so a new row and a new workspace id are made, but the runner receives the
    *same session id* as the label `mirafleet.session`, so `hostx.Manager.OpenFor` maps it to the
-   *same slug* and finds the existing directory. Her checkout, build caches and
+   *same slug* and finds the existing directory. Their checkout, build caches and
    uncommitted edits are there. Credentials are loaded fresh from the runner's current set, not from
    anything saved. <!-- verify: reopen of a closed session reattaches the same directory; notes say host layout <root>/sessions/<slug> and label mirafleet.session (d652c77) -->
 4. With `workdir: shared-app` in `.mirafleet.yaml`, two sessions (or two different Claude sessions
@@ -2254,7 +2254,7 @@ as lost.
 
 1. In flow 3, why does it matter that the host-key pin is checked during the SSH handshake and not
    after the token is sent?
-2. `kalyan` registers at 10:03:59 with a code that was shown at 10:03:12. Does it work? What if he
+2. `kalyan` registers at 10:03:59 with a code that was shown at 10:03:12. Does it work? What if kalyan
    tries at 10:04:01?
 3. In `RunAction`, why is the start audit row written before the call to `Registry.Exec`, and what
    happens if writing it fails?
@@ -2262,7 +2262,7 @@ as lost.
    about when the admin revokes `db-1` instead?
 5. After `central operator revoke kalyan`, Kalyan's laptop is still connected for a fraction of a second.
    Which two mechanisms make sure it does not stay connected?
-6. durga sends `workspace.open` for session `s1` twice. What does she get the second time, and
+6. durga sends `workspace.open` for session `s1` twice. What does durga get the second time, and
    what if `build-1` went offline in between?
 7. Why does central read the body frame of `write_file` only after the policy, ownership and
    confirm checks? What would an attacker gain if it read the body first?
@@ -2272,7 +2272,7 @@ as lost.
    about the environment?
 10. The MCP `exec` tool is called while the connection to central drops. Is the call retried? Is
     a `list_fleets` call retried? Why the difference?
-11. durga quits Claude Code for lunch and comes back with `claude --resume`. What happens to her
+11. durga quits Claude Code for lunch and comes back with `claude --resume`. What happens to durga's
     workspace in between, and which file makes the reattach work? What changes with no hooks?
 12. The model calls `run_action` on `prod` and the hook shows durga a prompt. Which two components
     would still stop a call that has no `confirm`, even with no plugin installed?
@@ -2295,14 +2295,14 @@ as lost.
    New `action.run` calls are refused with `conflict`. Revoke does stop it: `Tombstone` and `Kick`
    cancel the session context, the exec channel closes, the runner kills the process group, and the
    outcome row says `cancelled` with message "runner revoked".
-5. Central closes his open connections right after committing the revoke, and a re-check catches
+5. Central closes kalyan's open connections right after committing the revoke, and a re-check catches
    any connection that slipped in around the commit. In detail: `Service.RevokeOperator` commits the revoked status and then `OperatorConns.KickOperator` closes
    every tracked connection, which cancels the in-flight requests. For a connection that
    authenticated just before the commit and was added to `OperatorConns` after the kick,
    `serveOperator` re-reads the operator right after `add` and closes the connection if it is not
    active. New connections are refused by `KeyAuth` because the stored status is `revoked`.
-6. The second time she gets the same workspace with `reused: true`. If `build-1` is offline, she
-   gets `unavailable`: central never creates a fresh workspace elsewhere, because her files are on
+6. The second time durga gets the same workspace with `reused: true`. If `build-1` is offline, durga
+   gets `unavailable`: central never creates a fresh workspace elsewhere, because their files are on
    `build-1`.
 7. Reading the body costs memory (up to 1 MiB per call) and time. If central read it first, anyone
    with a valid connection could make it buffer megabytes for requests that will be refused (wrong

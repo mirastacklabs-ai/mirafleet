@@ -171,7 +171,7 @@ mirafleet pins everywhere:
 - There is **no TOFU fallback** and no prompt, even when there is no terminal.
 
 An example with MIRASTACK LABS: aarvee generates the token on central and sends it to the `db-1` admin by a
-channel she trusts (her password manager, say). An attacker on the network can see the traffic
+channel they trust (their password manager, say). An attacker on the network can see the traffic
 but cannot change the token, so cannot swap the host key. If the attacker presents their own key,
 `db-1` sees the hash mismatch and stops, *without handing over the secret*.
 

@@ -387,6 +387,10 @@ M3's "done when" sentence in [M3.md](../M3.md) is one scenario, written **once**
   the hermetic image of section 9.3. A small `m3Backend` struct holds the differences (the argv that
   means "print my uid", how to count containers), so the two cannot drift apart.
 
+(The operators `alice` and `bob` below, and in the MCP end-to-end test further down, are the names
+used by the test fixtures in the code. They are quoted as they are; the docs' own running example
+is durga and kalyan.)
+
 In order, the scenario:
 
 1. **Set-up.** An injected clock; fleet `dev` in workspace mode with an image allowlist; operators
@@ -396,7 +400,7 @@ In order, the scenario:
    runner; opening `s1` again returns the same workspace with `reused: true` and creates **no** second
    container.
 3. **Ownership.** bob's `exec`, `read_file`, `write_file` and `close` on alice's workspace all get
-   `not_found`; his `workspace.list` is empty; alice's row is untouched.
+   `not_found`; their `workspace.list` is empty; alice's row is untouched.
 4. **Inside the workspace.** `id -u` is not 0; writing under `/etc` fails (read-only rootfs; in the
    real run the message says "read-only"); a 1.5 MiB file round-trips in 512 KiB chunks with a
    matching SHA-256; a symlink to a host path cannot be read through `read_file`; a network dial
@@ -408,7 +412,7 @@ In order, the scenario:
    start another over the same store: the row persists, runners reconnect, the session is still sticky.
 7. **Reaper.** Move the injected clock past the idle TTL: the untouched `s2` is destroyed (container
    and directory gone, row `closed`); `s1`, used just now, stays.
-8. **Revoke.** Revoking alice closes her workspaces (the next reaper sweep destroys the container;
+8. **Revoke.** Revoking alice closes their workspaces (the next reaper sweep destroys the container;
    the row is `closed`, with a `workspace.close_all` audit row); bob's workspace on the other runner
    is untouched. Then revoking runner `rb` marks bob's workspace there **`lost`** (not `closed`:
    central can no longer reach that host, so it cannot prove the container is gone; a
@@ -462,7 +466,7 @@ own config directories (alice and bob); a project directory whose `.mirafleet.ya
    fleet are `conflict`.
 8. `09_cancel`: `notifications/cancelled` for a long `exec` cancels the exec on the runner, and
    the audit outcome is `cancelled`.
-9. `10_idle_on_exit`: closing alice's stdin makes `Serve` return within 5 s and leaves her row
+9. `10_idle_on_exit`: closing alice's stdin makes `Serve` return within 5 s and leaves their row
    `open`; a new server gets the other runner; a third gets `unavailable` (both slots used);
    advancing the injected clock past the idle TTL makes the reaper close the first row.
 10. `11_reattach`: two servers started with the same `-session s1`: the second `workspace_open`
@@ -751,15 +755,15 @@ mf central runner approve dev/build-1 -data /tmp/c
 mf central runner list -data /tmp/c      # dev/build-1  active  true
 ```
 
-**6. Register an operator, `alice`.** `operator code` prints three labelled lines
+**6. Register an operator, `durga`.** `operator code` prints three labelled lines
 (`code:`, `valid for:`, `host key:`); `sed` keeps only the value after `code:`. The code is only
 valid for its 60-second window, so use it straight away. A separate config directory plays the
-part of alice's laptop:
+part of durga's laptop:
 
 ```bash
 CODE=$(mf central operator code -data /tmp/c | sed -n 's/^code: *//p')
 export MIRAFLEET_CONFIG_DIR=/tmp/op1
-printf '%s\n' "$CODE" | mf mcp login 127.0.0.1:2222 -name alice -code -
+printf '%s\n' "$CODE" | mf mcp login 127.0.0.1:2222 -name durga -code -
 ```
 
 **7. Use it as the operator.** These are the calls an agent would make:
@@ -863,12 +867,12 @@ If the runner exits at start, its message names the failed rule (user namespaces
 `root` not 0700 and root-owned, a forbidden namespace, ...); see
 [10.6](10-operations.md#106-troubleshooting).
 
-**4. Register alice and use the workspace.**
+**4. Register durga and use the workspace.**
 
 ```bash
 CODE=$(mf central operator code -data /tmp/c | sed -n 's/^code: *//p')
 export MIRAFLEET_CONFIG_DIR=/tmp/op1
-printf '%s\n' "$CODE" | mf mcp login 127.0.0.1:2222 -name alice -code -
+printf '%s\n' "$CODE" | mf mcp login 127.0.0.1:2222 -name durga -code -
 
 mf mcp api workspace.open '{"fleet":"dev","session":"s1"}'            # note the id
 WS=<the id from the reply>
@@ -890,7 +894,7 @@ mf mcp api workspace.exec "{\"workspace\":\"$WS\",\"argv\":[\"env\"],\"env\":{\"
 mf mcp api workspace.write_file "{\"workspace\":\"$WS\",\"path\":\"../etc/evil\"}" -in /tmp/hello.txt        # refused
 ```
 
-**6. Look from the other side.** Dana lists and kills; the audit log shows start and outcome rows
+**6. Look from the other side.** aarvee lists and kills; the audit log shows start and outcome rows
 with the workspace column; the runner host shows the container and its directory:
 
 ```bash
