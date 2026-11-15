@@ -1,41 +1,61 @@
-# Handoff — 15 Nov 2026 (build complete; release rehearsal in progress)
+# Handoff — 15 Nov 2026 (release rehearsal `v0.6.0-rc.2`: all done except npm)
 
 Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and the plans
 ([M4.md](M4.md), [M6.md](M6.md), [M7.md](M7.md)). Every decision is recorded in those plans.
 
-## Where the code is
+## Where things are
 
-| Checkout | Branch | Commit | State |
-|---|---|---|---|
-| `mirafleet` | `main` (pushed) | squash of PR `m6/bump-rc2` | M1–M7 built and merged; version files at `0.6.0-rc.2`; all CI green. |
+| What | State |
+|---|---|
+| `main` | M1–M7 built and merged; version files at `0.6.0-rc.2`; all CI green. Protected: changes only by PR. |
+| Tag `v0.6.0-rc.1` | dead: tagged before the version bump, failed `verify`, nothing published. Left in place (tags are never moved). |
+| Tag `v0.6.0-rc.2` | release run https://github.com/mirastacklabs-ai/mirafleet/actions/runs/43718452505 |
+| GitHub release `v0.6.0-rc.2` | public, marked pre-release. Checked: cosign signature on `checksums.txt`, all 24 checksums, provenance (`gh attestation verify`), `install.sh --verify-signature` in a fresh container, binary prints `0.6.0-rc.2`. |
+| Images | `docker.io/mirastack/mirafleet:0.6.0-rc.2` and `ghcr.io/mirastacklabs-ai/mirafleet:0.6.0-rc.2`: same digest `sha256:4da49d3d…f872`, cosign verified on both, image runs. One image for central and runner (subcommand picks the role). |
+| npm | **not published.** The `npm` job failed `ENEEDAUTH`: no npm auth yet. |
+| Wiki | https://github.com/mirastacklabs-ai/mirafleet/wiki, generated from `docs/` at `3eb3c11` (`relgen wiki`; re-run and push after doc changes). |
 
-Wiki: https://github.com/mirastacklabs-ai/mirafleet/wiki, generated from `docs/` at `3eb3c11`
-(`relgen wiki`; re-run and push after doc changes).
+## Settings in place (15 Nov 2026)
+- **GitHub repo** `mirastacklabs-ai/mirafleet`: `release` environment (required reviewer aarvee11,
+  `v*` tags only); ruleset `main` (PR, squash only, required checks `gate`, `licenses`, `lint`,
+  `dco`, `windows-latest`, `macos-latest`); ruleset `release-tags` (only admins on `v*`);
+  auto-merge and delete-branch on; private vulnerability reporting on.
+- **`release` environment:** variable `DOCKERHUB_USERNAME=mirastack`, secret `DOCKERHUB_TOKEN`
+  (Docker Hub organization access token, Image Push on `mirastack/mirafleet`).
+- **Docker Hub:** org `mirastack`, public repo `mirafleet`.
+- **Homebrew tap:** `mirastacklabs-ai/homebrew-tap` created with a README.
+- **DCO:** every commit uses `git commit -s` as the user (aarvee11); no Claude co-author trailer.
 
-## Decisions taken 15 Nov 2026
-- **DCO:** every commit (agents included) uses `git commit -s` as the user (aarvee11); no Claude
-  co-author trailer.
-- **P1, repo side, done:** `release` environment (required reviewer aarvee11, `v*` tags only);
-  ruleset `main` (PR, squash only, required checks `gate`, `licenses`, `lint`, `dco`,
-  `windows-latest`, `macos-latest`; no force-push or delete); ruleset `release-tags` (only admins
-  on `v*`); auto-merge and delete-branch on; private vulnerability reporting on;
-  `mirastacklabs-ai/homebrew-tap` created with a README.
-- **Release:** the user said go ahead. `v0.6.0-rc.1` was tagged before the rc bump and failed
-  `verify` (`relgen check`); nothing was built or published. The tag stays (tags are never moved);
-  the rehearsal uses `v0.6.0-rc.2`.
+## Next steps, in order
+1. **User (in progress, in another Claude session):** npm org `mirastacklabs`; a granular token
+   with "Read and write (stage only)" and no 2FA bypass, stored with
+   `gh secret set NPM_TOKEN --env release --repo mirastacklabs-ai/mirafleet`.
+   Trusted publishing cannot be set up before a package exists, so the first publish uses this token.
+2. **Agent:** the rc.2 tag's `npm` job still has the old `npm publish`; it is not re-run. After the
+   staged-publish PR (version 0.6.0-rc.3) merges, tag `v0.6.0-rc.3` (user's yes) and the user
+   approves the `release` deployments. The `npm` job only stages: the **user** approves the 7 staged
+   versions at https://www.npmjs.com/settings/mirastacklabs/staged-packages (2FA). Then check
+   `npx -y @mirastacklabs/mirafleet@0.6.0-rc.3 version` in a container.
+3. **User:** on npmjs.com add a trusted publisher to each of the 7 `@mirastacklabs/...` packages
+   (repo `mirastacklabs-ai/mirafleet`, workflow `release.yml`, environment `release`, allowed action
+   `npm stage publish` only); delete the npm token;
+   `gh secret delete NPM_TOKEN --env release --repo mirastacklabs-ai/mirafleet`; set publishing
+   access to "Require 2FA and disallow tokens".
+4. **User:** `HOMEBREW_TAP_TOKEN` (fine-grained PAT, contents read/write on the tap only, with an
+   expiry) on the `release` environment, before `v0.6.0`.
+5. **Agent:** PR `relgen bump 0.6.0` (branch, `git commit -s`, `gh pr merge --auto --squash
+   --delete-branch`), then tag `v0.6.0` on the merge commit (P4). The user approves each job (P5):
+   `draft`, `publish-release`, `image`, `npm`, `brew`, `mcp-registry`. Agent verifies after each
+   (RELEASING.md §3 step 13).
+6. Then P6 (Docker Hub description, ghcr package public), P9–P12, and the full-product test
+   (M4 S19 browser check, M5 S17, M7 S21 smoke on the user's Mac + a VM with their GitLab).
 
-## What is waiting on the user
-1. **Account secrets on the `release` environment** (RELEASING.md §2): variable `DOCKERHUB_USERNAME`
-   and secret `DOCKERHUB_TOKEN` before approving `image`; npm org `mirastacklabs` with trusted
-   publishers (or a stage-only first-publish `NPM_TOKEN`) before approving `npm`, then approve the staged packages on npmjs.com; `HOMEBREW_TAP_TOKEN` before
-   `v0.6.0`.
-2. **Approvals** in the Actions page: P3 for the rc (`draft`, then `publish-release`, `image`, `npm`),
-   P5 for `v0.6.0`.
-3. **Full-product test** after `v0.6.0`: M4 GUI browser check (M4 S19), M5 S17 smoke, M7 S21 smoke
-   (Mac + Claude Code + a VM with your GitLab), quickstart, harness spot checks.
-
-## Next agent steps
-- After the rc is verified (RELEASING.md §3 step 9): PR `relgen bump 0.6.0`, then tag `v0.6.0` (P4).
+## Rules learned this session
+- Approving a `release` deployment is always the user's click; the agent never approves it.
+- The version files must match the tag exactly, rc included (RELEASING.md §3 step 3).
+- Verification downloads go under the repo's git-ignored `dist/`, not the scratchpad (colima only
+  shares the home folder with containers). Delete them afterwards.
+- Talk to the user in short, plain sentences; give exact commands and clicks.
 
 ## Open doc markers (resolve at the points named)
 - `docs/guide/README.md`: wiki link (once published as part of the release).
