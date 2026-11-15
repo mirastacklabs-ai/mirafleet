@@ -289,3 +289,27 @@ func TestKillSession(t *testing.T) {
 		t.Errorf("job state %s", got.State)
 	}
 }
+
+// H-10: `server &` in a foreground command does not survive the call.
+func TestForegroundBackgroundChildDoesNotSurvive(t *testing.T) {
+	e := newEngine(t, Config{})
+	s := newSession(t)
+	r := bash(t, e, s, `sleep 300 >/dev/null 2>&1 & echo $! > child.pid`, 0)
+	if r.ExitCode != 0 {
+		t.Fatalf("%+v", r)
+	}
+	b, err := os.ReadFile(filepath.Join(s.WorkDir, "child.pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 100 && alive(pid); i++ {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if alive(pid) {
+		t.Errorf("background child %d survived the foreground call", pid)
+	}
+}

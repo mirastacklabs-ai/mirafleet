@@ -91,6 +91,19 @@ type Engine struct {
 	cwds     map[string]string           // sid -> cwd
 	fg       map[string]map[int]struct{} // sid -> running foreground pgids
 	sessions map[string]string           // sid -> Dir, every session seen (for Busy)
+	startMu  map[string]*sync.Mutex      // sid -> serializes StartJob so job_max holds (H-11)
+}
+
+// startLock returns the session's StartJob mutex.
+func (e *Engine) startLock(sid string) *sync.Mutex {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	m := e.startMu[sid]
+	if m == nil {
+		m = &sync.Mutex{}
+		e.startMu[sid] = m
+	}
+	return m
 }
 
 // New builds an Engine. It snapshots the allowlisted part of the runner's environment now.
@@ -98,6 +111,7 @@ func New(cfg Config) (*Engine, error) {
 	e := &Engine{
 		shim: cfg.Shim, jobMax: cfg.JobMax, maxJobs: cfg.MaxJobs,
 		cwds: map[string]string{}, fg: map[string]map[int]struct{}{}, sessions: map[string]string{},
+		startMu: map[string]*sync.Mutex{},
 	}
 	if e.shim == "" {
 		p, err := os.Executable()
@@ -307,6 +321,9 @@ func (e *Engine) Bash(ctx context.Context, s Session, r BashRequest) (transport.
 	e.trackFG(s.ID, pgid, true)
 	werr := cmd.Wait()
 	e.trackFG(s.ID, pgid, false)
+	// A foreground command leaves nothing behind: `server &` must not outlive the call (a
+	// background shell is job_start's job). The group id stays ours until the shell is reaped.
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	_ = werr // non-zero exit and WaitDelay are reported through the result, not as errors
 
 	e.setCwd(s, readCwd(pr))

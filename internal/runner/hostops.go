@@ -154,7 +154,9 @@ func (m *devMgr) open(id workspace.ID, restrict bool, names []string) error {
 }
 
 // scopeFile records, in the session's state directory, which credentials the open asked for, so
-// a runner restart wires the adopted session with the same (never wider) set.
+// a runner restart wires the adopted session with the same set. The file is in the session
+// directory, which the session's own uid can write: it is a restart convenience, not a security
+// boundary (a process of that uid could widen it and kill the runner; docs/M7.md section 3.2, Q1).
 const scopeFile = "creds_scope"
 
 type credScope struct {
@@ -172,7 +174,8 @@ func saveScope(dir string, restrict bool, names []string) error {
 
 // adopt wires the workspaces found at start (a runner restart keeps them): central's creds_sync
 // refreshes them as soon as it arrives, and until then they have no credentials. A session whose
-// scope file is missing or unreadable gets no credentials rather than all of them.
+// scope file is missing or unreadable gets no credentials rather than all of them; a readable
+// file is trusted as written (see scopeFile).
 func (m *devMgr) adopt(ids []workspace.ID) {
 	for _, id := range ids {
 		dir, err := m.hooks.SessionDir(id)

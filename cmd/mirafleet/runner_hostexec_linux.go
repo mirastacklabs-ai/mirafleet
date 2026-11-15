@@ -42,7 +42,11 @@ func newHostExecutor(cfg *wsconfig.Config) (workspace.Executor, error) {
 	if err := paths.Ensure(); err != nil {
 		return nil, err
 	}
-	if err := hostHarden(paths.State); err != nil {
+	home, err := os.UserHomeDir() // §3.2: refuse a group/world-writable $HOME too (H-12)
+	if err != nil || !filepath.IsAbs(home) {
+		return nil, fmt.Errorf("runner user has no absolute home directory")
+	}
+	if err := hostHarden(paths.State, home); err != nil {
 		return nil, err
 	}
 	hc := cfg.Host

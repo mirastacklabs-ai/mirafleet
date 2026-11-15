@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -218,5 +220,33 @@ func TestJobOutputCapKillsJob(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dir, "stderr"))
 	if !strings.Contains(string(b), "output exceeded") {
 		t.Errorf("no cap note: %q", b)
+	}
+}
+
+// H-11: concurrent job_start cannot exceed MaxJobs.
+func TestConcurrentStartJobHonoursMax(t *testing.T) {
+	e := newEngine(t, Config{MaxJobs: 2})
+	s := newSession(t)
+	var wg sync.WaitGroup
+	var ok, busy atomic.Int32
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := e.StartJob(s, "sleep 300", "", 0)
+			switch {
+			case err == nil:
+				ok.Add(1)
+			case errors.Is(err, workspace.ErrBusy):
+				busy.Add(1)
+			default:
+				t.Errorf("unexpected: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	t.Cleanup(func() { e.KillSession(s) })
+	if ok.Load() != 2 || busy.Load() != 6 {
+		t.Fatalf("started %d, refused %d; want 2 and 6", ok.Load(), busy.Load())
 	}
 }

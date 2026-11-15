@@ -29,13 +29,19 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mirastacklabs-ai/mirafleet/internal/adminclient"
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 	"github.com/mirastacklabs-ai/mirafleet/internal/service"
 )
 
 // AdminActionTimeoutS is the action.run timeout the CLI asks for (the service caps it).
-const AdminActionTimeoutS = 600
+const AdminActionTimeoutS = adminclient.ActionTimeoutS
+
+// AdminCall is the client side of the admin socket; see adminclient.Call.
+func AdminCall(socketPath, method string, params, result any) error {
+	return adminclient.Call(socketPath, method, params, result)
+}
 
 // adminTable is the admin-socket table: every admin method plus the operator methods useful to
 // an admin. Enroll methods and hello are never served here.

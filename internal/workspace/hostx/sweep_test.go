@@ -178,3 +178,39 @@ func TestPrune(t *testing.T) {
 		t.Fatalf("expect b, c and w left: %+v", got)
 	}
 }
+
+// H-08/H-09: records live in StateDir/meta, and a delete or prune also removes the executor's
+// state directory of the session (saved output, job logs).
+func TestRemoveDropsStateDirAndMetaIsApart(t *testing.T) {
+	m, clk, base := newMgr(t, nil)
+	for _, id := range []string{"x", "x.json"} { // "x.json" must not collide with x's record
+		s, err := m.Open(id, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+		if err := os.MkdirAll(filepath.Join(base, "state", "sessions", Slug(id), "out"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := mustList(t, m); len(got) != 2 {
+		t.Fatalf("x and x.json must be two sessions: %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(base, "state", "meta", "x.json")); err != nil {
+		t.Fatalf("record not in meta/: %v", err)
+	}
+	if err := m.Delete("x.json"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "state", "sessions", "x.json")); err == nil {
+		t.Fatal("delete left the state dir")
+	}
+	clk.t = clk.t.Add(10 * day)
+	rep := m.Prune(PruneOptions{OlderThan: 7 * day, Yes: true})
+	if len(rep.Removed) != 1 || len(rep.Errors) != 0 {
+		t.Fatalf("%+v", rep)
+	}
+	if _, err := os.Stat(filepath.Join(base, "state", "sessions", "x")); err == nil {
+		t.Fatal("prune left the state dir")
+	}
+}

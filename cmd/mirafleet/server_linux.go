@@ -138,6 +138,7 @@ func runnerRun(args []string) error {
 		}
 		defer ex.Close()
 		rcfg.Workspace, rcfg.WorkspaceConfig = ex, wc
+		rcfg.EventSpool = filepath.Join(*data, "events.spool") // usage events survive a restart or crash
 		if rcfg.CorporateCA, err = loadCorporateCA(wc); err != nil {
 			return err
 		}

@@ -519,10 +519,14 @@ func TestWorkspaceDevOps(t *testing.T) {
 	if err := workspaceAllowed(transport.OpOutputRead, StatusDisabled); err != nil {
 		t.Fatal(err)
 	}
-	for _, op := range []string{transport.OpFS, transport.OpJobStart, transport.OpCredsSync} {
+	for _, op := range []string{transport.OpFS, transport.OpJobStart} {
 		if err := workspaceAllowed(op, StatusDisabled); !errors.Is(err, ErrDisabled) {
 			t.Errorf("%s on a disabled runner: %v", op, err)
 		}
+	}
+	// H-02: central must be able to send a disabled runner the empty set.
+	if err := workspaceAllowed(transport.OpCredsSync, StatusDisabled); err != nil {
+		t.Errorf("creds_sync on a disabled runner: %v", err)
 	}
 	_ = r
 }

@@ -18,8 +18,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/mirastacklabs-ai/mirafleet/internal/adminclient"
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
-	"github.com/mirastacklabs-ai/mirafleet/internal/central"
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
 
@@ -27,7 +27,7 @@ const defaultCentralData = "/var/lib/mirafleet/central"
 
 // adminCLI runs one central subcommand.
 type adminCLI struct {
-	call func(sock, method string, params, result any) error // central.AdminCall, or a fake
+	call func(sock, method string, params, result any) error // adminclient.Call, or a fake
 	out  io.Writer
 	err  io.Writer
 	exit func(code int) // exec propagates the action's exit code
@@ -38,7 +38,7 @@ type adminCLI struct {
 }
 
 func defaultAdminCLI() *adminCLI {
-	return &adminCLI{call: central.AdminCall, out: os.Stdout, err: os.Stderr, exit: os.Exit,
+	return &adminCLI{call: adminclient.Call, out: os.Stdout, err: os.Stderr, exit: os.Exit,
 		callBody: adminCallBody, in: os.Stdin}
 }
 
@@ -510,7 +510,7 @@ func (c *adminCLI) exec(args []string) error {
 	var res api.ActionRunResult
 	err = c.call(adminSock(*data), api.MethodActionRun, api.ActionRunParams{
 		Fleet: ref.Fleet, Runner: ref.Runner, Action: pos[1], Params: params,
-		TimeoutS: central.AdminActionTimeoutS, Confirm: *confirm}, &res)
+		TimeoutS: adminclient.ActionTimeoutS, Confirm: *confirm}, &res)
 	if err != nil {
 		return err
 	}

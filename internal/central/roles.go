@@ -163,11 +163,18 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			if hb.Executor != "" {
 				s.reconcileAsync(p.ID)
 			}
+			edge := s.claimEdge(p.ID, now)
 			if hasFeature(hb, transport.FeatureCreds) {
-				s.deliverAsync(p.ID)
+				if edge {
+					s.deliverAsync(p.ID)
+				} else {
+					// H-06: a flapping runner costs one decrypt+send per edge gap; the next
+					// heartbeat's retry delivers the set.
+					s.cfg.Service.MarkDeliveryStale(p.ID)
+				}
 			}
 			lastHB = hb
-			if s.claimEdge(p.ID, now) {
+			if edge {
 				lastTouch = now
 				tc.put(hb) // D-02: last_seen/info on register
 			} else {

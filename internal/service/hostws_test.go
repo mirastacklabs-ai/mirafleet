@@ -477,13 +477,27 @@ func TestKillAndCloseWithDelete(t *testing.T) {
 }
 
 func TestIngestRunnerEvents(t *testing.T) {
-	e := newEnv(t)
+	ce := newCredEnv(t)
+	e := ce.env
 	e.hostFleet("vm", false)
 	r := e.hostRunner("vm")
+	ce.setTok("gitlab-ssh", "v1")
+	ce.setTok("reg", "v2")
+	ce.assign("gitlab-ssh", "vm", "")
+	ce.assign("reg", "vm", "")
 	op := e.operator("ann")
 	w, _, err := e.svc.OpenWorkspace(e.ctx, op, SourceAPI, "vm", "s1", "", nil, "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// H-03: an event for a credential the runner does not hold is dropped.
+	foreign := &transport.EventBatch{Events: []transport.Event{
+		{Type: transport.EventCredentialUse, Session: "s1", Credential: "not-mine", Host: "x.corp", Status: transport.EventOK, Count: 1, WindowS: 60}}}
+	if err := e.svc.IngestRunnerEvents(e.ctx, r.ID, foreign); err != nil {
+		t.Fatal(err)
+	}
+	if use := e.wsAudit(ActionCredentialUse); len(use) != 0 {
+		t.Fatalf("event for a credential outside the runner's set was recorded: %+v", use)
 	}
 	b := &transport.EventBatch{Dropped: 7, Events: []transport.Event{
 		{Type: transport.EventCredentialUse, Session: w.WsID, Credential: "gitlab-ssh", Host: "gitlab.corp", Status: transport.EventOK, Count: 12, WindowMs: 1000, WindowS: 60},

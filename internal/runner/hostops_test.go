@@ -699,3 +699,38 @@ func TestRestartRewiresAdoptedSessions(t *testing.T) {
 		t.Fatalf("adopted unrestricted session: %v", env)
 	}
 }
+
+// H-21: the unsent table is spooled to disk and a new runner process sends it; a poisoned entry
+// is dropped, and a sent table removes the file.
+func TestEventSpoolSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.spool")
+	a := newEventAgg()
+	a.loadSpool(path)
+	a.record("s1", "c", "git.test:443", transport.EventOK)
+	a.record("s1", "c", "git.test:443", transport.EventOK)
+	a.persist()
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("spool: %v %v", fi, err)
+	}
+	b := newEventAgg() // the "restarted" runner
+	b.loadSpool(path)
+	batches := b.take(true)
+	if len(batches) != 1 || len(batches[0].Events) != 1 || batches[0].Events[0].Count != 2 || batches[0].Validate() != nil {
+		t.Fatalf("after restart: %+v", batches)
+	}
+	b.persist() // everything was taken: the file goes away
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("spool kept after the table was drained")
+	}
+	// A hand-edited entry central would refuse is dropped, not retried forever.
+	os.WriteFile(path, []byte(`{"events":[{"type":"credential_use","session":"s","credential":"c","host":"h","status":"ok","count":0,"window_ms":1,"window_s":60}]}`), 0o600)
+	c := newEventAgg()
+	c.loadSpool(path)
+	if c.hasPending() {
+		t.Fatal("invalid spool entry loaded")
+	}
+	c.persist()
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("unusable spool kept")
+	}
+}

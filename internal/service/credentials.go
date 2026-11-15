@@ -102,9 +102,10 @@ type credState struct {
 	reported  map[int64]map[string]string // runner id -> credential name -> runner-reported status
 	rotErr    map[string]string
 	lastTry   map[string]time.Time
-	rotating  map[string]bool // credential names with a rotation in flight
-	stale     map[int64]bool  // runners whose last delivery failed
-	retrying  map[int64]bool  // runners with a heartbeat-triggered retry in flight
+	rotating  map[string]bool       // credential names with a rotation in flight
+	stale     map[int64]bool        // runners whose last delivery failed
+	retrying  map[int64]bool        // runners with a heartbeat-triggered retry in flight
+	runLocks  map[int64]*sync.Mutex // per-runner delivery lock: read, generation and send are one step
 
 	// test seams
 	wait    time.Duration
@@ -119,7 +120,7 @@ func (s *Service) initCredentials(cfg CredentialsConfig) error {
 		lifetime: cfg.RotateLifetime, delivered: map[int64]map[string]int64{},
 		reported: map[int64]map[string]string{}, rotErr: map[string]string{}, lastTry: map[string]time.Time{},
 		rotating: map[string]bool{}, stale: map[int64]bool{}, retrying: map[int64]bool{},
-		wait: deliverWait, backoff: storeBackoff}
+		runLocks: map[int64]*sync.Mutex{}, wait: deliverWait, backoff: storeBackoff}
 	c.hasKey = cfg.Key != nil
 	if c.client == nil {
 		c.client = &http.Client{Timeout: 30 * time.Second}
@@ -196,6 +197,7 @@ func (s *Service) sealer(pl payload) store.CredentialSealer {
 			return nil, nil, errors.New("encode credential")
 		}
 		sealed, err := s.cred.key.Seal(raw, credAAD(id, version))
+		clear(raw) // H-05: no plaintext copy outlives the seal
 		if err != nil {
 			return nil, nil, errors.New("seal credential")
 		}
@@ -215,7 +217,9 @@ func (s *Service) open(sc store.SealedCredential) (payload, error) {
 		return payload{}, errors.New("cannot open credential")
 	}
 	var pl payload
-	if err := json.Unmarshal(raw, &pl); err != nil {
+	err = json.Unmarshal(raw, &pl)
+	clear(raw) // H-05
+	if err != nil {
 		return payload{}, errors.New("cannot decode credential")
 	}
 	return pl, nil
@@ -617,6 +621,11 @@ func (s *Service) RetryDelivery(ctx context.Context, runnerID int64) error {
 // sender. Nothing is sent when no key or sender is configured, or the runner is not active. A
 // failure marks the runner stale so its next heartbeat retries.
 func (s *Service) DeliverRunner(ctx context.Context, runnerID int64) error {
+	// H-01: one delivery per runner at a time, so the store read and the generation taken after
+	// it cannot interleave with another delivery and give a stale set the higher generation.
+	l := s.runnerLock(runnerID)
+	l.Lock()
+	defer l.Unlock()
 	err := s.deliverRunner(ctx, runnerID)
 	s.cred.mu.Lock()
 	if err != nil {
@@ -626,6 +635,53 @@ func (s *Service) DeliverRunner(ctx context.Context, runnerID int64) error {
 	}
 	s.cred.mu.Unlock()
 	return err
+}
+
+func (s *Service) runnerLock(id int64) *sync.Mutex {
+	s.cred.mu.Lock()
+	defer s.cred.mu.Unlock()
+	l := s.cred.runLocks[id]
+	if l == nil {
+		l = &sync.Mutex{}
+		s.cred.runLocks[id] = l
+	}
+	return l
+}
+
+// withdrawRunner sends a disabled runner an empty creds_sync so it drops the secrets it holds
+// (H-02), and forgets the delivery state. Best effort: a failure is logged; the runner is
+// re-synced from the store when it reconnects.
+func (s *Service) withdrawRunner(ctx context.Context, runnerID int64) {
+	if s.cred == nil || !s.cred.hasKey || s.cred.sender == nil {
+		return
+	}
+	l := s.runnerLock(runnerID)
+	l.Lock()
+	defer l.Unlock()
+	s.cred.mu.Lock()
+	delete(s.cred.delivered, runnerID)
+	delete(s.cred.reported, runnerID)
+	delete(s.cred.stale, runnerID)
+	s.cred.mu.Unlock()
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliverTimeout)
+	defer cancel()
+	body := &transport.CredsSyncBody{Credentials: []transport.CredSecret{}, Generation: s.nextGen()}
+	if err := s.cred.sender.SyncCredentials(dctx, runnerID, body); err != nil {
+		s.logf("service: empty creds_sync to runner %d failed: %v", runnerID, errors.New("send failed"))
+	}
+}
+
+// MarkDeliveryStale forgets the runner's delivery state and marks it for a heartbeat retry
+// instead of delivering now: used for a reconnect inside the edge debounce (H-06).
+func (s *Service) MarkDeliveryStale(runnerID int64) {
+	if s.cred == nil {
+		return
+	}
+	s.cred.mu.Lock()
+	delete(s.cred.delivered, runnerID)
+	delete(s.cred.reported, runnerID)
+	s.cred.stale[runnerID] = true
+	s.cred.mu.Unlock()
 }
 
 func (s *Service) deliverRunner(ctx context.Context, runnerID int64) error {

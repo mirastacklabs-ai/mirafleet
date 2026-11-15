@@ -96,8 +96,9 @@ func parseChallenge(h string) (map[string]string, bool) {
 }
 
 // registryDo sends r upstream; on a Bearer 401 challenge it fetches a token with the stored
-// credential, injects it and retries, so the client never sees the challenge or the token.
-func (b *Broker) registryDo(ctx context.Context, cred Credential, hostport string, r *http.Request) (*http.Response, error) {
+// credential, injects it and retries, so the client never sees the challenge or the token. It
+// also returns the bearer token sent last (empty if none), which the caller scrubs from the reply.
+func (b *Broker) registryDo(ctx context.Context, cred Credential, hostport string, r *http.Request) (*http.Response, string, error) {
 	var body []byte
 	if r.Body != nil && r.Body != http.NoBody {
 		if r.ContentLength < 0 || r.ContentLength > maxReplayBody {
@@ -105,7 +106,7 @@ func (b *Broker) registryDo(ctx context.Context, cred Credential, hostport strin
 		} else {
 			var err error
 			if body, err = io.ReadAll(r.Body); err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			r.Body.Close()
 		}
@@ -125,20 +126,21 @@ func (b *Broker) registryDo(ctx context.Context, cred Credential, hostport strin
 	tok, _ := b.tokens.get(key)
 	resp, err := send(tok)
 	if err != nil || resp.StatusCode != http.StatusUnauthorized {
-		return resp, err
+		return resp, tok, err
 	}
 	ch, ok := parseChallenge(resp.Header.Get("Www-Authenticate"))
 	if !ok || !replayable {
-		return resp, nil
+		return resp, tok, nil
 	}
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 	resp.Body.Close()
 	tok, ttl, err := b.fetchToken(ctx, cred, ch)
 	if err != nil {
-		return nil, err
+		return nil, tok, err
 	}
 	b.tokens.put(key, tok, ttl)
-	return send(tok)
+	resp, err = send(tok)
+	return resp, tok, err
 }
 
 // fetchToken calls the challenge realm with the stored credential. The realm must be https and

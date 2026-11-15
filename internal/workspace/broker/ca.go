@@ -71,6 +71,17 @@ func newCA(hosts []string, validity time.Duration) (*sessionCA, error) {
 	if len(seen) == 0 {
 		tpl.PermittedDNSDomains = []string{"nothing.invalid"}
 	}
+	// A name type with no constraint is unconstrained: close the other family too. All DNS
+	// hosts: exclude every IP. All IP hosts: permit only a DNS name that cannot exist.
+	if len(tpl.PermittedIPRanges) == 0 {
+		tpl.ExcludedIPRanges = []*net.IPNet{
+			{IP: net.IPv4zero.To4(), Mask: net.CIDRMask(0, 32)},
+			{IP: net.IPv6zero, Mask: net.CIDRMask(0, 128)},
+		}
+	}
+	if len(tpl.PermittedDNSDomains) == 0 {
+		tpl.PermittedDNSDomains = []string{"nothing.invalid"}
+	}
 	tpl.PermittedDNSDomainsCritical = true
 	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
 	if err != nil {
