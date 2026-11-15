@@ -5,6 +5,11 @@ Live status of every remaining step. Plans: [PLAN.md](PLAN.md), [M4.md](M4.md), 
 
 Status: `done` · `running` · `next` · `queued` · `waiting on user` · `blocked`.
 
+**Paused 14 Nov 2026 (offline).** Local commits, not pushed: main `ce68f76` (M4 wave B) +
+`299f27e` (test flake fix), gate to re-run; branch `m4-wave-c` (`../mirafleet-m4c`) WIP S7/S8/S12;
+branch `m6-now` (`../mirafleet-m6`) N1 done + partial fix pass. Resume: gate main → push → finish
+wave C and the M6 fix pass in their worktrees.
+
 Every wave ends the same way: narrow read-only Opus reviews → fix P0/P1 (P2/P3 batched per
 milestone) → full gate (`scripts/dev.sh fmt build vet test cross licenses integration`) → push →
 Windows/macOS CI green → clean up.
