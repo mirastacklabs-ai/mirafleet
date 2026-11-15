@@ -73,8 +73,8 @@ func (s *Server) wsRowOf(w store.Workspace) wsRow {
 	if !w.ClosedAt.IsZero() {
 		end = w.ClosedAt
 	}
-	return wsRow{ID: w.WsID, ShortID: short, Fleet: w.Fleet, Runner: w.Runner, Operator: w.Operator, Session: w.Session,
-		Image: w.Image, State: wsBadge(w.State), CanKill: !w.State.Terminal(),
+	return wsRow{ID: w.WsID, ShortID: short, Fleet: w.Fleet, Runner: w.Runner, Operator: inertRunnerText(w.Operator, 64),
+		Session: inertRunnerText(w.Session, 128), Image: inertRunnerText(w.Image, runnerDetailMax), State: wsBadge(w.State), CanKill: !w.State.Terminal(),
 		KillURL: "/workspaces/" + PathEscape(w.WsID) + "/kill",
 		Created: s.timeOf(w.CreatedAt), LastUsed: s.timeOf(w.LastUsedAt), Expires: s.timeOf(w.ExpiresAt),
 		Age: strings.TrimSuffix(relAge(end, w.CreatedAt), " ago")}

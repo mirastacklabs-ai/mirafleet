@@ -102,7 +102,7 @@ func (s *Server) PrepareSetup(ctx context.Context) (path string, created bool, e
 	if !created {
 		open, oerr := s.cfg.Backend.GUISetupOpen(ctx)
 		if oerr != nil {
-			return "", false, nil
+			return "", false, oerr
 		}
 		if !open {
 			s.removeSetupFile()

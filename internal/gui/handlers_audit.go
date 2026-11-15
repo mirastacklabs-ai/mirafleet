@@ -55,11 +55,22 @@ type auditQuery struct {
 	Filter                                          store.AuditFilter
 }
 
+// parseAuditTime parses a UTC filter time. For an upper bound (end) the value stands for its
+// whole unit and the bound is the unit's last millisecond (the store compares in ms,
+// inclusive): "2026-11-14" ends at 23:59:59.999, "...T09:30" at 09:30:59.999 (G-35). An RFC
+// 3339 value with a fraction is taken as given.
 func parseAuditTime(v string, end bool) (time.Time, bool) {
 	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04", "2006-01-02"} {
 		if t, err := time.ParseInLocation(layout, v, time.UTC); err == nil {
-			if end && layout == "2006-01-02" {
-				t = t.Add(24*time.Hour - time.Second)
+			if end {
+				switch {
+				case layout == "2006-01-02":
+					t = t.Add(24*time.Hour - time.Millisecond)
+				case layout == "2006-01-02T15:04" || layout == "2006-01-02 15:04":
+					t = t.Add(time.Minute - time.Millisecond)
+				case !strings.Contains(v, "."):
+					t = t.Add(time.Second - time.Millisecond)
+				}
 			}
 			return t.UTC(), true
 		}

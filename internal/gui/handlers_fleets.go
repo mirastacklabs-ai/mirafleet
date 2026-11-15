@@ -448,10 +448,10 @@ func (s *Server) fleetCreate(w http.ResponseWriter, r *http.Request) {
 	ws := wsFormFromValues(form)
 	errs := map[string]string{}
 	switch {
-	case !store.ValidFleetName(name):
-		errs["name"] = nameHint
 	case name == "new":
 		errs["name"] = "This name is reserved. Choose another."
+	case !store.ValidFleetName(name):
+		errs["name"] = nameHint
 	}
 	if mode != "actions" && mode != "workspace" {
 		errs["mode"] = "Choose actions or workspace."

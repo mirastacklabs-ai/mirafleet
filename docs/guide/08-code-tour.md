@@ -7,7 +7,7 @@ use them.
 
 ## What you will learn
 
-- The M7 packages (`hostx`, `fsops`, `sshagent`, `broker`, `secrets`) and a bash call followed end to end (sections 8.11 and 8.12).
+- The M7 packages (`hostx`, `fsops`, `sshagent`, `broker`, `secrets`) and a bash call followed end to end (sections 8.13 and 8.14).
 - Where every directory and file group lives, and what it is for.
 - Which package imports which, and why the arrows only point one way.
 - The key types and functions of each package, and the traps ("gotchas") that bit us before.
@@ -20,6 +20,9 @@ use them.
   `internal/handoff`, `integrations/claude-code/hook`), the import rules that keep them light
   (`TestOrchestratorDeps`), the function-by-function path of one `exec` **tool call** (section
   8.10), and how to add a tool (section 8.8).
+- The M4 package `internal/gui` (the admin GUI): its files, why it may import only `service`,
+  `api`, `auth` and `store` types (`TestGUIDeps`), the function-by-function path of one
+  **Revoke click** (section 8.11), and how to add a screen (section 8.8).
 - How build tags keep SQLite out of the macOS and Windows binaries (and containerd out of every
   non-Linux build), and where to add a new operator method, admin command, store method,
   action field or **workspace executor**.
@@ -42,7 +45,7 @@ mirafleet/
 ├── docs/
 │   ├── ARCHITECTURE.md        the design
 │   ├── PLAN.md                milestones M1..M6 and the build order
-│   ├── M2.md, M3.md, M5.md    per-milestone plans and decisions (M3 = workspaces, M5 = MCP)
+│   ├── M2.md, M3.md, M4.md, M5.md   per-milestone plans and decisions (M3 = workspaces, M4 = GUI, M5 = MCP)
 │   ├── BRAND.md               colours, fonts, tone
 │   └── guide/                 this developer guide
 ├── cmd/mirafleet/             the one binary: central | runner | mcp | version
@@ -54,6 +57,8 @@ mirafleet/
 │   ├── mcp_hook.go            `mcp hook claude-code <event>`: routes to integrations/ (M5)
 │   ├── mcp_login.go, mcp_api.go   `mcp login` and `mcp api` (operator side, cross-platform)
 │   ├── central_linux.go       `central init|run`: opens SQLite, builds service, starts server
+│   ├── central_gui_linux.go   the `-gui-*` flags of `central run`; starts and stops `internal/gui` (M4)
+│   ├── admin_gui.go           `central gui reset-admin`, `central fleet set -confirm` (M4)
 │   ├── server_linux.go        `runner join|run`, heartbeat constant (linux only)
 │   ├── runner_ws_linux.go     `runner run -workspace`, `tls-init`, `tls-front`, `workspace list|prune`;
 │   │                          the only file besides ctrd that links containerd (linux only)
@@ -82,11 +87,12 @@ mirafleet/
     ├── audit/                 JSON-lines audit writer (runner side) and the Sink interface
     ├── actions/               the runner's guard: actions.yaml, Plan, Run
     ├── store/                 persistence interface, domain types, validation, errors
-    │   ├── sqlite/            the SQLite implementation and migrations/0001_init.sql, 0002_workspaces.sql
+    │   ├── sqlite/            the SQLite implementation and migrations/0001_init.sql, 0002_workspaces.sql, 0003_gui.sql
     │   └── storetest/         conformance suite every Store must pass
-    ├── service/               the single code path behind CLI, API (and later GUI)
+    ├── service/               the single code path behind CLI, API and GUI
     ├── central/               the SSH server, role handlers, admin socket
     │   └── registry/          live runner sessions, Exec, Kick, tombstones
+    ├── gui/                   M4: the admin GUI (HTTPS, html/template, htmx); templates/ and static/ embedded
     ├── runner/                dial-out loop, heartbeat, exec@ and workspace@ handlers, runner.yaml, join
     ├── workspace/             M3: the Executor interface, validation helpers, output capture
     │   ├── fake/              in-memory Executor for unit tests
@@ -115,7 +121,7 @@ reports an import cycle. The groups come from the real `import` lines of the non
 ```mermaid
 flowchart TD
     cmd["4. cmd/mirafleet<br/>parses flags and wires everything"]
-    top["3. central, service, runner<br/>the behaviour of each role"]
+    top["3. central, service, runner, gui<br/>the behaviour of each role"]
     exe["2b. executors: workspace/ctrd (linux only),<br/>workspace/osb, workspace/fake"]
     mid["2a. store, store/sqlite, auth, policy,<br/>central/registry, apiclient, opconf, workspace/wsconfig"]
     leaf["1. leaves: api, transport, keys, tokens, actions,<br/>audit, workspace, workspace/egress, workspace/initproc"]
@@ -140,9 +146,10 @@ executor: it is handed a `workspace.Executor` value (the interface, in a leaf pa
 
 | Package | Imports (inside this repo) |
 |---|---|
-| `cmd/mirafleet` | actions, api, apiclient, audit, auth, central, central/registry, keys, mcpserver, opconf, orch, policy, runner, service, store, store/sqlite, transport, workspace, workspace/ctrd, workspace/initproc, workspace/osb, workspace/wsconfig, and `integrations/claude-code/hook` |
+| `cmd/mirafleet` | actions, api, apiclient, audit, auth, central, central/registry, gui, keys, mcpserver, opconf, orch, policy, runner, service, store, store/sqlite, transport, workspace, workspace/ctrd, workspace/initproc, workspace/osb, workspace/wsconfig, and `integrations/claude-code/hook` |
 | `internal/central` | api, auth, central/registry, service, store, transport |
 | `internal/central/registry` | transport |
+| `internal/gui` (M4) | api, auth, service, store, workspace, workspace/units |
 | `internal/service` | api, auth, central/registry, policy, store, tokens, transport, workspace |
 | `internal/policy` | api, auth, store |
 | `internal/auth` | store |
@@ -168,7 +175,11 @@ operator's laptop). `mcpserver` sits on `orch`, `orch` on `apiclient`, `opconf`,
 `keys`, and the Claude Code hook package sits beside `mcpserver` on the same `orch`. None of it
 imports the server side, which `TestOrchestratorDeps` enforces (section 8.7, point 4).
 
-Five consequences worth remembering:
+The M4 package `internal/gui` is a fourth kind: a second front end on the server side, beside
+`central`. It sits on `service` and never touches the store, the registry or the SSH server
+directly, which `TestGUIDeps` enforces (section 8.7, point 5).
+
+Six consequences worth remembering:
 
 1. **`internal/central` never imports `store/sqlite`.** It sees only the `store.Store`
    interface. Only `cmd/mirafleet/central_linux.go` (a file that exists only on Linux) imports
@@ -190,6 +201,10 @@ Five consequences worth remembering:
    remote operator does: over SSH, through `apiclient`. Without this rule the laptop binary could
    quietly start linking the database, and an agent's tool call could bypass the SSH boundary
    with a function call.
+6. **`internal/gui` never imports `central`, `central/registry`, `store/sqlite`, `apiclient`,
+   `orch` or `mcpserver`.** It calls `*service.Service` through the small `gui.Backend`
+   interface. That is why a revoke from a browser takes exactly the code path of `central runner
+   revoke`: there is no second implementation to keep in line.
 
 ## 8.3 Package by package
 
@@ -335,9 +350,11 @@ Each package below has an **If you only read one** line: the single file to open
 - **If you only read one:** `migrations/0001_init.sql` (the whole schema).
 - **Files:** `sqlite.go` (`Open`, two connection pools), `migrate.go` (embedded migrations),
   one file per entity (`fleets.go`, `runners.go`, `tokens.go`, `operators.go`, `settings.go`,
-  `audit.go`, and for M3 `fleetws.go` and `workspaces.go`), `driver.go` (maps driver error codes to `ErrConflict`), `open_unix.go` /
-  `open_other.go` (open with `O_NOFOLLOW` on unix), `migrations/0001_init.sql` and
-  `0002_workspaces.sql`.
+  `audit.go`, and for M3 `fleetws.go` and `workspaces.go`, and for M4 `gui.go`: the admin,
+  setup-token and session tables), `driver.go` (maps driver error codes to `ErrConflict`), `open_unix.go` /
+  `open_other.go` (open with `O_NOFOLLOW` on unix), `migrations/0001_init.sql`,
+  `0002_workspaces.sql` and `0003_gui.sql`. `audit.go` also has `QueryAudit`, the filtered
+  keyset read behind `audit.list` and the Audit screen.
 - **How it works:** one single-connection *writer* pool doing `BEGIN IMMEDIATE` transactions,
   plus a small `query_only` *reader* pool, in WAL mode with `busy_timeout(5000)` and
   `foreign_keys(1)`. Migrations are numbered `NNNN_name.sql`, must be contiguous from 0001, run
@@ -360,8 +377,8 @@ calls it from `TestConformance`. A future Postgres store will call the same func
 ### `internal/service`: the one code path
 
 - **If you only read one:** `internal/service/exec.go` (`RunAction`).
-- **Purpose:** every front end (the operator API, the admin socket and the enrol channels now,
-  the GUI in M4) calls the same `*Service` methods. Each method authorises, validates, changes
+- **Purpose:** every front end (the operator API, the admin socket, the enrol channels and, since
+  M4, the GUI) calls the same `*Service` methods. Each method authorises, validates, changes
   state and audits.
 - **Files:** `service.go` (`Config`, `New`, `authorize`, `deny`, `ToAPIError`, `Source`),
   `exec.go` (`RunAction`), `lifecycle.go` (`ListRunners`, `Approve`, `Disable`, `Enable`,
@@ -373,6 +390,12 @@ calls it from `TestConformance`. A future Postgres store will call the same func
   `workspace_ops.go` (`ExecWorkspace`, `ReadWorkspaceFile`, `WriteWorkspaceFile`,
   `ListWorkspaces`, `classify`), `workspace_admin.go` (`AdminListWorkspaces`, `KillWorkspace`)
   and `workspace_reaper.go` (`RunReaper`, `ReapOnce`, `ReconcileRunner`, `RecoverWorkspaces`).
+  M4 added `gui.go` (the admin account and its sessions: `EnsureGUISetup`, `CompleteGUISetup`,
+  `GUILogin`, `GUIAuthenticate`, `ChangeGUIPassword`, `ResetGUIAdmin`, `GUILogout`,
+  `PurgeGUISessions`, and the `Action*` names of the `gui.*` audit rows) and `audit.go`
+  (`ListAudit`, `RecordAuditExport`); `SetFleetConfirm` is in `fleets.go` and `ListRunnersAll`
+  in `lifecycle.go`. The principal of a GUI request is `auth.GUIAdmin(username, remote)` and the
+  source is `service.SourceGUI`.
 - **Dependencies are injected** through `service.Config`: `Store`, `Policy`, `Live` (the
   `registry.Live` interface), `HostKey`, `Now`, `OperatorConns`, `Logf`. Tests pass fakes
   (`fakeLive`, `fakeConns`) and a fixed clock.
@@ -593,6 +616,60 @@ environment: the config and state directories and the parent PID), starts `mcpse
 `append(mcpserver.ListTools(o), mcpserver.WorkspaceTools(o)...)`, and on return closes `orch` with
 a 5 s bound; `mcp_context.go` is `context list|use|remove`; `mcp_hook.go` hands a hook event to
 `integrations/claude-code/hook`. They are cross-platform and import no server-side package.
+
+M4 added `central_gui_linux.go` (`parseCentralRun` reads `-gui-listen`, `-gui-cert`, `-gui-key`,
+`-gui-host` and `-advertise` and checks them; `startGUI` builds `gui.New`, prepares the setup token
+and starts the listener; `runningGUI.stop` drains it within 5 s, before the store closes) and
+`admin_gui.go` (`guiResetAdmin` for `central gui reset-admin`, `fleetSet` for `central fleet set
+NAME -confirm=BOOL`). The `audit` command gained the filter flags (`-fleet`, `-source`,
+`-action-prefix` and so on). The GUI is linux-only because the file that wires it is.
+
+### `internal/gui`: the admin GUI (M4)
+
+- **If you only read one:** `internal/gui/handlers_runners.go` (`runnerOp`): one page with a
+  list, a detail view, a confirmation page and a state-changing POST, in about 400 lines.
+- **Purpose:** a human administrator's web console. It is a second front end on `service`, like
+  the admin socket, with its own listener (HTTPS only), its own authentication (a password and a
+  session cookie, not an SSH key), and no logic of its own beyond turning forms into service
+  calls and results into HTML.
+- **The seam:** `backend.go` holds `Backend`, the narrow interface of exactly the `*Service`
+  methods the GUI uses; `var _ Backend = (*service.Service)(nil)` makes the compiler check it.
+  `ResetGUIAdmin` is deliberately missing, so recovery stays on the CLI. Tests give `Server`
+  a real service over a temporary SQLite file.
+- **Files, in the order a request meets them:**
+  - `server.go` (`Config`, `New`, `Start`, `Shutdown`, `CheckHostName`): builds the certificate,
+    the Host guard, the templates and the handler; `listen.go` (`hostGuard`, `ownIPs`, the
+    start-up notice); `tlscert.go` (`ensureSelfSigned`, `Fingerprint`, operator certificates;
+    `tlscert_unix.go` / `tlscert_other.go` check the key file's owner and mode).
+  - `middleware.go` (`buildHandler`): request id and security headers, panic recovery, access
+    log, the Host allowlist (421), the in-flight cap (503), method, content type and body size,
+    then the mux.
+  - `routes.go`: `adminMux` (`HandleFunc` wraps a handler in `requireAdmin`, `Passive` does the
+    same and marks the route as not counting as activity) and `routes()`, which calls one
+    `routes<Screen>` function per screen.
+  - `session.go` (cookies, `authenticate`, the purge ticker), `csrf.go` (`CSRF.Check`, form and
+    htmx tokens, signed flash values), `limiter.go` (`LoginLimiter`, `HashSem`, `ParseForm`).
+  - `handlers_*.go`: one file per screen (`auth`, `overview`, `fleets`, `runners`, `tokens`,
+    `operators`, `workspaces`, `audit`, `account`). Each has its `routesX` function, the
+    handlers, and the view models.
+  - `render.go` (`Page`, `Render`, `ErrorPage`, `Redirect`, the flash table) and `assets.go`
+    (the embedded `static/` tree, content-hashed URLs). The HTML is in `templates/*.html`
+    (`layout.html`, `partials.html`, one file per screen).
+- **How a screen is built:** a handler authenticates (`screenAuth`), reads and checks the form
+  (`screenForm`: size, type, CSRF), calls `s.cfg.Backend`, and either calls `s.Render` with a
+  view model or `s.Redirect` with a flash message id. View models are small structs; a store row
+  with secret material (a password hash, a join token's secret hash, a runner's public key) is
+  never passed to a template.
+- **Gotchas:**
+  - `gui.Server` is not given the store, so a handler cannot read the database even by mistake.
+  - `routes.go` registers by calling each `routesX`; the **security suite finds routes by
+    scanning the source** for `Handle(`, `HandleFunc(` and `Passive(` calls with a literal
+    `"METHOD /path"`. A route registered any other way fails `TestSecurityAuthRequiredOnEveryRoute`
+    on purpose, because it could escape the checks.
+  - A page and its fragment share one handler: `Render(w, r, status, screen, fragment, pg)`
+    picks the fragment only when the request has `HX-Request: true`.
+  - Every template is parsed once at start. A syntax error therefore stops central from starting
+    its GUI; `TestS3TemplatesParse` finds it earlier.
 
 ## 8.4 Follow one request: `action.run`
 
@@ -853,6 +930,8 @@ checks.
 | `internal/workspace/egress/netns_linux.go` / `netns_other.go` | `_linux` / `!linux` | `setns` into a container's network namespace / an error |
 | `internal/workspace/initproc/init_linux.go` / `init_other.go` | `_linux` / `!linux` | PID 1 reaper / an error |
 | `cmd/mirafleet/runner_ws_linux.go` | `_linux` suffix | the **only** file that imports `ctrd`; `server_other.go` provides stubs elsewhere |
+| `cmd/mirafleet/central_gui_linux.go` | `_linux` suffix | the **only** file that imports `internal/gui` (M4); the `-gui-*` flags and `startGUI` exist only on Linux |
+| `internal/gui/tlscert_unix.go` / `tlscert_other.go` | `unix` / `!unix` | check that the operator's `-gui-key` is owned by central's uid and mode 0600 / fail closed: an operator key is refused (no check is possible) |
 | `*_integration_linux_test.go`, `e2e_integration_linux_test.go` | `linux && integration` | tests that need a real containerd; run only by `scripts/dev.sh integration` |
 
 The pattern is **fail closed**: where a security check cannot be done on a platform, the code
@@ -898,9 +977,20 @@ windows, each on amd64 and arm64):
   `TestLinuxLinksSQLite`). Every target package must also exist, so renaming one cannot silently
   disable the check.
 
-Everything in these packages must also build on Windows, which `scripts/dev.sh cross` checks
-(compile and vet only) and the CI workflow actually *tests* on Windows and macOS
+Everything in the orchestrator packages must also build on Windows, which `scripts/dev.sh cross`
+checks (compile and vet only) and the CI workflow actually *tests* on Windows and macOS
 ([chapter 9](09-dev-setup-and-testing.md#913-the-orchestrator-workflow-windows-and-macos)).
+
+**5. The GUI is wired in one Linux file and links no database code of its own (M4).**
+`TestGUIDeps` in `cmd/mirafleet/deps_test.go` lists what `internal/gui` imports (linux, darwin and
+windows) and fails if it names `internal/store/sqlite`, `internal/central`,
+`internal/central/registry`, `internal/apiclient`, `internal/orch` or `internal/mcpserver`. A
+second pass over the whole dependency closure also rejects `modernc.org/*`, containerd and gRPC,
+but allows `registry` there, because `service` legitimately uses it. Why: the GUI is a web
+server that parses untrusted input from a browser. If it could reach the store, one handler bug
+could skip the service's policy and audit. `TestGUILinkedOnlyOnLinux` is the other half: the
+darwin and windows binaries must not link `internal/gui` at all, and the Linux binary must (the
+positive control, same trick as `TestLinuxLinksSQLite`).
 
 ## 8.8 Where to add things
 
@@ -1065,6 +1155,38 @@ point of the three gates in [chapter 5](05-security.md#536-lifecycle-only-on-cen
    `mcpserver`, `orch` and `integrations` tests and `scripts/dev.sh cross`.
 10. Docs: the tool table in [chapter 7](07-protocols.md#713-the-mcp-layer-m5), and
     `docs/ARCHITECTURE.md`.
+
+### A new GUI screen (M4)
+
+Example: a "Settings" page at `/settings`. Read `handlers_workspaces.go` and `workspaces.html` side
+by side first; they are the smallest complete screen. [Chapter 11](11-contributing.md#118-adding-a-gui-screen)
+has the template checklist.
+
+1. **The service method.** If the screen needs data or a change the service does not offer yet,
+   add it to `internal/service` first (with its audit row and its tests), exactly as for an
+   operator method. The GUI never reads the store.
+2. `internal/gui/backend.go`: add the method to `Backend`. `*service.Service` already satisfies it
+   if you added the method there; the compile-time assertion at the bottom checks.
+3. `internal/gui/handlers_settings.go`: a `routesSettings(mux adminMux)` method that registers
+   every route with a **literal pattern**: `mux.HandleFunc("GET /settings", s.settingsPage)`.
+   Use `mux.Passive(...)` only for a polled fragment. Add `RegisterFlash(id, kind, format)` calls
+   in an `init` for the success messages. The handler is `screenAuth`, then (for a POST)
+   `screenForm`, then the backend call, then `s.Render(...)` or `s.Redirect(...)`.
+4. `internal/gui/routes.go`: one line, `s.routesSettings(am)`. Also add the screen's key to
+   `navKeys` (`handlers_auth.go`) and a link in `ui/nav-links` (`templates/partials.html`).
+5. `internal/gui/templates/settings.html`: `define "content"` for the page and
+   `define "settings/..."` for each fragment. The file name is the screen name passed to `Render`;
+   `newRenderer` picks every `*.html` up, so nothing else registers it.
+6. **Tests.** You write the screen's own test (a `*_test.go` using the harness in
+   `helpers_test.go`). The rest comes free, because the **security suite discovers routes by
+   scanning the sources**: `TestSecurityAuthRequiredOnEveryRoute` (anonymous gets a redirect to
+   `/login`), `TestSecurityCSRFOnEveryPost` (a POST without a valid token is refused),
+   `TestSecurityHeadersAndCacheControlOnEveryResponse` and `TestSecurityPolledFragmentsArePassive`
+   all pick the new routes up. `TestTemplateLintSources` and `TestTemplateLintRenderedPages` check
+   the new template against the CSP-safe rules. A route that is registered some other way than
+   with a literal pattern fails the route-count check, so no route can hide from the suite.
+7. Docs: the routes table in [chapter 7](07-protocols.md#714-the-admin-guis-http-routes-m4), and
+   the screen list in [chapter 10](10-operations.md#1011-the-admin-gui-m4).
 
 ## 8.9 Follow one `workspace.exec`
 
@@ -1282,11 +1404,75 @@ What to look at first when debugging: `mirafleet mcp context list` and the `wher
 then central's audit log (steps 9 onwards). [Chapter 10](10-operations.md#10108-troubleshooting-the-orchestrator)
 has the symptom table.
 
-## 8.11 Developer workspaces (M7): the new packages
+## 8.11 Follow a Revoke click in the GUI (M4)
+
+aarvee opens `https://central.example.com:8443/runners/dev/build-1`, clicks **Revoke**, types
+`dev/build-1` and confirms. This is the same revoke as section 8.6, entered through a browser.
+
+![Revoke from the GUI: Host, session, CSRF and typed-name checks, then the service](diagrams/gui-revoke.svg)
+
+*Look at: the four gates in the middle column. The service is only called when all of them pass,
+and from there on the path is the one of 8.6.*
+
+1. aarvee types dev/build-1 on the revoke page and submits: POST /runners/dev/build-1/revoke.
+2. Middleware: the Host must be allowed, the body a urlencoded form under 64 KiB (421, 415, 413).
+3. Session: the cookie's hash finds a live row of the active admin, else 303 to /login.
+4. CSRF: same-origin headers, then the `_csrf` token must match the cookie's key (403).
+5. The typed name must equal dev/build-1 (422), then `Service.Lifecycle` runs with source `gui`.
+6. Same path as the CLI: tombstone, kick, cancel, one commit with the audit row. Then 303 back.
+
+### In detail
+
+1. The **Revoke** button is a link to `GET /runners/{fleet}/{runner}/revoke`.
+   `runnerRevokeForm` finds the runner with `findRunner` (which calls `Backend.ListRunnersAll`) and
+   renders the `runners/revoke` fragment: a red dialog, a hidden `_csrf` field and a text field
+   named `confirm`. The form posts to `/runners/dev/build-1/revoke`, which matches the pattern
+   `POST /runners/{fleet}/{runner}/{op}`.
+2. `buildHandler` (`middleware.go`) runs first for every request. It sets the security headers,
+   then `hostGuard.allowed(r.Host)` (a name that is not on the list gets `421` and the request
+   goes no further), then takes a slot in the in-flight semaphore (`503` when 32 are busy), then
+   `checkRequest` (urlencoded only, body wrapped in `http.MaxBytesReader`), then looks up the
+   mux pattern and sets the request timeout.
+3. The mux hands the request to the handler that `adminMux.HandleFunc` wrapped in
+   `requireAdmin`. It calls `authenticate`: `SessionToken(r)` reads the `__Host-mf_session`
+   cookie, and `Backend.GUIAuthenticate(ctx, r.RemoteAddr, token, passive=false)` reaches
+   `Service.GUIAuthenticate`. That hashes the token with SHA-256, loads the session row joined
+   to the **active** admin (`store.GetGUISession`), and checks the admin's credential
+   generation, the 30-minute idle limit and the 12-hour absolute limit. A dead row is deleted
+   and the request is redirected to `/login`. A live one gets a throttled `last_active` touch
+   (at most once a minute) and yields `auth.GUIAdmin(username, remote)`, which `WithSession`
+   puts in the request context.
+4. `runnerOp` calls `screenAuth` (reads that principal back and derives the CSRF key from the
+   cookie with `CSRFKey`) and then `screenForm`: `ParseForm` reads the body, then
+   `CSRF.Check` runs two layers. The first is Go's `http.CrossOriginProtection` (it refuses a
+   request whose `Sec-Fetch-Site` or `Origin` says it came from another site). The second
+   compares the `_csrf` field with `FormToken(key)` in constant time. Either failure is `403`
+   and nothing has changed.
+5. `op` is checked against `approve`, `disable`, `enable`, `revoke`. For `revoke` the handler
+   compares the trimmed `confirm` field with `fleet/runner` exactly. A mismatch re-renders the
+   dialog with status `422` and the error text; the typed text is shown back as plain text
+   (`inertRunnerText`). Then it calls
+   `Backend.Lifecycle(ctx, principal, service.SourceGUI, "dev/build-1", "revoke")`.
+6. `Service.Lifecycle` is the function of section 8.6: `authorize` with `adminOnly=true`
+   (policy plus the direct kind check, so the GUI principal needs `Kind == KindAdmin`),
+   `Registry.Tombstone`, `Registry.Kick`, then `SetRunnerStatus` with the `runner.revoke` audit
+   row in the same transaction. The only differences from the CLI are in the row: `source` is
+   `gui`, `actor` is aarvee's GUI username, and `remote` is the browser's address.
+7. `s.Redirect(w, r, "/runners/dev/build-1", "runner.revoke", "dev/build-1")` sets the
+   `__Host-mf_flash` cookie (a message id and the subject, signed so a page cannot forge one) and
+   answers `303`. The browser fetches the detail page, `takeFlash` shows "Runner dev/build-1
+   revoked." once, and the page shows the runner as `revoked`.
+
+Why the order matters: nothing before step 6 changes state, so any refusal (wrong Host, expired
+session, forged form, mistyped name) leaves the fleet exactly as it was and writes no audit row of
+a change. And because step 6 is the CLI's function, a bug in the revoke itself would show up in
+both places, not only in the browser.
+
+## 8.13 Developer workspaces (M7): the new packages
 
 M7 adds a second kind of workspace. Instead of a container, the **host** executor runs tool calls
 directly on the runner's VM as the runner's own unprivileged user, and central stores credentials
-for it. Read [chapter 7, section 7.14](07-protocols.md#714-developer-workspaces-m7-tools-jobs-credentials)
+for it. Read [chapter 7, section 7.16](07-protocols.md#716-developer-workspaces-m7-tools-jobs-credentials)
 for the wire view first. The new code sits next to `ctrd` and `osb` and implements the same
 `workspace.Executor` interface, so sessions, placement, ownership, audit and the reaper are the
 M3 code, unchanged.
@@ -1465,7 +1651,7 @@ connection takes over, which the GUI flags. Root on the VM can read anything. Se
 [chapter 5](05-security.md).
 <!-- verify: the audit row is `runner.replaced` (internal/service/events.go, called from internal/central/roles.go); no code in internal/gui shows a flag for it yet, so the GUI flag is unconfirmed -->
 
-## 8.12 Follow one `bash` call (M7)
+## 8.14 Follow one `bash` call (M7)
 
 A foreground `bash` call from the model to the VM and back, then the follow-up that pages its
 output. It repeats the shape of [8.10](#810-follow-one-exec-tool-call) and
@@ -1522,7 +1708,7 @@ sequenceDiagram
 4. **`hostx.Engine.Bash`** (`exec_linux.go`):
    - refuses an empty command or one containing a NUL byte;
    - `prepare`: ensures `out/` and `jobs/` exist in the session state dir (0700);
-   - `childEnv`: builds the clean environment (see 8.11);
+   - `childEnv`: builds the clean environment (see 8.13);
    - `openSink`: creates `out/<Ref>`, the file that will hold the **full** output;
    - starts `bash -lc 'trap "pwd >&3" EXIT; eval "$1"' bash <command>` with `Setsid: true` (its own
      process group) and a pipe as fd 3. After the command exits, the final `pwd` is read from the
@@ -1566,6 +1752,7 @@ restart; background jobs do, because `KillMode=process` leaves their supervisors
 
 </details>
 
+
 ## Check your understanding
 
 1. `internal/central` handles SSH connections for a database-backed server, yet it does not
@@ -1590,6 +1777,12 @@ restart; background jobs do, because `KillMode=process` leaves their supervisors
 10. In section 8.10, why does a dead connection make `exec` fail with "may or may not have
     completed" instead of quietly trying again?
 11. You want a tool that revokes a runner. Where does the plan fail, and at how many places?
+12. A handler in `internal/gui` needs one more database column. Why can it not just open the
+    database, and which test says so?
+13. You add `mux.HandleFunc("GET /settings", ...)` for a new screen but forget the session check
+    in the handler. Which test catches it, and why can you not hide the route from that test?
+14. In the Revoke click, name the first step that changes state, and three refusals that happen
+    before it.
 
 <details>
 <summary>Answers</summary>
@@ -1636,5 +1829,18 @@ restart; background jobs do, because `KillMode=process` leaves their supervisors
     would refuse it because `api.IsOperatorMethod` is false; and central refuses admin methods on
     the `api@` channel whatever the caller. The tool table is also fixed in code, so
     `tools/call` for such a name finds nothing. See "A new MCP tool" in section 8.8.
+12. `TestGUIDeps` fails the build if `internal/gui` imports `internal/store/sqlite` (or
+    `central`, the registry, `apiclient`, `orch`, `mcpserver`). The GUI parses input from a
+    browser; it may reach data only through `service`, which authorises, validates and audits.
+    Add the column to the store, expose it in a service method, add that to `gui.Backend`.
+13. `TestSecurityAuthRequiredOnEveryRoute`: it requests every route anonymously and wants a
+    redirect to `/login`. (A handler registered with `HandleFunc` on `adminMux` is wrapped in
+    `requireAdmin` anyway, so the check is a second line of defence.) The suite finds routes by
+    scanning the source for literal `"METHOD /path"` patterns, and it fails if the number of
+    registration calls differs from the number it could parse, so a clever registration that
+    the scan cannot read fails the test instead of escaping it.
+14. Step 6, `Service.Lifecycle`. Before it: a Host not on the allowlist (`421`), no live
+    session (redirect to `/login`), a missing or wrong `_csrf` token or a cross-site request
+    (`403`), and a typed name that is not `dev/build-1` (`422`).
 
 </details>

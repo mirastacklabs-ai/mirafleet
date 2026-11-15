@@ -5,7 +5,7 @@ inside containers, and teaches you how the tests are built so you can write your
 
 ## What you will learn
 
-- The M7 tests, `scripts/dev.sh integration-host`, and how to try host mode locally (section 9.15).
+- The M7 tests, `scripts/dev.sh integration-host`, and how to try host mode locally (section 9.17).
 - Why every Go step runs in a container, and how to set that up on macOS (colima) and Linux.
 - What each `scripts/dev.sh` command does, what it costs in time, and how the cache volumes and
   host user ID work.
@@ -21,6 +21,9 @@ inside containers, and teaches you how the tests are built so you can write your
   `mirafleet mcp` as a child process, with no harness), the hook and plugin tests, the CI workflow
   that tests the orchestrator side on Windows and macOS ([9.13](#913-the-orchestrator-workflow-windows-and-macos)), and how to try the plugin
   with `claude --plugin-dir integrations/claude-code` ([9.14](#914-try-it-locally-the-mcp-server-and-the-claude-code-plugin)).
+- The M4 additions: `TestM4Done` (the admin GUI against a real central, over real TLS), the GUI
+  security suite, the built-binary smoke test `TestGUIBinary`, `scripts/dev.sh gui-shots`, and how
+  to look at the GUI yourself ([9.15](#915-try-it-locally-the-admin-gui)).
 
 ## 9.1 The container-only rule
 
@@ -126,6 +129,7 @@ because of downloads.
 | `scripts/dev.sh cross` | ro | for each of 6 targets: `go build -o /dev/null ./cmd/mirafleet` and `go vet ./...` | 1 to 3 min |
 | `scripts/dev.sh licenses` | ro | installs `go-licenses` v1.6.0, then `go-licenses check ./...` for each of 6 targets | 2 to 6 min |
 | `scripts/dev.sh integration` | ro (+ **privileged**, see below) | builds `-tags integration` test binaries, the real `mirafleet` binary and containerd 2.4.2; runs them as root against a real containerd in a throwaway `docker:28-dind` container | 3 to 10 min (first run: downloads and builds containerd) |
+| `scripts/dev.sh gui-shots [DIR]` | rw (+ `--network none`) | builds the GUI package's test binary, then runs it in a pinned headless Chromium image that photographs every screen, light and dark, at 1280 and 390 px wide, into `dist/gui-shots` (gitignored) or `DIR`; not part of the gate | 2 to 5 min (first run: pulls the Chromium image) |
 | `scripts/dev.sh go <args>` | rw | `go <args>` (for example `go mod tidy`, or a single test) | depends |
 | `scripts/dev.sh shell` | rw | an interactive `bash` in the container | n/a |
 
@@ -394,13 +398,13 @@ is durga and kalyan.)
 In order, the scenario:
 
 1. **Set-up.** An injected clock; fleet `dev` in workspace mode with an image allowlist; operators
-   alice and bob; two runners with `concurrent: 1` and *different trusted labels* (`zone=a`,
+   durga and kalyan; two runners with `concurrent: 1` and *different trusted labels* (`zone=a`,
    `zone=b`; the runners also claim a lying label in their heartbeat, which must be ignored).
-2. **Placement and sticky.** alice opens session `s1` with label `zone=a` and lands on the matching
+2. **Placement and sticky.** durga opens session `s1` with label `zone=a` and lands on the matching
    runner; opening `s1` again returns the same workspace with `reused: true` and creates **no** second
    container.
-3. **Ownership.** bob's `exec`, `read_file`, `write_file` and `close` on alice's workspace all get
-   `not_found`; their `workspace.list` is empty; alice's row is untouched.
+3. **Ownership.** kalyan's `exec`, `read_file`, `write_file` and `close` on durga's workspace all get
+   `not_found`; kalyan's `workspace.list` is empty; durga's row is untouched.
 4. **Inside the workspace.** `id -u` is not 0; writing under `/etc` fails (read-only rootfs; in the
    real run the message says "read-only"); a 1.5 MiB file round-trips in 512 KiB chunks with a
    matching SHA-256; a symlink to a host path cannot be read through `read_file`; a network dial
@@ -412,9 +416,9 @@ In order, the scenario:
    start another over the same store: the row persists, runners reconnect, the session is still sticky.
 7. **Reaper.** Move the injected clock past the idle TTL: the untouched `s2` is destroyed (container
    and directory gone, row `closed`); `s1`, used just now, stays.
-8. **Revoke.** Revoking alice closes their workspaces (the next reaper sweep destroys the container;
-   the row is `closed`, with a `workspace.close_all` audit row); bob's workspace on the other runner
-   is untouched. Then revoking runner `rb` marks bob's workspace there **`lost`** (not `closed`:
+8. **Revoke.** Revoking durga closes durga's workspaces (the next reaper sweep destroys the container;
+   the row is `closed`, with a `workspace.close_all` audit row); kalyan's workspace on the other runner
+   is untouched. Then revoking runner `rb` marks kalyan's workspace there **`lost`** (not `closed`:
    central can no longer reach that host, so it cannot prove the container is gone; a
    `workspace.lost` audit row says so). The containers of a revoked runner stay on its host until
    someone runs `mirafleet runner workspace prune` there (chapter 10).
@@ -441,7 +445,7 @@ files, [chapter 8](08-code-tour.md#87-build-tags-and-why).) Time is an injected 
 `TestM2Done`, so the idle reaper is tested without sleeping. The set-up is: fleet `dev` (workspace
 mode, runners `build-1` and `build-2`) and a guarded actions fleet `prod` (runner `db-1` with
 `tail-logs` and a `noisy` action that prints 200 KiB with colour codes); two operators with their
-own config directories (alice and bob); a project directory whose `.mirafleet.yaml` says
+own config directories (durga and kalyan); a project directory whose `.mirafleet.yaml` says
 `fleet: dev`; a second live context and a dead one; and *only decoy secrets*
 (`ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY`) in the servers' environment. Then, as subtests:
 
@@ -459,20 +463,20 @@ own config directories (alice and bob); a project directory whose `.mirafleet.ya
    in any create spec or exec request; `env: {ANTHROPIC_API_KEY: ...}` is refused.
 5. `06_files`: a 1.5 MiB `write_file` becomes two chunks; paged `read_file` calls reassemble to the
    same SHA-256; a default `read_file` is capped.
-6. `07_ownership`: bob using alice's workspace id with `exec`, `read_file` and `workspace_close`
+6. `07_ownership`: kalyan using durga's workspace id with `exec`, `read_file` and `workspace_close`
    gets `not_found` (the same answer as for an id that does not exist), and central writes
    exactly one `denied` audit row for each refusal.
 7. `08_mode_mismatch`: `workspace_open` on the actions fleet and `run_action` on the workspace
    fleet are `conflict`.
 8. `09_cancel`: `notifications/cancelled` for a long `exec` cancels the exec on the runner, and
    the audit outcome is `cancelled`.
-9. `10_idle_on_exit`: closing alice's stdin makes `Serve` return within 5 s and leaves their row
+9. `10_idle_on_exit`: closing durga's stdin makes `Serve` return within 5 s and leaves durga's row
    `open`; a new server gets the other runner; a third gets `unavailable` (both slots used);
    advancing the injected clock past the idle TTL makes the reaper close the first row.
 10. `11_reattach`: two servers started with the same `-session s1`: the second `workspace_open`
     says `reused: true` (no hook involved).
 11. `12_hygiene`: every call that reached central has a start row and an outcome row; no admin
-    method appears in alice's audit; no result contains the config directory, a key fingerprint or
+    method appears in durga's audit; no result contains the config directory, a key fingerprint or
     a decoy value.
 
 Because the servers speak the real protocol and use the real `orch`, a bug in any layer between the
@@ -520,6 +524,102 @@ SessionEnd has `timeout: 15`; the PreToolUse **matcher** matches all nine tool n
 JSON parses; and every relative link in the integration READMEs resolves.
 `TestPluginVersionLockstep` (in `cmd/mirafleet`) keeps `plugin.json` equal to `pluginVersion` in
 `mcp_hook.go`.
+
+### `TestM4Done`, the security suite and `TestGUIBinary`: the M4 acceptance tests
+
+M4 added a web page that can change a fleet, so its tests lean hard on one question: *what can a
+person (or a web page) who is not the admin make it do?* There are three layers.
+
+**`TestM4Done`** (`internal/central/m4_done_test.go`, helpers in `m4_helpers_test.go`) is the M4
+"done when". It starts a real central in process (the `newEnv` machinery of [9.5](#95-tour-of-the-test-helpers):
+SQLite in a temp dir, registry, service, SSH on an ephemeral port, a fake workspace executor) and
+puts the real `gui.Server` in front of it: `httptest` with `StartTLS` and the GUI's own
+self-signed certificate. The client is a browser stand-in: a cookie jar, TLS that **trusts only
+that one certificate**, and `Origin` and `Sec-Fetch-Site` headers like a real browser. One
+offset clock is injected into both the service and the GUI (session expiry lives in the service),
+so "31 minutes later" costs no waiting. The steps are subtests, run in order because each builds on
+the last:
+
+1. `01_bootstrap`: every page redirects to `/setup`; the token file is mode 0600; a wrong token is
+   refused; the right one creates the admin, deletes the file and logs in; `/setup` is then 404.
+2. `02_cookies_headers`: the cookie is `__Host-mf_session`, `Secure`, `HttpOnly`,
+   `SameSite=Strict`; the token changes at login; the CSP is exactly the documented one; a foreign
+   `Host` gets 421.
+3. `03_csrf`: a POST without `_csrf`, with a cross-site `Sec-Fetch-Site`, or with another session's
+   token is 403, changes nothing and writes no audit row.
+4. `04_login_limits`: ten wrong passwords from one address give 429; moving the clock 15 minutes
+   unlocks; an unknown user and a wrong password look the same.
+5. `05_fleets`: create `prod` (actions, guarded) and `dev` (workspace); an invalid name is 422 and
+   creates nothing; the guard cannot be turned off without typing the fleet name.
+6. `06_join_token_runner`: a join token is shown once (`no-store`) and never again; a runner joins
+   with it over the real enrol path, shows as `pending`, is approved from the GUI, and its detail
+   page lists its actions.
+7. `07_revoke_cascade`: with a long `action.run` in flight on `db-1`, a revoke with the wrong typed
+   name is refused; with the right one the action ends `cancelled` and the reconnect is refused:
+   the same outcome as `TestM2Done`, now started from a browser.
+8. `08_operators`: Show code writes an `operator.code` row without the code in it; durga registers
+   with it; Rotate secret kills the old code; Revoke drops durga's connection.
+9. `09_workspaces`: kalyan's workspace is listed and Kill makes the fake executor see the destroy.
+10. `10_audit`: filters by source, fleet and action prefix; paging both ways; the CSV export has a
+    header, neutralises a `=cmd` cell and is preceded by an `audit.export` row; JSONL parses.
+11. `11_sessions`: a polled (passive) fragment does not extend the idle timer; 31 minutes later the
+    next request redirects to `/login` (an htmx one gets `HX-Redirect`); 12 hours kills even an
+    active session; logout makes the old cookie useless.
+12. `12_restart_credential_binding`: the `gui.Server` and the service are thrown away and rebuilt
+    over the same SQLite file, and both sessions still work (so no session state lived in
+    memory). A password change keeps the changing session and kills the other on its very next
+    request; `ResetGUIAdmin` kills everything at once.
+13. `13_hygiene`: no response after the creation response holds the join token; none ever holds the
+    registration secret, a password hash, the setup token or key material; `gui_sessions` holds
+    only 32-byte hashes, never a cookie; every GUI change has its audit row with `source=gui` and
+    none was written as `source=api`.
+
+**The security suite** (`internal/gui/security_test.go`, in the normal gate) is the one that makes a
+new screen safe by default. It finds the routes **by scanning the package's own source** for
+route registrations, so nobody has to remember to add a route to a list. Over every route it
+checks that anonymous requests are redirected to `/login` (`TestSecurityAuthRequiredOnEveryRoute`),
+that every POST is refused without a valid CSRF token (`TestSecurityCSRFOnEveryPost`,
+`TestSecurityCSRFOnSetup`), that all the security headers and `Cache-Control` are on every
+response (`TestSecurityHeadersAndCacheControlOnEveryResponse`), that the polled fragments are
+passive (`TestSecurityPolledFragmentsArePassive`), and that before setup everything leads to
+`/setup` (`TestSecurityBeforeSetupEverythingGoesToSetup`). Two tests look at the database:
+`TestSecurityDBCopyYieldsNoCookie` (a copy of the file gives an attacker no cookie) and
+`TestSecurityTamperedSessionRowRefusedAndDeleted`. The **template lint** tests
+(`TestTemplateLintSources`, `TestTemplateLintRenderedPages`, `TestTemplateHTMXConfigMetaExact`,
+`TestTemplateNoTrustedTypesOutsideHelper`, with `TestTemplateLintSelfTest` as the positive
+control) read the HTML and fail on an inline script, a `style=` attribute, an `on...=` handler, an
+`hx-on` attribute or a `template.HTML` outside the one vetted helper, because each of those is a
+hole in the Content-Security-Policy ([chapter 5](05-security.md)).
+
+**Other GUI tests worth knowing.** `limiter_test.go` (the login rate limit, lockout and the
+hash semaphore); `server_test.go` (`TestHostAllowlist`, `TestStartupNotice`, `TestSelfSignedSANs`,
+`TestOperatorCertKeyPermsAndHSTS`: the bind, certificate and Host rules); `session_test.go` (cookie
+attributes, the purge ticker); `nojs_test.go` (`TestS16NoJSFlows`: every flow also works without
+JavaScript); `a11y_test.go` (`TestS16ContrastAA` computes the colour contrast of every theme
+pair); `internal/store/storetest` (`GUISetup`, `GUISetupRace`, `GUIPassword`, `GUISessions`,
+`GUIPurge`, `QueryAudit`, `SetFleetConfirm`, run against every store); `internal/service/gui_test.go`;
+and `TestGUIDeps` and `TestGUILinkedOnlyOnLinux` in `cmd/mirafleet/deps_test.go`
+([chapter 8](08-code-tour.md#87-build-tags-and-why), point 5).
+
+**`TestGUIBinary`** (`cmd/mirafleet/gui_linux_test.go`, Linux only) is the "does the real program
+work" test, as `TestM5NoHooks` is for MCP. It re-runs the test binary as a child process that
+executes `main`, so flags, signals and log lines are real. It runs `central init` and `central
+run` with the default-shaped bind (`-gui-listen 0.0.0.0:0`, self-signed) in a temp directory and
+checks: the log has the GUI URL, the certificate fingerprint and the all-interfaces notice, and
+**not** the setup token; the client pins that fingerprint (a wrong pin fails the handshake);
+before setup every page redirects to `/setup`; `Host: rebind.evil.example` gets 421 while
+`127.0.0.1` and the machine's own host name work; setup from the token file, then login; a fleet
+made in the GUI shows in `central fleet list` and one made by the CLI shows in the GUI; after a
+SIGTERM and a restart on the same data directory the old cookie still works and the fingerprint
+is unchanged; `central gui reset-admin` prints a token and the session is dead at once;
+`-gui-listen off` opens no GUI port; and SIGTERM exits 0 within 5 s.
+
+**`scripts/dev.sh gui-shots`** is not a test but belongs here: it is how a reviewer sees what the
+GUI looks like without running a central. `TestGUIShotsServe` (skipped unless
+`MIRAFLEET_GUI_SHOTS_ADDR` is set, so it never runs in the gate) serves a seeded GUI on loopback
+inside a container, and a pinned headless Chromium image photographs each screen. The Chromium
+image is a dev tool: it runs with `--network none`, is never shipped, and so is outside the
+licence rule for bundled code.
 
 ## 9.7 Writing a new test, step by step
 
@@ -1013,7 +1113,64 @@ and that the hook and the MCP server share a parent process (so that `--resume` 
 old workspace). If one of them is false for your version, the core still works; you lose the
 convenience, and the docs say which ([chapter 11](11-contributing.md#117-adding-a-harness-integration)).
 
-## 9.15 The M7 acceptance tests
+## 9.15 Try it locally: the admin GUI
+
+Three ways, from cheapest to most real.
+
+**1. Look at screenshots (no central, no browser).** `scripts/dev.sh gui-shots` photographs every
+screen, light and dark, wide and narrow, into `dist/gui-shots/`:
+
+```bash
+scripts/dev.sh gui-shots
+ls dist/gui-shots | head
+```
+
+**2. Drive it from inside the container.** `scripts/dev.sh shell` publishes no ports, so nothing
+outside can reach a server in it, but you can talk to it from the same shell. Build and start
+central as in [9.11](#911-try-it-locally-central-runner-and-operator-in-one-container), then:
+
+```bash
+mf central run -data /tmp/c -listen 127.0.0.1:2222 &     # the GUI starts too, on 0.0.0.0:8443
+cat /tmp/c/gui/setup-token                              # the one-time setup token
+curl -sk -o /dev/null -w '%{http_code} %{redirect_url}\n' https://localhost:8443/    # 303 to /setup
+```
+
+`-k` skips the certificate check, which is fine for a throwaway container and wrong anywhere else
+(see [chapter 10](10-operations.md#1011-the-admin-gui-m4) for the right way).
+
+**3. Use a real browser on your Mac.** You need a port forward, so start the container yourself
+with `-p` instead of through `dev.sh`. It is the same image and mounts that `dev.sh` uses, plus
+one published port bound to your loopback address only:
+
+```bash
+IMG=$(sed -n 's/^GO_IMAGE="\${MIRAFLEET_GO_IMAGE:-\(.*\)}"$/\1/p' scripts/dev.sh)
+docker run --rm -it --user "$(id -u):$(id -g)" -p 127.0.0.1:8443:8443 \
+  -v "$PWD":/src:ro -v mirafleet-gomod:/go/pkg/mod -v mirafleet-gocache:/gocache -w /src \
+  -e HOME=/tmp -e GOCACHE=/gocache -e GOPATH=/gocache/gopath -e GOMODCACHE=/go/pkg/mod \
+  -e GOFLAGS="-buildvcs=false -modcacherw" "$IMG" bash
+```
+
+Inside, build, `central init` and `central run` as in 9.11. Read the log: it prints the GUI URLs,
+the certificate's SHA-256 fingerprint and the path of the setup token. Then on the Mac open
+`https://localhost:8443/`. The browser warns about the self-signed certificate; compare the
+fingerprint it shows with the one in the log **before** you click through and paste the token
+(that comparison is the whole security of the first visit, see [chapter 5](05-security.md)).
+`localhost` is always on the Host allowlist, so the forwarded request is accepted.
+
+Things worth trying once you are in:
+
+- Create a fleet `dev` in the GUI, then `mf central fleet list -data /tmp/c` in a second shell
+  (`docker exec`) to see the CLI sees it: one service, two front ends.
+- Join a runner with a token created in the GUI (9.11, step 4), approve it, and revoke it from the
+  Runners screen. Run `mf central audit -data /tmp/c -source gui` and read the rows your clicks left.
+- Run `mf central gui reset-admin -data /tmp/c`: it prints a fresh setup token and your browser
+  session is dead on its next click.
+- Start central again with `-gui-listen 127.0.0.1:8443` and then with `-gui-listen off` and see the
+  difference in the log and in what `docker run -p` can reach.
+
+Stop with `kill $(jobs -p)` and `exit`; the container and `/tmp/c` vanish.
+
+## 9.17 The M7 acceptance tests
 
 M7's promise is: an agent on the Mac works on a remote VM, the code and the commands stay on the
 VM, and no secret reaches the agent. Two tests prove it, one that runs in every `scripts/dev.sh
@@ -1206,6 +1363,7 @@ is exactly that server in a test, rather than build one by hand.
 
 </details>
 
+
 ## Check your understanding
 
 1. Why does `scripts/dev.sh test` run the test suite twice?
@@ -1227,6 +1385,12 @@ is exactly that server in a test, rather than build one by hand.
    that the other cannot?
 10. Why is the orchestrator-side CI run on Windows and macOS when `scripts/dev.sh cross` already
     builds for both?
+11. A new screen's author forgets the CSRF check on one POST. Which test fails, and how does the
+    test know about a route nobody told it about?
+12. `TestM4Done` step 12 throws away the `gui.Server` and the service and builds new ones over the
+    same SQLite file. What claim does that prove?
+13. In `TestM4Done` the clock is an offset that the test advances. Why is it injected into the
+    service as well as the GUI?
 
 <details>
 <summary>Answers</summary>
@@ -1266,5 +1430,16 @@ is exactly that server in a test, rather than build one by hand.
 10. `cross` only compiles and vets. The Windows DACL code, the path handling and the tests of
     `orch`, `handoff` and `keys` have to *run* on Windows to prove anything, and there is no
     Windows in the Linux container.
+11. `TestSecurityCSRFOnEveryPost` fails: it sends every discovered POST route without a token and
+    wants a refusal. It knows the route because the suite scans the package's source for
+    `Handle`, `HandleFunc` and `Passive` calls with a literal `"METHOD /path"`, and it fails if the
+    number of registration calls differs from the number it parsed, so an unusual registration
+    breaks the suite instead of hiding from it.
+12. That no session state lives only in memory: sessions are rows in SQLite, so they survive a
+    restart of central, and the credential-generation check (a password change or `reset-admin`)
+    is made against the database on every request, not remembered by the process.
+13. Session expiry is decided in the service (`GUIAuthenticate` compares with `s.now()`), so
+    advancing only the GUI's clock would change nothing. One offset clock shared by both means
+    "31 minutes later" is real for the check that matters, and the test never sleeps.
 
 </details>

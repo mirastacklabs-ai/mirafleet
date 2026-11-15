@@ -2,7 +2,7 @@
 
 ## What you will learn
 
-- The M7 additions: the 24 MCP tools (the fifteen Claude Code parity tools), background jobs, the `Ref` output paging, and the admin-only credential methods (section 7.14).
+- The M7 additions: the 24 MCP tools (the fifteen Claude Code parity tools), background jobs, the `Ref` output paging, and the admin-only credential methods (section 7.16).
 - Which SSH users and channels exist, and who may open what.
 - The exact bytes of a message: the 4-byte length prefix, the JSON envelope, and a hex example.
 - Every method with a real request and response: operator methods, admin methods on the local
@@ -18,6 +18,9 @@
   their arguments, the result and error shapes, the caps and the chunking), plus the three small
   wire changes underneath: `runners.list` gains `actions` and `actions_omitted`, `workspace.close`
   gains `state`, and the heartbeat gains `actions` (section 7.13).
+- The M4 additions: two new admin methods (`gui.reset_admin`, `fleet.set_confirm`), the filters
+  of `audit.list` (section 7.6), and the one place where mirafleet speaks HTTP instead of SSH:
+  the admin GUI's routes table (section 7.14).
 
 Unfamiliar terms (SSH channel, global request, framing, envelope) are in the
 [glossary](glossary.md). The code is `internal/api` (framing, envelope, DTOs, limits),
@@ -28,7 +31,7 @@ All examples use the running example: central at `central.example.com:2222`, fle
 `prod`, runners `build-1` (in `dev`) and `db-1` (in `prod`), operators `durga` and `kalyan`, and
 aarvee, the admin who uses the local admin socket. Tokens and codes are obviously fake (the secret
 and host-key-hash placeholders are exactly 43 characters long, like the real ones). Timestamps
-are made up. M1, M2, M3 and M5 are done (M4, the GUI, and M6, release, are not); everything here is implemented, except where
+are made up. M1 to M5 are done, M7 (host mode) is built (M6, release, is not); everything here is implemented, except where
 a paragraph says "planned". Workspace ids are 32 lowercase hex characters; the examples use
 `3f9a6c1e5b7d4820a1c3e5f708192a4b`.
 
@@ -53,6 +56,11 @@ mirafleet uses three kinds of things on top of SSH:
 
 Names are defined once, in `internal/transport/transport.go`, so central and runner cannot
 disagree.
+
+There is one exception to "SSH carries everything": the admin GUI (M4). It is an HTTPS listener
+inside the central process (default `0.0.0.0:8443`, section 7.14) for a human administrator's
+browser. It is not a way in for operators or runners, and it carries no protocol of its own:
+every request is turned into a call of the same `service` methods that the admin socket uses.
 
 ## 7.2 SSH users and channels
 
@@ -593,7 +601,9 @@ All times are RFC 3339 UTC.
 | `operator.rotate_secret` | none | `{}` |
 | `operator.list` | none | `{"operators":[{name,fingerprint,status,last_seen}]}` including revoked |
 | `operator.revoke` | `name` | `{}` |
-| `audit.list` | `since_id`, `limit` (0 = 100, max 1000) | `{"events":[...]}` ascending by id |
+| `fleet.set_confirm` (M4) | `fleet`, `confirm` (bool) | `{"fleet":{...}}`: the guard flag changed; audited as `fleet.set_confirm` with the old and new value |
+| `gui.reset_admin` (M4) | none | `{"setup_token":"mfs1...."}`: ends every GUI session, retires the admin, shown once |
+| `audit.list` | `since_id`, `limit` (0 = 100, max 1000), and since M4 optional filters (below) | `{"events":[...]}` ascending by id |
 
 Examples (one line on the wire):
 
@@ -704,6 +714,36 @@ inside one.
 that are empty or zero are omitted (`omitempty`), except `id`, `time`, `source`, `actor_kind`,
 `actor`, `action`. To export the log, call repeatedly with `since_id` set to the last id seen.
 The `exit_code` pointer distinguishes "0" from "none".
+
+**Filters (M4).** `api.AuditListParams` gained optional, additive fields, all exact matches
+except where noted; leave them out and the call behaves as before. They exist because the GUI's
+Audit screen filters the log, and the admin socket and the screen share one code path
+(`service.ListAudit` over `store.QueryAudit`).
+
+| Field | Meaning |
+|---|---|
+| `before_id` | only rows with a smaller id (paging backwards) |
+| `fleet`, `runner`, `actor`, `source`, `outcome`, `workspace`, `request_id` | exact match on that column; `source` is `cli`, `api`, `gui`, `enroll` or `system` |
+| `action` | exact action name, or a prefix when `action_prefix` is `true` (`runner.` finds every runner action; the `%` and `_` characters are escaped) |
+| `from`, `to` | RFC 3339 time range |
+
+`mirafleet central audit` has a flag for each (`-fleet`, `-runner`, `-actor`, `-source`,
+`-outcome`, `-action`, `-action-prefix`, `-workspace`, `-request-id`, `-from`, `-to`, `-before`).
+
+Two new admin methods arrived with the GUI, and neither is served on `api@mirafleet` (they are in
+`api.IsAdminMethod`, so an agent gets `forbidden`):
+```json
+{"v":1,"id":"15","method":"fleet.set_confirm","params":{"fleet":"prod","confirm":true}}
+{"v":1,"id":"15","result":{"fleet":{"name":"prod","mode":"actions","confirm":true,"runners":1}}}
+{"v":1,"id":"16","method":"gui.reset_admin"}
+{"v":1,"id":"16","result":{"setup_token":"mfs1.EXAMPLE_SETUP_TOKEN_NOT_REAL"}}
+```
+`fleet.set_confirm` is what `mirafleet central fleet set prod -confirm=true` sends (and what the
+GUI's guard toggle calls through the service). `gui.reset_admin` is what `mirafleet central gui
+reset-admin` sends. The GUI cannot call it: `gui.Backend` leaves `ResetGUIAdmin` out on purpose,
+and `Service.ResetGUIAdmin` itself refuses any source but `cli`, so recovery needs shell access to
+the central host and cannot be started from a browser
+([chapter 10](10-operations.md#1011-the-admin-gui-m4)).
 
 ## 7.7 Enrol methods (`join@mirafleet`, `register@mirafleet`)
 
@@ -1404,7 +1444,93 @@ where the session id came from ([chapter 4](04-flows.md)). `workspace_close` ret
 runner yet and the reaper will finish (the `workspace.close` `state` field of section 7.5). After
 a close, the server forgets the binding, so the next `exec` opens a fresh workspace.
 
-## 7.14 Developer workspaces (M7): tools, jobs, credentials
+## 7.14 The admin GUI's HTTP routes (M4)
+
+Everything above is SSH. The admin GUI is the one HTTP surface. It is for **aarvee in a browser**,
+not for agents: it has no JSON API, and it never carries a request from an operator or a runner.
+Pages are server-rendered HTML (`html/template`); a small vendored library, **htmx**, swaps
+HTML **fragments** into a page so a table can refresh without a full reload ([chapter
+2](02-background.md) explains htmx). The handler is the same either way: a plain request gets the
+full page, a request with the header `HX-Request: true` gets just the fragment the route names
+(`Server.Render` in `internal/gui/render.go`).
+
+The routes are registered by one file per screen in `internal/gui` (`handlers_*.go`, listed in
+`routes.go`); the table below is that code. "Admin" means the route sits behind
+`requireAdmin`: no live session, no answer (a redirect to `/login`, or to `/setup` while no admin
+exists). **Passive** routes are polled by htmx every 10 s and deliberately do not count as
+activity, so an open tab cannot keep a session alive forever ([chapter 5](05-security.md)).
+
+| Method and path | Needs | What it does |
+|---|---|---|
+| `GET /static/...` | nothing | Embedded CSS, JS, fonts; URL has a content hash, cached for a year. |
+| `GET /setup`, `POST /setup` | setup token (only while no admin exists; then 404) | First-start form; creates the admin and the first session. |
+| `GET /login`, `POST /login` | nothing (rate-limited) | Sign-in form and check. |
+| `POST /logout` | admin | Deletes the session row, clears the cookie. |
+| `GET /` | admin | Overview page. |
+| `GET /overview/live` | admin, passive | Overview fragment (counts, runners waiting for approval, recent and denied audit rows). |
+| `GET /fleets`, `GET /fleets/new`, `POST /fleets` | admin | List, create form, create. |
+| `GET /fleets/{fleet}` | admin | Fleet detail. |
+| `GET /fleets/{fleet}/workspace`, `POST ...` | admin | Edit the fleet's workspace config (full replace). |
+| `GET /fleets/{fleet}/guard`, `POST ...` | admin | Turn the confirm guard on or off (`fleet.set_confirm`). |
+| `GET /runners` | admin | Runner list, all fleets. |
+| `GET /runners/live` | admin, passive | The polled runner list fragment. |
+| `GET /runners/{fleet}/{runner}` | admin | Runner detail (labels, slots, advertised actions). |
+| `GET /runners/{fleet}/{runner}/revoke` | admin | Revoke confirmation page: type `fleet/runner` to continue. |
+| `POST /runners/{fleet}/{runner}/{op}` | admin | `op` is `approve`, `disable`, `enable` or `revoke`; any other value is 404. |
+| `GET /tokens`, `GET /tokens/new` | admin | Join tokens and the create form. |
+| `POST /tokens` | admin | Creates a token; **renders the token directly** (once, `no-store`), no redirect. |
+| `GET /tokens/{id}/revoke`, `POST ...` | admin | Revoke a join token. |
+| `GET /operators` | admin | Operators. |
+| `POST /operators/code` | admin | Shows the registration code (renders directly, audited `operator.code`). |
+| `GET /operators/rotate`, `POST ...` | admin | Rotate the registration secret. |
+| `GET /operators/{name}/revoke`, `POST ...` | admin | Revoke an operator. |
+| `GET /workspaces` | admin | Workspaces of every operator. |
+| `GET /workspaces/live` | admin, passive | The polled workspace list fragment. |
+| `GET /workspaces/{id}/kill`, `POST ...` | admin | Kill a workspace. |
+| `GET /audit` | admin | Audit log with filters, newest first, keyset paging. |
+| `GET /audit/export?format=csv\|jsonl` | admin | Streams the filtered log; an `audit.export` row is written first. |
+| `GET /account` | admin | Password form, session list, theme. |
+| `POST /account/password` | admin | Change the password (ends the other sessions). |
+| `POST /account/sessions/revoke-others`, `POST /account/sessions/{id}/revoke` | admin | End other sessions. |
+| `POST /account/theme` | admin | Light, dark or system. |
+
+Rules that hold for every route, all in `internal/gui` and each pinned by a test
+([chapter 9](09-dev-setup-and-testing.md)):
+
+- **Methods.** Only GET and POST exist. Every state change is a POST, and every POST is checked
+  by the CSRF layers of [chapter 5](05-security.md). A wrong method on a known path is `405`.
+- **Forms.** A POST body must be `application/x-www-form-urlencoded` (else `415`) and at most
+  `MaxFormBytes`, 64 KiB (else `413`). Unknown fields are ignored.
+- **Post-redirect-get (PRG).** A successful POST answers `303` to a page (an htmx POST gets `200`
+  with `HX-Redirect` instead), never renders the result, so a reload cannot repeat the change.
+  The two exceptions are the ones that show a secret
+  once (`POST /tokens`, `POST /operators/code`).
+- **Host.** The `Host` header must be on the allowlist, else `421` before any routing.
+- **htmx.** An expired session on an htmx request gets `200` with `HX-Redirect: /login` (a plain
+  `303` would be followed by the browser's fetch and swapped into the page as a fragment).
+- **Headers.** Every response carries the security headers (`Content-Security-Policy` and
+  friends); HTML and fragments are `Cache-Control: no-store`.
+- **Errors.** `404`, `405`, `421` and `5xx` are branded pages that show a request id
+  (also the `X-Request-ID` header and the access log line) and never a stack or SQL text.
+
+The GUI's own limits (all in `internal/gui` unless noted):
+
+| Constant / field | Value | Why |
+|---|---|---|
+| `DefaultListen` | `0.0.0.0:8443` | Default bind of `-gui-listen`; `off` disables the GUI. |
+| `MaxFormBytes` | 64 KiB | Body cap on every POST. |
+| `DefaultMaxInFlight` | 32 | Requests being served at once; the 33rd gets `503` with `Retry-After`. |
+| `http.Server` timeouts | header 5 s, read 15 s, write 60 s, idle 120 s | A slow client cannot hold a connection; `MaxHeaderBytes` is 16 KiB. |
+| route timeout | 15 s default; 60 s for hashing routes (`POST /login`, `/setup`, `/account/password`); audit export 10 min | `RouteTimeout` per pattern. |
+| `DefaultHashSem` | 2 at once, wait 5 s, then `503` | Argon2id costs 64 MiB of memory per hash; bounded so a login flood cannot exhaust RAM. |
+| login limiter | 5 attempts per minute per client address (IPv6 per /64); 10 failures in a row lock that address 15 min | `loginBurst`, `lockoutAfter`, `lockoutFor`. |
+| global slow-down | more than 100 failures in 10 min: one attempt per 5 s for everyone | Never locks the account: with one admin that would be a free denial of service. |
+| `limiterMaxEntries` | 4096 | Hard cap on the limiter table (least recently used evicted). |
+| `service.GUIIdleTimeout` / `GUIAbsoluteTimeout` | 30 min / 12 h | Session lifetimes. |
+| `service.GUIMaxSessionsPerAdmin` | 16 | Oldest session evicted when a 17th is created. |
+| `service.GUISetupTTL` | 24 h | Setup token lifetime. |
+
+## 7.16 Developer workspaces (M7): tools, jobs, credentials
 
 M7 lets an agent on the orchestrator's Mac work on a remote VM as if the VM were its laptop. The
 design is [docs/M7.md](../M7.md); this section is the wire-level view. Plain-language story first:
@@ -1460,7 +1586,7 @@ What is worth knowing:
 - **`bash` runs `bash -lc` in the session's current directory.** The directory persists between
   calls (the result's `cwd`); environment variables do not (each call is a fresh shell). Over the
   wire it is an ordinary `workspace.exec` with `argv: ["bash","-lc",command]`; the runner
-  recognises that shape and takes the host path ([chapter 8](08-code-tour.md#812-follow-one-bash-call-m7)).
+  recognises that shape and takes the host path ([chapter 8](08-code-tour.md#814-follow-one-bash-call-m7)).
 - **`run_in_background: true`** returns a `shell_id` at once (`workspace.job_start`).
   `bash_output` returns only the output since the previous call; `read_output` re-reads from the
   start. At most 8 background shells per session; a shell stops at the fleet's `job_max`
@@ -1471,7 +1597,8 @@ What is worth knowing:
   request), the same pattern as `workspace.write_file` in section 7.3.
 - **`read` returns images as MCP image content** (png, jpg, gif, webp, up to 5 MiB) and describes
   other binary files (size, type, SHA-256) instead of dumping them. Text is numbered; long lines
-  are clipped; `.ipynb` is rendered as cells with outputs.- **`grep` uses `rg` when it is on the runner's `PATH`, else a Go implementation** with the same
+  are clipped; `.ipynb` is rendered as cells with outputs.
+- **`grep` uses `rg` when it is on the runner's `PATH`, else a Go implementation** with the same
   options (RE2, so no look-around). The result shape is the same either way. Hidden files are
   searched; `.git` is never entered; `.gitignore`, `.ignore` and `.rgignore` are honoured.
 - **`upload` and `download` are the only tools that touch the Mac's disk**, and they are confined to
@@ -1483,7 +1610,8 @@ What is worth knowing:
   denies local `Bash`, `Read`, `Write`, `Edit`, `MultiEdit`, `Grep`, `Glob`, `LS` and
   `NotebookEdit` when `.mirafleet.yaml` says `remote: true`, with a reason naming the remote tool.
   The MCP server works without the hook; the hook only stops the model from picking the wrong tool
-  ([chapter 11](11-contributing.md#117-adding-a-harness-integration)).- **Remote text is neutralised.** Every tool result and error passes `neutralize` in
+  ([chapter 11](11-contributing.md#117-adding-a-harness-integration)).
+- **Remote text is neutralised.** Every tool result and error passes `neutralize` in
   `internal/mcpserver/server.go`, which breaks harness control tags such as `<system-reminder>` so
   output from a remote file or command cannot pose as an instruction. `fsops` notices to the model
   are plain `[Warning: ...]` text for the same reason.
@@ -1584,7 +1712,8 @@ floods, an `events.dropped` row records what was dropped.
   On a container fleet they answer `bad_request` ("only host-mode fleets support this"), not
   `unsupported`.
 - Foreground `bash` on a container fleet still works (it is `exec` with a shell), but there is no
-  `ref` and no persisted cwd.- A job status `lost` means the runner could not find the job's process (for example after a VM reboot).
+  `ref` and no persisted cwd.
+- A job status `lost` means the runner could not find the job's process (for example after a VM reboot).
 
 Hosts, ports and tokens in this section are examples; no real secret appears anywhere in the
 guide.
@@ -1603,6 +1732,7 @@ guide.
 3. None: `credential.*` are admin methods, not reachable on `api@`, and no tool result contains a value.
 
 </details>
+
 
 ## Check your understanding
 
@@ -1624,6 +1754,10 @@ guide.
 10. A tool call fails. Which two things are different about the result compared with a success?
 11. A 40 MiB log file sits in the workspace. How does the model read all of it, and what does each
     reply carry?
+12. durga's agent sends `gui.reset_admin` on `api@mirafleet`. What happens, and why does the GUI
+    itself not offer the same button?
+13. Why does `POST /runners/dev/build-1/revoke` answer `303` instead of showing the result, and
+    which two routes break that rule?
 
 <details>
 <summary>Answers</summary>
@@ -1664,5 +1798,12 @@ guide.
     (30 KiB) and at most 1 MiB with `limit`. Each reply has `offset`, `length`, `size`, `eof`,
     `sha256` of the page, and `sanitized` if the text was cleaned. (Forty MiB in 1 MiB pages is
     forty calls; in practice the model should `exec` something like `grep` or `tail` instead.)
+12. Admin methods in `internal/api.IsAdminMethod` are refused on `api@mirafleet`, so the
+    agent's `gui.reset_admin` gets `forbidden` and nothing changes. The GUI has no button for it
+    either, by design: `gui.Backend` leaves `ResetGUIAdmin` out, so a stolen browser session
+    cannot mint a new setup token. Recovery needs a shell on the central host.
+13. After a `303` the browser fetches a page with GET, so pressing reload repeats the harmless
+    GET, not the revoke (post-redirect-get). The exceptions are `POST /tokens` and `POST
+    /operators/code`, which render the secret they show once, with `no-store`.
 
 </details>

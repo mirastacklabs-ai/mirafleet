@@ -153,8 +153,8 @@ func CheckVendored(fsys fs.FS) error {
 		if !isHex64(sum) {
 			continue // header, separator or prose
 		}
-		if len(cells) < 6 {
-			return fmt.Errorf("gui: ASSETS.md row %q is malformed", file)
+		if len(cells) != 8 {
+			return fmt.Errorf("gui: ASSETS.md row %q has %d cells, want 8 (File, Component, Version, Source URL, Licence, Licence file, Form, SHA-256)", file, len(cells))
 		}
 		rows[file] = row{sum: sum, lic: strings.Trim(strings.TrimSpace(cells[5]), "`")}
 	}

@@ -5,7 +5,7 @@
 # MIRAFLEET_CTR and MIRAFLEET_GO_IMAGE are trusted caller environment (the CTR value is
 # word-split and executed); never derive them from untrusted input.
 #
-# Usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|integration-host|shell|go <args...>
+# Usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|integration-host|gui-shots|shell|go <args...>
 set -eu
 
 # Pinned by tag and by multi-arch index digest.
@@ -265,9 +265,35 @@ integration-host)
 		done
 		exit $rc'
 	;;
+gui-shots)
+	# Screenshots of every GUI screen, light and dark, at 1280 and 390 px wide (docs/M4.md Q12, S16).
+	# Outside the gate and never bundled. Step 1: build the GUI package's test binary in the pinned
+	# golang image. Step 2: run it in a pinned headless Chromium image (dev-only container tool, never
+	# shipped); its TestGUIShotsServe serves a seeded GUI on loopback and Chromium photographs each
+	# screen. Output: dist/gui-shots (gitignored), or the directory given as $1 (inside the repo).
+	# --network none: nothing leaves the container.
+	SHOTS_IMAGE="${MIRAFLEET_SHOTS_IMAGE:-docker.io/chromedp/headless-shell@sha256:830fa77e0602cb42e5cb2cbd9237ba27b649ad69d5fb82b54713aac8b7ab4f29}"
+	out="${1:-dist/gui-shots}"
+	case "$out" in /*) ;; *) out="$ROOT/$out" ;; esac
+	case "$out" in */..|*/../*) echo "output directory must not contain .." >&2; exit 2 ;; esac
+	case "$out" in "$ROOT"/*) rel="${out#"$ROOT"/}" ;; *) echo "output directory must be inside the repository" >&2; exit 2 ;; esac
+	mkdir -p "$out"
+	rm -f "$out"/*.png "$out/urls.txt"
+	run rw 'CGO_ENABLED=0 go test -c -o "$1/gui.test" ./internal/gui' "$rel"
+	# The test binary serves the seeded GUI on loopback and drives Chromium over the DevTools
+	# protocol (screenshots as <screen>-<theme>-<width>.png in /out); it needs no network.
+	$CTR run --rm --network none --user "$(id -u):$(id -g)" -v "$out":/out -e HOME=/tmp \
+		-e MIRAFLEET_GUI_SHOTS_ADDR=127.0.0.1:18443 -e MIRAFLEET_GUI_SHOTS_URLS=/out/urls.txt \
+		-e MIRAFLEET_GUI_SHOTS_OUT=/out -e MIRAFLEET_GUI_SHOTS_CHROME=/headless-shell/headless-shell \
+		--entrypoint /out/gui.test "$SHOTS_IMAGE" -test.run '^TestGUIShotsServe$' -test.v -test.timeout 8m
+	rm -f "$out/gui.test"
+	n=0
+	for f in "$out"/*.png; do [ -e "$f" ] && n=$((n + 1)); done
+	echo "screenshots: $n in $out"
+	;;
 go) run rw 'exec go "$@"' "$@" ;;
 *)
-	echo "usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|integration-host|shell|go <args...>" >&2
+	echo "usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|integration-host|gui-shots|shell|go <args...>" >&2
 	exit 2
 	;;
 esac

@@ -74,7 +74,11 @@ func (s *Server) accountPage(w http.ResponseWriter, r *http.Request, status int,
 		return
 	}
 	d := AccountData{Username: p.Name, Errors: errs}
+	now := s.now()
 	for _, g := range list {
+		if !g.ExpiresAt.After(now) {
+			continue // expired, not yet purged
+		}
 		d.Sessions = append(d.Sessions, SessionRow{ID: g.ID, Created: viewTime(g.CreatedAt), Active: viewTime(g.LastActiveAt),
 			Remote: g.Remote, Browser: g.UserAgent, Current: g.ID == cur})
 		if g.ID != cur {
@@ -144,6 +148,10 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 			invalid(map[string]string{"new": userMessage(ae.Message)})
 			return
 		}
+		if errors.As(err, &ae) && ae.Code == api.CodeConflict { // the account changed under the form (G-39)
+			invalid(map[string]string{"form": userMessage(ae.Message)})
+			return
+		}
 		s.logf("gui: change password: %v", err)
 		s.ErrorPage(w, r, http.StatusInternalServerError)
 		return
@@ -208,5 +216,9 @@ func (s *Server) handleTheme(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: ThemeCookieName, Value: theme, Path: "/", MaxAge: 365 * 24 * 3600,
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
-	s.Redirect(w, r, "/account", "", "")
+	next := form.Get("next") // the page the switch was used on (G-39); Redirect refuses non-local targets
+	if next == "" || next == "/account/theme" {
+		next = "/account"
+	}
+	s.Redirect(w, r, next, "", "")
 }

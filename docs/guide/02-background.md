@@ -13,7 +13,9 @@
 - Containers (§2.9) from the bottom up: the OCI spec, namespaces including user namespaces,
   capabilities, seccomp, cgroups, read-only root file systems, an egress proxy, and Go's
   `os.Root`.
-- For host mode (§2.12): SSH agent forwarding versus a broker, a TLS-intercepting proxy, secrets
+- The web basics behind the admin GUI (§2.12): HTTP, TLS certificates and fingerprints, cookies
+  and sessions, same-origin, CSRF, CSP, DNS rebinding, HSTS, htmx fragments and Argon2id.
+- For host mode (§2.14): SSH agent forwarding versus a broker, a TLS-intercepting proxy, secrets
   at rest with a master key (AES-GCM), credential rotation, and how one OS user on a VM is
   isolated from another (permissions, `ptrace`, `/proc`, "dumpable").
 
@@ -511,7 +513,7 @@ through it is confined to it, even through symlinks and `..`. The executor opens
 workspace directory as an `os.Root`, so nothing outside `/workspace` is reachable
 (`internal/workspace/ctrd/files_linux.go`). It also checks that the file is a regular file, so a
 FIFO (a pipe in a file) cannot hang the runner. This is the container executor only: the M7
-host-mode file tools are deliberately not confined (see chapter 5, section 5.12).
+host-mode file tools are deliberately not confined (see chapter 5, section 5.14).
 
 ### The workspace life cycle
 
@@ -680,7 +682,98 @@ anything. Locking it to the central's own user is what makes "admin" mean someth
 
 ---
 
-## 2.12 Host mode background: secrets you can use but not read (M7)
+## 2.12 Web basics for the admin GUI
+
+The admin GUI (M4) is a web application, and a web application has its own set of attacks. This
+section teaches the ideas. [Chapter 5, section 5.12](05-security.md#512-attacking-the-gui) shows
+each attack against mirafleet. Every term below is also in the [glossary](glossary.md): see
+[CSRF](glossary.md#c), [CSP](glossary.md#c), [DNS rebinding](glossary.md#d),
+[HSTS](glossary.md#h), [htmx](glossary.md#h), [Argon2id](glossary.md#a) and
+[PRG](glossary.md#p).
+
+### HTTP, in one paragraph
+
+A browser sends an **HTTP request**: a method (`GET` reads, `POST` changes something), a path
+(`/runners`), **headers** (`Host: central.example.com:8443`, `Cookie: ...`) and sometimes a body
+(the fields of a form). The server answers with a status code (`200` ok, `303` go to another
+page, `404` not found, `421` wrong host, `429` slow down), headers and a body, usually HTML.
+HTTP is stateless: every request stands alone, so the server needs help to know that two requests
+come from the same person. That help is a cookie.
+
+### TLS, certificates and fingerprints
+
+**TLS** encrypts HTTP so nobody on the network can read or change it (that is the "S" in HTTPS).
+The server proves who it is with a **certificate**: a public key plus a name, signed by someone
+the browser trusts. Central usually has no such signature, because it lives on a private network
+with no public name. So by default it makes a **self-signed certificate**: it vouches for itself.
+A browser warns about that, because anyone could have made such a certificate. The **fingerprint**
+is the SHA-256 hash of the certificate (section 2.4): a short value you can compare by eye.
+aarvee reads the fingerprint in central's log, compares it with the one the browser shows and only
+then clicks "proceed". This is the same idea as the host-key check in section 2.3, done by a
+human. An admin who owns a real certificate passes `-gui-cert` and `-gui-key` instead.
+
+### Cookies and sessions
+
+A **cookie** is a small value the server asks the browser to store and send back on every later
+request to that site. A **session** is the server's memory of "this cookie belongs to a logged-in
+admin". The cookie holds a long random **session token**; the server looks the token up. mirafleet
+stores only the SHA-256 hash of the token, so a stolen copy of the database cannot be turned into
+a working cookie. Cookie flags matter:
+
+- `Secure`: send only over HTTPS. `HttpOnly`: page scripts cannot read it.
+- `SameSite=Strict`: the browser does not attach it to a request that starts on another site.
+- The `__Host-` name prefix: the browser refuses to store the cookie unless it is `Secure`, has
+  `Path=/` and has no `Domain` attribute, so another sub-domain cannot overwrite it.
+
+### Same-origin, CSRF and CSP
+
+An **origin** is scheme + host + port (`https://central.example.com:8443`). The **same-origin
+policy** stops a page from one origin reading data from another. It does *not* stop a page from
+*sending* a request: a hostile page can make aarvee's browser POST to central, and the browser adds
+aarvee's cookie. That is **CSRF** (cross-site request forgery). Defences: `SameSite` cookies, a
+secret **CSRF token** in every form that a foreign page cannot know, and checking the
+`Origin` / `Sec-Fetch-Site` headers the browser sends.
+
+**CSP** (Content-Security-Policy) is a response header that lists where scripts, styles and
+images may load from. With `script-src 'self'` the browser runs only scripts that come from
+central itself; text an attacker managed to put into a page (**XSS**, cross-site scripting) is
+not run. mirafleet allows no inline scripts or styles at all.
+
+**DNS rebinding** is a trick on the same-origin policy: an attacker's name
+(`rebind.evil.example`) first points to the attacker's server, then to an address inside your
+network, such as central. The browser still thinks it talks to the attacker's origin, so the
+attacker's script can now read central's pages. One clue always survives: the `Host` header
+says `rebind.evil.example`. A server that accepts only the host names it expects defeats it.
+
+**HSTS** (HTTP Strict-Transport-Security) tells a browser "always use HTTPS for this host name,
+and never offer a click-through on certificate errors". It is good with a real certificate and
+harmful with a self-signed one, because the admin could not click through any more.
+
+### htmx and server-rendered fragments
+
+Most modern sites ship a big JavaScript app that fetches JSON. The mirafleet GUI is the older,
+simpler design: the server renders HTML with Go's `html/template`, which **escapes** text
+automatically (a runner called `<script>` is shown as the letters, not run). **htmx** is a small
+library (vendored in the binary, no CDN) that lets an HTML element say "when clicked, GET this
+URL and put the answer here". The answer is a **fragment**: a piece of a page, rendered by the
+same handler as the full page. Every action also works with JavaScript off, as a normal form
+`POST` followed by a redirect to a page that shows the result. That pattern is called **PRG**
+(post, redirect, get); it stops a browser refresh from sending the form twice.
+
+### Password hashing and Argon2id
+
+Never store a password; store a **hash**. A fast hash such as SHA-256 is wrong for passwords,
+because an attacker with the database can try billions of guesses per second. A **slow password
+hash** is built to be expensive. **Argon2id** is the current recommended one: it needs both time
+and a lot of memory (mirafleet uses 64 MiB per hash), which makes cheap graphics-card guessing
+impractical. Each password gets a random **salt**, so equal passwords give different hashes.
+The cost has a side effect: a flood of login attempts could use all of central's memory, so the
+GUI runs at most two hashes at once.
+
+**Why mirafleet needs this.** Central now serves a web page that can revoke runners. Every item
+above is one of its defences, and the GUI is only as safe as the weakest one.
+
+## 2.14 Host mode background: secrets you can use but not read (M7)
 
 
 Host mode ([chapter 1, section 1.4a](01-what-is-mirafleet.md#14a-host-mode-remote-development-on-a-vm-m7))
@@ -718,7 +811,7 @@ agent per session** (`internal/workspace/sshagent`) that:
   their own server and use the agent to sign a login there.
 
 The agent still works as an oracle against the pinned hosts, and that **residual risk** is accepted
-and documented ([section 5.12](05-security.md#512-host-mode-and-credentials-m7)).
+and documented ([section 5.14](05-security.md#514-host-mode-and-credentials-m7)).
 
 **HTTPS has no agent.** Tokens go in an `Authorization` header that the client builds itself. So
 the runner runs a **broker**: a small local proxy (`internal/workspace/broker`) on
@@ -801,7 +894,8 @@ Host mode has no container, so isolation between things on a VM is plain Unix:
 
 **Why mirafleet needs this.** These four ideas together make "use without reading" real on a VM
 with no container. [Chapter 3](03-architecture.md#host-mode-the-m7-runner) shows the
-components; [chapter 5.12](05-security.md#512-host-mode-and-credentials-m7) attacks them.
+components; [chapter 5.14](05-security.md#514-host-mode-and-credentials-m7) attacks them.
+
 
 ---
 
@@ -821,11 +915,15 @@ components; [chapter 5.12](05-security.md#512-host-mode-and-credentials-m7) atta
    is it still not as safe as a virtual machine?
 7. An attacker in a workspace creates a symlink `/workspace/x -> /etc/shadow`. What stops
    `workspace.read_file` from returning the host's file?
-8. Why is a forwarded ssh-agent called a "signing oracle", and which two restrictions on
+8. A page on `evil.example` contains a hidden form that POSTs to `central.example.com:8443`.
+   aarvee's browser holds a valid session cookie. Name two things that stop the request from
+   working.
+9. Why is SHA-256 a poor way to store a password, and what does Argon2id do differently?
+10. Why is a forwarded ssh-agent called a "signing oracle", and which two restrictions on
    mirafleet's per-session agent reduce that?
-9. Why does the credential store use a random nonce per value, and what happens if someone copies
+11. Why does the credential store use a random nonce per value, and what happens if someone copies
    one credential's ciphertext into another credential's row?
-10. A process running as the same user as the runner tries `cat /proc/<runner pid>/environ` and
+12. A process running as the same user as the runner tries `cat /proc/<runner pid>/environ` and
     `gdb -p <runner pid>`. Why do both fail, and what would still work for the root user?
 
 <details>
@@ -854,13 +952,20 @@ components; [chapter 5.12](05-security.md#512-host-mode-and-credentials-m7) atta
    a VM-like runtime (gVisor, Kata) is needed to remove that risk.
 7. The containerd executor reads files through `os.Root`, which confines every path (symlinks and `..`
    included) to the workspace directory. The link cannot leave `/workspace`.
-8. You cannot read the key from it, but anyone who can reach its socket can ask it to sign. The
+8. Any two of: the `SameSite=Strict` cookie is not sent on a cross-site request; the browser's
+   `Sec-Fetch-Site` / `Origin` headers show a foreign origin and central refuses the request;
+   the form lacks the secret CSRF token that only a page loaded from central contains.
+9. SHA-256 is fast, so an attacker who copies the database can try billions of guesses per
+   second. Argon2id is deliberately slow and memory-hungry (64 MiB per hash here) and uses a
+   random salt per password, so each guess costs real time and memory and precomputed tables
+   are useless.
+10. You cannot read the key from it, but anyone who can reach its socket can ask it to sign. The
    mirafleet agent answers only `List` and `Sign`, signs only SSH user-authentication requests for the
    credential's user, and (with host binding) only when the server's host key is pinned.
-9. Reusing a nonce with one GCM key breaks its security, so every value gets a fresh random
+11. Reusing a nonce with one GCM key breaks its security, so every value gets a fresh random
    one. The associated data is the credential's id and version, so the copied ciphertext fails
    its authentication tag and is refused.
-10. The runner set itself non-dumpable before loading any secret, so the kernel denies `ptrace`
+12. The runner set itself non-dumpable before loading any secret, so the kernel denies `ptrace`
     attach and denies same-uid access to `/proc/<pid>/environ` and `mem`. Root can still read both;
     host mode does not defend against root on the VM.
 

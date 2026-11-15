@@ -112,7 +112,15 @@ func (l *LoginLimiter) get(key string, now time.Time) *ipState {
 		return s
 	}
 	for len(l.byKey) >= limiterMaxEntries {
+		// Evict the least recent entry that is not under a lockout (G-16); only when every
+		// entry is locked does the least recent one go.
 		old := l.lru.Back()
+		for e := old; e != nil; e = e.Prev() {
+			if !now.Before(e.Value.(*ipState).lockedUntil) {
+				old = e
+				break
+			}
+		}
 		s := old.Value.(*ipState)
 		l.lru.Remove(old)
 		delete(l.byKey, s.key)

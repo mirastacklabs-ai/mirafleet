@@ -308,3 +308,22 @@ func TestRetryAfterSeconds(t *testing.T) {
 		}
 	}
 }
+
+// G-16: a full map evicts unlocked entries before a locked-out one.
+func TestLimiterEvictsUnlockedFirst(t *testing.T) {
+	c := newClock()
+	l := NewLoginLimiter(c.Now)
+	const victim = "203.0.113.9"
+	for i := 0; i < lockoutAfter; i++ {
+		l.Failure(victim)
+	}
+	if ok, why, _ := l.Allow(victim); ok || why != DenyLockout {
+		t.Fatalf("not locked: %v %q", ok, why)
+	}
+	for i := 0; i < limiterMaxEntries+500; i++ {
+		l.Allow(fmt.Sprintf("10.%d.%d.%d", i>>16&255, i>>8&255, i&255))
+	}
+	if ok, why, _ := l.Allow(victim); ok || why != DenyLockout {
+		t.Fatalf("lockout lost to eviction: %v %q", ok, why)
+	}
+}

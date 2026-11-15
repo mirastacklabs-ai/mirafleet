@@ -8,23 +8,25 @@ those as they come up.
 After reading it you should be able to explain the whole design, find any piece of code, run the
 tests, and make your first change without asking the authors.
 
-> **Status:** M1, M2 and M3 (workspaces) are done (13 Nov 2026), and M5 (the orchestrator: MCP
-> server, Claude Code plugin and hooks, Windows support) is built; a smoke test with a real Claude
-> Code is still to run. M4 (the admin GUI) is done pending the user's browser check, and M7
-> (**host mode**: remote development on a VM, central-held credentials, background jobs, full
-> output, Claude Code tool parity; see [../M7.md](../M7.md)) is built; review is in progress and the
-> user smoke test is still to run. Next: M6 (release). Where a feature is planned, the guide says so
-> and links the milestone in [../PLAN.md](../PLAN.md).
+> **Status:** M1, M2 and M3 (workspaces) are done (13 Nov 2026), M5 (the orchestrator: MCP
+> server, Claude Code plugin and hooks, Windows support) is built, and M4 (the admin GUI) is
+> done. A smoke test of M5 with a real Claude Code is still to run. M7 (**host mode**: remote
+> development on a VM, central-held credentials, background jobs, full output, Claude Code tool
+> parity; see [../M7.md](../M7.md)) is built; review is in progress and the user smoke test is
+> still to run. Next: M6 (release). Where a feature is planned, the guide says so and links the
+> milestone in [../PLAN.md](../PLAN.md).
 >
 > **New in M7 (read these first if you work on host mode):** [1.4a](01-what-is-mirafleet.md#14a-host-mode-remote-development-on-a-vm-m7),
-> [2.12](02-background.md#212-host-mode-background-secrets-you-can-use-but-not-read-m7),
-> [the host runner](03-architecture.md#host-mode-the-m7-runner), [flows 24 to 30](04-flows.md#host-mode-flows-m7),
-> [5.12 (attacking host mode)](05-security.md#512-host-mode-and-credentials-m7) and
-> [6.17 (migration 0004)](06-data-model.md#617-host-mode-and-credentials-migration-0004-m7).
+> [2.14](02-background.md#214-host-mode-background-secrets-you-can-use-but-not-read-m7),
+> [the host runner](03-architecture.md#host-mode-the-m7-runner), [flows 30 to 36](04-flows.md#host-mode-flows-m7),
+> [5.14 (attacking host mode)](05-security.md#514-host-mode-and-credentials-m7) and
+> [6.19 (migration 0004)](06-data-model.md#619-host-mode-and-credentials-migration-0004-m7).
 
 ## The story in one paragraph
 
-MIRASTACK LABS is a company with a `dev` fleet and a `prod` fleet of servers. Engineers use an AI coding
+MIRASTACK LABS has spare servers and VMs sitting idle, and built mirafleet to put them to work
+for its engineers' AI coding sessions without sharing credentials. The company has a `dev` fleet
+and a `prod` fleet of servers. Engineers use an AI coding
 agent (Claude Code) and want it to help run those servers. Letting an AI log in to production
 with a shell is dangerous. mirafleet puts one server, **central**, in the middle. Each fleet
 server runs a small **runner** that dials out to central. The agent talks to central, and central
@@ -32,6 +34,8 @@ passes along only the work that the runner's own allowlist permits. Every reques
 This is the same shape as GitLab CI runners. For coding work the `dev` fleet runs in
 **workspace mode**: the agent gets a private container on a runner, where it may run any command
 (`go test`, edits) without being able to reach the host, the network or anyone else's files.
+The admin (aarvee) manages all of this from the command line or from a web page served by central,
+the **admin GUI** (HTTPS, one admin account, every change audited).
 
 ## Reading order and time estimates
 
@@ -40,12 +44,12 @@ Read in order the first time. Later, jump around with the map below.
 | # | Chapter | What it gives you | Time |
 |---|---|---|---|
 | 0 | [Glossary](glossary.md) | Every term, alphabetical. Keep it open in a tab. | skim 10 min, then look things up |
-| 1 | [What is mirafleet?](01-what-is-mirafleet.md) | The problem, the three roles, the big picture | 25 min |
-| 2 | [Background](02-background.md) | Public-key crypto, SSH, HMAC, TOTP, SQLite, context, containers (namespaces, seccomp, cgroups, egress proxy, `os.Root`), MCP in depth (JSON-RPC, tools, harness, plugin, skill, hook), Unix sockets, Windows DACLs, and (M7) ssh-agent versus broker, secrets at rest, rotation, OS-user isolation | 90 min |
-| 3 | [Architecture](03-architecture.md) | Components, packages, the orchestrator, executors, trust boundaries (the model is untrusted input) and how they fit | 65 min |
-| 4 | [Flows](04-flows.md) | Thirty step-by-step flows: join, register, run an action, revoke, the workspace flows (open, exec, files, close, reaper, reconcile), the MCP flows (one `exec` tool call, session handoff, idle on exit, SessionEnd, guarded `confirm`) and the host-mode flows (open, reattach, bash with paging, background jobs, credentials, re-adoption, cleanup) | 120 min |
-| 5 | [Security](05-security.md) | Every defence, the workspace container boundary, prompt injection through tool output, and what would go wrong without it | 95 min |
-| 6 | [Data model](06-data-model.md) | The SQLite tables (including the workspace tables), migrations, the audit log, and the local files M5 added | 45 min |
+| 1 | [What is mirafleet?](01-what-is-mirafleet.md) | The problem, the three roles, the big picture, host mode (1.4a) | 25 min |
+| 2 | [Background](02-background.md) | Public-key crypto, SSH, HMAC, TOTP, SQLite, context, containers (namespaces, seccomp, cgroups, egress proxy, `os.Root`), MCP in depth (JSON-RPC, tools, harness, plugin, skill, hook), Unix sockets, Windows DACLs, the web basics behind the GUI (HTTP, TLS certificates, cookies, sessions, CSRF, CSP, htmx, password hashing), and (M7) ssh-agent versus broker, secrets at rest, rotation, OS-user isolation | 100 min |
+| 3 | [Architecture](03-architecture.md) | Components, packages, the orchestrator, the admin GUI, executors, the host-mode runner, trust boundaries (the model is untrusted input) and how they fit | 75 min |
+| 4 | [Flows](04-flows.md) | Thirty-six step-by-step flows: join, register, run an action, revoke, the workspace flows (open, exec, files, close, reaper, reconcile), the MCP flows (one `exec` tool call, session handoff, idle on exit, SessionEnd, guarded `confirm`), the GUI flows (first-start setup, login, a revoke click, session lifetime, `reset-admin`, a token shown once) and the host-mode flows (open, reattach, bash with paging, background jobs, credentials, re-adoption, cleanup) | 130 min |
+| 5 | [Security](05-security.md) | Every defence, the workspace container boundary, prompt injection through tool output, attacks on the GUI, host mode and credentials (5.14), and what would go wrong without each defence | 120 min |
+| 6 | [Data model](06-data-model.md) | The SQLite tables (including the workspace and GUI tables), migrations, the audit log, the local files M5 added, and migration 0004 for credentials (6.19) | 55 min |
 | 7 | [Protocols](07-protocols.md) | SSH users, channels, framing, the JSON API | 40 min |
 | 8 | [Code tour](08-code-tour.md) | Package by package, with function names | 60 min |
 | 9 | [Dev setup and testing](09-dev-setup-and-testing.md) | Build, run, test, debug | 30 min |
@@ -53,30 +57,37 @@ Read in order the first time. Later, jump around with the map below.
 | 11 | [Contributing](11-contributing.md) | Rules, review process, your first change | 20 min |
 | 12 | [Why mirafleet?](12-why-mirafleet.md) | How it compares with CI runners, Salt, Teleport, ssh-mcp and sandboxes; where AI API keys live | 30 min |
 
-Total: about 10.5 hours (the times above add up to about 635 minutes). If you are short on time,
-read 1, 3, 4 and skim 5 (start with 5.11 if you work on the MCP side), 2.2, 2.3, 2.7 and 2.10;
-that is enough to review most changes. If you only want the MCP and orchestrator story, read
-2.10, the "Operator side" section of chapter 3, flows 19 to 23 in chapter 4 and section 5.11.
+Total: about 12 hours (the times above add up to about 735 minutes). If you are short on time,
+read 1, 3, 4 and skim 5 (start with 5.11 if you work on the MCP side, 5.12 if you work on the
+GUI), 2.2, 2.3, 2.7 and 2.10; that is enough to review most changes. If you only want the MCP and
+orchestrator story, read 2.10, the "Operator side" section of chapter 3, flows 19 to 23 in
+chapter 4 and section 5.11. If you only want the GUI, read 2.12, the "Admin GUI" section of
+chapter 3, flows 24 to 29 in chapter 4 and section 5.12. If you only want host mode, read 2.14,
+the "Host mode" section of chapter 3, flows 30 to 36 in chapter 4 and section 5.14.
 
 ## Map of the chapters
 
 1. **What is mirafleet?** Why an AI agent needs a safe way to work on many servers, and what the
    three roles do.
 2. **Background.** The ideas from outside mirafleet that you need first, each with "why we need
-   this".
+   this", including the web basics behind the admin GUI (section 2.12) and the background for host mode (section 2.14).
 3. **Architecture.** The components, how they connect, which Go package owns what, the
-   orchestrator on the operator's machine and where each key lives on each operating system.
-4. **Flows.** Thirty flows (join, register, run an action, revoke, the workspace flows:
-   open, exec, files, close, reaper, reconcile, revoke cascades, the MCP flows: one `exec`
-   tool call, session handoff and `--resume`, idle on exit, SessionEnd, guarded `confirm`, and
-   the host-mode flows 24 to 30), told one numbered step at a time.
+   orchestrator on the operator's machine, the admin GUI inside central, the host-mode runner (M7)
+   and where each key lives on each operating system.
+4. **Flows.** Thirty-six flows (join, register, run an action, revoke, the workspace flows:
+   open, exec, files, close, reaper, reconcile, revoke cascades; the MCP flows: one `exec`
+   tool call, session handoff and `--resume`, idle on exit, SessionEnd, guarded `confirm`; the
+   GUI flows: first-start setup, login, a revoke click, session lifetime, `reset-admin`, a
+   token shown once; and the host-mode flows 30 to 36), told one numbered step at a time.
 5. **Security.** The threat model, every defence layer, the workspace container boundary,
-   prompt injection through MCP tool output (with a worked example), and host mode: credentials,
-   the broker and agent, worked attacks, and what is not protected.
-6. **Data model.** Tables (including `fleet_workspace` and `workspaces`), statuses, the workspace
-   state machine, migrations, append-only audit, (no schema change in M5) the local files
+   prompt injection through MCP tool output (with a worked example), attacks on the admin GUI
+   (CSRF, DNS rebinding, XSS, brute force, stolen cookie, copied database, leaked setup token),
+   and host mode: credentials, the broker and agent, worked attacks, and what is not protected
+   (5.14).
+6. **Data model.** Tables (including `fleet_workspace`, `workspaces` and the three GUI tables),
+   statuses, the workspace state machine, migrations, append-only audit, the local files
    `contexts.yaml`, `.mirafleet.yaml` and the session handoff file, and M7's migration 0004
-   (credentials, assignments, `secrets_meta`) with the new audit actions.
+   (credentials, assignments, `secrets_meta`, 6.19) with the new audit actions.
 7. **Protocols.** The wire format: SSH users, channels, length-prefixed JSON frames.
 8. **Code tour.** Where to find things in the repository.
 9. **Dev setup and testing.** How to build and test, and the testing rules.
@@ -134,7 +145,7 @@ instead of a picture, the code itself is readable: `A -->|label| B` means "A sen
 ## Where else to look
 
 - [../ARCHITECTURE.md](../ARCHITECTURE.md): the formal design.
-- [../PLAN.md](../PLAN.md): milestones. [../M2.md](../M2.md), [../M3.md](../M3.md), [../M5.md](../M5.md), [../M7.md](../M7.md): detailed decisions.
+- [../PLAN.md](../PLAN.md): milestones. [../M2.md](../M2.md), [../M3.md](../M3.md), [../M4.md](../M4.md), [../M5.md](../M5.md), [../M7.md](../M7.md): detailed decisions.
 - [../BRAND.md](../BRAND.md): colours and fonts.
 - [../../CLAUDE.md](../../CLAUDE.md): ground rules for contributors and AI agents.
 - [STYLE.md](STYLE.md): the rules this guide follows.

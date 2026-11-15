@@ -3,15 +3,15 @@
 > **A snapshot of the landscape on 13 Nov 2026. It is not maintained with the code.** Other
 > projects change licences, get archived and add features; check the sources (section 12.6)
 > before relying on any row. This chapter compares mirafleet as designed, with all planned
-> milestones (M1 to M6) implemented. M1, M2, M3 (workspaces) and M5 (the MCP server, the Claude
-> Code plugin and the other harness files) are done; the GUI (M4) and release packaging (M6) are
+> milestones (M1 to M6) implemented. M1, M2, M3 (workspaces), M4 (the admin GUI) and M5 (the MCP
+> server, the Claude Code plugin and the other harness files) are done; release packaging (M6) is
 > not. See [../PLAN.md](../PLAN.md) for what is built today. Star counts are approximate. The rows
-> for other tools were last researched on 13 Nov 2026 and were **not** re-researched for the M5
-> refresh; only the statements about mirafleet were re-checked against the code.
+> for other tools were last researched on 13 Nov 2026 and were **not** re-researched for the M4
+> or M5 refreshes; only the statements about mirafleet were re-checked against the code.
 
 ## What you will learn
 
-- How host mode compares with dev containers and plain SSH (section 12.7; general-knowledge claims are marked).
+- How host mode compares with dev containers and plain SSH (section 12.8; general-knowledge claims are marked).
 - Why an AI agent that operates many servers needs more than plain SSH or a CI pipeline.
 - What an AI API key is, what losing one costs, and where each kind of tool keeps it.
 - How mirafleet compares with CI runners, config-management tools, access tools, MCP SSH servers
@@ -65,12 +65,12 @@ When Claude Code (or any agent) talks to a language model, it sends each request
 provider's web service. The request carries a secret string, the **API key**. The provider uses
 the key to decide who to bill, which models the caller may use and how fast it may call them.
 
-Whoever holds the key *is* you, as far as the provider is concerned. MIRASTACK LABS's key is valuable
+Whoever holds the key *is* you, as far as the provider is concerned. MIRASTACK LABS' key is valuable
 because it gives:
 
-- **Billing.** Every token the key spends is charged to MIRASTACK LABS's account.
+- **Billing.** Every token the key spends is charged to MIRASTACK LABS' account.
 - **Model access.** Access to expensive models and to any special access MIRASTACK LABS negotiated.
-- **Rate limits.** The key's quota is shared. An attacker using it can starve MIRASTACK LABS's real work.
+- **Rate limits.** The key's quota is shared. An attacker using it can starve MIRASTACK LABS' real work.
 - **Organisation data.** Depending on the provider's features, keys can reach stored files,
   fine-tuned models, conversation or usage history and org settings.
 
@@ -187,8 +187,8 @@ box around the sandbox with credentials, and every connection to central points 
 ## 12.3 The comparison
 
 Legend: ✅ yes, ⚠️ partly or with caveats, ❌ no. "Unverified" means the research could not
-confirm it. mirafleet's row describes the **full planned feature set** (M1 to M3 and M5 are built,
-including the MCP server; the GUI and release packaging are not), not the code today. The
+confirm it. mirafleet's row describes the **full planned feature set** (M1 to M5 are built,
+including the MCP server and the admin GUI; release packaging is not), not the code today. The
 table has five columns of facts on purpose; everything else (extra dependencies, MCP support,
 audit and revoke) is in the prose after it.
 
@@ -295,6 +295,39 @@ Where ssh-mcp-style tools remain better is unchanged: they need nothing installe
 mirafleet's trade is the opposite one: a central and a runner on every node, in return for
 outbound-only reach, the guard on the node, and a central audit and revoke.
 
+### mirafleet's admin GUI next to other web consoles
+
+Most tools in the table have a web console, and an administrator will ask for one, so here is how
+the M4 GUI compares. (The other tools' side is from their public documentation as of the
+snapshot date and was not re-researched; check before you rely on it.)
+
+- **CI runners (GitLab Runner, GitHub's runner, Buildkite, Jenkins agents).** The runner program
+  itself has no console. You manage runners (list, pause, remove, see their last contact) in the
+  web interface of the **server they report to**: GitLab's admin area, GitHub's repository or
+  organisation settings, Buildkite's dashboard, Jenkins' node pages. That console is part of a
+  large product you must run or rent. mirafleet's console is a page set of its own, served by
+  the same single binary as the control plane, with no further server.
+- **Rundeck, AWX, Teleport.** Their web interface is the main way to use them: jobs, inventories,
+  sessions, and in the commercial or enterprise tiers, roles and single sign-on. mirafleet's is a
+  console for the **administrator only**; the agent's work arrives over SSH and never touches it.
+  What it shows is the fleet and the audit trail, not a place where jobs are authored.
+- **Salt and Ansible (open source).** Neither ships a first-party console in the open core; people
+  use the command line, or add a separate product.
+
+What the GUI is, concretely: eight screens (Overview, Fleets, Runners, Join tokens, Operators,
+Workspaces, Audit, Account), server-rendered HTML with a small vendored helper (htmx), one admin
+account with a password, TLS always, a strict Content-Security-Policy, and every change made through
+the same `service` code and audit log as the CLI. It can be switched off (`-gui-listen off`) or
+bound to loopback and reached through an SSH tunnel.
+
+What it deliberately is not: **no SSO, no roles, no second admin account, no HA.** Those are the
+enterprise features the OSS edition leaves seams for ([chapter 11](11-contributing.md#111-the-ground-rules-with-reasons)).
+It also cannot change a runner's `actions.yaml` or `workspace.yaml`: those files stay on the node,
+because the node's own allowlist is the security boundary and a console that could rewrite them
+would be a way around it. If you need people to log in with their company account and hold
+different permissions today, one of the commercial consoles above does that and mirafleet's GUI
+does not.
+
 ### What the table leaves out
 
 - **Heavy dependencies.** mirafleet needs none: one binary plus SQLite (containerd or
@@ -343,6 +376,8 @@ This section assumes the full feature set exists.
   have been attacked, patched and documented. mirafleet has not.
 - **Teleport** has SSO, session recording and per-resource RBAC. mirafleet's OSS core
   deliberately has none of these (any active operator can use any fleet).
+- **Rundeck, AWX and Teleport** have web consoles with roles and, in their paid tiers, single
+  sign-on. mirafleet's GUI has one admin account and a password, by design.
 - **Ansible and Salt** have large module ecosystems and idempotent configuration management.
   mirafleet runs named actions; it does not converge a machine to a desired state.
 - **ssh-mcp** needs nothing installed on the nodes. If you can already SSH everywhere, that is
@@ -417,7 +452,7 @@ Researched 13 Nov 2026. Star counts are approximate and change daily.
 - https://github.com/anthropics/sandbox-runtime
 - https://github.com/coder/coder
 
-## 12.7 Remote development on a VM: how host mode compares (M7)
+## 12.8 Remote development on a VM: how host mode compares (M7)
 
 MIRASTACK LABS has spare servers and VMs sitting idle, and its engineers want to use them for AI
 coding sessions without handing out server logins or Git tokens. M7 is that case: durga's Claude
@@ -445,7 +480,7 @@ decide.** Statements about mirafleet come from the code and [docs/M7.md](../M7.m
 | Where do the repo and commands run? | In the container | On the VM | On the VM |
 | Who can reach the VM? | Provider-managed access | Anyone with network reach and a key; you manage it | Nobody dials in: the runner dials out to central |
 | Git credentials | Often a provider token injected into the environment, or forwarded; the process can read it | The forwarded agent: anything on the VM that can reach the socket (and root) can ask it to sign while you are connected | Stored encrypted on central, in runner memory only; the agent signs via a restricted socket (no export, pinned hosts) or a broker injects HTTPS headers; the agent never reads the value |
-| If the agent is prompt-injected | Can use what the environment holds | Can use your forwarded keys while connected | Can use the credential against its pinned hosts while a session is open; cannot copy it (the known gap: it can read the runner's own enrolment key; see [10.11.10](10-operations.md#101110-the-known-gap-in-plain-words)) |
+| If the agent is prompt-injected | Can use what the environment holds | Can use your forwarded keys while connected | Can use the credential against its pinned hosts while a session is open; cannot copy it (the known gap: it can read the runner's own enrolment key; see [10.13.10](10-operations.md#101310-the-known-gap-in-plain-words)) |
 | Audit | Provider logs | sshd logs, if you set them up | Central audit rows for each call and aggregated credential use, without values |
 | Persistence | Container lifetime and provider policy | Whatever you configure | A directory per session on the VM; close never deletes; cleanup after 30 days |
 | Set-up effort | Low if you already use it | Low | Higher: central, a runner user, credentials; the gain is the central control |
@@ -510,6 +545,8 @@ how your AI tool stores its API key. Sections 12.2 and 12.6 list how this chapte
    can drive either. Name two things that limit what a tricked model can do through mirafleet that
    do not depend on the laptop's MCP process being honest.
 9. Why does mirafleet's `exec` tool not count as "running a shell on the server"?
+10. aarvee's company wants every admin to sign in with the company account and wants a read-only
+    role for auditors. Does the mirafleet GUI do that, and why was it built without it?
 
 <details>
 <summary>Answers</summary>
@@ -550,5 +587,11 @@ how your AI tool stores its API key. Sections 12.2 and 12.6 list how this chapte
    capabilities, a read-only root file system, limited resources and (by default) no network, with
    its own files deleted when the workspace closes. The shell is `sh` in the container image, not
    the host's. Actions mode (`run_action`) uses no shell at all.
+10. No. The OSS GUI has one admin account with a password, and no roles or single sign-on. They
+    are enterprise features that the open-source edition leaves seams for (`gui.Backend` is the
+    seam where an enterprise build would wrap authentication and permissions), so the open core
+    stays small and easy to audit. The commercial consoles compared above (Rundeck, Teleport and
+    others) do offer them. Meanwhile the CLI-only route stays available to anyone with a shell on
+    central.
 
 </details>

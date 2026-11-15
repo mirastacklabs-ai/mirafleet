@@ -280,7 +280,7 @@ func insertGUISessionTx(ctx context.Context, tx *sql.Tx, s store.GUISession, now
 
 // SetGUIPassword swaps the password under a generation compare-and-swap, kills every session
 // of the admin and inserts the re-issued current one, in one transaction.
-func (d *DB) SetGUIPassword(ctx context.Context, id, generation int64, hash string, keep store.GUISession, now time.Time, ev store.AuditEvent) (store.GUIAdmin, error) {
+func (d *DB) SetGUIPassword(ctx context.Context, id, generation int64, hash string, keep store.GUISession, replaceID int64, now time.Time, ev store.AuditEvent) (store.GUIAdmin, error) {
 	if hash == "" {
 		return store.GUIAdmin{}, fmt.Errorf("%w: empty password hash", store.ErrInvalid)
 	}
@@ -312,6 +312,17 @@ func (d *DB) SetGUIPassword(ctx context.Context, id, generation int64, hash stri
 		}
 		if out, err = scanGUIAdmin(tx.QueryRowContext(ctx, `SELECT `+guiAdminCols+` FROM gui_admins WHERE id = ?`, id)); err != nil {
 			return err
+		}
+		if replaceID != 0 {
+			res, err := tx.ExecContext(ctx, `DELETE FROM gui_sessions WHERE admin_id = ? AND id = ?`, id, replaceID)
+			if err != nil {
+				return err
+			}
+			if n, err := res.RowsAffected(); err != nil {
+				return err
+			} else if n != 1 {
+				return fmt.Errorf("%w: the session was revoked", store.ErrConflict)
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM gui_sessions WHERE admin_id = ?`, id); err != nil {
 			return err
@@ -412,10 +423,10 @@ func (d *DB) GetGUISession(ctx context.Context, tokenHash []byte) (store.GUISess
 	return s, a, nil
 }
 
-// TouchGUISession records activity. Not audited.
+// TouchGUISession records activity; last_active_at never moves backwards. Not audited.
 func (d *DB) TouchGUISession(ctx context.Context, id int64, now time.Time) error {
 	return d.withTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE gui_sessions SET last_active_at = ? WHERE id = ?`, now.UnixMilli(), id)
+		res, err := tx.ExecContext(ctx, `UPDATE gui_sessions SET last_active_at = max(last_active_at, ?) WHERE id = ?`, now.UnixMilli(), id)
 		if err != nil {
 			return err
 		}

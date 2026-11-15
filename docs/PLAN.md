@@ -62,7 +62,7 @@ design: [ARCHITECTURE.md](ARCHITECTURE.md#workspace-mode). The "M3 done when" sc
   a privileged containerd container on the Docker runtime).
 
 ## M4 — Admin GUI
-**Status: planned (14 Nov 2026).** Detailed plan and decisions: [M4.md](M4.md).
+**Status: done pending the user's browser check (S19) (15 Nov 2026).** Detailed plan and decisions: [M4.md](M4.md).
 - `html/template` + htmx 2 (vendored, embedded). Screens per ARCHITECTURE.md. Admin bootstrap on
   first start (setup-token file, `central gui reset-admin`). CSRF protection, secure session
   cookies (sessions in SQLite, tokens stored hashed), TLS always on, default bind `0.0.0.0:8443`

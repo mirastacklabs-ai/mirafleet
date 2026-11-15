@@ -15,11 +15,15 @@
 - How one MCP `exec` tool call travels from the harness to a container and back, how the session
   handoff makes `--resume` reattach, what happens to a workspace when the harness exits, and how
   the guarded `confirm` prompt works (flows 19 to 23).
+- How the admin GUI starts (first-start setup with a one-time token), how login and sessions
+  work (idle and absolute expiry, survival across a restart, the generation check), how a revoke
+  click reaches the same code as the CLI, how `reset-admin` recovers a lost password and why a
+  join token is shown once (flows 24 to 29).
 - How a **host-mode** workspace is opened and reattached, how `bash` keeps its full output and is
   paged, how a background job runs, how a credential travels from `credential set` to `git push`
-  and is rotated, and how a restarted runner re-adopts its sessions and jobs (flows 24 to 30).
+  and is rotated, and how a restarted runner re-adopts its sessions and jobs (flows 30 to 36).
 
-[Chapter 3](03-architecture.md) showed the parts. This chapter shows them moving: thirty flows,
+[Chapter 3](03-architecture.md) showed the parts. This chapter shows them moving: thirty-six flows,
 each following one thing that really happens in mirafleet, from the command someone types to the
 rows that end up in the database. Every flow starts with a one-sentence summary, then a diagram and
 a numbered explanation that names the functions involved, so you can open the code and follow
@@ -35,11 +39,11 @@ dead" mark), **step** (one 60-second window of the registration code).
 
 | Name | Meaning in this chapter |
 |---|---|
-| `central.example.com:2222` | MIRASTACK LABS's central. Data dir `/var/lib/mirafleet/central`. |
+| `central.example.com:2222` | MIRASTACK LABS' central. Data dir `/var/lib/mirafleet/central`. |
 | `dev`, `prod` | Fleets. `prod` is created with `-confirm` (a guarded fleet). |
 | `build-1` (in `dev`), `db-1` (in `prod`) | Runners. |
 | `durga`, `kalyan` | Operators. |
-| aarvee | The admin: they have a shell on the central host and runs as the same user as central. |
+| aarvee | The admin: has a shell on the central host and runs as the same user as central. |
 
 All the admin commands below (`mirafleet central fleet create ...` and friends) are clients of the
 running central: each one connects to `<data>/admin.sock`, sends one request, prints the answer and
@@ -1845,13 +1849,229 @@ because central refuses without `confirm`; it only changes who sees the question
 
 ---
 
+## GUI flows (M4)
+
+Flows 24 to 29 are the admin GUI story. The cast: aarvee, the admin, runs central on
+`central.example.com`. The GUI listens on `https://central.example.com:8443`. Chapter 3 explains
+[where the GUI fits](03-architecture.md#the-admin-gui-m4), chapter 2
+[the web basics](02-background.md#212-web-basics-for-the-admin-gui) and chapter 5
+[how it is attacked](05-security.md#512-attacking-the-gui). Two promises hold in every flow: the
+GUI calls the same `service` methods as the CLI, and a secret (setup token, password, session
+token) is never written to a log or to an audit row.
+
+---
+
+## 24. First-start setup of the GUI
+
+**In one sentence:** the first time central starts without a GUI admin it makes a one-time setup
+token and leaves it in a file only aarvee can read; aarvee pastes it into `/setup` to create the
+admin account and aarvee's first session.
+
+![First-start GUI setup: token file, /setup, first session](diagrams/gui-setup.svg)
+
+*Follow the setup token from central's start to the file, then to aarvee's browser and the first
+session.*
+
+1. Central starts (`startGUI` in `cmd/mirafleet/central_gui_linux.go` calls `Server.PrepareSetup`).
+   There is no active admin, so `service.EnsureGUISetup` makes 32 random bytes, formats them as
+   `mfs1.<base64url>`, and stores only the SHA-256 plus a 24-hour expiry in table `gui_setup`
+   (audit action `gui.setup_token`, source `system`; the token is not in the row).
+2. The GUI writes the token to `<data>/gui/setup-token` (mode `0600`, created with `O_EXCL`
+   through `os.Root`). The log names the file and the URL, **never the token**: journald is often
+   readable by other users.
+3. aarvee, who has a shell on the central host, runs `cat /var/lib/mirafleet/central/gui/setup-token`.
+   aarvee opens `https://central.example.com:8443`. Every page except `/setup`, the static files and
+   the error pages answers with a redirect to `/setup`, so there is nothing else to see. The browser
+   warns about the self-signed certificate; aarvee compares the fingerprint with the one central
+   logged (the setup page repeats it next to the token field) before continuing.
+4. aarvee sends the token, a username (`aarvee`) and a password twice. The form carries a CSRF token
+   that matches the short-lived `__Host-mf_pre` cookie (there is no session yet). `/setup` has its
+   own per-IP rate limit, and Argon2id hashing is limited to two at a time.
+5. `service.CompleteGUISetup` runs in **one transaction** (`store.CompleteGUISetup`): the setup row
+   exists, the hash matches in constant time, it has not expired, and no active admin exists. Then
+   it inserts the admin (Argon2id hash, generation 1), deletes the setup row and writes the
+   `gui.setup` audit row, all together. Two people racing: one wins, the other gets a plain
+   refusal.
+6. The service then opens the first session in a second transaction (row with `SHA-256(token)`
+   plus a `gui.login` audit row whose message is "after setup"). The GUI deletes the token file,
+   sets the `__Host-mf_session` cookie and redirects to the Overview. From now on `/setup` is
+   `404`.
+
+**Why this is safe from the LAN.** Central listens on all interfaces by default, so anyone on the
+network can open `/setup` before aarvee does. They still cannot do anything: the token has 256 bits,
+so guessing is hopeless; no endpoint creates or reveals a token, so they cannot take it or block
+aarvee; and before setup the pages show no data. The one real risk is a man in the middle on the
+very first visit (self-signed certificate), which is why the fingerprint check matters and why
+the guide recommends doing the first visit through `ssh -L 8443:127.0.0.1:8443`
+([section 5.12](05-security.md#512-attacking-the-gui)). If the token expires, central makes a new
+one at its next start.
+
+---
+
+## 25. Login and the first request after it
+
+**In one sentence:** aarvee types a username and password; if they are right, central starts a
+session and sets a cookie that proves it on every later request.
+
+```mermaid
+sequenceDiagram
+  participant B as aarvee's browser
+  participant G as gui.Server
+  participant S as service.Service
+  participant DB as sqlite.DB
+  B->>G: GET /login (Host checked, pre-session cookie set)
+  G-->>B: form with _csrf token
+  B->>G: POST /login username, password, _csrf
+  G->>G: CSRF check, rate limit check, hash slot (max 2)
+  G->>S: GUILogin(remote, user agent, username, password)
+  S->>DB: read the admin, verify Argon2id hash
+  S->>DB: create session row (SHA-256 of token) + gui.login audit row, one tx
+  S-->>G: raw session token
+  G-->>B: 303 to Overview, Set-Cookie __Host-mf_session
+  B->>G: GET / with cookie
+  G->>S: GUIAuthenticate(token)
+  S->>DB: look up hash, check expiry and generation
+  S-->>G: Principal admin aarvee, source gui
+```
+
+1. `GET /login` passes the **Host allowlist** (any other `Host` gets `421`), gets the security
+   headers, and sets a pre-session cookie `__Host-mf_pre` whose value keys the form's CSRF token.
+2. `POST /login` (`handleLogin`) first checks the CSRF token, then the **login limiter**: 5
+   attempts per minute per client address (IPv6 by /64). After 10 failures in a row the address
+   is locked out for 15 minutes (`429` with `Retry-After`, and one `gui.lockout` audit row). More
+   than 100 failures in 10 minutes slows login for everyone to one attempt per 5 seconds, but
+   never locks the account: with only one admin, a lockout would let any attacker shut aarvee out.
+3. The handler takes one of two hash slots (a third waiter waits up to 5 s, then gets `503`) and
+   calls `service.GUILogin`. For an unknown username the service still burns a dummy Argon2id
+   hash, and a wrong password and an unknown user return the same error, so timing and message
+   reveal nothing about which usernames exist.
+4. On success the store creates the session row and the `gui.login` audit row **in one
+   transaction**. The row holds `SHA-256(token)`, never the token. At most 16 sessions per admin
+   exist; a 17th login deletes the oldest.
+5. The browser gets `__Host-mf_session` (`Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/`, no
+   `Domain`) and a redirect. Failed logins are only logged (address and username length), not
+   audited, so an attacker cannot fill the audit table.
+6. Every later request runs `requireAdmin`, which calls `service.GUIAuthenticate`: one indexed
+   read joining the session to the active admin. The result is a principal
+   `auth.GUIAdmin("aarvee", <peer ip:port>)` with kind `admin`.
+
+---
+
+## 26. A revoke from the Runners screen
+
+**In one sentence:** aarvee clicks Revoke on `dev/build-1`; the GUI checks the request, then runs
+exactly the code path that `mirafleet central runner revoke dev/build-1` runs.
+
+![A runner revoke from the GUI: the gates, then Service.Lifecycle and the audit row](diagrams/gui-revoke.svg)
+
+*Count the gates before the service call; the last half is the same as the CLI revoke in
+[flow 8](#8-revoking-a-runner-while-an-action-is-in-flight).*
+
+1. On `/runners`, aarvee clicks Revoke. `GET /runners/dev/build-1/revoke` shows a page explaining
+   the effect (connection closed, in-flight work cancelled, workspaces closed, the key never
+   enrols again) and asking aarvee to type `dev/build-1`. aarvee does, and submits
+   `POST /runners/dev/build-1/revoke`.
+2. Middleware (`Server.buildHandler`): the `Host` must be allowed (`421`), no more than 32
+   requests are in flight (`503`), and the body must be an urlencoded form under 64 KiB (`415`,
+   `413`).
+3. Session: `requireAdmin` hashes the cookie and finds a live row of the active admin, else `303`
+   to `/login?next=...` (an htmx request gets `HX-Redirect` instead).
+4. CSRF (`CSRF.Check`): first the stdlib `http.CrossOriginProtection` (refuses cross-site
+   `Sec-Fetch-Site` / `Origin`), then the `_csrf` field must equal the HMAC derived from the
+   cookie's token, compared in constant time. Failure: `403`.
+5. `runnerOp` checks that the typed text equals `dev/build-1` (otherwise `422` and the form is
+   shown again with the error), then calls `Backend.Lifecycle(ctx, principal, SourceGUI,
+   "dev/build-1", "revoke")`.
+6. From here it is the same as the CLI: `service.lifecycle` authorises (policy plus the direct
+   admin check), the tombstone goes up, `Registry.Kick` closes `build-1`'s connection, in-flight
+   work is cancelled, workspaces cascade to `closing`, and the status change and the audit row
+   (`runner.revoke`, `source=gui`, actor `aarvee`) commit in one transaction. The GUI answers `303`
+   back to the page and shows a one-time "revoked" flash message ([flow 8](#8-revoking-a-runner-while-an-action-is-in-flight) has the details).
+
+If the runner was changed by someone else a moment earlier (`conflict`), the page says so and
+changes nothing. Because the revoke is a `POST` followed by a `303` (post, redirect, get),
+pressing refresh does not send it twice.
+
+---
+
+## 27. Session lifetime: expiry, restart and the generation check
+
+**In one sentence:** a session ends when it is idle for 30 minutes, 12 hours old, replaced by a
+password change or a `reset-admin`, or deleted by hand; a central restart does not end it.
+
+1. **Idle and absolute limits.** `GUIAuthenticate` compares the row with the clock the service
+   owns: idle timeout 30 minutes from `last_active_at`, absolute 12 hours from `created_at`. A
+   dead row is deleted and the request is treated as logged out (`303` to `/login`).
+2. **Touches are throttled.** Each normal request updates `last_active_at`, but at most once per
+   60 seconds per session. Polled fragments (the Overview, Runners and Workspaces tables refresh
+   every 10 s through htmx) are registered as **passive** and never touch the row, so a tab left
+   open cannot keep a session alive.
+3. **Restart.** Sessions are rows in SQLite (`gui_sessions`), not memory. When central restarts,
+   aarvee's cookie still works, because the expiry arithmetic uses stored timestamps.
+4. **Generation.** Each admin has a `generation` number, copied into every session at login. A
+   password change bumps it, deletes every other session in the same transaction and re-issues
+   the current session under a new token. Any row whose generation differs from the admin's is
+   dead on its next request. A stolen cookie therefore dies the moment aarvee changes the password.
+   The Account screen also lists sessions (created, last active, address, browser) so aarvee can sign
+   out one or all others (`gui.session_revoke`).
+5. **Housekeeping.** `PurgeGUISessions` deletes expired and dead rows at GUI start and every
+   10 minutes. It is not audited: it is housekeeping.
+
+---
+
+## 28. Recovery with `central gui reset-admin`
+
+**In one sentence:** aarvee forgot the GUI password; because aarvee can still log in to the central
+host as the user that runs central, aarvee asks central for a fresh setup token.
+
+1. On the central host aarvee runs `mirafleet central gui reset-admin`. The CLI sends the admin
+   method `gui.reset_admin` over the admin socket (never the network; the GUI itself cannot do
+   this).
+2. `service.ResetGUIAdmin` (admin only, with the double gate) runs one transaction: the active
+   admin's status becomes `reset`, **every** GUI session row is deleted, a new setup token's hash
+   is stored, and the audit row `gui.reset_admin` (source `cli`) is written.
+3. The CLI prints the token once on standard output and a reminder on standard error. It is in no
+   log.
+4. aarvee opens the GUI, which now answers like flow 24: every page goes to `/setup`. aarvee pastes
+   the token and picks a username and password. A new admin row is created; the old one stays as
+   `reset`, and old cookies are already dead.
+
+Why this is safe: anyone who can talk to the admin socket already has central's user id, which
+is as powerful as the database file itself. The step only makes the GUI no weaker than that.
+
+---
+
+## 29. A join token that is shown once
+
+**In one sentence:** aarvee creates a join token in the GUI; the page shows the secret exactly once,
+and refreshing or going back cannot mint a second one.
+
+1. On `/tokens/new` aarvee chooses fleet `dev`, labels, uses and a lifetime (at most 30 days). The
+   form contains a **nonce**: a value signed (HMAC) with aarvee's session's CSRF key.
+2. `POST` `tokenCreate` checks the session and CSRF as in flow 26, validates the fields (`422`
+   with field errors if wrong) and then marks the nonce **used** in an in-memory table (kept 1 h,
+   at most 1024 entries). Only then does it call `service.CreateToken` with source `gui`.
+3. The service stores `SHA-256(secret)` and the audit row `token.create` in one transaction, as in
+   [flow 2](#2-creating-a-fleet-and-a-join-token). The page renders **directly** (no redirect)
+   with `Cache-Control: no-store`, shows the token with a copy button and the command to run on
+   the runner (`mirafleet runner join central.example.com:2222 -name build-1 -token -`), and says
+   it cannot be shown again.
+4. If aarvee presses back and resubmits, or refreshes, the nonce is already used: the page says
+   "already created; the token is not shown again" and no second token exists. htmx history
+   caching is off, so the page with the token is not kept in the browser's `localStorage`.
+
+The registration code (Operators screen) follows the same rule for a different reason: each
+"Show code" press is audited by `service.OperatorCode`, so the page never refreshes it by itself.
+
+---
+
 ## Host-mode flows (M7)
 
-<!-- verify: flows 24 to 30 are written from docs/M7.md plus the decided-behaviour notes; step lists name functions that exist in the m7-wave-a worktree (hostx.Executor, hostx.Manager, runner credHolder, service.DeliverRunner, service.RotateDue/rotate, service.IngestRunnerEvents) but the end-to-end wiring (central dispatch for workspace.fs / job_* / output_read / credential.*, S17) was still being added. Re-check each step against the merged code. -->
+<!-- verify: flows 30 to 36 are written from docs/M7.md plus the decided-behaviour notes; step lists name functions that exist in the m7-wave-a worktree (hostx.Executor, hostx.Manager, runner credHolder, service.DeliverRunner, service.RotateDue/rotate, service.IngestRunnerEvents) but the end-to-end wiring (central dispatch for workspace.fs / job_* / output_read / credential.*, S17) was still being added. Re-check each step against the merged code. -->
 
-Flows 24 to 30 are the host-mode story (new in M7). The cast: raj owns a spare VM `vm1.example.com`
+Flows 30 to 36 are the host-mode story (new in M7). The cast: raj owns a spare VM `vm1.example.com`
 with an ordinary user `dev` and a runner `vm1-dev` in fleet `dev` (workspace mode, executor `host`).
-MIRASTACK LABS's private GitLab, `gitlab.example.com`, is reachable only from the VM. aarvee stored two
+MIRASTACK LABS' private GitLab, `gitlab.example.com`, is reachable only from the VM. aarvee stored two
 credentials on central: `gitlab-deploy` (kind `ssh-key`, host `gitlab.example.com`) and
 `gitlab-api` (kind `https-token`, host `gitlab.example.com`), and assigned both to `vm1-dev`. Durga's
 project has `.mirafleet.yaml` with `fleet: dev` and `remote: true`. Chapter 3 draws the
@@ -1859,7 +2079,7 @@ project has `.mirafleet.yaml` with `fleet: dev` and `remote: true`. Chapter 3 dr
 
 ---
 
-## 24. Open a host workspace
+## 30. Open a host workspace
 
 **Summary:** the same `workspace.open` as flow 12, with three extra checks (is this runner free,
 does it hold the credentials, is the session already held) and a directory instead of a container.
@@ -1924,7 +2144,7 @@ requested credentials (`unavailable`); `workdir` is invalid or the runner is a c
 
 ---
 
-## 25. Reattach by session
+## 31. Reattach by session
 
 **Summary:** closing keeps the directory, and opening the same session (or `workdir`) later finds it
 again, with its files, even after a runner restart.
@@ -1936,12 +2156,13 @@ again, with its files, even after a runner restart.
    runner's state.
 2. The next day Durga runs `claude --resume`. The handoff file gives the same session name
    `cc:<id>` (flow 20).
-3. `workspace_open` runs flow 24 again. The sticky-session rule from flow 12 finds no live row (the
+3. `workspace_open` runs flow 30 again. The sticky-session rule from flow 12 finds no live row (the
    old one is `closed`), so a new row and a new workspace id are made, but the runner receives the
    *same session id* as the label `mirafleet.session`, so `hostx.Manager.OpenFor` maps it to the
    *same slug* and finds the existing directory. Their checkout, build caches and
    uncommitted edits are there. Credentials are loaded fresh from the runner's current set, not from
-   anything saved.4. With `workdir: shared-app` in `.mirafleet.yaml`, two sessions (or two different Claude sessions
+   anything saved.
+4. With `workdir: shared-app` in `.mirafleet.yaml`, two sessions (or two different Claude sessions
    of the same operator) share `<root>/work/shared-app`.
 5. `workspace_list` shows the directories with their size and last use, including ones with no
    live workspace.
@@ -1954,11 +2175,11 @@ again, with its files, even after a runner restart.
 
 **What can go wrong:** two live handles for the same session are refused. The next *operator* on a
 runner can read directories the previous operator left, because they are the same OS user; this is
-documented ([section 5.12](05-security.md#512-host-mode-and-credentials-m7)).
+documented ([section 5.14](05-security.md#514-host-mode-and-credentials-m7)).
 
 ---
 
-## 26. `bash` with full output and paging
+## 32. `bash` with full output and paging
 
 **Summary:** a foreground command runs as the runner's user in the session's current directory;
 its full output is saved on the VM; if the reply had to be cut, the reply says so and how to read
@@ -1993,17 +2214,19 @@ sequenceDiagram
    default timeout is 120 s and the maximum is 600 s (10 minutes, like Claude Code's Bash tool).
 2. **A fresh shell each time.** The runner runs `bash -lc COMMAND` (fallback `sh -c`) with a
    *clean* environment: only the names in the runner's `env_allow`, the runner-set tool
-   variables of flow 24, `HOME`, `USER`, `PATH` and `LANG`. It starts a new session and process group
+   variables of flow 30, `HOME`, `USER`, `PATH` and `LANG`. It starts a new session and process group
    (`Setsid`) and passes only file descriptors 0 to 2. Environment variables set in one call do
    **not** persist.
 3. **The directory does persist.** A wrapper reports the final `pwd` on an extra descriptor; the
    runner saves it per session, and the result carries it as `Cwd`. The next call starts there. This
-   mimics Claude Code's own Bash tool.4. **Everything is saved.** While the command runs, the runner tees stdout and stderr into
+   mimics Claude Code's own Bash tool.
+4. **Everything is saved.** While the command runs, the runner tees stdout and stderr into
    `out/<request_id>` in the session's state directory. The last 32 such files are kept, each at most
    64 MiB (`hostx.KeepOutputs`, `hostx.MaxOutputFile`).
 5. **Never a silent cut.** The reply holds as much text as fits (a budget of about 32 KiB of JSON
    text per stream) and always carries `stdout_bytes`, `stderr_bytes`, `truncated` (with how many
-   bytes were omitted from the head and the tail) and a `ref`. The text itself says how to page.6. **Paging.** `read_output{ref, offset, limit, tail_lines, grep}` reads the saved file: a byte
+   bytes were omitted from the head and the tail) and a `ref`. The text itself says how to page.
+6. **Paging.** `read_output{ref, offset, limit, tail_lines, grep}` reads the saved file: a byte
    `offset` and `limit` (at most 1 MiB), the last N lines, or only lines matching an RE2 regular
    expression. It returns `next_offset` to continue. Paging a 5 MiB build log from offset 0 in
    chunks returns exactly the original bytes.
@@ -2015,7 +2238,7 @@ sequenceDiagram
 
 ---
 
-## 27. A background job
+## 33. A background job
 
 **Summary:** `run_in_background` starts a supervised shell that outlives the tool call, writes its
 output to files, and is polled, tailed or killed later.
@@ -2039,15 +2262,15 @@ output to files, and is polled, tailed or killed later.
 5. **Killing.** `kill_shell{shell_id}` signals the whole process group.
 6. **A running job keeps the workspace alive.** The runner's heartbeat reports `busy`, central touches the
    workspace row at most every 5 minutes, and the idle reaper ([flow 16](#16-the-ttl-reaper)) skips
-   a busy session. The sweep of flow 25 also never deletes a directory with a running job.
-7. **Runner restart.** See flow 29: a job survives it.
+   a busy session. The sweep of flow 31 also never deletes a directory with a running job.
+7. **Runner restart.** See flow 35: a job survives it.
 
 **What can go wrong:** the shell id is unknown (`not_found`), the 8-shell limit is reached, or the
 command exits at once (`state: exited` with an exit code and the output so far).
 
 ---
 
-## 28. Credential assign, delivery, use and rotation
+## 34. Credential assign, delivery, use and rotation
 
 **Summary:** aarvee enters a secret once; central stores it encrypted; the runner receives it in
 memory; the agent uses it without reading it; later aarvee replaces it and the new value is live
@@ -2132,12 +2355,12 @@ expiry dates are admin-only.
 
 **What can go wrong:** the runner is offline when the value changes (it receives the whole set on
 reconnect); the wrong or missing `MIRAFLEET_SECRETS_KEY` (central refuses to start when credentials exist but the key is missing or wrong;
-[section 6.17](06-data-model.md#617-host-mode-and-credentials-migration-0004-m7)); a credential is deleted while sessions use it (the next `creds_sync` removes
+[section 6.19](06-data-model.md#619-host-mode-and-credentials-migration-0004-m7)); a credential is deleted while sessions use it (the next `creds_sync` removes
 it, and the next use fails).
 
 ---
 
-## 29. Runner restart: re-adoption
+## 35. Runner restart: re-adoption
 
 **Summary:** a restarted runner picks its sessions and running jobs back up instead of treating them
 as lost.
@@ -2146,11 +2369,11 @@ as lost.
    the runner process and not its children. Background shells run under `host-shim` in their own
    process group, so they keep going. Directories are just files.
 2. **Start-up.** The new runner process hardens itself first (non-dumpable, no core dumps, refuses
-   uid 0 and capabilities; [section 5.12](05-security.md#512-host-mode-and-credentials-m7)),
+   uid 0 and capabilities; [section 5.14](05-security.md#514-host-mode-and-credentials-m7)),
    *then* connects to central. It holds **no secrets** yet.
 3. **Reconnect and sync.** Central sees the runner connect (a newer connection replaces an older half-open one and
    writes a `runner.replaced` audit row, and the GUI flags the runner) and sends `creds_sync`
-   (flow 28 C). Only now do the secrets exist in the new process's memory.
+   (flow 34 C). Only now do the secrets exist in the new process's memory.
 4. **Re-adopt sessions.** The executor reads its session records (`hostx.Manager.OpenSessions`):
    sessions whose `open` flag was left set are re-attached. The runner then re-wires their
    credentials (`devMgr.adopt`, called once with the adopted workspaces at start): for each session it
@@ -2174,7 +2397,7 @@ as lost.
 
 ---
 
-## 30. The cleanup sweep and prune
+## 36. The cleanup sweep and prune
 
 **Summary:** a once-a-day sweep and one command delete directories nobody is using.
 
@@ -2185,6 +2408,7 @@ as lost.
 2. `mirafleet runner host prune [-older-than D] [-yes]` does the same by hand. Without `-yes` it is a
    dry run that lists what would go.
 3. The timestamp comes from an injectable clock in tests, so "30 days later" is a test without waiting.
+
 
 ---
 
@@ -2198,10 +2422,12 @@ as lost.
 | Join token | usable until used up, expired or revoked | `token create`, `token revoke`, enroll | n/a |
 | Registration code | valid for its 60 s step | time; `rotate-secret` invalidates all | n/a |
 | Session handoff file | written (SessionStart), rewritten (resume, `/clear`), removed (SessionEnd), pruned after 7 days | the Claude Code hooks (flows 20 and 22) | none: a file only; the MCP server re-reads it at every open |
+| GUI setup token | made at first start or by `reset-admin`; valid 24 h; single use | `EnsureGUISetup`, `gui reset-admin`, `CompleteGUISetup` (flows 24, 28) | none: a file and a table row |
+| GUI session | live until idle 30 min, 12 h old, replaced by a password change, or deleted | `GUILogin`, `GUILogout`, `ChangeGUIPassword`, `ResetGUIAdmin`, the purge (flows 25, 27, 28) | none to runners; the browser is sent to `/login` on its next request |
 | Workspace | `opening`, `open`, `closing`, `closed`, `failed`, `lost` (see [chapter 6](06-data-model.md#the-workspace-state-machine)) | `workspace.open` / `close`, the reaper, reconcile, revoke cascades, `workspace.kill` | runner revoke: its workspaces go `closing` then `lost`; operator revoke: `closing` then `closed`; runner disable: no new open, exec or write |
-| Host session directory (M7) | present (live or closed), deleted | `workspace_close {delete: true}`, the daily sweep, `runner host prune`, admin kill with delete | none: closing never deletes (flow 25) |
-| Background job (M7) | running, then exited, killed or timed out | `bash {run_in_background}`, `kill_shell`, job limit, runner restart re-adoption | a running job keeps its workspace busy and is not reaped (flow 27) |
-| Credential (M7) | stored, assigned, delivered (per runner: `ok`, `expiring`, `expired`, `invalid`), deleted | `credential set/assign/unassign/rotate/delete` | delivery on connect and on every change (flow 28) |
+| Host session directory (M7) | present (live or closed), deleted | `workspace_close {delete: true}`, the daily sweep, `runner host prune`, admin kill with delete | none: closing never deletes (flow 31) |
+| Background job (M7) | running, then exited, killed or timed out | `bash {run_in_background}`, `kill_shell`, job limit, runner restart re-adoption | a running job keeps its workspace busy and is not reaped (flow 33) |
+| Credential (M7) | stored, assigned, delivered (per runner: `ok`, `expiring`, `expired`, `invalid`), deleted | `credential set/assign/unassign/rotate/delete` | delivery on connect and on every change (flow 34) |
 
 ## Failure: what you see and what the system does
 
@@ -2252,11 +2478,18 @@ as lost.
 | Argument with a wrong case (`Confirm`) or an unknown name | `bad_request`: "unknown or mis-cased argument ..." | The handler never runs (flow 19, chapter 5). |
 | Harness closes stdin | The server exits 0 within 5 s | In-flight calls are cancelled; the workspace stays `open` until `idle_ttl` (flow 21). |
 | SessionEnd for `prompt_input_exit`, `resume` or `other` | Nothing visible | The workspace is kept for a possible `--resume` (flow 22). |
-| `workspace_open` on a host runner another operator holds (M7) | `conflict`: "busy: runner NAME is in use by kalyan" | A `denied` audit row; placement had skipped held runners if another was free (flow 24). |
-| Requested credential not held by any runner of the fleet (M7) | `unavailable`, naming no value | Nothing is created (flow 24). |
-| `bash` output too long for the reply (M7) | The text plus `stdout_bytes`, `stderr_bytes`, `truncated` and a `ref` | The full output is on the VM; `read_output` pages it (flow 26). |
-| Runner restarted while a job runs (M7) | `bash_output` continues | The job survives and is re-adopted (flow 29). |
-| GitLab unreachable at self-rotation (M7) | A "rotation failed" notice in the GUI | An audit row; the old token keeps working until it expires (flow 28). |
+| GUI: `Host` header not on the allowlist | `421` branded error page | Nothing is routed; the request never reaches a handler (flow 25, [section 5.12](05-security.md#512-attacking-the-gui)). |
+| GUI: 5 login attempts in a minute, or 10 failures in a row | `429` with `Retry-After` and a "try again in N minutes" message | The address is locked out for 15 minutes; one `gui.lockout` audit row (flow 25). |
+| GUI: session idle 30 min, 12 h old, or password changed elsewhere | `303` to `/login?next=...` (htmx: `HX-Redirect`) | The session row is deleted (flow 27). |
+| GUI: missing or wrong CSRF token, or a cross-site `POST` | `403` page | Nothing changes (flow 26). |
+| GUI: revoke form with the wrong typed name | `422`, the form again with an error | Nothing changes (flow 26). |
+| GUI: resubmitted token form | "already created; the token is not shown again" | No second token is minted (flow 29). |
+| GUI: all hash slots busy | `503` with `Retry-After: 1` | Argon2id runs at most two at a time (flow 25). |
+| `workspace_open` on a host runner another operator holds (M7) | `conflict`: "busy: runner NAME is in use by kalyan" | A `denied` audit row; placement had skipped held runners if another was free (flow 30). |
+| Requested credential not held by any runner of the fleet (M7) | `unavailable`, naming no value | Nothing is created (flow 30). |
+| `bash` output too long for the reply (M7) | The text plus `stdout_bytes`, `stderr_bytes`, `truncated` and a `ref` | The full output is on the VM; `read_output` pages it (flow 32). |
+| Runner restarted while a job runs (M7) | `bash_output` continues | The job survives and is re-adopted (flow 35). |
+| GitLab unreachable at self-rotation (M7) | A "rotation failed" notice in the GUI | An audit row; the old token keeps working until it expires (flow 34). |
 
 ## Check your understanding
 
@@ -2284,6 +2517,20 @@ as lost.
     workspace in between, and which file makes the reattach work? What changes with no hooks?
 12. The model calls `run_action` on `prod` and the hook shows durga a prompt. Which two components
     would still stop a call that has no `confirm`, even with no plugin installed?
+13. Someone on the LAN opens `https://central.example.com:8443/setup` before aarvee does. What can
+    they do, and what can they not do?
+14. aarvee changes the GUI password on a laptop. What happens to the session still open in a
+    phone's browser, and why on the very next request?
+15. aarvee revokes `dev/build-1` from the GUI. List the checks before `Service.Lifecycle` runs, and
+    say what the audit row records that tells it apart from a CLI revoke.
+16. Durga closes a host workspace on Monday and reopens the same session on Wednesday. Which
+    files are still there, and what is the only thing that deletes them?
+17. A 200 MiB build log scrolls past in a foreground `bash` call. What does Claude receive, and
+    how can it read the error at line 41,203?
+18. aarvee replaces the value of `gitlab-api`. Does `vm1-dev` need a restart? What happens to a
+    `git push` already in flight?
+19. The runner is restarted during a 3-minute build. Why does the build survive, and why can
+    the new runner process not read the token it needs?
 
 <details>
 <summary>Answers</summary>
@@ -2333,29 +2580,25 @@ as lost.
 12. The MCP server (it relays central's refusal and rewrites it into "ask the user") and, above
     all, central: `service` refuses a guarded fleet's call unless `confirm` equals the fleet name,
     and writes a `denied` audit row. The hook is only convenience.
-13. Durga closes a host workspace on Monday and reopens the same session on Wednesday. Which
-    files are still there, and what is the only thing that deletes them?
-14. A 200 MiB build log scrolls past in a foreground `bash` call. What does Claude receive, and
-    how can it read the error at line 41,203?
-15. aarvee replaces the value of `gitlab-api`. Does `vm1-dev` need a restart? What happens to a
-    `git push` already in flight?
-16. The runner is restarted during a 3-minute build. Why does the build survive, and why can
-    the new runner process not read the token it needs?
-
-</details>
-
-<details>
-<summary>Answers to 13 to 16</summary>
-
-13. All of them: closing keeps the directory and reopening the same session finds it again. Only the
+13. They can load the page and try tokens, within the per-IP rate limit. They cannot succeed: the
+    token has 256 bits, no endpoint reveals or regenerates it, and every other page just redirects
+    to `/setup` without showing data. Their one real chance is a man in the middle on aarvee's first
+    visit, which the fingerprint check (or an `ssh -L` tunnel) prevents.
+14. The phone session is dead. `ChangeGUIPassword` bumps the admin's generation and deletes every
+    other session row in the same transaction. Even without the delete, `GUIAuthenticate` compares
+    the session's generation with the admin's on every request and would refuse it.
+15. `Host` allowlist, in-flight cap and body limits; a live session; the CSRF checks (cross-origin
+    headers, then the token); the typed name `dev/build-1`. Then the same service code as the CLI.
+    The row has `source` = `gui` and actor `aarvee`; the CLI's row says `cli`.
+16. All of them: closing keeps the directory and reopening the same session finds it again. Only the
     cleanup sweep (after `delete_after`, default 30 days), `workspace_close {delete: true}`, `runner host
     prune` or an admin kill with delete removes it.
-14. The first part of the output (about 32 KiB per stream), exact byte counts, how much was
+17. The first part of the output (about 32 KiB per stream), exact byte counts, how much was
     omitted, and a `ref`. It calls `read_output {ref, grep: "error"}` or `tail_lines` or an
     `offset`, and gets exactly those bytes from the file on the VM.
-15. No. Central pushes a new `creds_sync`; the runner swaps its in-memory set atomically and
+18. No. Central pushes a new `creds_sync`; the runner swaps its in-memory set atomically and
     the next request uses the new value. A push in flight keeps whatever it was already given.
-16. The unit uses `KillMode=process` and the job runs under `host-shim` in its own process group, so
+19. The unit uses `KillMode=process` and the job runs under `host-shim` in its own process group, so
     it is not killed. The new runner starts with no secrets in memory and receives them again by
     `creds_sync` after it reconnects; nothing was ever on disk.
 

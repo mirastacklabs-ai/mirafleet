@@ -64,7 +64,7 @@ func validToken(s string) bool {
 	if len(s) != 43 {
 		return false
 	}
-	b, err := base64.RawURLEncoding.DecodeString(s)
+	b, err := base64.RawURLEncoding.Strict().DecodeString(s)
 	return err == nil && len(b) == 32
 }
 

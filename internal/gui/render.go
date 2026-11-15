@@ -32,6 +32,7 @@ type Page struct {
 	Crumbs    []Crumb
 	RequestID string
 	Version   string
+	Path      string // request path and query of a GET page, for the theme switch to return to; else ""
 	Data      any
 }
 
@@ -105,6 +106,9 @@ func newRenderer(funcs template.FuncMap) (*renderer, error) {
 // the pending flash message, which is consumed. PageDefaults then fills Authed, CSRF and the like.
 func (s *Server) Page(w http.ResponseWriter, r *http.Request, title, nav string) Page {
 	pg := Page{Title: title, Nav: nav, Theme: themeOf(r), RequestID: RequestID(r.Context()), Version: s.cfg.Version}
+	if r.Method == http.MethodGet {
+		pg.Path = r.URL.RequestURI()
+	}
 	if r.Header.Get("HX-Request") != "true" {
 		pg.Flash = s.takeFlash(w, r)
 	}

@@ -54,6 +54,8 @@ guide they understand the whole design and code and never need to ask the author
 | `diagrams/workspace-boundary.svg` | the container boundary: what is locked down, what crosses, what cannot |
 | `diagrams/mcp-tool-call.svg` | one `exec` MCP tool call: harness → `mcp` → central → runner, with the output cap on the way back |
 | `diagrams/session-handoff.svg` | the session handoff file: hook writes `cc:<id>`, server reads it, `--resume` reattaches |
+| `diagrams/gui-setup.svg` | first-start GUI setup: setup token file → `/setup` → first session |
+| `diagrams/gui-revoke.svg` | a runner revoke from the GUI: Host, session, CSRF and typed-name checks → `Service.Lifecycle` → audit |
 | `diagrams/host-session.svg` | host mode: open, session directory (0700), per-session agent and broker, close keeps the dir, reattach, cleanup |
 | `diagrams/credential-flow.svg` | credentials: set and seal on central, assign, `creds_sync` to runner memory, agent/broker use, audit, rotate |
 

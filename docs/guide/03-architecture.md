@@ -10,6 +10,8 @@
 - How the code inside central is layered, so you know where a new feature belongs.
 - The orchestrator on the operator's machine (`orch`, `mcpserver`, integrations) and why the
   model on the other side of MCP is treated as untrusted input.
+- The admin GUI: a second front end inside central, which listener it uses (`0.0.0.0:8443` by
+  default), why it calls the same service as the CLI and which packages it may import.
 - Which platforms are supported (including where the keys live on each), and why mirafleet ships
   as one static binary.
 - The M7 host-mode runner: `hostx`, `fsops`, `sshagent`, `broker` and `secrets`, how central
@@ -26,7 +28,7 @@ who is allowed to talk to whom, and where every secret lives. The next chapter,
 | Word | Plain meaning |
 |---|---|
 | **principal** | The verified identity behind a connection: its kind (`admin`, `operator`, `runner` or `enroll`) plus its id. |
-| **front end** | One of the doors into central's logic: the operator API (`api@mirafleet` channels), the admin socket, and the enroll channels. Each has its own method table. |
+| **front end** | One of the doors into central's logic: the operator API (`api@mirafleet` channels), the admin socket, the enroll channels and, since M4, the admin GUI. The first three have their own method table; the GUI calls the service directly. |
 | **`hello`** | The smallest operator method. It does nothing but answer, so a client can check that its connection and key work. |
 | **DTO** | "Data transfer object": a plain struct that only carries data between layers, such as `api.Request` or `store.Runner`. It has no behaviour. |
 | **role** | What the SSH user name selects after login: `runner`, `operator` or `enroll`. |
@@ -188,7 +190,8 @@ is the only component with a view of the whole fleet. Its parts:
 | **Roles** | `internal/central/roles.go` (`Server.dispatch`, `serveRunner`), `api.go` (`serveOperator`), `enroll.go` (`serveEnroll`) | After authentication, the SSH **user** name picks the role: `runner`, `operator` or `enroll`. Each role has its own handler and its own allow-list of SSH channel types. |
 | **Dispatch** | `internal/central/dispatch.go` (`methodTable`) | Turns a request such as `action.run` into a handler call. A method that is not in the table for this front end is refused, whoever asks. |
 | **Admin socket** | `internal/central/admin_unix.go` (`ServeAdmin`, `adminConn`), `adminclient.go` (`AdminCall`) | A Unix socket (a file that processes on the same machine connect to, instead of a network port) at `<data>/admin.sock` (mode `0600`). Same framing and the same dispatcher as the operator API, but with the `admin` principal. It exists so admin commands can reach the live connections (revoke has to kick a connected runner). |
-| **Service** | `internal/service` (`Service`) | The one place where business rules live: check policy, validate input, change state, write audit, map errors to wire errors. The SSH server, the admin socket and (later) the GUI all call it. |
+| **Service** | `internal/service` (`Service`) | The one place where business rules live: check policy, validate input, change state, write audit, map errors to wire errors. The SSH server, the admin socket and the GUI all call it. |
+| **Admin GUI** | `internal/gui` (`Server`), wired by `cmd/mirafleet/central_gui_linux.go` (`startGUI`) | An HTTPS server inside the central process. Renders HTML pages for aarvee, handles login, sessions and CSRF, and turns each click into a `service` call with source `gui`. Details in [The admin GUI](#the-admin-gui-m4) below. |
 | **Policy** | `internal/policy` (`TablePolicy`) | A small fixed table: who may do what. Denies by default. |
 | **Registry** | `internal/central/registry` (`Registry`, `Session`) | In-memory list of runners that are connected *right now*: their SSH connection, last heartbeat (the runner's "I am alive" message), live status, tombstones (in-memory "this runner id is dead" marks) for revoked runners, and (from the heartbeat) the runner's slots, executor and secure runtime. It is also how central runs an action (`exec@`) or a workspace operation (`workspace@`) on a runner. |
 | **Store** | `internal/store` (interface), `internal/store/sqlite` (`DB`) | Persistence. The interface offers domain-level operations (`Enroll`, `SetRunnerStatus`, ...), each atomic and each writing its audit row in the same transaction. SQL stays inside `sqlite`. |
@@ -314,7 +317,7 @@ policy, the `workspace.*` methods) is reused. What is new sits below it and besi
 |---|---|---|
 | **hostx** | `internal/workspace/hostx` | The `host` executor. Start-up hardening (`harden_linux.go`), session directories and cleanup (`sessions.go`, `sweep.go`), foreground `bash` with output capture (`exec_linux.go`), background jobs (`job_linux.go`, supervised by the hidden `mirafleet host-shim job` of `cmd/mirafleet/host_shim_linux.go`), XDG default paths (`xdg.go`), file operations through `fsops` (`files.go`). |
 | **fsops** | `internal/workspace/fsops` | A pure Go package (no OS-specific hooks) that implements the file tools: read, write, edit, multi-edit, notebook edit, ls, glob, grep. It runs inside the runner process, as the runner's user, so OS permissions are the boundary. Pure so that container mode could reuse it later. |
-| **sshagent** | `internal/workspace/sshagent` | The restricted per-session ssh-agent ([chapter 2, 2.12](02-background.md#212-host-mode-background-secrets-you-can-use-but-not-read-m7)): `List` and `Sign` only, user-auth requests only, host binding. |
+| **sshagent** | `internal/workspace/sshagent` | The restricted per-session ssh-agent ([chapter 2, 2.14](02-background.md#214-host-mode-background-secrets-you-can-use-but-not-read-m7)): `List` and `Sign` only, user-auth requests only, host binding. |
 | **broker** | `internal/workspace/broker` | The local HTTPS proxy: per-session CA with name constraints (`ca.go`), credential injection (`cred.go`), registry token exchange (`registry.go`). |
 | **secrets** | `internal/secrets` | AES-256-GCM seal/open, the key from `MIRAFLEET_SECRETS_KEY`, the key-check value, `Rekey`. Central only: a test (`deps_test`) keeps `secrets`, `hostx`, `broker` and `sshagent` out of the orchestrator and macOS/Windows builds. |
 | **Credential holder** | `internal/runner/creds.go` | The runner's **in-memory** set of delivered credentials. Replaced atomically on each `creds_sync`. |
@@ -357,7 +360,8 @@ Facts to remember about a host runner:
   the home directory. A second runner on the same VM is a second user (`qa`), enrolled separately.
 - **Config.** `workspace.yaml` takes `executor: host` plus an optional `host:` block (`root`, `cleanup.delete_after`,
   `job_max`, `corporate_ca_file`). A host runner takes no image, no resource limits and no egress
-  list: the VM and its firewall are the boundary.- **Directories.** Each session gets `<root>/sessions/<slug>` (mode `0700`; `<slug>` derives from
+  list: the VM and its firewall are the boundary.
+- **Directories.** Each session gets `<root>/sessions/<slug>` (mode `0700`; `<slug>` derives from
   the session id). A project may share a named directory instead: `workdir: NAME` in
   `.mirafleet.yaml` resolves to `<root>/work/<name>` (names match `^[a-z0-9][a-z0-9._-]{0,62}$`,
   host fleets only, symlinks refused). Closing a workspace stops its processes and closes its
@@ -385,7 +389,7 @@ Central stores each credential encrypted. The admin assigns it to a runner or to
 effective set of a runner is the **union** of both. Central pushes that set to each connected host
 runner on connect and on every change, as a `creds_sync` operation inside the already-authenticated
 SSH connection. The runner keeps the values in memory only, and swaps the whole set atomically.
-[Flow 28](04-flows.md#28-credential-assign-delivery-use-and-rotation) follows one credential
+[Flow 34](04-flows.md#34-credential-assign-delivery-use-and-rotation) follows one credential
 from the GUI to a `git push`.
 
 ### Operator side
@@ -463,6 +467,67 @@ flowchart LR
 *Look at the last arrow: what comes back to the model is marked as data, because it may carry
 text written by an attacker on a remote machine.*
 
+### The admin GUI (M4)
+
+The admin GUI is a web front end for aarvee. It lives **inside the central process**: not a second
+program, not a separate service. `mirafleet central run` starts it unless you pass
+`-gui-listen off`.
+
+```mermaid
+flowchart LR
+  BR["aarvee's browser"]
+  GUI["internal/gui<br/>Server: Host check, headers,<br/>session, CSRF, handlers, templates"]
+  BE["gui.Backend<br/>(narrow interface)"]
+  SVC["internal/service<br/>Service"]
+  REG["registry"]
+  ST["store (SQLite)"]
+  BR -- "HTTPS :8443" --> GUI
+  GUI -- "calls, source gui" --> BE
+  BE -. "satisfied by" .-> SVC
+  SVC -- "kicks sessions via" --> REG
+  SVC -- "reads and writes via" --> ST
+```
+
+*Look at the middle: the GUI never reaches the registry or the store. Everything goes through
+`gui.Backend`, which `*service.Service` satisfies.*
+
+How it fits:
+
+- **One code path.** A revoke clicked in the GUI runs `service.Lifecycle`, the same method as
+  `mirafleet central runner revoke`, so it gets the same tombstone, kick, in-flight cancel and
+  audit row (flow 8). The only differences are the audit `source` (`gui` instead of `cli`) and
+  the principal, `auth.GUIAdmin(username, remote)`: kind `admin`, name = the GUI username, remote
+  = the TCP peer. The policy is unchanged: an admin may do everything, and admin-only service
+  methods still check the caller's kind a second time.
+- **Narrow interface.** `internal/gui/backend.go` defines `Backend`, listing exactly the service
+  methods the GUI uses, and asserts at compile time that `*service.Service` satisfies it. This is
+  also the seam where an enterprise edition would add roles or single sign-on.
+- **Import rules.** `internal/gui` must not import the SQLite package, `internal/central`, the
+  registry, `apiclient`, `orch`, `mcpserver`, `modernc.org/*` or containerd. `TestGUIDeps` in
+  `cmd/mirafleet/deps_test.go` enforces it. Only `cmd/mirafleet/central_linux.go` wires the GUI,
+  so the macOS and Windows binaries do not contain it.
+- **Listener.** `-gui-listen ADDR`, default `0.0.0.0:8443` (`gui.DefaultListen`), or `off`. It is
+  **always TLS** (TLS 1.3 minimum), never plain HTTP. With `-gui-cert` and `-gui-key` (both or
+  neither) it serves your certificate. Otherwise it generates a self-signed one on first start
+  under `<data>/gui/` and logs its fingerprint. Every start logs the URL, the fingerprint and,
+  for a bind that is not loopback, a notice on how to restrict it.
+- **Why all interfaces by default?** So aarvee can open it from a laptop without extra steps. The
+  price is that anyone on the network can reach the login page; chapter 5 section 5.12 shows why
+  that is acceptable (and how to restrict it: `-gui-listen 127.0.0.1:8443` with `ssh -L`).
+- **Host allowlist.** Before any routing, `Server.buildHandler` checks the `Host` header against
+  the names and addresses central expects (`hostGuard` in `listen.go`; `-gui-host` adds names).
+  Anything else gets `421`.
+- **Rendering.** `html/template` files embedded in the binary (`internal/gui/templates/`), one per
+  screen, plus a vendored htmx. A request is a full page, or, with the `HX-Request` header, just
+  the fragment of that page. Nothing is loaded from the internet.
+- **Files.** `handlers_*.go` hold one screen each, `routes.go` the route table, `middleware.go`
+  the chain (headers, Host check, in-flight cap, body limits), `session.go`, `csrf.go` and
+  `limiter.go` the account defences.
+
+Order of events for one request: Host allowlist, in-flight cap (32), body and content-type limits,
+route match, `requireAdmin` (session lookup through `service.GUIAuthenticate`), CSRF check on
+`POST`, handler, service call, redirect. Chapter 4 follows a real click (flow 26).
+
 ### Shared building blocks
 
 | Package | Why it exists |
@@ -487,11 +552,15 @@ flowchart TB
   subgraph CH["Central host: central.example.com"]
     L1["TCP 2222<br/>SSH (the only network listener)"]
     L2["Unix socket<br/>/var/lib/mirafleet/central/admin.sock<br/>mode 0600, same-UID peers only"]
+    L3["TCP 8443<br/>admin GUI (HTTPS only)"]
     P["mirafleet central run"]
     L1 --- P
     L2 --- P
+    L3 --- P
     ADMIN["aarvee's shell on the central host<br/>mirafleet central ..."]
     ADMIN --> L2
+    BROWSER["aarvee's browser<br/>(any machine that can reach 8443)"]
+    BROWSER --> L3
   end
 
   subgraph DEVNET["dev network (behind NAT)"]
@@ -513,9 +582,10 @@ network with no inbound firewall rule at all.*
 
 Facts to remember:
 
-- **Only central listens.** It binds the SSH address given by `-listen` (default `0.0.0.0:2222`) and
-  creates the admin socket in its data directory. A GUI listener on `127.0.0.1:8443` is **planned**
-  for M4; it does not exist yet.
+- **Only central listens.** It binds the SSH address given by `-listen` (default `0.0.0.0:2222`),
+  creates the admin socket in its data directory and, since M4, serves the admin GUI over HTTPS on
+  `-gui-listen` (default `0.0.0.0:8443`; `off` disables it). Runners and operator laptops still
+  listen on nothing.
 - **Runners never accept inbound connections.** A runner dials central and keeps that one TCP
   connection open. When central needs the runner to do something, it opens an SSH *channel* back
   over that same connection. The firewall rule for `db-1` therefore only has to allow *outgoing*
@@ -527,7 +597,10 @@ Facts to remember:
 - **Admins act on the central host.** Lifecycle changes (approve, disable, enable, revoke), fleet
   and token creation, registration codes and audit reading are done by aarvee running
   `mirafleet central ...` on the central host itself. They go through the admin socket, never over
-  the network. See [Security](05-security.md) for why.
+  the network. See [Security](05-security.md) for why. The admin GUI is the one exception to
+  "never over the network": it is a web page, so it needs its own defences (login, sessions,
+  CSRF, Host allowlist), covered in [section 5.12](05-security.md#512-attacking-the-gui). It runs
+  the same service methods, with source `gui`.
 - **Central needs no internet.** Only the operator side may need it (for the AI service). Central and
   runners talk only to each other, so private and air-gapped networks work.
 
@@ -583,7 +656,8 @@ The boundaries, one by one:
    `fleets.list`, `runners.list`, `action.run` and the six `workspace.*` methods) and nothing
    else. Admin and enroll methods are refused on the operator channel even if the key is valid.
    Even for its own workspace, an operator may only touch workspaces it owns; anybody else's id
-   gets `not_found`.3. **Central to runner.** The runner trusts exactly one thing: central's host key, pinned in its
+   gets `not_found`.
+3. **Central to runner.** The runner trusts exactly one thing: central's host key, pinned in its
    `known_hosts` at join time. But it does **not** trust central's *requests*: every `exec`
    request still goes through the actions guard. A stolen central cannot run `rm -rf /` unless
    `actions.yaml` on that runner defines such an action. A workspace runner likewise re-checks
@@ -603,7 +677,7 @@ The boundaries, one by one:
    (or an allowlisting proxy). Chapter 5, [section 5.9](05-security.md#59-the-workspace-container-boundary),
    covers each defence. Nothing the container does is trusted: on a container fleet the runner
    reads its files only through `os.Root` and re-checks every path. (A host-mode workspace has no
-   container; its file tools are not confined, see chapter 5, section 5.12.)
+   container; its file tools are not confined, see chapter 5, section 5.14.)
 7. **Runner host to containerd.** A runner that serves workspaces must reach the containerd
    socket, and **access to that socket is equivalent to root on the host**. A workspace runner
    is therefore a root-equivalent process: run it on a dedicated machine or VM, in its own
@@ -643,6 +717,10 @@ allowlist permits. The runner-side guard bounds the damage but cannot remove it.
 | **Registration secret** (32 bytes) | `central init` (`InitRegistrationSecret`) | Central | `settings` table, key `registration_secret`, inside `<data>/mirafleet.db` (mode `0600`) | Nobody. Registration *codes* are derived from it every 60 seconds. Never logged, never audited. |
 | Registration code (60 s) | `central operator code` | Shown to aarvee, passed to an operator | Not stored | Valid only in its own 60-second step. |
 | Admin socket | `central run` | Central | `<data>/admin.sock`, mode `0600` | Same-UID processes only. |
+| **GUI TLS key and certificate** | `central run` (first GUI start), unless aarvee passes `-gui-cert` / `-gui-key` | Central | `<data>/gui/tls.key` (`0600`) and `tls.crt`, in a `0700` directory | Nobody. The certificate's fingerprint is logged and shown on the Account screen so aarvee can check it. |
+| **GUI setup token** | `service.EnsureGUISetup` (first start, or `central gui reset-admin`) | Central | Hash in table `gui_setup`; the clear token only in `<data>/gui/setup-token` (`0600`), deleted after setup | aarvee, who reads the file. Never logged, never audited. Single use, valid 24 h. |
+| **GUI admin password hash** | The setup form or the Account screen | Central | `gui_admins.pw_hash`, an Argon2id string | Nobody. The password itself is never stored. |
+| **GUI session token** | `service.GUILogin` / `CompleteGUISetup` | aarvee's browser only | Cookie `__Host-mf_session`; central stores only `SHA-256(token)` in `gui_sessions.token_hash` | Nobody. A copy of the database cannot be turned back into a cookie. |
 | Data-dir lock | `central init` / `central run` | Central | `<data>/central.lock` (`flock`) | Keeps a second central off the same directory. |
 | Runner `workspace.yaml` | The runner's admin | The runner host (workspace runners only) | `/etc/mirafleet/workspace.yaml` (`-workspace`) | Nobody else. This is the workspace-mode boundary: image allowlist, limits, network modes, env allowlist, executor settings. |
 | **OpenSandbox API key** | The runner's admin (OpenSandbox's own key) | The runner host only | The file named by `opensandbox.api_key_file` in `workspace.yaml`; must be mode `0600` or `0400` and owned by the runner's user | Never in env or argv, never logged, never passed into a sandbox. The runner refuses to start if the file is missing or loose. |
@@ -651,7 +729,7 @@ allowlist permits. The runner-side guard bounds the damage but cannot remove it.
 | **Secrets master key** (32 bytes) (M7) | `mirafleet central keygen` | Central host | `MIRAFLEET_SECRETS_KEY` in a `0600` environment file read by `central run` | Nobody. The database stores only a key-check value (an HMAC of a constant). If it is lost, every stored credential is lost. |
 | **Credential values** (M7) | `central credential set` or the GUI | Central, then runner memory | `credentials.ciphertext` in `mirafleet.db` (AES-256-GCM); on a host runner **in memory only**, never on disk, in env or in argv | The runner that holds the assignment. The agent can use them through the agent socket and the broker, never read them. |
 | Per-session CA, agent socket (M7) | The host runner, per session | The VM | CA key in runner memory only; `agent.sock` (`0600`) and the CA certificate `ca.pem` (public), in the session's private directory (`0700`) The session state directory is `<state>/sessions/<slug>/` (`$XDG_STATE_HOME/mirafleet/sessions/<slug>/`); it also holds `ssh_config`, `out/`, `jobs/` and `creds_scope`.  | The agent's processes can connect to the socket and trust the CA; neither is a secret. |
-| Host runner state (M7) | `runner join` as the runner's user | The VM | `$XDG_CONFIG_HOME/mirafleet` (config, enrolment key), `$XDG_STATE_HOME/mirafleet` (sessions, job logs, outputs, local audit) | The enrolment key is readable by the same OS user (an accepted gap, [5.12](05-security.md#512-host-mode-and-credentials-m7)). |
+| Host runner state (M7) | `runner join` as the runner's user | The VM | `$XDG_CONFIG_HOME/mirafleet` (config, enrolment key), `$XDG_STATE_HOME/mirafleet` (sessions, job logs, outputs, local audit) | The enrolment key is readable by the same OS user (an accepted gap, [5.14](05-security.md#514-host-mode-and-credentials-m7)). |
 | **The agent's AI API key** | The operator | The operator's laptop only | Environment of Claude Code | Never sent to central, never to a runner, never into a workspace. The env denylist (`*_API_KEY`, `ANTHROPIC_*`, ...) refuses to forward such names. |
 
 **Where the operator's files live, per operating system** (`internal/opconf`; setting
@@ -760,13 +838,15 @@ does not report reliably. On other systems the request still ends at its own tim
 
 ## Planned parts (not in the code yet)
 
-M1, M2 and M3 are done (13 Nov 2026), M5 (the orchestrator) is built, M4 (the GUI) is done
-pending the user's browser check, and M7 (host mode and credentials, above) is built on branch
-`m7-wave-a`. Next: M6 (release). So you do not look for them: release packaging, the shipped
-systemd unit files (the M7 design fixes their content, M6 ships them), the package-manager and
-plugin-marketplace listings (M6), and a container-mode version of the M7 file tools (the `fsops`
-package is pure Go, so wiring it into `ctrd` is a small follow-up; the new tools return
-`unsupported` on container fleets). Workspace mode, the containerd executor
+M1, M2, M3 and M4 (the admin GUI) are done (M4 since 15 Nov 2026, pending the user's browser
+check), M5 (the orchestrator) is built, and M7 (host mode and credentials, above) is built on
+branch `m7-wave-a`. Next: M6 (release). So you do not look for them: release packaging, the
+shipped systemd unit files (the M7 design fixes their content, M6 ships them), the
+package-manager and plugin-marketplace listings (M6), and a container-mode version of the M7
+file tools (the `fsops` package is pure Go, so wiring it into `ctrd` is a small follow-up; the
+new tools answer `bad_request` on container fleets). Also not built, by design: more than one GUI
+admin, roles, single sign-on and two-factor login (enterprise features; `gui.Backend` is the
+seam). Workspace mode, the containerd executor
 and the OpenSandbox executor are **built** (M3, [M3.md](../M3.md)). The MCP stdio server, the
 Claude Code plugin and hooks, and the opencode and generic notes are **built** (M5,
 [M5.md](../M5.md)). Also deferred: MCP elicitation (a prompt from the server to the human) and SSH
@@ -774,7 +854,7 @@ jump hosts per context.
 
 ## Check your understanding
 
-1. Which processes in MIRASTACK LABS's deployment listen on a network port, and which do not?
+1. Which processes in MIRASTACK LABS' deployment listen on a network port, and which do not?
 2. Why can the firewall in front of `db-1` block all inbound traffic and mirafleet still work?
 3. A developer wires the admin handler for `token.create` into the operator handler map by
    mistake. Which checks would still stop an operator from creating a join token?
@@ -786,11 +866,17 @@ jump hosts per context.
 7. A runner is started with both `-actions` and `-workspace`. What happens, and why?
 8. Which package is the only one allowed to call `internal/apiclient`, and what does it refuse
    to send? Why is the model on the MCP side treated as untrusted input?
+9. aarvee revokes `prod/db-1` from the GUI. Which code path runs, and how does the audit row show
+   that it came from the GUI?
+10. A VM has users `dev` and `qa`, each with its own runner. Why are they two runners and not one
+    runner serving two users? Which Unix feature keeps `qa`'s tools out of `dev`'s files?
+11. Where does the plaintext of a GitLab deploy key exist in a running host-mode system?
 
 <details>
 <summary>Answers</summary>
 
-1. Only central listens: the SSH port (`0.0.0.0:2222` by default) and the local Unix admin socket.
+1. Only central listens: the SSH port (`0.0.0.0:2222` by default), the admin GUI's HTTPS port
+   (`0.0.0.0:8443` by default, off with `-gui-listen off`) and the local Unix admin socket.
    Runners and operator machines listen on nothing; they dial out.
 2. The runner opens the connection to central. Central then opens `exec@mirafleet` channels
    *inside* that connection, so no new inbound connection is ever needed.
@@ -817,20 +903,14 @@ jump hosts per context.
    operator method, so admin and enrol methods cannot be sent whatever the model asks. The model
    reads text written by strangers (READMEs, web pages, command output), so its tool arguments
    can be attacker-influenced; they are checked like network input.
-9. A VM has users `dev` and `qa`, each with its own runner. Why are they two runners and not one
-   runner serving two users? Which Unix feature keeps `qa`'s tools out of `dev`'s files?
-10. Where does the plaintext of a GitLab deploy key exist in a running host-mode system?
-
-</details>
-
-<details>
-<summary>Answers to 9 and 10</summary>
-
-9. A host runner runs every tool as its own OS user, so a runner is exactly one user. Two users
+9. The handler calls `service.Lifecycle` through `gui.Backend`, the same method as the CLI, so it
+   gets the same tombstone, kick, in-flight cancel and single-transaction audit row. The row has
+   `source` = `gui` and the actor is the GUI username (principal kind `admin`).
+10. A host runner runs every tool as its own OS user, so a runner is exactly one user. Two users
    means two enrolments (two join tokens, two keys) and credentials assigned to each separately.
    Plain file permissions (home directories `0700`, session directories `0700`, sockets `0600`)
    keep them apart.
-10. Briefly on central while it decrypts the value to push it, and in the memory of the one
+11. Briefly on central while it decrypts the value to push it, and in the memory of the one
     runner that holds the assignment (and in the agent's signing code). Never on disk
     in plaintext, never in an environment variable, argument list or child process.
 

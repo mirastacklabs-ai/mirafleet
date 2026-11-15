@@ -164,7 +164,11 @@ func New(cfg Config) (*Server, error) {
 			return nil, err
 		}
 		s.hsts = true
-		dns = append(dns, s.cert.DNSNames...)
+		for _, n := range s.cert.DNSNames {
+			if !strings.HasPrefix(n, "*") { // a wildcard SAN is not a Host name to allow (G-23)
+				dns = append(dns, n)
+			}
+		}
 	} else {
 		if cfg.DataDir == "" {
 			return nil, errors.New("gui: a data directory is required for the self-signed certificate")
@@ -287,6 +291,13 @@ func (s *Server) Start() error {
 			s.logf("gui: serve: %v", err)
 		}
 	}()
+	// Housekeeping: purge expired GUI sessions now and every PurgeInterval until Shutdown/Close.
+	if s.cfg.Backend != nil {
+		StartPurge(baseCtx, s.now, func(ctx context.Context, _ time.Time) error {
+			_, err := s.cfg.Backend.PurgeGUISessions(ctx)
+			return err
+		}, func(err error) { s.logf("gui: purge sessions: %v", err) })
+	}
 	go func() {
 		t := time.NewTicker(s.cfg.HostRefresh)
 		defer t.Stop()
@@ -299,7 +310,39 @@ func (s *Server) Start() error {
 			}
 		}
 	}()
+	// Certificate expiry: warn at start and then once a day while running (G-23, G-24).
+	s.warnCertExpiry()
+	go func() {
+		t := time.NewTicker(CertCheckInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				s.warnCertExpiry()
+			case <-stop:
+				return
+			}
+		}
+	}()
 	return nil
+}
+
+// Certificate expiry warning window and check interval.
+const (
+	CertWarnWithin    = 30 * 24 * time.Hour
+	CertCheckInterval = 24 * time.Hour
+)
+
+// warnCertExpiry logs a warning when the served certificate expires within CertWarnWithin (or
+// already has). A self-signed certificate is renewed at the next start of central.
+func (s *Server) warnCertExpiry() {
+	left := s.cert.NotAfter.Sub(s.now())
+	switch {
+	case left <= 0:
+		s.logf("gui: WARNING the GUI certificate expired on %s; browsers will refuse it", s.cert.NotAfter.UTC().Format("2006-01-02"))
+	case left < CertWarnWithin:
+		s.logf("gui: WARNING the GUI certificate expires on %s (%d days); renew it", s.cert.NotAfter.UTC().Format("2006-01-02"), int(left/(24*time.Hour)))
+	}
 }
 
 // dedupe returns names without duplicates and without the empty string, keeping the first
@@ -338,7 +381,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // Close stops the server at once: it cancels the context of every in-flight request (so backend
 // calls abort) and closes all connections. Call it when Shutdown timed out. Safe after Shutdown
-// and when not started.
+// and when not started. It does not wait for handlers to return: a handler still unwinding
+// may find the store closed, which only turns its answer into an error (G-31).
 func (s *Server) Close() error {
 	s.mu.Lock()
 	srv, stop, cancel := s.srv, s.stop, s.baseCancel
