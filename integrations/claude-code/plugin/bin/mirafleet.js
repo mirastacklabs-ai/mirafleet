@@ -13,7 +13,7 @@ const win = process.platform === "win32";
 
 // File names to try for "mirafleet" in each PATH directory. On Windows only real executables
 // qualify: a .cmd or .bat shim (npm) cannot be run without a shell.
-const names = win ? ["mirafleet.exe", "mirafleet.com"] : ["mirafleet"];
+const names = win ? ["mirafleet.exe"] : ["mirafleet"];
 
 function find() {
   const dirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
@@ -38,20 +38,18 @@ function find() {
 const bin = find();
 if (!bin) {
   process.stderr.write(
-    "mirafleet: binary not found on PATH. Install it by one of:\n" +
-      "  brew install mirastacklabs-ai/tap/mirafleet\n" +
-      "  install.sh (macOS, Linux) or install.ps1 (Windows)\n" +
-      "  a release archive from https://github.com/mirastacklabs-ai/mirafleet/releases\n" +
-      "then start Claude Code from a shell where `mirafleet` is on PATH.\n"
+    "mirafleet: binary not found on PATH. Install it (Homebrew, install.sh, install.ps1 or a " +
+      "release archive; see the plugin README), then start Claude Code from a shell where " +
+      "`mirafleet` is on PATH.\n"
   );
   process.exit(127);
 }
 
-// The environment is passed through unchanged except for one addition: Claude Code's PID. The hook
-// and the MCP server each run behind their own launcher process, so os.Getppid() in the binary
-// would differ between them; the binary keys its session handoff on this PID instead.
-const env = { ...process.env, MIRAFLEET_HARNESS_PID: String(process.ppid) };
-const child = spawn(bin, process.argv.slice(2), { stdio: "inherit", shell: false, env });
+// The hook and the MCP server each run behind their own launcher process, so os.Getppid() in the
+// binary would differ between them; the binary keys its session handoff on Claude Code's PID
+// instead. The child inherits this process's environment, with that one variable added.
+process.env.MIRAFLEET_HARNESS_PID = String(process.ppid);
+const child = spawn(bin, process.argv.slice(2), { stdio: "inherit", shell: false });
 
 // Forward termination signals so the binary can shut down cleanly.
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
