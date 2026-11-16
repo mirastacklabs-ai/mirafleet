@@ -39,7 +39,7 @@ type FilesOptions struct {
 }
 
 // Files runs the file tools in-process. Relative paths start at one directory (the session dir
-// or workdir); absolute paths reach everything the OS user can see (docs/M7.md §3.7).
+// or workdir); absolute paths reach everything the OS user can see.
 type Files struct {
 	dir  string
 	fs   *fsops.FS

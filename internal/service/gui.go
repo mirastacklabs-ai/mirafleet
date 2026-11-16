@@ -1,6 +1,6 @@
 package service
 
-// Admin GUI accounts and sessions (docs/M4.md §2.3, §2.4, §2.9). The service owns the session
+// Admin GUI accounts and sessions. The service owns the session
 // clock: GUIAuthenticate compares the credential generation and both expiries on every request,
 // using Config.Now, so expiry is identical after a restart and testable with an injected clock.
 // The store only holds rows. Secrets (setup token, session token) are returned to the caller
@@ -22,7 +22,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
 
-// Session and setup limits (docs/M4.md §2.3, §2.4).
+// Session and setup limits.
 const (
 	GUIIdleTimeout     = 30 * time.Minute
 	GUIAbsoluteTimeout = 12 * time.Hour
@@ -475,7 +475,7 @@ func (s *Service) GUISetupOpen(ctx context.Context) (bool, error) {
 }
 
 // RecordGUILockout writes one gui.lockout audit row for a client address the GUI login limiter
-// has just locked out (docs/M4.md 2.5). The caller calls it once per lockout window.
+// has just locked out. The caller calls it once per lockout window.
 func (s *Service) RecordGUILockout(ctx context.Context, remote string) error {
 	ev := s.systemEvent(ActionGUILockout)
 	ev.Source = string(SourceGUI)

@@ -1,6 +1,6 @@
 package service
 
-// Central-held credentials (docs/M7.md section 4): admin-only set/list/delete/assign/unassign/
+// Central-held credentials: admin-only set/list/delete/assign/unassign/
 // rotate, encryption at rest, delivery to runners and central-side GitLab self-rotation. The
 // secret value exists in plaintext only inside Set (from the caller's buffer to the sealer), the
 // delivery body and the rotation exchange; it is never audited, logged, returned or put in errors.
@@ -28,7 +28,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// Rotation and expiry timing (docs/M7.md section 4.5).
+// Rotation and expiry timing.
 const (
 	// ExpiringWindow is how far ahead of expiry a credential reports "expiring".
 	ExpiringWindow = 14 * 24 * time.Hour
@@ -61,7 +61,7 @@ type CredentialSender interface {
 }
 
 // secretsEnvKey is the name of the key variable (secrets.EnvKey), repeated here so that this
-// package, which every binary links, does not link internal/secrets (server-only, M7.md S0).
+// package, which every binary links, does not link internal/secrets (server-only).
 const secretsEnvKey = "MIRAFLEET_SECRETS_KEY"
 
 // KeyRing is the sealing key as the service sees it; cmd adapts a secrets.Key to it.

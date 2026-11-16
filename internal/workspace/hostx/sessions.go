@@ -22,7 +22,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// Cleanup defaults (docs/M7.md Q5).
+// Cleanup defaults.
 const (
 	DefaultDeleteAfter = 30 * 24 * time.Hour
 	DefaultWarnBefore  = 3 * 24 * time.Hour
@@ -219,7 +219,7 @@ func (m *Manager) OpenFor(id, ws, workdir string) (*SessionDir, error) {
 		mt.Dir, mt.Own = dir, true
 	} else {
 		if !filepath.IsAbs(workdir) {
-			// A project-file workdir NAME: the shared directory <root>/<name> (docs/M7.md Q4),
+			// A project-file workdir NAME: the shared directory <root>/<name>,
 			// created 0700. The grammar has no separator or leading dot, so it cannot leave Root.
 			if !WorkdirName.MatchString(workdir) {
 				return nil, errors.New("hostx: workdir must be a name (a-z, 0-9, . _ -) or an absolute path")

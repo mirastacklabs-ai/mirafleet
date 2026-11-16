@@ -1,6 +1,6 @@
 package transport
 
-// Dev-workspace wire types (docs/M7.md §3, §4): the file tools (fs), background jobs, output
+// Dev-workspace wire types: the file tools (fs), background jobs, output
 // paging and credential delivery (creds_sync). Everything here is validated twice, by central
 // before it sends and by the runner on receipt, with the same code. Keys are exact-case, unknown
 // and duplicate keys are refused, and every field that is not valid for an op is refused.
@@ -186,7 +186,7 @@ func checkRE2(what, s string, max int) error {
 
 // ---- fs op ----------------------------------------------------------------------------------
 
-// Fixed list of fs ops (docs/M7.md §3.7). Anything else is refused.
+// Fixed list of fs ops. Anything else is refused.
 const (
 	FSRead         = "read"
 	FSWrite        = "write"
@@ -821,7 +821,7 @@ func (r *WorkspaceResult) validateDevResult() error {
 
 // ---- credentials ----------------------------------------------------------------------------
 
-// Credential kinds, HTTPS auth modes and SSH host binding values (docs/M7.md §4.1).
+// Credential kinds, HTTPS auth modes and SSH host binding values.
 const (
 	CredSSHKey     = "ssh-key"
 	CredHTTPSToken = "https-token"

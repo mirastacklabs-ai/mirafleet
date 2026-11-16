@@ -9,11 +9,11 @@ import (
 )
 
 // ChanEvents is the channel a host-mode runner opens toward central to send aggregated usage
-// events (docs/M7.md §4.5). It is one-way: the runner writes length-prefixed EventBatch frames
+// events. It is one-way: the runner writes length-prefixed EventBatch frames
 // (4-byte big-endian length, then JSON), central reads and never replies. Runner role only.
 const ChanEvents = "events@mirafleet"
 
-// Event limits (docs/M7.md §4.5).
+// Event limits.
 const (
 	MaxBatchEvents    = 128
 	MaxBatchBytes     = 64 << 10 // encoded EventBatch

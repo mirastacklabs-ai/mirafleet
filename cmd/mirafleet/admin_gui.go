@@ -1,7 +1,7 @@
 package main
 
 // M4 admin commands: `central gui reset-admin`, `central fleet set NAME -confirm=BOOL` and the
-// audit filter flags (docs/M4.md 2.3, 3.3, 3.8). All are thin clients of the admin socket.
+// audit filter flags. All are thin clients of the admin socket.
 
 import (
 	"flag"

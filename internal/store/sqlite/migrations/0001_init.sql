@@ -1,4 +1,4 @@
--- Schema v1 (docs/M2.md section 1.1). Times are INTEGER unix milliseconds UTC.
+-- Schema v1. Times are INTEGER unix milliseconds UTC.
 -- AUTOINCREMENT everywhere: ids are never reused (revoke tombstones rely on it).
 
 CREATE TABLE fleets (

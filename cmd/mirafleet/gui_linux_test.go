@@ -2,7 +2,7 @@
 
 package main
 
-// TestGUIBinary (docs/M4.md 6.2, step S15): the real `mirafleet central run` entry as a child
+// TestGUIBinary: the real `mirafleet central run` entry as a child
 // process (the test binary re-executed, like TestM5NoHooks; the package has no TestMain, so a
 // normal test function, TestGUIBinaryChild, is the hook). It drives the GUI like a browser
 // without JavaScript: a cookie jar, CSRF tokens parsed from the forms, TLS pinned to the

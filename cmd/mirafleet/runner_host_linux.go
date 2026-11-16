@@ -1,6 +1,6 @@
 package main
 
-// Host-mode additions to the runner commands (docs/M7.md §3.3, §3.4): XDG defaults so a runner
+// Host-mode additions to the runner commands: XDG defaults so a runner
 // started by an ordinary user needs nothing outside its home, and `runner host prune`.
 
 import (

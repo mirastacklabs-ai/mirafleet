@@ -5,7 +5,7 @@ import (
 	"regexp"
 )
 
-// The Compose files pin the image tag (docs/M6.md section 2.8); relgen bumps and checks it.
+// The Compose files pin the image tag; relgen bumps and checks it.
 var composeImageRE = regexp.MustCompile(`(mirastack/mirafleet:)([0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)`)
 
 func composeTags(b []byte) ([]string, error) {

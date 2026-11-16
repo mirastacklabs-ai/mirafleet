@@ -27,7 +27,7 @@ type target struct {
 	Set   func(b []byte, value string) ([]byte, error)
 }
 
-// targets is the list of versioned files (docs/M6.md section 2.1). npm templates carry no version.
+// targets is the list of versioned files. npm templates carry no version.
 // Later steps (compose image tags, ...) append from their own file's init via addTarget.
 var targets = []target{
 	{Path: "integrations/claude-code/plugin/.claude-plugin/plugin.json", Get: jsonVersions, Set: setJSONVersions},

@@ -1,6 +1,6 @@
 package main
 
-// The host executor of `runner run -workspace` (docs/M7.md section 3): tool calls run as the
+// The host executor of `runner run -workspace`: tool calls run as the
 // runner's own unprivileged user on the VM. Built from workspace.yaml `executor: host`.
 
 import (

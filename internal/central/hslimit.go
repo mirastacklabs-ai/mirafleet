@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// hsLimiter is the cheap pre-handshake connection limit (docs/M2.md D-03): it counts SSH
+// hsLimiter is the cheap pre-handshake connection limit: it counts SSH
 // handshakes currently in progress, per source IP and globally, and refuses new connections
 // beyond the caps before any cryptography is done. It complements the post-handshake enroll
 // limiter, which runs once the role is known.

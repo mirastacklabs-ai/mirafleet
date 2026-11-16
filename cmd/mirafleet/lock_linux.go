@@ -8,8 +8,7 @@ import (
 	"syscall"
 )
 
-// lockDataDir takes an exclusive, non-blocking flock on <dir>/central.lock (docs/M2.md §1.8,
-// Q13). A second central on the same directory fails instead of sharing the database and admin
+// lockDataDir takes an exclusive, non-blocking flock on <dir>/central.lock. A second central on the same directory fails instead of sharing the database and admin
 // socket. The lock lives as long as the returned release func has not run (or the process
 // lives); it is also what makes stale admin-socket removal safe (central.Server.ServeAdmin).
 // dir must exist; call after keys.EnsureDir and umask 077.

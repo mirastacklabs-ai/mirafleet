@@ -2952,7 +2952,7 @@ func credentialRekey(t *testing.T, s store.Store) {
 	}
 }
 
-// hostHold: a host-fleet runner is held by the operator with live rows on it (docs/M7.md 3.4);
+// hostHold: a host-fleet runner is held by the operator with live rows on it;
 // other fleets are unaffected, closing still holds, a closed row releases, and concurrent
 // reserves by two operators on one runner admit exactly one.
 func hostHold(t *testing.T, s store.Store) {

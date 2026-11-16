@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-// ChanWorkspace is the central->runner channel type for workspace operations (docs/M3.md §1.2).
+// ChanWorkspace is the central->runner channel type for workspace operations.
 const ChanWorkspace = "workspace@mirafleet"
 
 // Workspace operations.
@@ -24,7 +24,7 @@ const (
 	OpDestroy = "destroy"
 	OpList    = "list"
 
-	// Dev-workspace operations (docs/M7.md §3, §4): file tools, background jobs, output paging and
+	// Dev-workspace operations: file tools, background jobs, output paging and
 	// credential delivery. Shapes and validation live in devws.go.
 	OpFS         = "fs"
 	OpJobStart   = "job_start"

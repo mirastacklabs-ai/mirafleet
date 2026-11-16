@@ -1,6 +1,6 @@
 package service
 
-// Background jobs and saved output (docs/M7.md 3.5, 3.6): workspace.job_start, job_status,
+// Background jobs and saved output: workspace.job_start, job_status,
 // job_tail, job_cancel and output_read, all dispatched to the runner of the caller's host
 // workspace. job_start and job_cancel are audited (start and end rows); the polling reads
 // (job_status, job_tail, output_read) write a row only when they fail, so a poll loop does not

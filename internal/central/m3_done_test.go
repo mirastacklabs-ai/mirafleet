@@ -29,13 +29,13 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/wsconfig"
 )
 
-// The "M3 done when" scenario of docs/M3.md section 4, in process: a real central (SQLite store,
+// The end-to-end workspace scenario, in process: a real central (SQLite store,
 // registry, service, SSH), two real runners in workspace mode and real operator clients. Only
 // the workspace executor differs: TestM3Done uses the fake executor (every run); the containerd
 // variant (m3_done_integration_linux_test.go) drives the same scenario against a real containerd.
 //
 // What the fake variant can only assert as requests and specs (the fake's ExecFunc is a stand-in
-// userland): point 4's non-root uid, read-only rootfs, symlink escape and no-network checks reach
+// userland): the non-root uid, read-only rootfs, symlink escape and no-network checks reach
 // the executor as exec requests and Create specs (network none, limits, image, no denied env) but
 // prove no isolation; the fake cannot make a symlink, and the "read-only" text is only checked
 // for the real variant; restart reconcile and the reaper act on the fake's in-memory containers

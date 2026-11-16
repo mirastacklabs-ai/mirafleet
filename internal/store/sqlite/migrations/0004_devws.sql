@@ -1,4 +1,4 @@
--- Schema v4 (docs/M7.md section 4.1): host-mode executor and central-held credentials.
+-- Schema v4: host-mode executor and central-held credentials.
 -- Times are INTEGER unix milliseconds UTC. Only sealed ciphertext (AES-256-GCM, sealed by
 -- internal/secrets) is stored; the key never enters the database, only its key-check value.
 

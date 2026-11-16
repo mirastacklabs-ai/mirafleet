@@ -8,7 +8,7 @@ import (
 
 // The hook hard-codes the tool names (it must not link the MCP server); every tool the server
 // registers must be known, or a confirm on it would get the generic ask. knownTools may list
-// remote tools (docs/M7.md §3.7) a little before the server registers them.
+// remote tools a little before the server registers them.
 func TestKnownToolsMatchMCPServer(t *testing.T) {
 	var want []string
 	want = append(want, mcpserver.ToolNames(mcpserver.Config{Tools: mcpserver.ListTools(nil)})...)

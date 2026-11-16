@@ -33,7 +33,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/wsconfig"
 )
 
-// TestM4Done is the "M4 done when" scenario of docs/M4.md section 6.1: a real central (SQLite,
+// TestM4Done is the end-to-end admin GUI scenario: a real central (SQLite,
 // registry, service, SSH), real runners (actions mode, and workspace mode over the fake
 // executor), real operators over api@, and the admin GUI mounted over TLS. Everything the admin
 // does goes through the GUI's HTTP interface, driven like a browser without JavaScript: form

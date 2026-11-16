@@ -1,11 +1,11 @@
 package gui
 
-// Credentials screens (docs/M7.md 4.1, S14): a masked list, create and replace through a
+// Credentials screens: a masked list, create and replace through a
 // write-only form, per-runner delivery status, assignment to runners or whole fleets, rotate-now
 // and a typed-confirmation delete. The secret value exists in this package only inside the POST
 // handler that forwards it to the service: it is never rendered, flashed, logged, put in a URL or
 // echoed into a re-rendered form. Everything shown is metadata and status from the service's
-// masked views. The browser form is urlencoded only (docs/M4.md 2.6), so the value is pasted; a
+// masked views. The browser form is urlencoded only, so the value is pasted; a
 // file upload is available through the CLI (`central credential set NAME < secretfile`).
 
 import (

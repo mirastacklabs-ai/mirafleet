@@ -113,7 +113,7 @@ func TestServerJSON(t *testing.T) {
 	if s.Name != "io.github.mirastacklabs-ai/mirafleet" {
 		t.Errorf("name = %q", s.Name)
 	}
-	// Verified 2026-11-14 against the MCP Registry docs (docs/M6.md section 2.18).
+	// Verified 2026-11-14 against the MCP Registry docs.
 	if s.Schema != "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json" {
 		t.Errorf("$schema = %q", s.Schema)
 	}

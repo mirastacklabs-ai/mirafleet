@@ -111,7 +111,7 @@ func TestConfinement(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	// File tools reach what the OS user can see (docs/M7.md §3.7): links, "..", absolute paths.
+	// File tools reach what the OS user can see: links, "..", absolute paths.
 	for _, op := range []transport.FSOp{
 		{Op: transport.FSRead, Path: "link"},
 		{Op: transport.FSRead, Path: "dirlink/secret.txt"},

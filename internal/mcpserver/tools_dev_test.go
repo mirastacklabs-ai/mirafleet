@@ -638,7 +638,7 @@ func TestDevReadOutputPaging(t *testing.T) {
 		t.Fatalf("%v", v)
 	}
 	// A runner page larger than the cap is trimmed to what fits, not cut: next_offset resumes
-	// exactly at the end of the shown content (docs/M7.md 3.6).
+	// exactly at the end of the shown content.
 	r.f.OutputReadFn = func(context.Context, string, api.OutputReadParams) (*api.OutputReadResult, error) {
 		return &api.OutputReadResult{Content: strings.Repeat("y", 5000), Size: 5000, EOF: true}, nil
 	}

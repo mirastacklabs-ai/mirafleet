@@ -1,4 +1,4 @@
-# mirafleet host-mode runner as a systemd USER unit (docs/M7.md §3.3). Install as the runner's own
+# mirafleet host-mode runner as a systemd USER unit. Install as the runner's own
 # user (no root):
 #   mkdir -p ~/.config/systemd/user && cp mirafleet-runner.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload && systemctl --user enable --now mirafleet-runner

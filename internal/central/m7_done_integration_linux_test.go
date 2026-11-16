@@ -2,7 +2,7 @@
 
 package central
 
-// The "M7 done when" scenario with real host-mode runners (docs/M7.md section 7.2), run by
+// The end-to-end host-mode scenario with real host-mode runners, run by
 // `scripts/dev.sh integration-host` as root in a throwaway container that has the unprivileged
 // users dev and qa, git, openssh-client and (best effort) ripgrep. Everything is the real
 // `mirafleet` binary (MIRAFLEET_TEST_BIN): central, two runners (one as dev, one as qa, started
@@ -10,7 +10,7 @@ package central
 // The fake GitLab (internal/testfake/gitlab) listens on the container's own address, which
 // /etc/hosts maps to gitlab.test and registry.gitlab.test (MIRAFLEET_TEST_FAKE_IP), on ports 443
 // and 22 so the clones use plain URLs. Keys and tokens are generated at test time. The long
-// build of point 2 takes 3 minutes; MIRAFLEET_TEST_M7_BUILD_STEPS shortens it for development.
+// build step takes 3 minutes; MIRAFLEET_TEST_M7_BUILD_STEPS shortens it for development.
 
 import (
 	"bufio"

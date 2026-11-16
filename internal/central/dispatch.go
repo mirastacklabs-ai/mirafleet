@@ -148,7 +148,7 @@ func handleHello(ctx context.Context, c *callCtx, req *api.Request) (any, error)
 	if err != nil || op.Status != store.OperatorActive {
 		return nil, api.Errorf(api.CodeForbidden, "forbidden")
 	}
-	// Version skew (docs/M6.md 2.2): a missing proto is level 0 and is refused too.
+	// Version skew: a missing proto is level 0 and is refused too.
 	if verr := protover.Check("orchestrator", c.p.Name, c.proto, p.Proto); verr != nil {
 		c.logf("operator %q refused: %v", c.p.Name, verr)
 		return nil, api.Errorf(api.CodeUnsupportedVersion, "%s", verr.Error())

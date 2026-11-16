@@ -1,6 +1,6 @@
 package main
 
-// Workspace additions to the central admin CLI (docs/M3.md §1.10): the workspace flags shared by
+// Workspace additions to the central admin CLI: the workspace flags shared by
 // `fleet create` and `fleet workspace set`, and `workspace list|kill`. Everything here goes
 // through the adminCLI.call seam; nothing links SQLite or containerd.
 

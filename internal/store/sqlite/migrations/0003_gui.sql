@@ -1,4 +1,4 @@
--- Schema v3 (docs/M4.md section 2.9): admin GUI. Times are INTEGER unix milliseconds UTC.
+-- Schema v3: admin GUI. Times are INTEGER unix milliseconds UTC.
 -- Only SHA-256 hashes of the setup token and of session tokens are stored.
 
 CREATE TABLE gui_admins (

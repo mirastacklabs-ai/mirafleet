@@ -1,6 +1,6 @@
 package main
 
-// The secrets key of central (docs/M7.md §4.1, Q14): `central keygen`, `central secrets rekey`
+// The secrets key of central: `central keygen`, `central secrets rekey`
 // and the start-up read of MIRAFLEET_SECRETS_KEY. Linux only: darwin and windows binaries never
 // link internal/secrets.
 
@@ -63,7 +63,7 @@ func centralKeygen(args []string, out, errw io.Writer) error {
 }
 
 // envCorporateCA names an optional PEM file of a corporate CA that central trusts, in addition to
-// the system roots, when it calls GitLab for self-rotation (docs/M7.md 4.5). Unset = system roots.
+// the system roots, when it calls GitLab for self-rotation. Unset = system roots.
 const envCorporateCA = "MIRAFLEET_CORPORATE_CA_FILE"
 
 // rotateClient is the HTTP client for GitLab self-rotation: the system pool plus the optional

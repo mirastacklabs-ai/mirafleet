@@ -13,8 +13,8 @@ import (
 
 func init() { m7Cleanup = m7CleanupSweep }
 
-// m7CleanupSweep drives the host executor's session manager (the real cleanup policy, docs/M7.md
-// 3.4) on its own injected clock: a directory unused for 27 days is warned about when it is
+// m7CleanupSweep drives the host executor's session manager (the real cleanup policy)
+// on its own injected clock: a directory unused for 27 days is warned about when it is
 // reattached, one unused for 30 days is deleted by the sweep, and close alone never deletes.
 func m7CleanupSweep(t *testing.T, clk *m4Clock) {
 	root, state := t.TempDir(), t.TempDir()

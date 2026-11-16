@@ -2,7 +2,7 @@
 
 package main
 
-// TestM5NoHooks (docs/M5.md section 6): the real `mirafleet mcp` entry run as a child process
+// TestM5NoHooks: the real `mirafleet mcp` entry run as a child process
 // with no harness around it (no CLAUDE_* env, no handoff file, no hook), spoken to in hand-written
 // newline-delimited JSON-RPC over its stdin and stdout. The child is this test binary re-exec'd:
 // the package has no TestMain, so a normal test function (TestM5NoHooksChild) is the hook. It does

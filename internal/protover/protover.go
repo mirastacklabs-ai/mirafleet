@@ -1,5 +1,5 @@
 // Package protover is the protocol-level rule for version skew between central, runners and
-// orchestrators (docs/M6.md section 2.2). It is a pure rule package with no I/O. Central applies
+// orchestrators. It is a pure rule package with no I/O. Central applies
 // it to the runner heartbeat and to the operator hello (internal/central).
 //
 // The protocol level is one integer: the release's minor version while in 0.x (v0.6.x is 6)
@@ -120,7 +120,7 @@ const MixedMajorMessage = "mixed 0.x and 1.x: upgrade everything to 1.x, central
 
 // Check applies the rule for one peer. role is "runner" or "orchestrator". name is the peer's
 // name, or "" when unknown. It returns nil when accepted; otherwise an error whose text names the
-// side to upgrade, exactly as in docs/M6.md section 2.2:
+// side to upgrade, for example:
 //
 //	runner `db-1` is protocol 4, central needs 5 or 6: upgrade mirafleet on that runner
 //	central is protocol 6, this runner is 7: upgrade central first

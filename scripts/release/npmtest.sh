@@ -1,5 +1,5 @@
 #!/bin/sh
-# npmtest (docs/M6.md section 2.14): generate the 7 npm packages, `npm pack` them, install them
+# npmtest: generate the 7 npm packages, `npm pack` them, install them
 # offline into a temp project from the tarballs, run the launcher, and assert that no install
 # scripts exist or ran. Everything runs in digest-pinned containers; nothing is installed on the
 # host and nothing is published.

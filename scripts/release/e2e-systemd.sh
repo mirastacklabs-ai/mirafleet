@@ -1,5 +1,5 @@
 #!/bin/sh
-# e2e-systemd (docs/M6.md section 2.15): install the snapshot .deb in a real systemd (PID 1 in a
+# e2e-systemd: install the snapshot .deb in a real systemd (PID 1 in a
 # throwaway privileged debian container on the Docker runtime), then run central and an actions
 # runner as the shipped units: join, approve, `mcp login`, `mcp api action.run`, one MCP
 # `tools/call`, and check that removing and purging the package keeps the data and the user.
@@ -102,7 +102,7 @@ wait_for "central to answer admin commands" 60 adm central fleet list
 x systemctl is-active mirafleet-central.service >/dev/null || fail "central not active"
 say "mirafleet-central.service active, admin socket answers"
 
-# --- Admin GUI (docs/M4.md 2.2, 2.3): TLS, logged fingerprint, setup token file, Host, setup ---
+# --- Admin GUI: TLS, logged fingerprint, setup token file, Host, setup ---
 GUI=https://127.0.0.1:8443
 gcode() { x curl -sk -o /dev/null -w '%{http_code}' "$@"; }
 wait_for "GUI to answer on 8443" 30 x curl -sk -o /dev/null "$GUI/"
@@ -164,7 +164,7 @@ printf '%s' "$resp" | tr -d ' ' | grep -q '"isError":true' && fail "tools/call r
 printf '%s' "$resp" | tr -d ' \n' | grep -q 'exit_code' || fail "tools/call run_action has no exit_code: [$resp]"
 say "MCP tools/call run_action ok"
 
-# --- Host mode (docs/M7.md section 3.3): runners `dev` and `qa`, two OS users, user unit, linger ---
+# --- Host mode: runners `dev` and `qa`, two OS users, user unit, linger ---
 x test -f /usr/lib/systemd/user/mirafleet-runner.service || fail "user unit not installed"
 x test -f /usr/lib/systemd/system/mirafleet-runner@.service || fail "system template not installed"
 x test -f /usr/share/doc/mirafleet/examples/workspace-host.yaml || fail "workspace-host.yaml not installed"
@@ -196,7 +196,7 @@ done
 x pgrep -u 0 -f 'mirafleet runner run' >/dev/null 2>&1 && fail "a host-mode runner is running as root"
 say "host-mode runners dev and qa: separate users with linger, packaged user unit, active on central"
 
-# --- Backup on upgrade (docs/M6.md section 2.3) ---
+# --- Backup on upgrade ---
 # Only one snapshot exists, so rebuild a schema-3 database (undo migration 0004), reinstall the
 # package (the upgrade), and start central: it must back the schema-3 database up, then migrate.
 db=/var/lib/mirafleet/central/mirafleet.db
@@ -221,7 +221,7 @@ adm central fleet list | grep -qw prod || fail "fleet prod lost by the upgrade"
 x systemctl is-active mirafleet-central.service >/dev/null || fail "central not active after upgrade"
 say "upgrade: schema-3 backup (0600) kept, database migrated to 4, data survives"
 
-# Uninstall keeps data, user and configuration (docs/M6.md section 2.5).
+# Uninstall keeps data, user and configuration.
 x sh -c 'echo keep >/var/lib/mirafleet/central/e2e-marker; chown mirafleet:mirafleet /var/lib/mirafleet/central/e2e-marker'
 alive() {
 	xs 'test "$(cat /var/lib/mirafleet/central/e2e-marker)" = keep && test -f /var/lib/mirafleet/runner/runner.yaml && getent passwd mirafleet >/dev/null' ||

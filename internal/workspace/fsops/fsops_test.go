@@ -423,7 +423,7 @@ func TestLSTruncates(t *testing.T) {
 	}
 }
 
-// The tools reach everything the OS user can (docs/M7.md §3.7): absolute paths anywhere, "..",
+// The tools reach everything the OS user can: absolute paths anywhere, "..",
 // and symlinks that leave the start directory. Special files stay refused.
 func TestReachesOutside(t *testing.T) {
 	if runtime.GOOS == "windows" {

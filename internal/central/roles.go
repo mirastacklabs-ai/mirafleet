@@ -120,7 +120,7 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			continue
 		}
 		if sess == nil {
-			// Version skew (docs/M6.md 2.2), checked on the first heartbeat: a missing proto is
+			// Version skew, checked on the first heartbeat: a missing proto is
 			// level 0. Tell the runner why, audit it, and close.
 			if verr := protover.Check("runner", p.Name, s.cfg.Proto, hb.Proto); verr != nil {
 				s.refuseRunner(sconn, p, r, verr)
@@ -232,7 +232,7 @@ func (s *Server) refuseRunner(sconn *ssh.ServerConn, p auth.Principal, r *ssh.Re
 	sconn.Close()
 }
 
-// reconcileAsync compares the runner's workspaces with the store in the background (M3.md 1.6). It
+// reconcileAsync compares the runner's workspaces with the store in the background. It
 // runs outside the registry lock and the heartbeat path, tracked by the wait group so Close drains
 // it before the store closes. Called from serveRunner, itself tracked, so Add cannot race Wait.
 func (s *Server) reconcileAsync(id int64) {

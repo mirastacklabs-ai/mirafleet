@@ -1,6 +1,6 @@
 package runner
 
-// Host-mode glue (docs/M7.md sections 3 and 4): the optional executor capabilities the runner
+// Host-mode glue: the optional executor capabilities the runner
 // dispatches the M7 ops to, the per-session credential wiring (broker, ssh-agent, CA bundle, ssh
 // config, tool environment) and the dispatch of fs, job_*, output_read and creds_sync.
 //
@@ -81,8 +81,8 @@ type DestroyDeleter interface {
 }
 
 // BashExecutor is implemented by the host executor: a foreground bash command run in the
-// session's persisted cwd, with the full output kept on the runner under the result's Ref
-// (docs/M7.md section 3.6). The runner uses it for `bash -lc <command>` execs with no stdin, env
+// session's persisted cwd, with the full output kept on the runner under the result's Ref.
+// The runner uses it for `bash -lc <command>` execs with no stdin, env
 // or cwd; everything else goes through Exec. The timeout is passed separately because the
 // executor reports a timeout itself.
 type BashExecutor interface {
@@ -156,7 +156,7 @@ func (m *devMgr) open(id workspace.ID, restrict bool, names []string) error {
 // scopeFile records, in the session's state directory, which credentials the open asked for, so
 // a runner restart wires the adopted session with the same set. The file is in the session
 // directory, which the session's own uid can write: it is a restart convenience, not a security
-// boundary (a process of that uid could widen it and kill the runner; docs/M7.md section 3.2, Q1).
+// boundary (a process of that uid could widen it and kill the runner).
 const scopeFile = "creds_scope"
 
 type credScope struct {

@@ -17,7 +17,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
 )
 
-// Defaults for the workspace service settings and for omitted fleet config fields (M3.md 1.10).
+// Defaults for the workspace service settings and for omitted fleet config fields.
 const (
 	DefaultMaxWorkspacesPerOperator = 8
 	DefaultWorkspaceOpenTimeout     = 5 * time.Minute
@@ -166,7 +166,7 @@ func validSpecLabels(labels map[string]string) error {
 	return nil
 }
 
-// OpenWorkspace opens (or reuses) the caller's workspace for (fleet, session) (M3.md 1.4). The
+// OpenWorkspace opens (or reuses) the caller's workspace for (fleet, session). The
 // caller must be an active operator and the fleet in workspace mode. Guarded fleets need
 // confirm == fleet name and a runner with a secure runtime. A live workspace of the same session
 // that is open is returned with reused=true (one still opening is a conflict); if its runner is offline the call fails with unavailable and
@@ -198,8 +198,8 @@ func (s *Service) OpenWorkspaceIn(ctx context.Context, p auth.Principal, src Sou
 // (runner.LabelCredentials): a comma-separated list, absent = every credential the runner holds.
 const labelCredentials = "mirafleet.credentials"
 
-// OpenWorkspaceWith is OpenWorkspaceIn plus an optional credential subset (host fleets only,
-// docs/M7.md 4.2): placement needs a runner that holds every named credential, and the names go
+// OpenWorkspaceWith is OpenWorkspaceIn plus an optional credential subset (host fleets only):
+// placement needs a runner that holds every named credential, and the names go
 // to the runner in the reserved spec label.
 func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src Source, fleet, session, image string,
 	labels map[string]string, confirm, workdir string, credentials []string) (store.Workspace, bool, error) {

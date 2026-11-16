@@ -3,7 +3,7 @@
 // for the credential's SSH user. With host binding on (the default) it also requires the
 // client to prove, via OpenSSH's session-bind@openssh.com extension, which server host key
 // the session is talking to, and refuses unless that key is pinned in the credential's
-// known_hosts. Add, remove, lock and unlock are refused. See docs/M7.md section 4.3.
+// known_hosts. Add, remove, lock and unlock are refused.
 package sshagent
 
 import (

@@ -12,7 +12,7 @@ import (
 
 const prSetDumpable = 4 // PR_SET_DUMPABLE
 
-// Harden applies the runner start-up rules of docs/M7.md section 3.2. Call it first thing in the
+// Harden applies the runner start-up rules (see docs/THREAT-MODEL.md). Call it first thing in the
 // runner, before any secret is loaded: PR_SET_DUMPABLE 0 (same-uid processes can no longer ptrace
 // the runner or open /proc/<pid>/{mem,environ,fd,maps,root}), RLIMIT_CORE 0, then refuse uid 0, any
 // effective capability, and any state dir that is not an own, non-group/world-writable directory.

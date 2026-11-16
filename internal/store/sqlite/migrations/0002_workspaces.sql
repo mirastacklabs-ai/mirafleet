@@ -1,4 +1,4 @@
--- Schema v2 (docs/M3.md section 1.7): workspace mode.
+-- Schema v2: workspace mode.
 
 CREATE TABLE fleet_workspace (
     fleet_id      INTEGER PRIMARY KEY REFERENCES fleets (id) ON DELETE CASCADE,

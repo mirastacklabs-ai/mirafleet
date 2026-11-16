@@ -871,7 +871,7 @@ func (s *wsState) close(ctx context.Context, req Request) (any, error) {
 	return closeOut{State: state, Workspace: sel.id, Where: whereOf(sel.t)}, nil
 }
 
-// projectWorkdir is the `workdir:` of the project's .mirafleet.yaml (docs/M7.md §3.4, §3.8): the
+// projectWorkdir is the `workdir:` of the project's .mirafleet.yaml: the
 // shared directory name sent with workspace_open. The file is re-read at every open; an invalid
 // one is an error, never silently ignored. `remote: true` needs no wire field: it only steers the
 // plugin and hook.

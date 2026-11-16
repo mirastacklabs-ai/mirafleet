@@ -2,7 +2,7 @@
 
 package main
 
-// Built-binary end-to-end test (docs/M3.md S19), run by `scripts/dev.sh integration` inside the
+// Built-binary end-to-end test, run by `scripts/dev.sh integration` inside the
 // privileged dind harness with a real containerd. It starts the real `mirafleet` binary (path in
 // MIRAFLEET_TEST_BIN) as central and as a `runner run -workspace` runner, and drives everything
 // through the CLI: fleet create/set, workspace list/kill, mcp api workspace.open / exec /

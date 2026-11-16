@@ -18,7 +18,7 @@ if [ -z "${MIRAFLEET_CTR:-}" ] && ! docker info >/dev/null 2>&1; then
 	exit 1
 fi
 
-# Supported targets for every binary we ship. Keep in sync with docs/PLAN.md (M6).
+# Supported targets for every binary we ship. Keep in sync with scripts/release.sh.
 TARGETS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
 
 # run MODE SCRIPT [ARG...]: MODE is ro|rw (source mount); SCRIPT runs under sh -ec in the
@@ -76,7 +76,7 @@ licenses)
 	# modules are checked too; allowlist per CLAUDE.md. go-licenses is built into the
 	# container's /tmp (host-arch, before GOOS is exported per target) and never installed on the host.
 	# NOTE: go-licenses classifies each module's top-level LICENSE only. modernc.org/libc bundles
-	# musl-derived MIT code that it does not see (reviewed manually, see docs/M2.md §6.3).
+	# musl-derived MIT code that it does not see (reviewed manually).
 	# --ignore modernc.org/mathutil: its LICENSE is verbatim BSD-3-Clause text (reviewed by hand)
 	# but go-licenses' classifier cannot match it ("The mathutil Authors" wording). The ignore is
 	# valid only for the reviewed version, pinned below; any bump fails until re-reviewed.
@@ -207,7 +207,7 @@ CFG
 		exit $rc'
 	;;
 integration-host)
-	# M7 host-mode integration tests (docs/M7.md §7.2). No containerd, no --privileged. (1) Build
+	# Host-mode integration tests. No containerd, no --privileged. (1) Build
 	# `-tags integration` test binaries and the mirafleet binary statically, as in `integration`, into
 	# the separate volume mirafleet-itest-host-bin. (2) Run them as root in a throwaway container of
 	# the digest-pinned Go image (Debian bookworm, which ships git and openssh-client), after
@@ -266,7 +266,7 @@ integration-host)
 		exit $rc'
 	;;
 gui-shots)
-	# Screenshots of every GUI screen, light and dark, at 1280 and 390 px wide (docs/M4.md Q12, S16).
+	# Screenshots of every GUI screen, light and dark, at 1280 and 390 px wide.
 	# Outside the gate and never bundled. Step 1: build the GUI package's test binary in the pinned
 	# golang image. Step 2: run it in a pinned headless Chromium image (dev-only container tool, never
 	# shipped); its TestGUIShotsServe serves a seeded GUI on loopback and Chromium photographs each

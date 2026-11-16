@@ -1,6 +1,6 @@
 package osb
 
-// The built-in node-local TLS front (docs/M3.md §0, decision 3). OpenSandbox's lifecycle server
+// The built-in node-local TLS front. OpenSandbox's lifecycle server
 // and execd speak plain HTTP; the runner refuses anything but https with TLS 1.3, so this small
 // stdlib reverse proxy sits next to OpenSandbox (ideally in its network namespace) and is the
 // only thing that listens on a TLS port. Rules:

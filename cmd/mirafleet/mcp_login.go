@@ -79,7 +79,7 @@ func mcpLogin(args []string, stdin io.Reader, stdout io.Writer) error {
 }
 
 // loginSkew says hello to the central just registered with and returns its version-skew refusal
-// (docs/M6.md 2.2) as the error, which the CLI prints and turns into a non-zero exit. Any other
+// as the error, which the CLI prints and turns into a non-zero exit. Any other
 // hello failure is ignored: registration succeeded, and `mcp` reports connection problems itself.
 func loginSkew(ctx context.Context, dir, addr string, signer ssh.Signer) error {
 	cl, err := apiclient.Dial(ctx, addr, transport.UserOperator, signer, keys.PinnedHostKeys(opconf.KnownHostsPath(dir)))

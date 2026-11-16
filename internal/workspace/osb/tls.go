@@ -1,4 +1,4 @@
-// Package osb is the OpenSandbox client used by the osb workspace executor (docs/M3.md §0, §1.14).
+// Package osb is the OpenSandbox client used by the osb workspace executor.
 // This file builds the hardened HTTP client: TLS 1.3 only, trust anchored in one configured CA
 // (never the system roots), an optional SPKI pin, mandatory client certificate (mTLS), no proxy
 // from the environment and no redirects.

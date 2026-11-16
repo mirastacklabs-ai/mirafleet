@@ -1,6 +1,6 @@
 package service
 
-// Runner event ingestion (docs/M7.md 4.5): the runner sends aggregated credential-use events on
+// Runner event ingestion: the runner sends aggregated credential-use events on
 // the events@mirafleet channel; central validates the batch and writes one audit row per event
 // with source "runner". The row carries names, hosts, status and counts, never a secret value.
 
@@ -86,7 +86,7 @@ func (s *Service) IngestRunnerEvents(ctx context.Context, runnerID int64, b *tra
 }
 
 // ActionRunnerReplaced is the audit action written when a runner's new connection replaces its
-// live one (docs/M7.md 3.2: the only mitigation of the accepted enrolment-key gap).
+// live one (the only mitigation of the accepted enrolment-key gap).
 const ActionRunnerReplaced = "runner.replaced"
 
 // RunnerReplaced writes the runner.replaced audit row. Best effort: failures are logged.
@@ -103,7 +103,7 @@ func (s *Service) RunnerReplaced(ctx context.Context, runnerID int64) {
 }
 
 // ActionRunnerRefusedVersion is the audit action written when central refuses a runner for
-// protocol version skew (docs/M6.md 2.2).
+// protocol version skew.
 const ActionRunnerRefusedVersion = "runner.refused_version"
 
 // RunnerRefusedVersion writes the runner.refused_version audit row; msg is the refusal text sent

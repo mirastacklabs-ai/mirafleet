@@ -19,7 +19,7 @@ import (
 	"strings"
 )
 
-// npm generates the seven npm packages (docs/M6.md section 2.9) from the release archives:
+// npm generates the seven npm packages from the release archives:
 // the launcher @mirastacklabs/mirafleet and one platform package per archive. Every archive is
 // verified against checksums.txt before anything is read from it. Nothing is published.
 

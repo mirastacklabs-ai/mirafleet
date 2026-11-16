@@ -20,9 +20,9 @@
 // Not confirmed by the pages we could read (the fetch was truncated before the SessionEnd and
 // PreToolUse input-schema sections): that reason sits at the top level of the SessionEnd input
 // (assumed, matching the other fields), and the exact field names of the mirafleet tools'
-// tool_input (we use fleet, action, runner, workspace; confirm per docs/M5.md §1.7).
+// tool_input (we use fleet, action, runner, workspace).
 //
-// Assumption Q2 (docs/M5.md §1.4): the hook process and the MCP server are both direct children of
+// Assumption: the hook process and the MCP server are both direct children of
 // Claude Code, so os.Getppid() is the same PID in both and keys the handoff file. The plugin starts
 // both through a Node launcher, which sets MIRAFLEET_HARNESS_PID to Claude Code's PID
 // (handoff.HarnessPID), so the key is still the same. A node shim that spawns a child (Volta,
@@ -70,7 +70,7 @@ var knownFields = []string{"confirm", "fleet", "runner", "action", "workspace", 
 var knownTools = map[string]bool{
 	"list_fleets": true, "list_runners": true, "run_action": true, "workspace_open": true, "exec": true,
 	"read_file": true, "write_file": true, "workspace_close": true, "workspace_list": true,
-	// M7 remote tools (docs/M7.md §3.7).
+	// Remote-project tools.
 	"bash": true, "bash_output": true, "kill_shell": true, "job_list": true, "read_output": true,
 	"read": true, "write": true, "edit": true, "multi_edit": true, "grep": true, "glob": true,
 	"ls": true, "notebook_edit": true, "upload": true, "download": true,

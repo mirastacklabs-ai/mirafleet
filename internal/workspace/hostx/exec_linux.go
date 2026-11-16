@@ -1,6 +1,6 @@
 //go:build linux
 
-// Package hostx is the host-mode workspace executor's exec side (docs/M7.md section 3): start-up
+// Package hostx is the host-mode workspace executor's exec side: start-up
 // hardening, a clean child environment, foreground bash with a per-exec output log and a
 // persisted cwd, and background jobs supervised by `mirafleet host-shim job` that outlive runner
 // restarts. Every child runs as the runner's own unprivileged user.
@@ -27,7 +27,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
 )
 
-// Limits (docs/M7.md section 3.5, 3.6).
+// Limits.
 const (
 	DefaultTimeout = 120 * time.Second
 	MaxTimeout     = 10 * time.Minute

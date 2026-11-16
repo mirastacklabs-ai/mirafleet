@@ -1,6 +1,6 @@
 package mcpserver
 
-// File tools of a remote project (docs/M7.md §3.7): read, write, edit, multi_edit, grep, glob, ls,
+// File tools of a remote project: read, write, edit, multi_edit, grep, glob, ls,
 // notebook_edit, upload and download. One tool per operation, so the destructive hint is exact.
 // The operations run on the runner (workspace.fs); this file only validates arguments, picks the
 // workspace, and makes the result safe to show: sanitised, capped, and free of anything that

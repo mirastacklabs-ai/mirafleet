@@ -1,7 +1,6 @@
 package gui
 
-// S16: accessibility and layout rules that can be checked without a browser (docs/M4.md 3.11,
-// 3.12): WCAG contrast of every text token pair in app.css, light and dark; the 360 px layout
+// Accessibility and layout rules that can be checked without a browser: WCAG contrast of every text token pair in app.css, light and dark; the 360 px layout
 // rules; and the keyboard and landmark basics of every screen.
 
 import (

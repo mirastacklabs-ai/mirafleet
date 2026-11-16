@@ -3,7 +3,7 @@
 // It has no MCP code (internal/mcpserver sits on top) and runs on linux, darwin and windows, so
 // it never links the server side (service, store, central, runner, containerd, SQLite).
 //
-// Shape (docs/M5.md §1.2–§1.11):
+// Shape:
 //
 //   - New(Config) builds an Orch. It always succeeds, even with no contexts or key. Until the
 //     operator has run `mirafleet mcp login …`, every call returns ErrNotSetUp (no paths).
@@ -115,7 +115,7 @@ type Config struct {
 
 	// Test hooks. Dial replaces the pinned dial; it stays exported because tests in other
 	// packages (internal/central's M5 tests) drive a real orch over a fake central, so it cannot
-	// be unexported without changing those tests (docs/M5.md F-33).
+	// be unexported without changing those tests.
 	Dial              DialFunc
 	KeepaliveInterval time.Duration
 }

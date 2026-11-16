@@ -18,7 +18,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// TestM2Done is the "M2 done when" scenario from docs/M2.md, in process:
+// TestM2Done is the end-to-end fleet and operator scenario, in process:
 // fleet -> token -> join (pinned from the token) -> approve (central) -> two operators register
 // with the same current code (pinned from the code) -> list and run over api@ -> lifecycle refused
 // on api@ -> revoke on central during the long action (cancelled, reconnect rejected, audited) ->

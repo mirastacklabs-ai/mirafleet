@@ -1,6 +1,6 @@
 package gui
 
-// The screenshot server of `scripts/dev.sh gui-shots` (docs/M4.md Q12, S16). It is a test only so
+// The screenshot server of `scripts/dev.sh gui-shots`. It is a test only so
 // that it can reuse the harness (a real service on a temp SQLite file, seeded rows, a signed-in
 // session). It skips unless MIRAFLEET_GUI_SHOTS_ADDR is set, so it never runs in the gate.
 //

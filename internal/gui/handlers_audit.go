@@ -1,6 +1,6 @@
 package gui
 
-// Audit screen (docs/M4.md 3.8): filtered list with keyset paging and a streamed CSV / JSON Lines
+// Audit screen: filtered list with keyset paging and a streamed CSV / JSON Lines
 // export. Every filter and the page position live in the query string, so a view can be
 // bookmarked. Paging: "Older" is a descending query with BeforeID; "Newer" is an ascending query
 // with AfterID whose rows are reversed here (AuditFilter Desc+AfterID would return the newest

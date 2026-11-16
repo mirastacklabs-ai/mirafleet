@@ -85,7 +85,7 @@ func clean(s string) string {
 }
 
 // call is the only path to apiclient. It refuses any method that is not an operator method, so
-// admin and enrol methods are unreachable from here whatever the caller passes (docs/M5.md §1.11).
+// admin and enrol methods are unreachable from here whatever the caller passes.
 func (o *Orch) call(ctx context.Context, cname, method string, params any, x *callIO) error {
 	if !api.IsOperatorMethod(method) {
 		if panicOnGuard {

@@ -130,7 +130,7 @@ func TestMCPJSON(t *testing.T) {
 const launcher = "${CLAUDE_PLUGIN_ROOT}/bin/mirafleet.js"
 
 // The plugin root holds only plugin files, so the plugin directory validator sees no Go source and
-// no program other than the Node launcher (docs/M6.md section 2.18).
+// no program other than the Node launcher.
 func TestPluginRootFileTypes(t *testing.T) {
 	err := filepath.WalkDir(pluginDir, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {

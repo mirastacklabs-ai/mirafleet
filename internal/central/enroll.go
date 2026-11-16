@@ -18,8 +18,7 @@ import (
 
 // serveEnroll is the enroll role: one connection lives at most Config.EnrollDeadline from
 // accept, carries exactly one channel (join@ or register@) with one framed request and one
-// framed response, then is closed. Failures are logged by the service and here, never audited
-// (docs/M2.md §1.7).
+// framed response, then is closed. Failures are logged by the service and here, never audited.
 func (s *Server) serveEnroll(sconn *ssh.ServerConn, p auth.Principal, accepted time.Time, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
 	if !s.limiter.allow(p.Remote) {
 		s.cfg.Logf("enroll connection from %s refused: rate limit exceeded", p.Remote)

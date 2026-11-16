@@ -1,6 +1,6 @@
 package api
 
-// Dev-workspace and credential types (docs/M7.md §3, §4). Every params type has Validate, and
+// Dev-workspace and credential types. Every params type has Validate, and
 // DecodeValid is the one way a handler decodes them: exact-case keys, no unknown or duplicate
 // keys, no trailing data, then Validate. Values never appear in an error message.
 //

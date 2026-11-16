@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	// Metadata keys that tie a sandbox to a mirafleet workspace and runner (docs/M3.md §1.14).
+	// Metadata keys that tie a sandbox to a mirafleet workspace and runner.
 	// Ownership is decided by these two keys only.
 	MetaWorkspace = "mirafleet.workspace"
 	MetaRunner    = "mirafleet.runner"

@@ -1,7 +1,6 @@
 package orch
 
-// Upload and download between the local project directory and a workspace (docs/M7.md §3.9,
-// Q13). The local side is confined to the project directory through os.Root (a path or symlink
+// Upload and download between the local project directory and a workspace. The local side is confined to the project directory through os.Root (a path or symlink
 // leading out is refused), symlinks inside it are never followed, and a deny list keeps secrets
 // and VCS/config state out. Pure os/filepath: this file builds on linux, darwin and windows.
 

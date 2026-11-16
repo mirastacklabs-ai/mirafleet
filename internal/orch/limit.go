@@ -22,7 +22,7 @@ const (
 // (server default when omitted, server max at most) plus RunMargin; every other method keeps
 // CallTimeout.
 //
-// Workspace methods (docs/M3.md §1.9, decision 5): workspace.exec gets its requested timeout_s
+// Workspace methods: workspace.exec gets its requested timeout_s
 // plus the margin, capped at the server's 24 h ceiling; without timeout_s the fleet default
 // applies, which this client cannot see, so the cap is the ceiling (the server enforces the real
 // deadline). workspace.open gets the 5 min open timeout plus the margin; file calls 100 s.

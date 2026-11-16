@@ -25,9 +25,9 @@ import (
 var execMargin = 15 * time.Second // added to the exec timeout for the central-side deadline (a var for tests)
 
 const (
-	// fileOpTimeout bounds read_file and write_file (M3.md 1.9).
+	// fileOpTimeout bounds read_file and write_file.
 	fileOpTimeout = 60 * time.Second
-	// maxAuditArgv is the clip of the argv JSON in the audit row (M3.md 1.8).
+	// maxAuditArgv is the clip of the argv JSON in the audit row.
 	maxAuditArgv = 4 << 10
 	// maxAuditEnvNames bounds the audited env name list; at most MaxEnvVars (32) names of
 	// at most 64 bytes each exist, so this is only a safety net.
@@ -135,7 +135,7 @@ func (s *Service) startRow(ctx context.Context, ev store.AuditEvent) error {
 	return nil
 }
 
-// ExecWorkspace runs argv in the caller's workspace (M3.md 1.1, 1.8, 1.9). Checks, in order:
+// ExecWorkspace runs argv in the caller's workspace. Checks, in order:
 // policy (active operator), ownership (not_found otherwise), state open (else conflict), input
 // (argv, cwd, env, stdin length), guarded confirm, then the timeout is derived from the fleet's
 // exec_default/exec_max (api.WorkspaceExecTimeout). The env must pass workspace.FilterEnv with the
@@ -381,7 +381,7 @@ func cleanFilePath(path string) (string, error) {
 	return clean, nil
 }
 
-// WriteWorkspaceFile writes length bytes from body to path (M3.md 1.1). Checks, in order: policy,
+// WriteWorkspaceFile writes length bytes from body to path. Checks, in order: policy,
 // ownership, state open, guarded confirm, path, offset, mode (api.ValidateFileMode, <= 0777), length
 // (<= api.MaxFileChunk) and sha256 shape.
 //
@@ -491,7 +491,7 @@ func (s *Service) writeRefused(ctx context.Context, p auth.Principal, src Source
 }
 
 // ListWorkspaces returns the caller's own live workspaces (opening, open, closing), optionally of
-// one fleet. It is audited with one row (M3.md 1.8); if that row cannot be written the call fails
+// one fleet. It is audited with one row; if that row cannot be written the call fails
 // closed with unavailable.
 func (s *Service) ListWorkspaces(ctx context.Context, p auth.Principal, src Source, fleet string) ([]store.Workspace, error) {
 	if err := s.requireOperator(ctx, p, src, api.MethodWorkspaceList); err != nil {

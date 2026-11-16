@@ -24,7 +24,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// Version skew (docs/M6.md 2.2) in process: a real central, a real runner and a real orch that
+// Version skew in process: a real central, a real runner and a real orch that
 // fake their protocol levels. Central is at level 6 unless a test says otherwise.
 
 const (

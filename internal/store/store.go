@@ -577,7 +577,7 @@ type Store interface {
 	Close() error
 }
 
-// CredentialKind is the type of a central-held credential (docs/M7.md section 4.1).
+// CredentialKind is the type of a central-held credential.
 type CredentialKind string
 
 const (
@@ -691,7 +691,7 @@ const SettingRegistrationSecret = "registration_secret"
 var ErrFull = errors.New("store: no free workspace slot")
 
 // ErrRunnerHeld: a host-fleet runner already has live workspaces of another operator (one operator
-// per runner, docs/M7.md 3.4). The error is a *HeldError naming that operator.
+// per runner). The error is a *HeldError naming that operator.
 var ErrRunnerHeld = errors.New("store: runner is in use by another operator")
 
 // HeldError is the ErrRunnerHeld error returned by ReserveWorkspace; Operator holds the runner.
@@ -723,8 +723,8 @@ type Executor string
 const (
 	ExecutorContainerd  Executor = "containerd"
 	ExecutorOpenSandbox Executor = "opensandbox"
-	// ExecutorHost runs tool calls as the runner's own unprivileged user on the VM (docs/M7.md
-	// section 3): no images, no resource limits.
+	// ExecutorHost runs tool calls as the runner's own unprivileged user on the VM:
+	// no images, no resource limits.
 	ExecutorHost Executor = "host"
 )
 
@@ -758,7 +758,7 @@ const (
 // Valid reports whether n is a known network mode.
 func (n NetworkMode) Valid() bool { return n == NetworkNone || n == NetworkEgress }
 
-// WorkspaceConfig is a workspace-mode fleet's admin-set configuration (M3.md 1.7, 1.10).
+// WorkspaceConfig is a workspace-mode fleet's admin-set configuration.
 // Durations are stored in whole seconds.
 type WorkspaceConfig struct {
 	Executor     Executor

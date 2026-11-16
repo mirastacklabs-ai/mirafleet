@@ -1,6 +1,6 @@
 package main
 
-// Workspace-mode wiring of the runner commands (docs/M3.md §1.12): executor construction for
+// Workspace-mode wiring of the runner commands: executor construction for
 // `runner run -workspace`, the node PKI (`tls-init`), the TLS front (`tls-front`) and the local
 // `workspace list|prune` admin commands. This file is the only place (with ctrd's own package)
 // that links containerd, and only on linux.
@@ -33,7 +33,7 @@ const defaultWorkspaceFile = "/etc/mirafleet/workspace.yaml"
 // newExecutor builds the executor named by cfg. It is a seam for tests (a fake executor); the
 // default talks to a real containerd or OpenSandbox. owner is the ownership name: it tags every
 // workspace the executor creates and bounds what List returns, so it must be unique across
-// fleets (docs/M3.md C-16): "<fleet>/<runner>".
+// fleets: "<fleet>/<runner>".
 var newExecutor = func(cfg *wsconfig.Config, owner string) (workspace.Executor, error) {
 	switch cfg.Executor {
 	case wsconfig.ExecContainerd:
@@ -216,7 +216,7 @@ func newTLSFront(args []string) (*osb.Front, error) {
 // runnerWorkspace is the local admin command on the runner host: it talks to the executor
 // directly (no central), so it works after a runner revoke, when central can no longer reach
 // the host. List and prune see only this runner's workspaces (the executor filters on its
-// ownership name "<fleet>/<runner>", docs/M3.md C-16), so several runners may share one
+// ownership name "<fleet>/<runner>"), so several runners may share one
 // containerd namespace. Prune with -all while `runner run` is active races with its reaper (a
 // destroy of an already-gone workspace is harmless), but stopping it first is still cleaner.
 func runnerWorkspace(args []string, out io.Writer, now time.Time) error {

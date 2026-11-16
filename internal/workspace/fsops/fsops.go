@@ -2,7 +2,7 @@
 // Stat) as a pure Go library rooted at a directory. It follows Claude Code's local tool
 // semantics and error messages closely.
 //
-// The tools reach everything the OS user can see (docs/M7.md §3.7, parity with local Claude
+// The tools reach everything the OS user can see (parity with local Claude
 // Code): an absolute path works anywhere, a relative one is taken from the directory the FS was
 // opened on; the OS permissions are the boundary. Anything that is not a regular file (FIFO,
 // device, socket) is refused before and after open, and opens are non-blocking where the OS has

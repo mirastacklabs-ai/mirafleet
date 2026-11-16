@@ -1,6 +1,6 @@
 package orch
 
-// Typed calls for the dev-workspace methods (docs/M7.md §3.5-§3.7). Each validates its params
+// Typed calls for the dev-workspace methods. Each validates its params
 // locally (the same Validate central runs) so a bad call never leaves the machine.
 
 import (

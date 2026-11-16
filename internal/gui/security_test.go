@@ -1,6 +1,6 @@
 package gui
 
-// S14: the GUI security suite (docs/M4.md 5, rows S14, 2.4-2.7, 7 and G-02). The route list is
+// The GUI security suite. The route list is
 // derived from the registration code itself (every mux.Handle / mux.HandleFunc call in the
 // non-test sources of this package), so a new route cannot be missed; no test hook is needed.
 
@@ -750,7 +750,7 @@ var (
 		"hx-select": true, "hx-confirm": true, "hx-indicator": true, "hx-headers": true, "hx-disabled-elt": true, "hx-include": true}
 )
 
-// lintHTML returns the violations of docs/M4.md 2.7 / G-02 in an HTML (or template) text.
+// lintHTML returns the template-lint violations (inline script/style/handlers, htmx attributes) in an HTML (or template) text.
 func lintHTML(s string, source bool) []string {
 	var bad []string
 	for _, tag := range tagRE.FindAllString(s, -1) {
@@ -914,7 +914,7 @@ func TestTemplateHTMXConfigMetaExact(t *testing.T) {
 			continue
 		}
 		if ms[0][1] != htmxConfigWant {
-			t.Errorf("%s: htmx-config differs from docs/M4.md 2.7:\n%s", name, ms[0][1])
+			t.Errorf("%s: htmx-config differs from the expected config:\n%s", name, ms[0][1])
 		}
 		var got any
 		if err := json.Unmarshal([]byte(ms[0][1]), &got); err != nil || !reflect.DeepEqual(got, want) {

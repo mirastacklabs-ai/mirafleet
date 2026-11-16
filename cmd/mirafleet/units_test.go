@@ -48,7 +48,7 @@ func TestRunnerUnitFiles(t *testing.T) {
 		if got := svc["ExecStart"]; len(got) != 1 || got[0] != c.execStart {
 			t.Errorf("%s: ExecStart = %q", c.file, got)
 		}
-		// Background shells must survive a runner restart (docs/M7.md §3.5).
+		// Background shells must survive a runner restart.
 		if svc["KillMode"][0] != "process" || svc["Restart"][0] != "on-failure" {
 			t.Errorf("%s: KillMode/Restart = %v/%v", c.file, svc["KillMode"], svc["Restart"])
 		}

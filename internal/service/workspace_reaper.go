@@ -11,7 +11,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
 )
 
-// DefaultReaperInterval is the period of the workspace reaper sweep (M3.md 1.6).
+// DefaultReaperInterval is the period of the workspace reaper sweep.
 const DefaultReaperInterval = 60 * time.Second
 
 // DefaultOpenMargin is added to the open timeout before reconcile treats an opening row as stuck,
@@ -363,7 +363,7 @@ func (s *Service) RecoverWorkspaces(ctx context.Context) (int, error) {
 	}
 }
 
-// ReconcileRunner compares the runner's own list of workspaces with the store (M3.md 1.6). It
+// ReconcileRunner compares the runner's own list of workspaces with the store. It
 // is idempotent, never holds a lock across a runner call, and is meant to run in a background
 // goroutine on the runner's first heartbeat.
 func (s *Service) ReconcileRunner(ctx context.Context, runnerID int64) {

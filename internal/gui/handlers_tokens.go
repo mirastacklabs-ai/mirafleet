@@ -1,6 +1,6 @@
 package gui
 
-// Join tokens screens (docs/M4.md 3.5): list, create and revoke. Creating a token is one of the
+// Join tokens screens: list, create and revoke. Creating a token is one of the
 // two POSTs that answer directly instead of redirecting, because they show a secret once:
 //
 //   - The form carries a signed nonce (32 random bytes, MACed with the session's CSRF key, valid

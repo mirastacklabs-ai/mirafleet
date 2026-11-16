@@ -2,7 +2,7 @@ package runner
 
 // Workspace mode: the runner serves workspace@mirafleet channels through a workspace.Executor.
 // Central is not trusted: every request is re-validated here against the runner's own
-// workspace.yaml (docs/M3.md sections 1.2, 1.4, 1.8, 1.9, 1.11, 1.12).
+// workspace.yaml.
 //
 // Channel flow (one op per channel):
 //  1. decode the request (strict); malformed -> channel rejected (ConnectionFailed);
@@ -1105,7 +1105,7 @@ func (r *Runner) fillHeartbeat(hb *transport.Heartbeat) {
 var diskSampleEvery = 60 * time.Second
 
 // runDiskSampler samples workspace disk usage every diskSampleEvery until ctx is done and
-// destroys workspaces at 2x their quota (M3.md 1.9). It does nothing when the executor has no
+// destroys workspaces at 2x their quota. It does nothing when the executor has no
 // DiskUsager. Run waits for it, so nothing outlives the runner.
 func (r *Runner) runDiskSampler(ctx context.Context) {
 	if r.ws == nil {

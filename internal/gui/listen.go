@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// DefaultListen is the GUI bind address (docs/M4.md Q11).
+// DefaultListen is the GUI bind address.
 const DefaultListen = "0.0.0.0:8443"
 
 // DefaultHostRefresh is how often the interface addresses behind the Host allowlist are re-read.
@@ -79,7 +79,7 @@ func ownIPs(list InterfaceLister) ([]netip.Addr, error) {
 	return out, err
 }
 
-// hostGuard is the Host header allowlist (docs/M4.md 2.2): IP literals only when they are this
+// hostGuard is the Host header allowlist: IP literals only when they are this
 // machine's own addresses, names only when listed exactly. Anything else, and a missing Host,
 // is refused.
 type hostGuard struct {
@@ -214,7 +214,7 @@ func isLoopbackHost(host string) bool {
 	return err == nil && a.IsLoopback()
 }
 
-// bindNotice is the "reachable beyond this machine" warning of docs/M4.md 2.2, or "" for a
+// bindNotice is the "reachable beyond this machine" warning, or "" for a
 // loopback bind. addr is the bound ip:port.
 func bindNotice(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
