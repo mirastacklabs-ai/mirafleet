@@ -42,7 +42,7 @@ const (
 	testHost = "192.0.2.10:8443"
 )
 
-// TestMain gives every test cheap Argon2id parameters (G-11): hashing at production cost under
+// TestMain gives every test cheap Argon2id parameters: hashing at production cost under
 // -race made a single login take seconds.
 func TestMain(m *testing.M) {
 	restore := auth.SetParamsForTest(auth.TestParams)

@@ -61,5 +61,5 @@ func TestS3TemplatesParse(t *testing.T) {
 			}
 		}
 	}
-	// The lint (inline script/style/handlers, htmx attributes) lives in security_test.go (S14).
+	// The lint (inline script/style/handlers, htmx attributes) lives in security_test.go.
 }

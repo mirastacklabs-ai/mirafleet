@@ -55,7 +55,7 @@ func TestHeartbeatActionsBounds(t *testing.T) {
 	}
 }
 
-// An M2/M3 heartbeat (no actions key) decodes and validates; empty actions marshal to no key.
+// An older heartbeat (no actions key) decodes and validates; empty actions marshal to no key.
 func TestHeartbeatWithoutActions(t *testing.T) {
 	var hb Heartbeat
 	if err := json.Unmarshal([]byte(`{"hostname":"h","os":"linux","arch":"amd64","version":"v","slots":2}`), &hb); err != nil {

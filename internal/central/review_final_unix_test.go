@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// D-20: closing an older server never removes the socket of a newer one on the same path.
+// Closing an older server never removes the socket of a newer one on the same path.
 func TestAdminSocketNotRemovedByOlderServer(t *testing.T) {
 	e1 := newEnv(t)
 	e2 := newEnv(t)

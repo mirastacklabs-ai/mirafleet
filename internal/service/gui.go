@@ -52,7 +52,7 @@ var (
 	// errBadLogin is the single refusal for an unknown user and a wrong password.
 	errBadLogin = api.Errorf(api.CodeUnauthenticated, "invalid username or password")
 	// errSetupRefused is the single refusal for a wrong, expired or already-used setup token
-	// and for a lost setup race (G-07).
+	// and for a lost setup race.
 	errSetupRefused = api.Errorf(api.CodeConflict, "setup is not available")
 	errNoSession    = api.Errorf(api.CodeUnauthenticated, "unauthenticated")
 
@@ -154,7 +154,7 @@ func (s *Service) newSession(adminID, generation int64, remote, ua string) (stor
 
 // CompleteGUISetup consumes the setup token, creates the first admin and logs it in. The token
 // is the credential. A wrong, expired or used token and a lost race all return one generic
-// error (G-07). Returns the raw session token (for the cookie) and the admin principal.
+// error. Returns the raw session token (for the cookie) and the admin principal.
 func (s *Service) CompleteGUISetup(ctx context.Context, remote, ua, token, username, password string) (string, auth.Principal, error) {
 	if !store.ValidOperatorName(username) {
 		return "", auth.Principal{}, ErrInvalidUsername
@@ -165,7 +165,7 @@ func (s *Service) CompleteGUISetup(ctx context.Context, remote, ua, token, usern
 	if len(token) == 0 || len(token) > maxCredentialBytes {
 		return "", auth.Principal{}, errSetupRefused
 	}
-	// G-21: the token is checked (constant time) before the expensive password hash, so a guess
+	// The token is checked (constant time) before the expensive password hash, so a guess
 	// with a wrong token costs no Argon2 run. The transaction below repeats the check.
 	now := s.now()
 	if err := s.st.CheckGUISetup(ctx, tokenHash(token), now); err != nil {
@@ -368,7 +368,7 @@ func (s *Service) ChangeGUIPassword(ctx context.Context, p auth.Principal, sessi
 // "reset", every session is deleted, and a fresh setup token is created and returned once. Admin
 // only. It is two transactions (reset, then the new setup row); if the second fails there is no
 // admin and no setup token, which fails closed: run it again, or restart the GUI, which creates
-// the token (G-08).
+// the token.
 func (s *Service) ResetGUIAdmin(ctx context.Context, p auth.Principal, src Source) (string, error) {
 	if err := s.authorize(ctx, p, src, api.MethodGUIResetAdmin, true); err != nil {
 		return "", err

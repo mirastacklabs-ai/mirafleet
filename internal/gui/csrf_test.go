@@ -227,7 +227,7 @@ func TestFlashAndNonceMAC(t *testing.T) {
 	}
 }
 
-// G-17: a token whose last character carries non-zero padding bits is not canonical.
+// A token whose last character carries non-zero padding bits is not canonical.
 func TestValidTokenIsStrict(t *testing.T) {
 	if !validToken(strings.Repeat("A", 43)) {
 		t.Fatal("canonical token refused")

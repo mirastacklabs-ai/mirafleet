@@ -146,7 +146,7 @@ func TestM5Done(t *testing.T) {
 				r.Stdout.Write([]byte("hi\n"))
 			}
 			if err == nil && len(r.Argv) == 3 && r.Argv[2] == "m5-noisy" && r.Stdout != nil {
-				line := []byte(strings.Repeat("n", 99) + "\n") // F-42: 400 KiB of output
+				line := []byte(strings.Repeat("n", 99) + "\n") // 400 KiB of output
 				for i := 0; i < 4096; i++ {
 					r.Stdout.Write(line)
 				}
@@ -519,7 +519,7 @@ func m5ImplicitOpen(t *testing.T, f *m5Fixture) {
 	}
 	f.assertNoDecoyAtExecutors(t)
 
-	// F-42: a noisy exec is capped: truncated is set and the result is within the output cap.
+	// A noisy exec is capped: truncated is set and the result is within the output cap.
 	r = al.call("exec", map[string]any{"command": "m5-noisy"})
 	if r.IsErr || !r.boolean("truncated") || r.num("omitted_bytes") <= 0 ||
 		len(r.str("stdout"))+len(r.str("stderr")) > opconf.DefaultOutputCap {
@@ -680,14 +680,14 @@ func m5Ownership(t *testing.T, f *m5Fixture) {
 		if got := f.rec.count(p.method) - n; got != 1 {
 			t.Errorf("%s: %d requests reached central, want exactly 1", p.method, got)
 		}
-		f.ownershipRefused[p.method]++ // refused before any work: one denied row each (F-43, step 12)
+		f.ownershipRefused[p.method]++ // refused before any work: one denied row each
 	}
 	after, err := f.e.db.GetWorkspace(ctx, f.aliceWS)
 	must(t, err)
 	if after.State != store.WorkspaceOpen || !reflect.DeepEqual(after, before) {
 		t.Fatalf("alice's workspace after bob's calls: %+v, before %+v", after, before)
 	}
-	// F-43: each refusal left exactly one denied row (bob as actor, alice's workspace id), nothing else.
+	// Each refusal left exactly one denied row (bob as actor, alice's workspace id), nothing else.
 	deniedBy := map[string]int{}
 	for _, row := range f.e.auditRows() {
 		if row.Actor == "bob" && row.Workspace == f.aliceWS {
@@ -946,8 +946,8 @@ func m5Hygiene(t *testing.T, f *m5Fixture) {
 		}
 	}
 	// Every call sent has a start row or a single denied row, and the denied rows are exactly the
-	// known refusals: step 7's ownership probes (F-43) per method, step 8's mode-mismatch
-	// run_action on the workspace fleet (F-41) plus the one guarded refusal for action.run.
+	// known refusals: the ownership probes per method, the mode-mismatch
+	// run_action on the workspace fleet plus the one guarded refusal for action.run.
 	modeRefused := 0 // action.run requests aimed at fleet dev (the workspace fleet), from the recorder
 	for _, q := range f.rec.snapshot() {
 		if q.method != api.MethodActionRun {
@@ -965,7 +965,7 @@ func m5Hygiene(t *testing.T, f *m5Fixture) {
 		api.MethodWorkspaceWriteFile: f.ownershipRefused[api.MethodWorkspaceWriteFile],
 		api.MethodWorkspaceClose:     f.ownershipRefused[api.MethodWorkspaceClose],
 		api.MethodActionRun:          1 + modeRefused,
-		api.MethodWorkspaceOpen:      1, // step 8: workspace_open on the actions fleet (F-41)
+		api.MethodWorkspaceOpen:      1, // workspace_open on the actions fleet
 	}
 	for _, m := range []string{api.MethodWorkspaceExec, api.MethodWorkspaceReadFile, api.MethodWorkspaceWriteFile, api.MethodActionRun} {
 		if started[m]+denied[m] != sent[m] {

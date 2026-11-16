@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// F-06: openNoFollow refuses a symlink and does not block on a FIFO.
+// openNoFollow refuses a symlink and does not block on a FIFO.
 func TestOpenNoFollow(t *testing.T) {
 	d := t.TempDir()
 	real := filepath.Join(d, "real")
@@ -65,7 +65,7 @@ func TestLoadProjectFIFORefused(t *testing.T) {
 	}
 }
 
-// F-18/F-11: saved contexts are 0600 and the dir is synced via the keys helper without leftovers.
+// Saved contexts are 0600 and the dir is synced via the keys helper without leftovers.
 func TestSaveContextsMode(t *testing.T) {
 	dir := t.TempDir()
 	if err := SaveContexts(dir, &Contexts{Contexts: []Context{{Name: "a", Addr: "h:1"}}}); err != nil {

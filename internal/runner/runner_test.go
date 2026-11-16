@@ -126,7 +126,7 @@ func runFake(t *testing.T, f *fakeCentral, kit runnerKit, mod func(*Config)) {
 	t.Cleanup(func() { cancel(); <-done })
 }
 
-// Q17: a handshake-then-drop central must not reset the backoff; waits grow.
+// A handshake-then-drop central must not reset the backoff; waits grow.
 func TestBackoffGrowsWhenConnectionNeverHealthy(t *testing.T) {
 	f, kit := startFake(t, "drop")
 	runFake(t, f, kit, func(c *Config) {
@@ -150,7 +150,7 @@ func TestBackoffGrowsWhenConnectionNeverHealthy(t *testing.T) {
 	}
 }
 
-// Q06: a central that never replies to the heartbeat gets dropped and redialled.
+// A central that never replies to the heartbeat gets dropped and redialled.
 func TestHeartbeatReplyTimeoutReconnects(t *testing.T) {
 	f, kit := startFake(t, "mute")
 	runFake(t, f, kit, func(c *Config) {
@@ -233,7 +233,7 @@ func TestBackoffMaxClamped(t *testing.T) {
 	}
 }
 
-// Q08: worst-case escaping of a capped result stays under central's read limit, unescaped HTML.
+// Worst-case escaping of a capped result stays under central's read limit, unescaped HTML.
 func TestEncodeResultWorstCase(t *testing.T) {
 	ctrl := strings.Repeat("\x01", actions.MaxOutput) // 6 bytes each once escaped
 	b := encodeResult(&transport.ExecResult{Stdout: ctrl[:actions.MaxOutput/2], Stderr: ctrl[:actions.MaxOutput/2], Message: "m"})
@@ -252,7 +252,7 @@ func TestEncodeResultWorstCase(t *testing.T) {
 
 func writeFile(p, s string) error { return os.WriteFile(p, []byte(s), 0o600) }
 
-// S5: an actions-mode runner advertises its actions (bounded, valid); a workspace-mode or
+// An actions-mode runner advertises its actions (bounded, valid); a workspace-mode or
 // unconfigured runner sends none.
 func TestFillActions(t *testing.T) {
 	set, err := actions.Parse([]byte(`{actions: {b: {run: ["/bin/echo", "{{x}}"], params: {x: {pattern: "[a-z]+", default: "d"}}}, a: {run: ["/usr/bin/true"]}}}`))

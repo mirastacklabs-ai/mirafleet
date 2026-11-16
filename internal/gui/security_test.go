@@ -722,7 +722,7 @@ func TestSecurityTamperedSessionRowRefusedAndDeleted(t *testing.T) {
 	}
 }
 
-// ---- template lint (G-02) ----
+// ---- template lint ----
 
 const htmxConfigWant = `{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"historyCacheSize":0,"refreshOnHistoryMiss":true,"selfRequestsOnly":true,"defaultSwapStyle":"outerHTML","responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}`
 
@@ -740,7 +740,7 @@ var (
 	srcAttrRE    = regexp.MustCompile(`(?i)\ssrc\s*=\s*["'{]`)
 	styleTagRE   = regexp.MustCompile(`(?i)<style\b`)
 	triggerOKRE  = regexp.MustCompile(`^(?:load|every [0-9]+s|change|submit|keyup changed delay:[0-9]+s)(?:\s*,\s*(?:load|every [0-9]+s|change|submit|keyup changed delay:[0-9]+s))*$`)
-	// Source-only: the G-02 expressions applied to the raw template text.
+	// Source-only: the lint expressions applied to the raw template text.
 	sourceRE = map[string]*regexp.Regexp{
 		"on* handler": regexp.MustCompile(`(?i)\son[a-z]+\s*=`),
 		"style attr":  regexp.MustCompile(`(?i)\sstyle\s*=`),

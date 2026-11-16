@@ -42,7 +42,7 @@ func TestSetFleetWorkspaceUpperBounds(t *testing.T) {
 	}
 }
 
-// C-14: a sticky open of a row still opening is a conflict, not reused=true.
+// A sticky open of a row still opening is a conflict, not reused=true.
 func TestOpenWorkspaceStickyStillOpening(t *testing.T) {
 	e := newEnv(t)
 	e.wsFleet("dev", false, nil)
@@ -58,7 +58,7 @@ func TestOpenWorkspaceStickyStillOpening(t *testing.T) {
 	}
 }
 
-// C-17: an inconsistent read reply sends nothing to the caller.
+// An inconsistent read reply sends nothing to the caller.
 func TestReadWorkspaceFileInconsistentSendsNothing(t *testing.T) {
 	e := newEnv(t)
 	e.wsFleet("dev", false, nil)
@@ -86,7 +86,7 @@ func TestReadWorkspaceFileInconsistentSendsNothing(t *testing.T) {
 	}
 }
 
-// C-13: one hung runner does not stall the sweep of another.
+// One hung runner does not stall the sweep of another.
 func TestReapOneHungRunnerDoesNotStallOthers(t *testing.T) {
 	e := newEnv(t)
 	e.wsFleet("dev", false, nil)
@@ -128,7 +128,7 @@ func TestReapOneHungRunnerDoesNotStallOthers(t *testing.T) {
 	}
 }
 
-// D-05: kill reports the resulting state.
+// Kill reports the resulting state.
 func TestKillWorkspaceState(t *testing.T) {
 	e := newEnv(t)
 	e.wsFleet("dev", false, nil)

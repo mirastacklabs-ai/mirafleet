@@ -179,7 +179,7 @@ func TestPrune(t *testing.T) {
 	}
 }
 
-// H-08/H-09: records live in StateDir/meta, and a delete or prune also removes the executor's
+// Records live in StateDir/meta, and a delete or prune also removes the executor's
 // state directory of the session (saved output, job logs).
 func TestRemoveDropsStateDirAndMetaIsApart(t *testing.T) {
 	m, clk, base := newMgr(t, nil)

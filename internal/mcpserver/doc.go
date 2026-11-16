@@ -1,7 +1,7 @@
 // Package mcpserver is the MCP stdio server. It is the only package in this module that imports
 // github.com/modelcontextprotocol/go-sdk (enforced by TestOrchestratorDeps).
 //
-// # Design (M5 S7; wave C wires the real tools)
+// # Design
 //
 // The package is decoupled from internal/orch: the caller hands it tools through [Config].
 //

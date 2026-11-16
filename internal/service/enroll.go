@@ -49,7 +49,7 @@ type JoinResult = api.EnrollJoinResult
 // Join enrols a runner (p.Kind must be enroll). The token's host-key pin must equal central's;
 // the key must not belong to an operator (checked atomically in store.Enroll); labels come from the token only. Failures other than
 // a name/key conflict return one identical error and the real reason is logged server-side only.
-// A successful join is audited (source enroll); failed joins are logged, not audited (§1.7).
+// A successful join is audited (source enroll); failed joins are logged, not audited.
 func (s *Service) Join(ctx context.Context, p auth.Principal, src Source, token, name string, key ssh.PublicKey) (JoinResult, error) {
 	if err := s.requireEnroll(ctx, p, src, api.MethodEnrollJoin); err != nil {
 		return JoinResult{}, err

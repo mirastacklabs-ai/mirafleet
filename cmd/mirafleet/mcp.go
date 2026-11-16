@@ -71,7 +71,7 @@ func loadOperatorKey(dir string) (ssh.Signer, error) {
 }
 
 // writeAtomic0600 writes dir/name atomically with a private temp file (explicit owner-only DACL on
-// Windows, F-18), fsync, rename and a directory fsync. See keys.WriteAtomic0600.
+// Windows), fsync, rename and a directory fsync. See keys.WriteAtomic0600.
 func writeAtomic0600(dir, name string, data []byte) error {
 	return keys.WriteAtomic0600(dir, name, data)
 }

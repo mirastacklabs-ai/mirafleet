@@ -13,7 +13,7 @@ import (
 )
 
 // OperatorConns lets the service drop an operator's live SSH connections (implemented by the
-// central api handler, S7). In-flight execs started by that operator die with the connection
+// central api handler). In-flight execs started by that operator die with the connection
 // because their request ctx is derived from it.
 type OperatorConns interface {
 	KickOperator(id int64, reason string)

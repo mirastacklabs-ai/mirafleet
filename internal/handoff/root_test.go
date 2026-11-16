@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// F-01: a symlink planted inside sessions/ that points outside is never followed.
+// A symlink planted inside sessions/ that points outside is never followed.
 func TestSymlinkEntryOutsideRootNotFollowed(t *testing.T) {
 	dir, outside := t.TempDir(), t.TempDir()
 	if err := Write(dir, k1, "cc:real", time.Now()); err != nil {
@@ -37,7 +37,7 @@ func TestSymlinkEntryOutsideRootNotFollowed(t *testing.T) {
 	}
 }
 
-// F-01: prune never follows or deletes through a symlink, even to an old file outside.
+// Prune never follows or deletes through a symlink, even to an old file outside.
 func TestPruneDoesNotFollowSymlinks(t *testing.T) {
 	dir, outside := t.TempDir(), t.TempDir()
 	if err := Write(dir, k1, "s", time.Now()); err != nil {
@@ -58,7 +58,7 @@ func TestPruneDoesNotFollowSymlinks(t *testing.T) {
 	}
 }
 
-// F-01: the state dir itself is Lstat-checked.
+// The state dir itself is Lstat-checked.
 func TestSymlinkStateDirRefused(t *testing.T) {
 	base, real := t.TempDir(), t.TempDir()
 	link := filepath.Join(base, "state")
@@ -76,7 +76,7 @@ func TestSymlinkStateDirRefused(t *testing.T) {
 	}
 }
 
-// F-05: prune reads at most maxScanned entries, so a huge directory is not slurped whole.
+// Prune reads at most maxScanned entries, so a huge directory is not slurped whole.
 func TestPruneBounded(t *testing.T) {
 	dir := t.TempDir()
 	if err := Write(dir, k1, "s", time.Now()); err != nil {

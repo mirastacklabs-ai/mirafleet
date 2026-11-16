@@ -1109,7 +1109,7 @@ const (
 	FeatureHost   = "host"
 )
 
-// MaxHeartbeatFeatures and MaxHeartbeatCredentials bound the M7 heartbeat fields.
+// MaxHeartbeatFeatures and MaxHeartbeatCredentials bound the host-mode heartbeat fields.
 const (
 	MaxHeartbeatFeatures    = 16
 	MaxHeartbeatCredentials = 64

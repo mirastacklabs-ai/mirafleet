@@ -221,7 +221,7 @@ func m7Bash(t *testing.T, f *m7Fix) {
 			t.Fatalf("read_output at %d: %s", off, p.Text)
 		}
 		if int64(p.num("offset")) != off || p.num("omitted_bytes") != 0 {
-			// Known bug (reported with S17): readOutput asks the runner for `budget` raw bytes but
+			// Known bug: readOutput asks the runner for `budget` raw bytes but
 			// the cap counts the JSON-encoded size, so a page full of newlines is cut in the middle
 			// while next_offset skips the cut part. This check stays red until that is fixed.
 			t.Errorf("read_output page at %d lost %v bytes inside the page (offset %v): paging is not exact",
@@ -386,7 +386,7 @@ func m7Dirs(t *testing.T, f *m7Fix) {
 		t.Fatalf("write in workdir: %s", x.Text)
 	}
 	if x := w2.call("read", map[string]any{"path": "shared.txt"}); !strings.Contains(x.str("content"), "from w1") {
-		// Known gap (reported with S17): mcpserver does not send the project file's workdir.
+		// Known gap: mcpserver does not send the project file's workdir.
 		t.Errorf("BUG: .mirafleet.yaml workdir is not sent by workspace_open, so the sessions do not share a directory: %s", x.Text)
 	}
 	w1.call("workspace_close", nil)

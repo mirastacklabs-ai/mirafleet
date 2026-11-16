@@ -72,7 +72,7 @@ func TestEnsureDirRepairsEmptyLooseDir(t *testing.T) {
 	}
 }
 
-// F-13: a non-empty pre-existing dir is verified, never rewritten. A loose one (inherited ACEs) is
+// A non-empty pre-existing dir is verified, never rewritten. A loose one (inherited ACEs) is
 // refused and its DACL, and its children's, are left alone.
 func TestEnsureDirRefusesLooseExistingDirWithoutRewriting(t *testing.T) {
 	d := filepath.Join(t.TempDir(), "loose")
@@ -149,7 +149,7 @@ func TestDenyACERefused(t *testing.T) {
 // SeTakeOwnership/SeRestore (admin) and a second account. The owner rule is covered by
 // TestACLPolicy ("wrong owner") on every OS.
 
-// F-18: the atomic writer's temp (and so the final file) carries the explicit private DACL, not
+// The atomic writer's temp (and so the final file) carries the explicit private DACL, not
 // the one inherited from its directory.
 func TestWriteAtomic0600HasPrivateDACL(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "cfg")

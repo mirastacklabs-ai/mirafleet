@@ -148,7 +148,7 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 			invalid(map[string]string{"new": userMessage(ae.Message)})
 			return
 		}
-		if errors.As(err, &ae) && ae.Code == api.CodeConflict { // the account changed under the form (G-39)
+		if errors.As(err, &ae) && ae.Code == api.CodeConflict { // the account changed under the form
 			invalid(map[string]string{"form": userMessage(ae.Message)})
 			return
 		}
@@ -216,7 +216,7 @@ func (s *Server) handleTheme(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: ThemeCookieName, Value: theme, Path: "/", MaxAge: 365 * 24 * 3600,
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
-	next := form.Get("next") // the page the switch was used on (G-39); Redirect refuses non-local targets
+	next := form.Get("next") // the page the switch was used on; Redirect refuses non-local targets
 	if next == "" || next == "/account/theme" {
 		next = "/account"
 	}

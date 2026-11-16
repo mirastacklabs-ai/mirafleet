@@ -136,7 +136,7 @@ func TestCwdPersists(t *testing.T) {
 	if got := strings.TrimSpace(bash(t, e, s, "pwd", 0).Stdout); got != want {
 		t.Fatalf("cwd = %q, want %q", got, want)
 	}
-	// env does not persist (Q11)
+	// env does not persist
 	bash(t, e, s, "export FOO=1", 0)
 	if r := bash(t, e, s, `echo "[$FOO]"`, 0); strings.TrimSpace(r.Stdout) != "[]" {
 		t.Errorf("env persisted: %q", r.Stdout)
@@ -290,7 +290,7 @@ func TestKillSession(t *testing.T) {
 	}
 }
 
-// H-10: `server &` in a foreground command does not survive the call.
+// `server &` in a foreground command does not survive the call.
 func TestForegroundBackgroundChildDoesNotSurvive(t *testing.T) {
 	e := newEngine(t, Config{})
 	s := newSession(t)

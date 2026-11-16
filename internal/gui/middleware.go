@@ -52,7 +52,7 @@ func newRequestID() string {
 
 // statusWriter records the status for the access log and gives every response without an
 // explicit Cache-Control the value "no-store" (HTML, fragments, errors, and the static handler's
-// 404s: G-01). The static handler sets its own immutable value before WriteHeader, so it wins.
+// 404s). The static handler sets its own immutable value before WriteHeader, so it wins.
 type statusWriter struct {
 	http.ResponseWriter
 	status int

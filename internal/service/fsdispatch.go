@@ -2,7 +2,7 @@ package service
 
 // Dev-workspace dispatch: workspace.fs and the shared call path of the
 // job and output methods (jobs.go). All of them need a host-mode fleet; container fleets answer
-// bad_request. The guard of a guarded host fleet is the typed fleet-name confirm only (Q10),
+// bad_request. The guard of a guarded host fleet is the typed fleet-name confirm only,
 // decided by policy.RequiresConfirm.
 
 import (

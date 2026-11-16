@@ -217,7 +217,7 @@ func (f *Front) newHandler() http.Handler {
 			// The error text can carry the upstream address only; never headers. Keep it short.
 			f.cfg.Logf("tls-front: upstream error on %s %q: %s", r.Method, r.URL.Path, errClass(err))
 			if db, ok := r.Body.(*deadlineBody); ok && db.timedOut.Load() {
-				// D-08: the client stalled while sending its body. Answer before the connection
+				// The client stalled while sending its body. Answer before the connection
 				// is closed so it sees 408 instead of a bare EOF.
 				w.Header().Set("Connection", "close")
 				http.Error(w, "request body timeout", http.StatusRequestTimeout)
@@ -314,7 +314,7 @@ func (f *Front) Start() (string, error) {
 	srv := &http.Server{
 		Handler:   f.handler,
 		TLSConfig: f.tlsCfg.Clone(),
-		// D-03: net/http applies the smallest of Read/ReadHeader/WriteTimeout to the TLS handshake
+		// net/http applies the smallest of Read/ReadHeader/WriteTimeout to the TLS handshake
 		// too, so a silent or stalled client is dropped after this long (and the request headers
 		// must also arrive within it). ReadTimeout is deliberately unset: exec streams are long.
 		ReadHeaderTimeout: f.handshakeTimeout,

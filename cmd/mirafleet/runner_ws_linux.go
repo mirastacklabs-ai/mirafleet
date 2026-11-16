@@ -93,7 +93,7 @@ func runnerTLSInit(args []string, out io.Writer) error {
 		return fmt.Errorf("%s is not empty: tls-init never overwrites; use a fresh directory", *dir)
 	}
 	// The files are created relative to the verified fd (openat O_EXCL|O_NOFOLLOW), so a swap of
-	// the path after the check cannot redirect them (F-19).
+	// the path after the check cannot redirect them.
 	p, err := osb.InitPKIAt(dirf, *dir, *days, time.Now())
 	if err != nil {
 		return err
@@ -122,9 +122,9 @@ func runnerTLSInit(args []string, out io.Writer) error {
 // the effective uid, mode exactly 0700. An existing leaf that fails any of this is refused, never
 // chmodded or chowned (an attacker-owned or looser directory in a shared parent is not ours).
 //
-// dir is cleaned first (F-21): a trailing slash ("x/") would make the kernel follow a symlinked
+// dir is cleaned first: a trailing slash ("x/") would make the kernel follow a symlinked
 // leaf despite O_NOFOLLOW. On a setgid parent a directory created here inherits the setgid bit
-// (02700); since this call created it, it is Fchmod'ed to 0700 through the fd (F-22). A
+// (02700); since this call created it, it is Fchmod'ed to 0700 through the fd. A
 // pre-existing leaf is never chmodded: with setgid set it is refused with a message saying so.
 func openPrivateDir(dir string) (*os.File, error) {
 	dir = filepath.Clean(dir)

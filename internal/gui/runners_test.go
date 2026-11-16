@@ -1,6 +1,6 @@
 package gui
 
-// Tests for the Runners screens (M4 step S9). They use the shared harness (helpers_test.go),
+// Tests for the Runners screens. They use the shared harness (helpers_test.go),
 // signed in through loginForTest. Runner-reported data a real runner would send over the
 // heartbeat (info, advertised actions) is injected by a Backend wrapper.
 

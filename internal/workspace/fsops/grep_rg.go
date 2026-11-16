@@ -3,7 +3,7 @@ package fsops
 import "strconv"
 
 // RgArgs returns the ripgrep argv (without the program name) that produces the same file set and
-// matches as Grep for o, so a runner with rg installed can delegate (Q12). Run it with the
+// matches as Grep for o, so a runner with rg installed can delegate. Run it with the
 // session directory as the working directory and no shell. Output shape per mode:
 //
 //	content             --json (parse "match" and "context" events; line numbers are always there)

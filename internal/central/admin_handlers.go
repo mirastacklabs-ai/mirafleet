@@ -187,7 +187,7 @@ func handleAuditList(ctx context.Context, c *callCtx, req *api.Request) (any, er
 	return out, nil
 }
 
-// maxConfigSeconds bounds every *_s admin field (D-07) so the conversion to a Duration cannot
+// maxConfigSeconds bounds every *_s admin field so the conversion to a Duration cannot
 // overflow; the store's own limits (exec ceiling, ttl order) apply afterwards.
 const maxConfigSeconds = 100_000_000
 
@@ -205,7 +205,7 @@ func checkWorkspaceSeconds(w *api.WorkspaceConfig) error {
 	return nil
 }
 
-// exposeConfig reports whether fleet DTOs may carry the complete workspace config (D-14): only for
+// exposeConfig reports whether fleet DTOs may carry the complete workspace config: only for
 // the admin principal on the admin socket (source cli).
 func (c *callCtx) exposeConfig() bool {
 	return c.p.Kind == auth.KindAdmin && c.src == service.SourceCLI

@@ -101,7 +101,7 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 	defer func() {
 		if sess != nil {
 			reg.Unregister(sess)
-			// D-02: last_seen/info on disconnect. Never throttled (only connect edges are), and
+			// last_seen/info on disconnect. Never throttled (only connect edges are), and
 			// written by the touch worker after its pending write, in the background: a hung
 			// store (each write is bounded by storeTimeout) never delays teardown.
 			s.markEdge(p.ID, s.cfg.Now())
@@ -128,7 +128,7 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			}
 		}
 		if err := hb.Validate(); err != nil && len(hb.Actions) > 0 {
-			// F-16: an invalid Actions list is informational and may be version skew; drop it and
+			// An invalid Actions list is informational and may be version skew; drop it and
 			// keep the connection if everything else is valid.
 			stripped := hb
 			stripped.Actions = nil
@@ -168,7 +168,7 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 				if edge {
 					s.deliverAsync(p.ID)
 				} else {
-					// H-06: a flapping runner costs one decrypt+send per edge gap; the next
+					// A flapping runner costs one decrypt+send per edge gap; the next
 					// heartbeat's retry delivers the set.
 					s.cfg.Service.MarkDeliveryStale(p.ID)
 				}
@@ -176,7 +176,7 @@ func (s *Server) serveRunner(sconn *ssh.ServerConn, p auth.Principal, chans <-ch
 			lastHB = hb
 			if edge {
 				lastTouch = now
-				tc.put(hb) // D-02: last_seen/info on register
+				tc.put(hb) // last_seen/info on register
 			} else {
 				// Throttled: the next heartbeat after the edge gap does the write instead.
 				lastTouch = now.Add(s.edgeGap() - s.cfg.TouchInterval)
@@ -441,7 +441,7 @@ func (s *Server) register(sconn *ssh.ServerConn, p auth.Principal, hb transport.
 // storeTimeout bounds the best-effort last_seen writes.
 const storeTimeout = 5 * time.Second
 
-// touchRunner records last_seen_at and info for a runner (D-02). Failures are logged only.
+// touchRunner records last_seen_at and info for a runner. Failures are logged only.
 func (s *Server) touchRunner(id int64, hb transport.Heartbeat) {
 	ctx, cancel := context.WithTimeout(context.Background(), storeTimeout)
 	defer cancel()

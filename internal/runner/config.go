@@ -24,7 +24,7 @@ const (
 // ErrNotJoined means the data directory has no runner.yaml.
 var ErrNotJoined = errors.New("runner is not joined: run `mirafleet runner join` first")
 
-// ErrAlreadyJoined means the data directory already holds a runner.yaml (Q13).
+// ErrAlreadyJoined means the data directory already holds a runner.yaml.
 var ErrAlreadyJoined = errors.New("this data directory has already joined a central (runner.yaml exists); use a fresh -data directory")
 
 // FileConfig is the contents of <data>/runner.yaml, written by `runner join`.

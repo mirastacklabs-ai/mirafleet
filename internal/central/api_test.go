@@ -178,7 +178,7 @@ func TestEndToEndJoinRegisterAndRun(t *testing.T) {
 	if !found {
 		t.Fatal("no api-sourced action.run audit row")
 	}
-	// D-02: register wrote last_seen and info.
+	// register wrote last_seen and info.
 	r, err = e.db.GetRunnerByID(ctx, r.ID)
 	must(t, err)
 	if r.LastSeenAt.IsZero() || r.Info["version"] != "test" || r.Info["os"] == "" {

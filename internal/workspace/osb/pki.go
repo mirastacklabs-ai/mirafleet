@@ -47,7 +47,7 @@ type PKI struct {
 // No existing file is overwritten. days is the validity of all three certificates (1..3650).
 //
 // The files are created relative to a handle on the directory (os.Root), not by path, so a swap
-// of dir (or of a component above it) after the check cannot redirect the writes (F-19). On linux
+// of dir (or of a component above it) after the check cannot redirect the writes. On linux
 // a caller that already holds a verified directory fd uses InitPKIAt instead.
 func InitPKI(dir string, days int, now time.Time) (*PKI, error) {
 	if days < 1 || days > 3650 {

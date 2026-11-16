@@ -18,7 +18,7 @@ const maxProjectBytes = 4 << 10
 
 // Project is the contents of .mirafleet.yaml. Every field may be empty. Remote marks a project
 // whose tools all run on the remote workspace; Workdir names a shared
-// directory on the runner instead of a per-session one (Q4) and needs Remote. Still no addresses,
+// directory on the runner instead of a per-session one and needs Remote. Still no addresses,
 // keys or caps.
 type Project struct {
 	Fleet   string `yaml:"fleet,omitempty"`
@@ -40,7 +40,7 @@ func LoadProject(start, home string) (Project, string, error) {
 	home = strings.TrimSpace(home)
 	if home != "" {
 		home = filepath.Clean(home)
-		// F-08: HOME=/ (or C:\) would make the walk-up reach the filesystem root, where any
+		// HOME=/ (or C:\) would make the walk-up reach the filesystem root, where any
 		// user's file could be planted. A root home counts as no home: only start is checked.
 		if filepath.Dir(home) == home {
 			home = ""
@@ -87,7 +87,7 @@ func loadProjectAt(dir string) (Project, string, bool, error) {
 	if st.Size() > maxProjectBytes {
 		return Project{}, "", false, fmt.Errorf("%s: larger than %d bytes", path, maxProjectBytes)
 	}
-	// F-06: open without following a symlink or blocking on a FIFO swapped in after the Lstat,
+	// Open without following a symlink or blocking on a FIFO swapped in after the Lstat,
 	// then check the opened file is the regular file that was Lstat-ed.
 	f, err := openNoFollow(path)
 	if err != nil {

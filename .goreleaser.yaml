@@ -120,7 +120,7 @@ nfpms:
         dst: /usr/lib/systemd/system/mirafleet-runner-workspace.service
         file_info: {mode: 0644, owner: root, group: root}
         packager: rpm
-      # M7 host mode: the user unit (shown first in the docs) and the system template (User=%i).
+      # Host mode: the user unit (shown first in the docs) and the system template (User=%i).
       - src: packaging/systemd/user/mirafleet-runner.service
         dst: /usr/lib/systemd/user/mirafleet-runner.service
         file_info: {mode: 0644, owner: root, group: root}
@@ -137,7 +137,7 @@ nfpms:
         dst: /usr/lib/systemd/system/mirafleet-runner@.service
         file_info: {mode: 0644, owner: root, group: root}
         packager: rpm
-      # Config: kept on upgrade. central.env holds secrets (M7): 0600 root.
+      # Config: kept on upgrade. central.env holds secrets: 0600 root.
       - src: packaging/env/central.env
         dst: /etc/mirafleet/central.env
         type: config|noreplace

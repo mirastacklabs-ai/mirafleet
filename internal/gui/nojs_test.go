@@ -1,6 +1,6 @@
 package gui
 
-// S16: every flow runs with JavaScript off. A plain net/http client with a cookie jar stands in
+// Every flow runs with JavaScript off. A plain net/http client with a cookie jar stands in
 // for the browser: it never sends HX-Request or any other htmx header, fills in the forms the
 // server rendered (hidden fields included) and follows redirects, over real TLS.
 

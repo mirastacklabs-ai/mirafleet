@@ -565,7 +565,7 @@ type keepOpen struct{ *fake.Executor }
 
 func (keepOpen) Close() error { return nil }
 
-// F-21: a trailing slash must not defeat O_NOFOLLOW on a symlinked leaf.
+// A trailing slash must not defeat O_NOFOLLOW on a symlinked leaf.
 func TestRunnerTLSInitTrailingSlashSymlink(t *testing.T) {
 	parent := t.TempDir()
 	target := filepath.Join(parent, "target")
@@ -588,7 +588,7 @@ func TestRunnerTLSInitTrailingSlashSymlink(t *testing.T) {
 	}
 }
 
-// F-22: a leaf created under a setgid parent inherits 02700; since tls-init created it, it is
+// A leaf created under a setgid parent inherits 02700; since tls-init created it, it is
 // normalised to 0700. A pre-existing setgid leaf is refused with a message naming the bit.
 func TestRunnerTLSInitSetgidParent(t *testing.T) {
 	parent := t.TempDir()

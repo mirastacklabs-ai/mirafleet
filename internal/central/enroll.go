@@ -79,7 +79,7 @@ func (s *Server) serveEnroll(sconn *ssh.ServerConn, p auth.Principal, accepted t
 }
 
 // enrollKey recovers the key presented at authentication (stored by the auth callback) and
-// cross-checks it against the authenticated principal's fingerprint; a mismatch fails closed (D-07).
+// cross-checks it against the authenticated principal's fingerprint; a mismatch fails closed.
 func enrollKey(sconn *ssh.ServerConn, p auth.Principal) (ssh.PublicKey, error) {
 	if sconn.Permissions == nil {
 		return nil, errors.New("missing permissions")
@@ -163,7 +163,7 @@ type ipLimiter struct {
 	m  map[string]*bucket
 
 	// global is an extra bucket shared by all sources (nil: disabled). Per-source buckets can be
-	// evicted by an attacker rotating addresses (D-22); this one cannot.
+	// evicted by an attacker rotating addresses; this one cannot.
 	global     *bucket
 	globalRate float64
 }

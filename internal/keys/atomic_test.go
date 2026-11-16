@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// F-18: WriteAtomic0600 replaces the target, leaves no temp file and (unix) creates it 0600.
+// WriteAtomic0600 replaces the target, leaves no temp file and (unix) creates it 0600.
 func TestWriteAtomic0600(t *testing.T) {
 	dir := t.TempDir()
 	for _, body := range []string{"one", "two-longer"} {

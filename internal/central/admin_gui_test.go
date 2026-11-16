@@ -12,7 +12,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/service"
 )
 
-// The M4 admin methods work on the admin socket and are refused on api@ for every principal.
+// The admin GUI methods work on the admin socket and are refused on api@ for every principal.
 func TestAdminGUIMethods(t *testing.T) {
 	e := newEnv(t, "r1")
 	sock := adminSocket(t, e)

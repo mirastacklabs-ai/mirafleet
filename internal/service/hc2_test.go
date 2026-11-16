@@ -12,7 +12,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// F-34: the guarded refusal text is the shared constant.
+// The guarded refusal text is the shared constant.
 func TestMsgConfirmRequired(t *testing.T) {
 	e := newEnv(t)
 	e.fleet("prod")
@@ -26,7 +26,7 @@ func TestMsgConfirmRequired(t *testing.T) {
 	}
 }
 
-// F-43: another operator's exec/read/write/close is refused as not_found and audited as one denied
+// Another operator's exec/read/write/close is refused as not_found and audited as one denied
 // row (requester as actor, the workspace id); an unknown id leaves no row; the owner's rows are unharmed.
 func TestOwnershipRefusalAuditedDenied(t *testing.T) {
 	e, ann, w := opsEnv(t, false, nil)
@@ -61,7 +61,7 @@ func TestOwnershipRefusalAuditedDenied(t *testing.T) {
 		}
 		// Guarded refusals use the same shape: denied, requester as actor, workspace id.
 	}
-	// F-47: an unknown (well-formed) id takes the foreign-id path: one denied row carrying the id.
+	// An unknown (well-formed) id takes the foreign-id path: one denied row carrying the id.
 	// A malformed id is refused and audited with an empty Workspace (never echoed).
 	for _, c := range []struct{ id, wantWs string }{{strings.Repeat("0", 32), strings.Repeat("0", 32)}, {"short", ""}} {
 		n := len(e.audit())
@@ -87,7 +87,7 @@ func TestOwnershipRefusalAuditedDenied(t *testing.T) {
 	}
 }
 
-// F-41: a mode mismatch is one denied row in both directions.
+// A mode mismatch is one denied row in both directions.
 func TestModeMismatchAuditedDenied(t *testing.T) {
 	e := newEnv(t)
 	e.fleet("prod")
@@ -111,7 +111,7 @@ func TestModeMismatchAuditedDenied(t *testing.T) {
 	}
 }
 
-// F-27: a create that succeeded but could not be recorded as open leaves the row failed (not stuck
+// A create that succeeded but could not be recorded as open leaves the row failed (not stuck
 // opening), with an audit row, so the session can be reused at once.
 func TestOpenWorkspaceStuckOpeningMarkedFailed(t *testing.T) {
 	e := newEnv(t)
@@ -157,7 +157,7 @@ func TestOpenWorkspaceStuckOpeningMarkedFailed(t *testing.T) {
 	}
 }
 
-// F-28: failStaleOpening only fails the rows; the destroy runs in the per-runner phase of the
+// failStaleOpening only fails the rows; the destroy runs in the per-runner phase of the
 // sweep, and its result is audited (ok, or error when the destroy fails).
 func TestStaleOpeningDestroyInReapRunner(t *testing.T) {
 	for _, destroyOK := range []bool{true, false} {

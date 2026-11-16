@@ -30,7 +30,7 @@ var _ store.Store = (*DB)(nil)
 
 // Open opens (creating if needed) the database at path and migrates it to the latest schema.
 //
-// The data directory must be mode 0700 and flock'ed by central (S10); that closes the one
+// The data directory must be mode 0700 and flock'ed by central; that closes the one
 // window Open cannot: SQLite re-opens the file by name after the checks here, so a rename of
 // the path between those checks and SQLite's own open is only possible for someone who can
 // write the directory. Within that, Open opens the file with O_NOFOLLOW (unix; elsewhere the

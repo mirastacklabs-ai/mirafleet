@@ -286,7 +286,7 @@ func TestWriteBody(t *testing.T) {
 }
 
 func TestHeartbeatCompat(t *testing.T) {
-	// An M2-shaped heartbeat decodes with zero workspace fields.
+	// An older-shaped heartbeat decodes with zero workspace fields.
 	m2 := `{"hostname":"h","os":"linux","arch":"amd64","version":"v0.2","labels":{"a":"b"}}`
 	var hb Heartbeat
 	if err := json.Unmarshal([]byte(m2), &hb); err != nil {
@@ -295,14 +295,14 @@ func TestHeartbeatCompat(t *testing.T) {
 	if hb.Slots != 0 || hb.Executor != "" || hb.SecureRuntime != "" || hb.Images != nil || hb.Validate() != nil {
 		t.Fatalf("unexpected: %+v", hb)
 	}
-	// And an M2-shaped heartbeat re-encodes without the new keys.
+	// And an older-shaped heartbeat re-encodes without the new keys.
 	b, _ := json.Marshal(hb)
 	for _, k := range []string{"slots", "executor", "secure_runtime", "images"} {
 		if strings.Contains(string(b), k) {
 			t.Fatalf("zero heartbeat emits %q: %s", k, b)
 		}
 	}
-	// An M3 heartbeat decoded by an M2-style struct (no new fields) still works.
+	// A newer heartbeat decoded by an older-style struct (no new fields) still works.
 	m3, _ := json.Marshal(Heartbeat{Hostname: "h", Slots: 2, Executor: "containerd", SecureRuntime: "gvisor", Images: []string{"alpine:*"}})
 	var old struct {
 		Hostname string `json:"hostname"`

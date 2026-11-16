@@ -1,6 +1,6 @@
 // Package adminclient is the client side of central's admin socket. It lives apart from
 // internal/central so the darwin and windows binaries (which carry the admin CLI) never link the
-// server-side stack (H-19).
+// server-side stack.
 package adminclient
 
 import (

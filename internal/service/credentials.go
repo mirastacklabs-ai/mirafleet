@@ -197,7 +197,7 @@ func (s *Service) sealer(pl payload) store.CredentialSealer {
 			return nil, nil, errors.New("encode credential")
 		}
 		sealed, err := s.cred.key.Seal(raw, credAAD(id, version))
-		clear(raw) // H-05: no plaintext copy outlives the seal
+		clear(raw) // no plaintext copy outlives the seal
 		if err != nil {
 			return nil, nil, errors.New("seal credential")
 		}
@@ -218,7 +218,7 @@ func (s *Service) open(sc store.SealedCredential) (payload, error) {
 	}
 	var pl payload
 	err = json.Unmarshal(raw, &pl)
-	clear(raw) // H-05
+	clear(raw) // zero the plaintext copy
 	if err != nil {
 		return payload{}, errors.New("cannot decode credential")
 	}
@@ -472,7 +472,7 @@ func (s *Service) credInfo(ctx context.Context, c store.Credential) (api.Credent
 }
 
 // RunnerCredentials is the operator view of what the runner fleet/name holds: name, kind, hosts
-// and status only (Q32). Allowed for active operators and admins (policy action runners.list).
+// and status only. Allowed for active operators and admins (policy action runners.list).
 func (s *Service) RunnerCredentials(ctx context.Context, p auth.Principal, src Source, ref store.Ref) ([]api.RunnerCredential, error) {
 	if err := s.authorize(ctx, p, src, api.MethodRunnersList, false); err != nil {
 		return nil, err
@@ -541,8 +541,8 @@ func (s *Service) ResolveCredentials(ctx context.Context, runnerID int64, reques
 	return append([]string(nil), requested...), nil
 }
 
-// FilterRunnersByCredentials keeps the runners that hold every requested credential (placement,
-// Q33). No requested names keeps all.
+// FilterRunnersByCredentials keeps the runners that hold every requested credential (placement).
+// No requested names keeps all.
 func (s *Service) FilterRunnersByCredentials(ctx context.Context, runners []store.Runner, requested []string) ([]store.Runner, error) {
 	if len(requested) == 0 {
 		return runners, nil
@@ -621,7 +621,7 @@ func (s *Service) RetryDelivery(ctx context.Context, runnerID int64) error {
 // sender. Nothing is sent when no key or sender is configured, or the runner is not active. A
 // failure marks the runner stale so its next heartbeat retries.
 func (s *Service) DeliverRunner(ctx context.Context, runnerID int64) error {
-	// H-01: one delivery per runner at a time, so the store read and the generation taken after
+	// One delivery per runner at a time, so the store read and the generation taken after
 	// it cannot interleave with another delivery and give a stale set the higher generation.
 	l := s.runnerLock(runnerID)
 	l.Lock()
@@ -649,7 +649,7 @@ func (s *Service) runnerLock(id int64) *sync.Mutex {
 }
 
 // withdrawRunner sends a disabled runner an empty creds_sync so it drops the secrets it holds
-// (H-02), and forgets the delivery state. Best effort: a failure is logged; the runner is
+// and forgets the delivery state. Best effort: a failure is logged; the runner is
 // re-synced from the store when it reconnects.
 func (s *Service) withdrawRunner(ctx context.Context, runnerID int64) {
 	if s.cred == nil || !s.cred.hasKey || s.cred.sender == nil {
@@ -672,7 +672,7 @@ func (s *Service) withdrawRunner(ctx context.Context, runnerID int64) {
 }
 
 // MarkDeliveryStale forgets the runner's delivery state and marks it for a heartbeat retry
-// instead of delivering now: used for a reconnect inside the edge debounce (H-06).
+// instead of delivering now: used for a reconnect inside the edge debounce.
 func (s *Service) MarkDeliveryStale(runnerID int64) {
 	if s.cred == nil {
 		return

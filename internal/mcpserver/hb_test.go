@@ -13,7 +13,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/orch"
 )
 
-// F-34: the guarded refusal is recognised by code and the shared message constant only.
+// The guarded refusal is recognised by code and the shared message constant only.
 func TestGuardedRewriteMatchesSharedConstant(t *testing.T) {
 	tg := orch.Target{Context: "main", ContextSource: orch.SrcOnly, Fleet: "prod"}
 	hit := guardedRewrite(&Error{Code: api.CodeBadRequest, Message: api.MsgConfirmRequired}, tg)
@@ -30,7 +30,7 @@ func TestGuardedRewriteMatchesSharedConstant(t *testing.T) {
 	}
 }
 
-// F-44: the implicit-open refusal and the rewrite end in the same consent sentence.
+// The implicit-open refusal and the rewrite end in the same consent sentence.
 func TestGuardedTextsShareTheAskSentence(t *testing.T) {
 	tg := orch.Target{Context: "main", ContextSource: orch.SrcOnly, Fleet: "prod"}
 	a := guardedErr(tg).Error()
@@ -45,7 +45,7 @@ func TestGuardedTextsShareTheAskSentence(t *testing.T) {
 	}
 }
 
-// F-35: run_action validates the runner and action grammar locally, before any call.
+// run_action validates the runner and action grammar locally, before any call.
 func TestRunActionRejectsBadNames(t *testing.T) {
 	fb := &fakeBackend{}
 	h := startTools(t, ListTools(fb))
@@ -67,7 +67,7 @@ func TestRunActionRejectsBadNames(t *testing.T) {
 	okJSON(t, callJSON(t, h, "run_action", `{"fleet":"dev","runner":"db-1.eu","action":"tail_logs:v2"}`), nil)
 }
 
-// F-36: admin-set runner labels are sanitised before they reach the model.
+// Admin-set runner labels are sanitised before they reach the model.
 func TestListRunnersSanitisesLabels(t *testing.T) {
 	fb := &fakeBackend{}
 	fb.RunnersListFn = func(context.Context, string, string) (*api.RunnersListResult, error) {
@@ -93,7 +93,7 @@ func TestListRunnersSanitisesLabels(t *testing.T) {
 	}
 }
 
-// F-37: opens serialise per (context, fleet, session) and never across unrelated keys.
+// Opens serialise per (context, fleet, session) and never across unrelated keys.
 func TestOpensSerialisePerKeyNotGlobally(t *testing.T) {
 	r := newWSRig(t, "dev")
 	r.f.FleetsListFn = func(context.Context, string) (*api.FleetsListResult, error) {
@@ -165,7 +165,7 @@ func countOpens(f *fakeBackend, fleet string) int {
 	return n
 }
 
-// F-38: the default read_file page is sized by its encoded cost.
+// The default read_file page is sized by its encoded cost.
 func TestReadFileDefaultPageFitsEncodedCap(t *testing.T) {
 	r := newWSRig(t, "dev")
 	r.f.Cap = 1000
@@ -230,7 +230,7 @@ func TestReadFileDefaultPageFitsEncodedCap(t *testing.T) {
 
 func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }
 
-// F-39: workspace_close with no binding and no id finds the caller's workspace by session.
+// workspace_close with no binding and no id finds the caller's workspace by session.
 func TestCloseFindsWorkspaceBySession(t *testing.T) {
 	r := newWSRig(t, "dev")
 	const mine = "p:0123456789abcdef0123456789abcdef"

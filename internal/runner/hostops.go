@@ -1,7 +1,7 @@
 package runner
 
 // Host-mode glue: the optional executor capabilities the runner
-// dispatches the M7 ops to, the per-session credential wiring (broker, ssh-agent, CA bundle, ssh
+// dispatches the host-mode ops to, the per-session credential wiring (broker, ssh-agent, CA bundle, ssh
 // config, tool environment) and the dispatch of fs, job_*, output_read and creds_sync.
 //
 // The executor is reached only through small optional interfaces, so the container executors are
@@ -92,7 +92,7 @@ type BashExecutor interface {
 // HostModer marks an executor as host mode (heartbeat feature "host").
 type HostModer interface{ HostMode() bool }
 
-// devCapable reports whether the M7 capabilities of ex are live: an executor that implements
+// devCapable reports whether the host-mode capabilities of ex are live: an executor that implements
 // HostModer (the fake does for tests) must say yes.
 func devCapable(ex workspace.Executor) bool {
 	if h, ok := ex.(HostModer); ok {
@@ -664,7 +664,7 @@ func credNamesFromLabels(labels map[string]string) (restrict bool, names []strin
 
 // ---- heartbeat ----
 
-// fillDevHeartbeat adds the M7 fields: features, credentials (never values) and busy jobs.
+// fillDevHeartbeat adds the host-mode fields: features, credentials (never values) and busy jobs.
 func (r *Runner) fillDevHeartbeat(hb *transport.Heartbeat) {
 	ex := r.ws.ex
 	if !devCapable(ex) {

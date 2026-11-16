@@ -11,7 +11,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/tokens"
 )
 
-// Join token limits (§1.2): never unlimited.
+// Join token limits: never unlimited.
 const (
 	DefaultTokenUses = 1
 	MaxTokenUses     = 1000

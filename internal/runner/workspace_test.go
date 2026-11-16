@@ -67,7 +67,7 @@ func (s *syncBuf) String() string {
 	return s.b.String()
 }
 
-// chanHook (M7 tests) lets a test accept channels the runner opens toward the fake central.
+// chanHook (host-mode tests) lets a test accept channels the runner opens toward the fake central.
 var chanHook func(ssh.NewChannel) bool
 
 // wsHarness is a fake central (a real SSH server) driving a real Runner in workspace mode.
@@ -1568,7 +1568,7 @@ func TestWorkspaceDestroyPanicSettles(t *testing.T) {
 	}
 }
 
-// F-26: a second normal-path destroy of a confirmed entry waits for the first and answers its
+// A second normal-path destroy of a confirmed entry waits for the first and answers its
 // result: one executor call, the slot held until the executor returns and freed exactly once,
 // new ops on the entry refused meanwhile.
 func TestWorkspaceDestroyingConcurrentDestroy(t *testing.T) {

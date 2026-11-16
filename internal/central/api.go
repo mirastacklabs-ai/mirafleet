@@ -81,7 +81,7 @@ func (s *Server) serveOperator(sconn *ssh.ServerConn, p auth.Principal, chans <-
 // serveAPIChannel handles one request on one channel: read, dispatch, respond, close. The
 // request context ends when the connection ctx ends or the peer FULLY closes the channel. A
 // half-close (CloseWrite after the request, EOF on our read side) only means "no more input":
-// the request still runs and its response is still written (D-06). Full closure is observed as
+// the request still runs and its response is still written. Full closure is observed as
 // the channel's request stream ending (the mux closes it when the peer's close arrives).
 func (s *Server) serveAPIChannel(connCtx context.Context, sconn *ssh.ServerConn, ch ssh.Channel, creqs <-chan *ssh.Request, table *methodTable, cc *callCtx) {
 	defer ch.Close()

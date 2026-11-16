@@ -33,7 +33,7 @@ func reqFrame(t *testing.T, method string, params any) []byte {
 	return b
 }
 
-// D-05: a peer running as another UID is dropped before anything is read from it.
+// A peer running as another UID is dropped before anything is read from it.
 func TestAdminForeignUIDRejectedBeforeAnyRead(t *testing.T) {
 	e := newEnv(t, "r1")
 	sock := adminSocket(t, e)
@@ -69,10 +69,10 @@ func TestAdminForeignUIDRejectedBeforeAnyRead(t *testing.T) {
 	}
 }
 
-// D-05/D-06: the client disconnecting cancels an admin action.run; a half-close does not.
+// The client disconnecting cancels an admin action.run; a half-close does not.
 func TestAdminClientDisconnectCancelsActionRun(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("admin disconnect-cancel is linux-only (D-18)")
+		t.Skip("admin disconnect-cancel is linux-only")
 	}
 	e := newEnv(t, "r1")
 	e.startRunner("r1")
@@ -107,7 +107,7 @@ func TestAdminHalfCloseDoesNotCancel(t *testing.T) {
 	}
 }
 
-// D-06 on api@: CloseWrite after the request still gets the response; only a full close cancels.
+// On api@: CloseWrite after the request still gets the response; only a full close cancels.
 func TestAPIHalfCloseDoesNotCancel(t *testing.T) {
 	e := newEnv(t, "r1")
 	e.addOperator("op")
@@ -160,7 +160,7 @@ func TestAPIFullChannelCloseCancelsAction(t *testing.T) {
 	waitFor(t, func() bool { return e.hasActionRow(service.OutcomeCancelled) })
 }
 
-// D-10: Close does not wait for the admin socket's context.
+// Close does not wait for the admin socket's context.
 func TestCloseStopsAdminSocket(t *testing.T) {
 	e := newEnv(t)
 	sock := adminSocket(t, e) // its ctx is cancelled only at cleanup

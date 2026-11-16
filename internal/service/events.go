@@ -46,7 +46,7 @@ func (s *Service) IngestRunnerEvents(ctx context.Context, runnerID int64, b *tra
 		return api.Errorf(api.CodeForbidden, "forbidden")
 	}
 	base := store.AuditEvent{Source: SourceRunner, ActorKind: "runner", Actor: r.Name, Fleet: r.Fleet, Runner: r.Name}
-	// H-03: a runner may only report credentials it holds; others are dropped, not audited.
+	// A runner may only report credentials it holds; others are dropped, not audited.
 	held, err := s.heldNames(ctx, runnerID)
 	if err != nil {
 		return err

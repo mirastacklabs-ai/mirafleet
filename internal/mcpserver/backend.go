@@ -24,7 +24,7 @@ type Backend interface {
 	WorkspaceClose(ctx context.Context, cname, id string) (*api.WorkspaceCloseResult, error)
 	WorkspaceList(ctx context.Context, cname, fleet string) (*api.WorkspaceListResult, error)
 
-	// M7 dev-workspace calls (tools_fs.go, tools_bash.go).
+	// Dev-workspace calls (tools_fs.go, tools_bash.go).
 	WorkspaceCloseWith(ctx context.Context, cname string, p api.WorkspaceCloseParams) (*api.WorkspaceCloseResult, error)
 	WorkspaceFS(ctx context.Context, cname string, p api.FSParams, data []byte) (*api.FSResult, []byte, error)
 	JobStart(ctx context.Context, cname string, p api.JobStartParams) (*api.JobStartResult, error)

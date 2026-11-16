@@ -1,6 +1,6 @@
 package gui
 
-// Tests for the Credentials screens (M7 step S14): create, replace, assign, delete with a typed
+// Tests for the Credentials screens: create, replace, assign, delete with a typed
 // confirmation, the runner detail panel, and a decoy scan proving a secret value appears in no
 // response, log or audit row.
 

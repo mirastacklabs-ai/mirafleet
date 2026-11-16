@@ -17,7 +17,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// Audit outcomes of an exec (§1.7). "start" is the row written before dispatch.
+// Audit outcomes of an exec. "start" is the row written before dispatch.
 const (
 	OutcomeStart     = "start"
 	OutcomeError     = "error"
@@ -39,7 +39,7 @@ func newRequestID() (string, error) {
 // RunActionResult is the wire result of RunAction.
 type RunActionResult = api.ActionRunResult
 
-// RunAction runs an action on a runner (§1.4, §1.7). Checks, in order: policy (operator must be
+// RunAction runs an action on a runner. Checks, in order: policy (operator must be
 // active), input limits, fleet mode "actions", server-side confirm (guarded fleets need
 // confirm == fleet name), runner active. A "start" audit row is written BEFORE dispatch; if that
 // write fails nothing is executed (fail closed). The outcome row (ok/error/cancelled/timeout) has
@@ -82,7 +82,7 @@ func (s *Service) RunAction(ctx context.Context, p auth.Principal, src Source, f
 		return RunActionResult{}, s.fail("get fleet", err)
 	}
 	if f.Mode != store.ModeActions {
-		// F-41: a mode mismatch is audited as one denied row (no start row exists yet).
+		// A mode mismatch is audited as one denied row (no start row exists yet).
 		den := s.event(p, src, api.MethodActionRun)
 		den.Fleet, den.Runner, den.Subject = ref.Fleet, ref.Runner, action
 		den.Outcome, den.Message = OutcomeDenied, "fleet is not in actions mode"

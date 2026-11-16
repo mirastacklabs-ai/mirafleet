@@ -153,7 +153,7 @@ func TestCSSURLsResolve(t *testing.T) {
 	}
 }
 
-// G-06: a manifest row must have exactly 8 cells, with a message that says so.
+// A manifest row must have exactly 8 cells, with a message that says so.
 func TestVendoredAssetsRowNeedsEightCells(t *testing.T) {
 	row := "| `vendor/x.js` | x | 1 | https://example.org | MIT | `LICENSES/x.txt` | " + strings.Repeat("a", 64) + " |\n"
 	err := CheckVendored(fstest.MapFS{"ASSETS.md": {Data: []byte(row)}})

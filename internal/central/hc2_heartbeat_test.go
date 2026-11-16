@@ -9,7 +9,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// F-16: an invalid Actions list is dropped (and logged), the connection stays open and the other
+// An invalid Actions list is dropped (and logged), the connection stays open and the other
 // heartbeat fields are kept. An invalid non-actions field still closes the connection.
 func TestInvalidActionsHeartbeatKeepsConnection(t *testing.T) {
 	e := newEnv(t, "r1")

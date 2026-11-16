@@ -500,7 +500,7 @@ func TestAuditExportTimeout(t *testing.T) {
 	}
 }
 
-// G-33: the filter form is a plain GET (no htmx swap), so the export links and the address bar
+// The filter form is a plain GET (no htmx swap), so the export links and the address bar
 // always match the filter shown.
 func TestAuditFilterFormIsPlainGet(t *testing.T) {
 	h := newAdminHarness(t)
@@ -515,7 +515,7 @@ func TestAuditFilterFormIsPlainGet(t *testing.T) {
 	}
 }
 
-// G-35: an upper bound covers the last millisecond of the unit the operator typed.
+// An upper bound covers the last millisecond of the unit the operator typed.
 func TestParseAuditTimeEndCoversUnit(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
 		{"2026-11-14", "2026-11-14T23:59:59.999Z"},

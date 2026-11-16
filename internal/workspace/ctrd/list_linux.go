@@ -34,7 +34,7 @@ func (e *Executor) List(ctx context.Context) ([]workspace.Info, error) {
 			return nil, fmt.Errorf("%w: container info: %v", workspace.ErrUnavailable, err)
 		}
 		if e.runner != "" && info.Labels[labelRunner] != e.runner {
-			continue // another runner's workspace in a shared namespace (C-16)
+			continue // another runner's workspace in a shared namespace
 		}
 		id := workspace.ID(info.Labels[labelWorkspace])
 		if !workspace.ValidID(id) {

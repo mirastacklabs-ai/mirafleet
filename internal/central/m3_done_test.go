@@ -558,7 +558,7 @@ func runM3Done(t *testing.T, b m3Backend) {
 	//   - every executed call: exactly one start row and exactly one outcome row (same id);
 	//   - a sticky re-open ("reused") is a single ok row, with no start row (nothing is started);
 	//   - a refused exec (denied env) is a single `denied` row without a request id;
-	//   - bob's not_found calls on s1 (F-43) and workspace.open on an actions fleet (F-41) are one
+	//   - bob's not_found calls on s1 and workspace.open on an actions fleet are one
 	//     denied row each, asserted exactly below;
 	//   - other refusals decided before any work (image not allowed, unknown label, third open with
 	//     all slots taken, lexical read_file path attacks) leave no workspace.* row at all, which is
@@ -582,7 +582,7 @@ func runM3Done(t *testing.T, b m3Backend) {
 		default:
 			continue
 		}
-		// F-41: workspace.open on an actions fleet is one denied row with no workspace.
+		// workspace.open on an actions fleet is one denied row with no workspace.
 		if r.Action == api.MethodWorkspaceOpen && r.Outcome == service.OutcomeDenied && r.Workspace == "" {
 			modeDenied = append(modeDenied, r)
 			continue
@@ -594,7 +594,7 @@ func runM3Done(t *testing.T, b m3Backend) {
 		if r.Subject == "evil" || r.Subject == "nolabel" || r.Subject == "s3" {
 			t.Errorf("a refusal left an audit row: %+v", r)
 		}
-		// F-43: bob's not_found calls on s1 each left one denied row (collected, asserted below).
+		// bob's not_found calls on s1 each left one denied row (collected, asserted below).
 		if r.Actor == "bob" && r.Workspace == s1 {
 			ownerDenied = append(ownerDenied, r)
 			continue
@@ -641,7 +641,7 @@ func runM3Done(t *testing.T, b m3Backend) {
 	if len(denied) != 1 || denied[0].Action != api.MethodWorkspaceExec || denied[0].Workspace != s1 || denied[0].Actor != "alice" {
 		t.Errorf("denied rows: %+v", denied)
 	}
-	// F-43: bob's four refused calls on alice's s1 left exactly one denied row each, bob as actor,
+	// bob's four refused calls on alice's s1 left exactly one denied row each, bob as actor,
 	// s1's id, no request id; the caller saw plain not_found (asserted where the calls are made).
 	ownerByAction := map[string]int{}
 	for _, r := range ownerDenied {
@@ -658,7 +658,7 @@ func runM3Done(t *testing.T, b m3Backend) {
 	if len(ownerDenied) != 4 {
 		t.Errorf("bob's denied rows: %+v", ownerDenied)
 	}
-	// F-41: alice's workspace.open on the actions fleet: one denied row, no workspace id, no request id.
+	// alice's workspace.open on the actions fleet: one denied row, no workspace id, no request id.
 	if len(modeDenied) != 1 || modeDenied[0].Actor != "alice" || modeDenied[0].Fleet != testFleet || modeDenied[0].Subject != "s1" ||
 		modeDenied[0].RequestID != "" || modeDenied[0].Message != "fleet is not in workspace mode" {
 		t.Errorf("mode-mismatch rows: %+v", modeDenied)

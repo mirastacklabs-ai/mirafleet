@@ -525,7 +525,7 @@ func TestGitLabRotationFailure(t *testing.T) {
 }
 
 // workspace_open's credentials narrow the session through the reserved spec label, and placement
-// only considers runners that hold every named credential (S11).
+// only considers runners that hold every named credential.
 func TestOpenWithCredentialsLabelAndPlacement(t *testing.T) {
 	ce := newCredEnv(t)
 	ce.hostFleet("vm", false)
@@ -565,7 +565,7 @@ func TestOpenWithCredentialsLabelAndPlacement(t *testing.T) {
 	}
 }
 
-// ---- M7 review A fixes (Q01, Q02, Q03, Q05b/Q06) ----
+// ---- review fixes ----
 
 func codeOf(err error) string {
 	var ae *api.Error

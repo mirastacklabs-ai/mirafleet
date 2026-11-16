@@ -179,7 +179,7 @@ func checkOrchestratorDeps(t *testing.T, mod string, targets []string, goos, goa
 	}
 }
 
-// M7 host-mode packages: central/runner-only. The orchestrator side (orch, mcpserver, hook) and
+// Host-mode packages: central/runner-only. The orchestrator side (orch, mcpserver, hook) and
 // the darwin/windows binaries must never link them. Packages that do not exist yet are tolerated
 // (they simply never show up in the dependency lists), so the check bites as soon as they appear.
 var m7ServerOnly = []string{"internal/workspace/hostx", "internal/secrets", "internal/workspace/broker", "internal/workspace/sshagent"}
@@ -194,7 +194,7 @@ func isM7ServerOnly(pkg string) bool {
 	return false
 }
 
-// serverSide lists the server-side stacks a darwin/windows binary must never link (H-19).
+// serverSide lists the server-side stacks a darwin/windows binary must never link.
 var serverSide = []string{"internal/service", "internal/runner", "internal/central"}
 
 func isServerSide(pkg string) bool {

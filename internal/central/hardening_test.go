@@ -27,7 +27,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// ---- D-03 pre-handshake limit, D-10 Close ----
+// ---- pre-handshake limit, Close ----
 
 func TestHSLimiter(t *testing.T) {
 	l := newHSLimiter(2, 3)
@@ -121,7 +121,7 @@ func TestCloseDropsHandshakingConnections(t *testing.T) {
 	}
 }
 
-// ---- D-04 add-after-kick ----
+// ---- add-after-kick ----
 
 func TestOperatorRevokedBetweenAuthAndAddIsDropped(t *testing.T) {
 	e := newEnv(t)
@@ -150,7 +150,7 @@ func TestOperatorRevokedBetweenAuthAndAddIsDropped(t *testing.T) {
 	}
 }
 
-// ---- D-05 key algorithms and the enroll key ----
+// ---- key algorithms and the enroll key ----
 
 func TestOnlyEd25519KeysAreAccepted(t *testing.T) {
 	e := newEnv(t, "r1")
@@ -235,7 +235,7 @@ func TestEnrollKeyIsTheAuthenticatedKey(t *testing.T) {
 		t.Fatalf("enrollKey: %v", err)
 	}
 
-	// D-07: fail closed on any disagreement between the stored key and the principal.
+	// Fail closed on any disagreement between the stored key and the principal.
 	other := p
 	other.Fingerprint = "SHA256:other"
 	if _, err := enrollKey(sc, other); err == nil {
@@ -262,7 +262,7 @@ func TestEnrollKeyIsTheAuthenticatedKey(t *testing.T) {
 	}
 }
 
-// ---- D-09 write deadline ----
+// ---- write deadline ----
 
 type blockingWriter struct{ unblock chan struct{} }
 
@@ -291,7 +291,7 @@ func TestWriteResponseTimeoutClosesStalledChannel(t *testing.T) {
 	}
 }
 
-// ---- D-11 limiter ----
+// ---- limiter ----
 
 func TestIPLimiterBoundedAndIPv6Prefix(t *testing.T) {
 	now := time.Unix(1000, 0)
@@ -314,7 +314,7 @@ func TestIPLimiterBoundedAndIPv6Prefix(t *testing.T) {
 	}
 }
 
-// ---- D-08 runner touches ----
+// ---- runner touches ----
 
 func TestClipInfoValue(t *testing.T) {
 	if clip("host") != "host" {
@@ -398,7 +398,7 @@ func TestHeartbeatReplyDoesNotWaitOnStore(t *testing.T) {
 	}
 }
 
-// ---- D-12 ----
+// ---- forbidden methods are logged ----
 
 func TestForbiddenMethodAttemptIsLogged(t *testing.T) {
 	e := newEnv(t)

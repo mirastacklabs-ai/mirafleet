@@ -8,7 +8,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 )
 
-// S19: additive list fields. runners.list carries slots, free_slots and executor; fleets.list
+// Additive list fields. runners.list carries slots, free_slots and executor; fleets.list
 // carries workspace{default_image, images, network} for everyone and the complete config on the
 // admin socket only.
 func TestListAdditiveWorkspaceFields(t *testing.T) {

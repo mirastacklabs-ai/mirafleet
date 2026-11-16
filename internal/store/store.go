@@ -44,7 +44,7 @@ var (
 )
 
 // ValidFleetName reports whether s is an acceptable fleet name. "new" is reserved: the GUI
-// serves /fleets/new (G-38).
+// serves /fleets/new.
 func ValidFleetName(s string) bool { return s != "new" && FleetNameRE.MatchString(s) }
 
 // ValidRunnerName reports whether s is an acceptable runner name.
@@ -219,7 +219,7 @@ type Operator struct {
 	LastSeenAt  time.Time
 }
 
-// AuditEvent is one row of the append-only audit table (§1.7). Names are denormalised; there
+// AuditEvent is one row of the append-only audit table. Names are denormalised; there
 // are no foreign keys, so rows survive deletion of what they describe. ID is assigned by the
 // store and ignored on write.
 type AuditEvent struct {
@@ -306,7 +306,7 @@ type AuditFilter struct {
 // Time: every mutator takes now and implementations never call time.Now(); the service owns
 // the clock (injectable in tests).
 //
-// Key disjointness (a key may belong to a runner or an operator, never both, §4a) is enforced
+// Key disjointness (a key may belong to a runner or an operator, never both) is enforced
 // by the store, inside the Enroll and RegisterOperator transactions in internal/store/sqlite.
 type Store interface {
 	// CreateFleet inserts a fleet and returns it with ID and CreatedAt (= now) set. ErrInvalid
@@ -495,7 +495,7 @@ type Store interface {
 	// active admin; ErrInvalid on an empty hash or a bad keep. The returned GUIAdmin is the
 	// updated one. A non-zero replaceID is the session keep re-issues: it must still exist
 	// (exactly one row deleted for it) or the call is ErrConflict, so a session revoked in the
-	// meantime is not resurrected (G-18).
+	// meantime is not resurrected.
 	SetGUIPassword(ctx context.Context, id, generation int64, hash string, keep GUISession, replaceID int64, now time.Time, ev AuditEvent) (GUIAdmin, error)
 	// ResetGUIAdmin, in one transaction: the active admin (if any) becomes status reset, every
 	// session row is deleted, ev is written (also when there was no admin).
@@ -920,7 +920,7 @@ func (s WorkspaceState) Live() bool {
 }
 
 // CanTransitionWorkspace reports whether a workspace may move from one state to another:
-// opening->open|closing|failed, open->closing|lost, closing->closed|lost|failed (B-12: a dead runner must not pin a slot forever). The rest are terminal.
+// opening->open|closing|failed, open->closing|lost, closing->closed|lost|failed (a dead runner must not pin a slot forever). The rest are terminal.
 func CanTransitionWorkspace(from, to WorkspaceState) bool {
 	switch from {
 	case WorkspaceOpening:

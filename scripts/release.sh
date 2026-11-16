@@ -1,7 +1,7 @@
 #!/bin/sh
 # Release tooling. Every step runs in a digest-pinned container; nothing is
-# installed on the host. dev.sh is not touched by M6: release targets live here, and N2/N3 add
-# theirs below the marked line. ONE target per call.
+# installed on the host. Release targets live here, not in dev.sh; add new ones
+# below the marked line. ONE target per call.
 # Default runtime: the Docker CLI against colima's Docker runtime (`colima start`).
 # Override with MIRAFLEET_CTR. MIRAFLEET_CTR and the *_IMAGE variables are trusted caller
 # environment (CTR is word-split and executed); never derive them from untrusted input.
@@ -91,7 +91,7 @@ toolsrun() {
 		"$TOOLS_TAG" sh -ec "$1"
 }
 
-# runscript NAME [ARG...]: run scripts/release/NAME (written by another N2 step), or fail clearly.
+# runscript NAME [ARG...]: run scripts/release/NAME (a separate script), or fail clearly.
 runscript() {
 	name=$1
 	shift
@@ -134,7 +134,7 @@ vuln)
 		/tmp/bin/govulncheck ./..."
 	;;
 lint-sh)
-	# Every tracked-style shell script: scripts/*.sh and scripts/release/*.sh (N2 adds the latter).
+	# Every tracked-style shell script: scripts/*.sh and scripts/release/*.sh.
 	set -- "$ROOT"/scripts/*.sh
 	[ ! -d "$ROOT/scripts/release" ] || set -- "$@" "$ROOT"/scripts/release/*.sh
 	files=""
@@ -164,7 +164,7 @@ clean)
 	}
 	echo "clean: dist/ and labelled release-test resources removed"
 	;;
-# --- N2/N3 targets go below this line (snapshot, pkgtest, ..., m6check) ---
+# --- release targets go below this line (snapshot, pkgtest, ..., m6check) ---
 stage)
 	# dist/stage/: the documents goreleaser puts in archives and packages. THIRD_PARTY_LICENSES.txt
 	# comes from `licenses-report`; docs/QUICKSTART.md is a late-lane file, so without it this

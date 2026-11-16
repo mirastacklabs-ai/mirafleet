@@ -1,6 +1,6 @@
-// Package registry holds the live runner sessions on central, keyed by runner id (the DB id from
-// M2 S2 onwards). It owns the Exec path over a runner's own SSH connection, the heartbeat
-// staleness watch, kicks and tombstones (M2 §1.6).
+// Package registry holds the live runner sessions on central, keyed by runner id (the DB id).
+// It owns the Exec path over a runner's own SSH connection, the heartbeat
+// staleness watch, kicks and tombstones.
 //
 // Locking: the registry lock guards only the maps. It is never held across network I/O
 // (OpenChannel, Close, reads); a session's own mutex guards its mutable fields.
@@ -64,7 +64,7 @@ type SessionInfo struct {
 	Since         time.Time
 	Info          transport.Heartbeat
 
-	// From the latest validated heartbeat (M3); zero for runners without a workspace executor.
+	// From the latest validated heartbeat; zero for runners without a workspace executor.
 	Slots         int
 	Executor      string
 	SecureRuntime string
@@ -427,7 +427,7 @@ func workspaceAllowed(op string, st Status) error {
 		switch op {
 		case transport.OpRead, transport.OpDestroy, transport.OpList,
 			transport.OpJobStatus, transport.OpJobCancel, transport.OpOutputRead, // wind down
-			transport.OpCredsSync: // central withdraws a disabled runner's secrets with an empty set (H-02)
+			transport.OpCredsSync: // central withdraws a disabled runner's secrets with an empty set
 			return nil
 		case transport.OpCreate, transport.OpExec, transport.OpWrite, transport.OpFS,
 			transport.OpJobStart, transport.OpJobTail:

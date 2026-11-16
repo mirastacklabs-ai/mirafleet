@@ -13,7 +13,7 @@ func TestACLPolicy(t *testing.T) {
 	if err := aclPolicy(ok(), me); err != nil {
 		t.Fatalf("good ACL refused: %v", err)
 	}
-	// F-14: an empty (unconvertible) SID is never equal to anything, even another empty one.
+	// An empty (unconvertible) SID is never equal to anything, even another empty one.
 	if err := aclPolicy(aclInfo{Owner: "", Protected: true, HasDACL: true}, ""); err == nil {
 		t.Error("empty owner and empty user accepted")
 	}

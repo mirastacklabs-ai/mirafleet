@@ -34,7 +34,7 @@ type placementReq struct {
 	labels  map[string]string
 	image   string
 
-	// Host fleets (M7): held maps runner id to the operator whose live workspaces hold it; those
+	// Host fleets: held maps runner id to the operator whose live workspaces hold it; those
 	// runners are skipped and the first holder met is stored in *busyBy (for the busy refusal).
 	held       map[int64]string
 	busyBy     *string

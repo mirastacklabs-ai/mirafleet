@@ -33,7 +33,7 @@ func currentUserSID() (string, error) {
 }
 
 // sidString renders a SID. (*SID).String() returns "" on failure; an empty SID is an error, never
-// a value (an empty owner/ACE SID must not compare equal to anything, F-14).
+// a value (an empty owner/ACE SID must not compare equal to anything).
 func sidString(s *windows.SID) (string, error) {
 	if s == nil {
 		return "", fmt.Errorf("nil SID")
@@ -94,9 +94,9 @@ func winMkdirPrivate(dir string) error {
 	}
 	// Every directory this call touches is verified (owner, protected DACL, only our ACEs) and
 	// only components created by this call are rewritten (they already carry the protected DACL
-	// from CreateDirectory). One that lost a create race (ALREADY_EXISTS, F-12) or that pre-existed
+	// from CreateDirectory). One that lost a create race (ALREADY_EXISTS) or that pre-existed
 	// is only checked, owner included. A pre-existing dir that fails the check is repaired only
-	// when it is empty (F-13: SetNamedSecurityInfo with OICI re-ACLs the whole tree under it);
+	// when it is empty (SetNamedSecurityInfo with OICI re-ACLs the whole tree under it);
 	// otherwise it is refused. The owner is never changed, so a foreign-owned dir stays refused.
 	verify := missing
 	if len(missing) == 0 {

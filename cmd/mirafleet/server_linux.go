@@ -95,7 +95,7 @@ func runnerJoin(args []string, stdin io.Reader, stdout io.Writer) error {
 			"(unit: packaging/systemd/user/mirafleet-runner.service; once, as an admin: `loginctl enable-linger $USER`)\n", *data)
 		return nil
 	}
-	fmt.Fprintf(stdout, "next: start it with `mirafleet runner run -data %s` (under systemd; the unit ships with the M6 packages)\n", *data)
+	fmt.Fprintf(stdout, "next: start it with `mirafleet runner run -data %s` (under systemd; the unit ships with the packages)\n", *data)
 	return nil
 }
 

@@ -223,7 +223,7 @@ func TestJobOutputCapKillsJob(t *testing.T) {
 	}
 }
 
-// H-11: concurrent job_start cannot exceed MaxJobs.
+// Concurrent job_start cannot exceed MaxJobs.
 func TestConcurrentStartJobHonoursMax(t *testing.T) {
 	e := newEngine(t, Config{MaxJobs: 2})
 	s := newSession(t)

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// F-19: InitPKIAt writes through the verified fd, so replacing the path (here: renaming the
+// InitPKIAt writes through the verified fd, so replacing the path (here: renaming the
 // directory and putting another in its place) cannot redirect the writes.
 func TestInitPKIAtWritesThroughFD(t *testing.T) {
 	base := t.TempDir()

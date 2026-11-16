@@ -2,7 +2,7 @@
 // (parent PID, project dir). It is harness-neutral and takes the state directory as a parameter.
 //
 // Every operation runs inside an os.Root opened on <dir>/sessions, so a path component swapped for
-// a symlink after the checks cannot make an operation act outside the directory (F-01).
+// a symlink after the checks cannot make an operation act outside the directory.
 //
 // Directories are created with keys.EnsureDir: 0700 on unix, a protected owner-only DACL on
 // Windows (where file modes are no-ops, so private files rely on that directory DACL).

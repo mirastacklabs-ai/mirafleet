@@ -184,7 +184,7 @@ func (s *wsState) unbindID(cname, id string) {
 }
 
 // WorkspaceTools returns workspace_open, exec, read_file, write_file and workspace_close, then the
-// M7 dev tools (bash and background shells, file tools, upload and download). Each
+// Dev tools (bash and background shells, file tools, upload and download). Each
 // call creates its own binding state, so every server process (and test) is independent.
 func WorkspaceTools(b Backend) []Tool {
 	s := &wsState{b: b, bound: map[bindKey]string{}, fleetOf: map[wsRef]string{}, locks: map[bindKey]*keyLock{}}

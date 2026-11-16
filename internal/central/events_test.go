@@ -19,14 +19,14 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// S11: a runner may open events@ and only events@; its batches become audit rows attributed to
+// A runner may open events@ and only events@; its batches become audit rows attributed to
 // the runner from the store, and a heartbeat that advertises credentials is accepted.
 func TestRunnerEventsChannel(t *testing.T) {
 	key, _, err := secrets.GenerateKey()
 	must(t, err)
 	e := newM7Env(t, time.Now, key, nil)
 	e.addRunner("r1", store.StatusActive)
-	// H-03: only credentials the runner holds are recorded, so give it "gl".
+	// Only credentials the runner holds are recorded, so give it "gl".
 	value := []byte("events-decoy-token")
 	sum := sha256.Sum256(value)
 	_, err = e.svc.SetCredential(context.Background(), e.admin, service.SourceCLI, api.CredentialSetParams{

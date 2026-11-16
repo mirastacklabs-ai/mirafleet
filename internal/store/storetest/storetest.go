@@ -102,7 +102,7 @@ func fleets(t *testing.T, s store.Store) {
 		{Name: "", Mode: store.ModeActions},
 		{Name: "Upper", Mode: store.ModeActions},
 		{Name: "a/b", Mode: store.ModeActions},
-		{Name: "new", Mode: store.ModeActions}, // reserved by the GUI route (G-38)
+		{Name: "new", Mode: store.ModeActions}, // reserved by the GUI route
 		{Name: "ok", Mode: "bogus"},
 		{Name: "ok", Mode: ""},
 	} {
@@ -1245,7 +1245,7 @@ func workspaces(t *testing.T, s store.Store) {
 			}
 		}
 	}
-	// B-12: a closing workspace may end closed, lost or failed (a dead runner must not pin a slot).
+	// A closing workspace may end closed, lost or failed (a dead runner must not pin a slot).
 	for _, to := range all {
 		want := to == store.WorkspaceClosed || to == store.WorkspaceLost || to == store.WorkspaceFailed
 		if store.CanTransitionWorkspace(store.WorkspaceClosing, to) != want {
@@ -1768,7 +1768,7 @@ func workspaceListLimit(t *testing.T, s store.Store) {
 	}
 }
 
-// ---- M4: GUI admin, sessions, audit queries, fleet guard ----
+// ---- GUI admin, sessions, audit queries, fleet guard ----
 
 func guiEv(action string) store.AuditEvent {
 	return store.AuditEvent{Source: "gui", ActorKind: "admin", Actor: "boss", Action: action, Outcome: "ok"}
@@ -1959,7 +1959,7 @@ func guiPassword(t *testing.T, s store.Store) {
 	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$new", badKeep, 0, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("bad keep: %v", err)
 	}
-	// G-18: the session being re-issued must still exist; nothing changes otherwise.
+	// The session being re-issued must still exist; nothing changes otherwise.
 	if _, err := s.SetGUIPassword(ctx, a.ID, a.Generation, "$new", keep, 987654, t0, guiEv("gui.password_change")); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("revoked replaceID: %v", err)
 	}
@@ -2105,7 +2105,7 @@ func guiSessions(t *testing.T, s store.Store) {
 	if g, _, _ := s.GetGUISession(ctx, secretHash("s3")); !g.LastActiveAt.Equal(t0.Add(time.Hour)) {
 		t.Fatalf("touch: %v", g.LastActiveAt)
 	}
-	// G-10: an older timestamp never moves last_active_at backwards.
+	// An older timestamp never moves last_active_at backwards.
 	if err := s.TouchGUISession(ctx, l[0].ID, t0); err != nil {
 		t.Fatal(err)
 	}
@@ -2377,7 +2377,7 @@ func setFleetConfirm(t *testing.T, s store.Store) {
 		t.Fatalf("zero ev.Time should default to now: %v", evs[0].Time)
 	}
 	if evs[0].Params["from"] != "false" {
-		t.Fatalf("audit from = %q, want false (G-20)", evs[0].Params["from"])
+		t.Fatalf("audit from = %q, want false", evs[0].Params["from"])
 	}
 	w, err := s.SetFleetConfirm(ctx, "ws", true, t0, ev("fleet.set_confirm"))
 	if err != nil || !w.Confirm || w.Workspace == nil || w.Workspace.DefaultImage == "" {
@@ -2395,7 +2395,7 @@ func setFleetConfirm(t *testing.T, s store.Store) {
 	}
 }
 
-// ---- M7: host executor and central-held credentials ----
+// ---- host executor and central-held credentials ----
 
 // credFixture enrols runners r1, r2 in fleet cf1 and r3 in cf2 and returns them.
 func credFixture(t *testing.T, s store.Store) (r1, r2, r3 store.Runner) {

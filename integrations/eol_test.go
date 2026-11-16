@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// F-45: the tests in this package compare file bytes, so every text file under integrations/ must be
+// The tests in this package compare file bytes, so every text file under integrations/ must be
 // LF. .gitattributes enforces that on checkout; this guard fails loudly if a CRLF slips in (it
 // also runs on Windows CI, where a missing .gitattributes would produce CRLF checkouts).
 func TestNoCRLFInIntegrations(t *testing.T) {

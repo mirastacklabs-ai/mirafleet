@@ -1,5 +1,5 @@
 // Package opconf locates and reads the operator's local configuration: the key pair, known_hosts
-// and a minimal contexts file (central address + name) used from M5. Cross-platform.
+// and a minimal contexts file (central address + name) used by the MCP server. Cross-platform.
 package opconf
 
 import (
@@ -79,7 +79,7 @@ func windowsStateDir(getenv func(string) string) (string, error) {
 
 // isWinAbs accepts drive-letter (C:\ or C:/) paths only. UNC paths (\\host\share) are refused:
 // the operator key would live on a network share, where the local owner-only DACL check does not
-// apply (F-10).
+// apply.
 func isWinAbs(p string) bool {
 	return len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') &&
 		(p[0] >= 'A' && p[0] <= 'Z' || p[0] >= 'a' && p[0] <= 'z')
@@ -193,7 +193,7 @@ func RemoveContext(dir, name string) error {
 // held on an open file, so a leftover file never blocks anyone.
 const LockName = ".contexts.lock"
 
-// UpdateContexts is a locked load-modify-save of contexts.yaml (F-11): it takes an exclusive
+// UpdateContexts is a locked load-modify-save of contexts.yaml: it takes an exclusive
 // advisory lock (flock; LockFileEx on Windows) on LockName, loads the file (a missing one is
 // empty), runs fn, and saves only if fn returns nil. Two concurrent updates (two `mcp login`
 // runs, or login racing `mcp context use`) therefore cannot lose each other's change. The lock
@@ -301,7 +301,7 @@ func LoadContexts(dir string) (*Contexts, error) {
 	return &c, nil
 }
 
-// errMultiDoc is returned when a YAML file carries more than one document (F-07).
+// errMultiDoc is returned when a YAML file carries more than one document.
 var errMultiDoc = errors.New("more than one YAML document (remove the extra \"---\" section)")
 
 // decodeSingle strictly decodes exactly one YAML document into out: unknown fields are an error,

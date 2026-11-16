@@ -187,7 +187,7 @@ BEGIN SELECT RAISE(ABORT, 'audit insert refused'); END`); err != nil {
 	}
 }
 
-// §1.7: a state change and its audit event commit together or not at all.
+// A state change and its audit event commit together or not at all.
 func TestAuditFailureRollsBackStateChange(t *testing.T) {
 	d := open(t)
 	ctx := context.Background()

@@ -9,7 +9,7 @@ import (
 )
 
 // Dev-workspace and credential handlers: the host-workspace operator methods (workspace.fs, job_*,
-// output_read) on api@, and the credential admin methods on the admin socket. Like the M3
+// output_read) on api@, and the credential admin methods on the admin socket. Like the workspace
 // handlers they decode strictly and call the service, which gates before any body is read.
 // credential.set carries its secret as one body frame; it never appears in params or a result.
 

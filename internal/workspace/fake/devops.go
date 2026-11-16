@@ -1,6 +1,6 @@
 package fake
 
-// M7 host-mode behaviour of the fake executor, on only when Executor.SessionRoot is set: a session
+// Host-mode behaviour of the fake executor, on only when Executor.SessionRoot is set: a session
 // directory per workspace, the runner-set tool environment, file tools (internal/workspace/fsops
 // on <session>/work), background jobs run through ExecFunc, and saved-output paging. It lets the
 // runner and TestM7Done exercise the same ops the host executor serves.

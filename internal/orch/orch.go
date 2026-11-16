@@ -114,7 +114,7 @@ type Config struct {
 	Logf func(format string, args ...any) // diagnostics for the operator (stderr); never shown to the model
 
 	// Test hooks. Dial replaces the pinned dial; it stays exported because tests in other
-	// packages (internal/central's M5 tests) drive a real orch over a fake central, so it cannot
+	// packages (internal/central's MCP tests) drive a real orch over a fake central, so it cannot
 	// be unexported without changing those tests.
 	Dial              DialFunc
 	KeepaliveInterval time.Duration

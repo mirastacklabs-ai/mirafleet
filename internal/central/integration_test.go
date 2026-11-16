@@ -688,7 +688,7 @@ func (e *env) rawRunner(name string, onChan func(ssh.NewChannel)) *ssh.Client {
 	return cl
 }
 
-// Q01/Q02: a second key enrolling under a live name is refused by the store (partial unique
+// A second key enrolling under a live name is refused by the store (partial unique
 // index), so it can never authenticate; a revoked name is reusable by a new key.
 func TestDuplicateRunnerNameRefused(t *testing.T) {
 	e := newEnv(t, "a", "c")
@@ -726,7 +726,7 @@ func TestSameKeyReconnectReplacesSession(t *testing.T) {
 	waitFor(t, func() bool { s := e.session("r1"); return s != nil && s != old })
 }
 
-// Q05: a runner that stops heartbeating goes offline and its connection is closed.
+// A runner that stops heartbeating goes offline and its connection is closed.
 func TestSilentRunnerGoesOffline(t *testing.T) {
 	e := newEnvHB(t, 40*time.Millisecond, "r1")
 	cl := e.rawRunner("r1", nil)
@@ -756,7 +756,7 @@ func TestNeverHeartbeatingConnectionClosed(t *testing.T) {
 	}
 }
 
-// Q05: OpenChannel that never completes is abandoned when ctx ends.
+// OpenChannel that never completes is abandoned when ctx ends.
 func TestExecCancelledWhileOpening(t *testing.T) {
 	e := newEnv(t, "r1")
 	gate := make(chan struct{})
@@ -772,7 +772,7 @@ func TestExecCancelledWhileOpening(t *testing.T) {
 	}
 }
 
-// Q08: an oversized result is an explicit error, not a silent failure.
+// An oversized result is an explicit error, not a silent failure.
 func TestResultTooLarge(t *testing.T) {
 	e := newEnv(t, "r1")
 	e.rawRunner("r1", func(nch ssh.NewChannel) {
@@ -795,7 +795,7 @@ func TestResultTooLarge(t *testing.T) {
 	}
 }
 
-// Q07: concurrency cap, and an action dies with its channel (freeing the slot).
+// Concurrency cap, and an action dies with its channel (freeing the slot).
 func TestRunnerExecCapAndCancel(t *testing.T) {
 	e := newEnv(t, "r1")
 	auditPath := filepath.Join(t.TempDir(), "runner-audit.jsonl")
@@ -826,7 +826,7 @@ func TestRunnerExecCapAndCancel(t *testing.T) {
 	if time.Since(start) > 5*time.Second {
 		t.Fatal("slot not freed promptly")
 	}
-	// Q18: the audit shows start before its result.
+	// The audit shows start before its result.
 	b, _ := os.ReadFile(auditPath)
 	text := string(b)
 	si, ri := strings.Index(text, `"outcome":"start"`), strings.Index(text, `"outcome":"failed"`)

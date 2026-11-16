@@ -401,7 +401,7 @@ func TestRunnerHeldByOneOperator(t *testing.T) {
 	}
 }
 
-// busyMsg reports whether err is the M7 busy refusal "busy: runner NAME is in use by OP" (any op
+// busyMsg reports whether err is the busy refusal "busy: runner NAME is in use by OP" (any op
 // when op is "").
 func busyMsg(err error, op string) bool {
 	ae, ok := err.(*api.Error)
@@ -490,7 +490,7 @@ func TestIngestRunnerEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// H-03: an event for a credential the runner does not hold is dropped.
+	// An event for a credential the runner does not hold is dropped.
 	foreign := &transport.EventBatch{Events: []transport.Event{
 		{Type: transport.EventCredentialUse, Session: "s1", Credential: "not-mine", Host: "x.corp", Status: transport.EventOK, Count: 1, WindowS: 60}}}
 	if err := e.svc.IngestRunnerEvents(e.ctx, r.ID, foreign); err != nil {

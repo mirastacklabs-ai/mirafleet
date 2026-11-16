@@ -46,7 +46,7 @@ type executor struct {
 	memory  int64
 
 	createMu sync.Mutex
-	creating map[workspace.ID]*idLock // per-ID create locks (C-15)
+	creating map[workspace.ID]*idLock // per-ID create locks
 }
 
 // idLock serialises Create for one workspace ID; refs counts holders and waiters so the map
@@ -609,7 +609,7 @@ func (l *limitedBody) Close() error { return l.c.Close() }
 
 // WriteFile uploads the file through execd's multipart upload. It is NOT atomic: the OpenSandbox
 // execd API has no rename or temp-file primitive, so a reader can see a partially written file
-// and a failed upload may leave a truncated one (C-15). Offset and append writes are
+// and a failed upload may leave a truncated one. Offset and append writes are
 // read-modify-write and are not safe against concurrent writers of the same path.
 func (e *executor) WriteFile(ctx context.Context, id workspace.ID, p string, r io.Reader, off int64, truncate bool, mode fs.FileMode) (workspace.FileInfo, error) {
 	p, err := workspace.CleanPath(p)

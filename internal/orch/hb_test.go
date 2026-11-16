@@ -21,7 +21,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/opconf"
 )
 
-// F-29: a known_hosts with no entry is refused before any dial.
+// A known_hosts with no entry is refused before any dial.
 func TestEmptyKnownHostsNeverDials(t *testing.T) {
 	for name, content := range map[string]string{"empty": "", "comments": "# nothing\n\n  \n"} {
 		t.Run(name, func(t *testing.T) {
@@ -42,7 +42,7 @@ func TestEmptyKnownHostsNeverDials(t *testing.T) {
 	}
 }
 
-// F-30: PinnedHostKeys wraps ErrHostKeyMismatch and orch shows the mismatch message.
+// PinnedHostKeys wraps ErrHostKeyMismatch and orch shows the mismatch message.
 func TestHostKeyMismatchMessage(t *testing.T) {
 	pub := func() ssh.PublicKey {
 		p, _, _ := ed25519.GenerateKey(rand.Reader)
@@ -78,7 +78,7 @@ func TestHostKeyMismatchMessage(t *testing.T) {
 	}
 }
 
-// F-31: a dial that finishes after the pool was replaced (re-login) is closed, not kept.
+// A dial that finishes after the pool was replaced (re-login) is closed, not kept.
 func TestRetiredPoolDropsLateDial(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, 4)
@@ -126,7 +126,7 @@ func TestRetiredPoolDropsLateDial(t *testing.T) {
 	}
 }
 
-// F-32: the guarded cache is keyed by name and address, and concurrent refreshes share one call.
+// The guarded cache is keyed by name and address, and concurrent refreshes share one call.
 func TestGuardedCacheKeyedByAddrAndSingleFlight(t *testing.T) {
 	var lists atomic.Int32
 	d := &dialer{mk: func(n int) (Conn, error) {
