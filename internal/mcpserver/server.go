@@ -287,11 +287,12 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, cfg Config) (err er
 	}
 	// Reads from in go through a pipe so closing the transport never blocks on (or closes) in.
 	pr, pw := io.Pipe()
-	go func() {
-		_, cerr := io.Copy(pw, in)
-		_ = pw.CloseWithError(cerr) // nil error = EOF
-	}()
-	tr := &mcp.IOTransport{Reader: pr, Writer: nopWriteCloser{out}}
+	// On stdin EOF the SDK cancels in-flight calls, so pump holds EOF back until the calls already
+	// read have been answered (see drain.go). Messages themselves are processed in arrival order
+	// by the SDK: initialize is handled synchronously, tools/call etc. run concurrently.
+	pend := &pending{}
+	go pump(ctx, in, pw, pend)
+	tr := &mcp.IOTransport{Reader: pr, Writer: nopWriteCloser{countedWriter{out, pend}}}
 	err = srv.Run(ctx, tr)
 	_ = pr.Close()
 	switch {
