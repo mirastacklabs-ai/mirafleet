@@ -301,9 +301,9 @@ func TestReplyID(t *testing.T) {
 		id   string
 		want bool
 	}{
-		{`{"jsonrpc":"2.0","id":1,"result":{}}`, "1", true},
-		{`{"jsonrpc":"2.0","id":"a","error":{"code":1}}`, `"a"`, true},
-		{`{"result":{"x":1},"id":3,"jsonrpc":"2.0"}`, "3", true},
+		{`{"jsonrpc":"2.0","id":1,"result":{}}`, "n:1", true},
+		{`{"jsonrpc":"2.0","id":"a","error":{"code":1}}`, "s:a", true},
+		{`{"result":{"x":1},"id":3,"jsonrpc":"2.0"}`, "n:3", true},
 		{`{"jsonrpc":"2.0","id":null,"error":{}}`, "", false},
 		{`{"jsonrpc":"2.0","method":"notifications/progress","params":{}}`, "", false},
 		{`{"jsonrpc":"2.0","id":1,"method":"ping"}`, "", false}, // a server-to-client request

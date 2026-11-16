@@ -300,7 +300,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, cfg Config) (err er
 	_ = pr.Close()
 	switch {
 	case err == nil, ctx.Err() != nil,
-		errors.Is(err, io.EOF), errors.Is(err, io.ErrClosedPipe), errors.Is(err, context.Canceled):
+		errors.Is(err, io.EOF), errors.Is(err, io.ErrClosedPipe), errors.Is(err, context.Canceled),
+		isBrokenPipe(err): // the client closed our stdout: nobody to answer, a clean end
 		return nil
 	}
 	return err

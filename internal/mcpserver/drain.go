@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strconv"
 	"sync"
 	"time"
 
@@ -20,18 +21,22 @@ import (
 // answered. tools/call is not held: it can run for minutes and is cancelled at EOF as before.
 
 // drainTimeout bounds the EOF hold. Quick calls (initialize, tools/list, ping) answer in
-// milliseconds; the bound only protects exit time (docs/M5.md: exit within 5 s). Variable for tests.
+// milliseconds; the bound only protects exit time. Worst case after stdin EOF is this 2 s plus
+// the cmd's orch.Close grace (mcpShutdownGrace, 5 s): 7 s (docs/M5.md). Variable for tests.
 var drainTimeout = 2 * time.Second
 
 // maxFrame is the largest single JSON-RPC frame the SDK accepts (its decoder fails past it), so it
 // is also the most this file ever buffers for one message.
 var maxFrame = mcp.DefaultMaxLineLength
 
+// keepBuf is the largest frame buffer the framer keeps between frames.
+const keepBuf = 64 << 10
+
 // drained reports whether a call with this method is held back at EOF.
 func drained(method string) bool { return method != "" && method != "tools/call" }
 
 // tracker is the set of outstanding drained-call ids: added when a request is read from stdin,
-// removed when its reply is written to stdout. Ids are keyed by their raw JSON text.
+// removed when its reply is written to stdout. Ids are normalised by [idKey].
 type tracker struct {
 	mu     sync.Mutex
 	ids    map[string]struct{}
@@ -86,38 +91,139 @@ func (t *tracker) wait(ctx context.Context, done <-chan struct{}, d time.Duratio
 	}
 }
 
-// message is the part of a JSON-RPC message the tracker needs.
-type message struct {
-	ID     json.RawMessage `json:"id"`
-	Method string          `json:"method"`
+// header is the part of a JSON-RPC message the tracker needs.
+type header struct {
+	id        json.RawMessage
+	hasID     bool
+	method    string
+	hasMethod bool
+	hasReply  bool // a "result" or "error" key
 }
 
+// isCall: a request with a non-null id and a method (it will be answered).
+func (h header) isCall() bool {
+	return h.hasID && h.hasMethod && h.method != "" && string(bytes.TrimSpace(h.id)) != "null"
+}
+
+// scanHeader reads the top-level keys of one JSON object without decoding the payload. Keys match
+// exactly (case-sensitive) and the last duplicate wins, like the SDK's decoder (segmentio json
+// with DontMatchCaseInsensitiveStructFields, which fills struct fields in order). With early set
+// it returns as soon as it has an id and sees result/error (SDK-written replies put "id" first), so
+// large tool results are never walked. Inbound frames are scanned to the end, because a later
+// duplicate key must win; values are skipped token by token, never copied.
+func scanHeader(b []byte, early bool) (h header, ok bool) {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return h, false
+	}
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return h, false
+		}
+		switch key, _ := kt.(string); key {
+		case "id":
+			var raw json.RawMessage
+			if dec.Decode(&raw) != nil {
+				return h, false
+			}
+			h.id, h.hasID = raw, true
+		case "method":
+			var v any
+			if dec.Decode(&v) != nil {
+				return h, false
+			}
+			s, isStr := v.(string)
+			h.method, h.hasMethod = s, isStr
+		case "result", "error":
+			h.hasReply = true
+			if early && h.hasID {
+				return h, true
+			}
+			if skipValue(dec) != nil {
+				return h, false
+			}
+		default:
+			if skipValue(dec) != nil {
+				return h, false
+			}
+		}
+	}
+	return h, true
+}
+
+// skipValue consumes one JSON value token by token, without copying it.
+func skipValue(dec *json.Decoder) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if d, ok := tok.(json.Delim); !ok || d == '}' || d == ']' {
+		return nil
+	}
+	for depth := 1; depth > 0; {
+		tok, err = dec.Token()
+		if err != nil {
+			return err
+		}
+		if d, ok := tok.(json.Delim); ok {
+			if d == '{' || d == '[' {
+				depth++
+			} else {
+				depth--
+			}
+		}
+	}
+	return nil
+}
+
+// idKey normalises an id the way the SDK does (jsonrpc2.MakeID): a number goes through float64 to
+// int64, a string is its decoded value. 1, 1.0 and 1e0 are one id; "A" and "A" are one id.
 func idKey(raw json.RawMessage) (string, bool) {
-	s := string(bytes.TrimSpace(raw))
-	if s == "" || s == "null" {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
 		return "", false
 	}
-	return s, true
+	switch v := v.(type) {
+	case float64:
+		return "n:" + strconv.FormatInt(int64(v), 10), true
+	case string:
+		return "s:" + v, true
+	}
+	return "", false
 }
 
 // onInput records the calls in one complete inbound frame (an object, or an array batch).
 func (t *tracker) onInput(frame []byte) {
 	if len(frame) > 0 && frame[0] == '[' {
-		var batch []json.RawMessage
-		if json.Unmarshal(frame, &batch) != nil {
+		var els []json.RawMessage
+		if json.Unmarshal(frame, &els) != nil {
 			return
 		}
-		for _, el := range batch {
-			t.onInput(bytes.TrimSpace(el))
+		var calls []header
+		for _, el := range els {
+			h, ok := scanHeader(bytes.TrimSpace(el), false)
+			if !ok || !h.isCall() {
+				continue
+			}
+			if !drained(h.method) {
+				// The SDK writes a batch reply only when every call in it has finished, so a
+				// batch holding a tools/call cannot be drained: track none of it.
+				return
+			}
+			calls = append(calls, h)
+		}
+		for _, h := range calls {
+			if id, ok := idKey(h.id); ok {
+				t.add(id)
+			}
 		}
 		return
 	}
-	var m message
-	if json.Unmarshal(frame, &m) != nil || !drained(m.Method) {
-		return
-	}
-	if id, ok := idKey(m.ID); ok {
-		t.add(id)
+	if h, ok := scanHeader(frame, false); ok && h.isCall() && drained(h.method) {
+		if id, ok := idKey(h.id); ok {
+			t.add(id)
+		}
 	}
 }
 
@@ -149,53 +255,13 @@ func (t *tracker) onOutput(b []byte) {
 	}
 }
 
-// replyID returns the id of a response object (id plus result or error, no method). It reads
-// top-level keys only and returns as soon as it knows, which for the SDK's key order
-// ("jsonrpc","id","result") is before the payload.
+// replyID returns the normalised id of a response object (an id plus result or error, no method).
 func replyID(b []byte) (string, bool) {
-	dec := json.NewDecoder(bytes.NewReader(b))
-	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+	h, ok := scanHeader(b, true)
+	if !ok || h.hasMethod || !h.hasID || !h.hasReply {
 		return "", false
 	}
-	var (
-		id               json.RawMessage
-		haveID, hasReply bool
-	)
-	for dec.More() {
-		kt, err := dec.Token()
-		if err != nil {
-			return "", false
-		}
-		key, _ := kt.(string)
-		switch key {
-		case "method":
-			return "", false
-		case "id":
-			if dec.Decode(&id) != nil {
-				return "", false
-			}
-			haveID = true
-		case "result", "error":
-			hasReply = true
-			if haveID {
-				k, ok := idKey(id)
-				return k, ok
-			}
-			var skip json.RawMessage
-			if dec.Decode(&skip) != nil {
-				return "", false
-			}
-		default:
-			var skip json.RawMessage
-			if dec.Decode(&skip) != nil {
-				return "", false
-			}
-		}
-	}
-	if haveID && hasReply {
-		return idKey(id)
-	}
-	return "", false
+	return idKey(h.id)
 }
 
 // replyWriter forwards to w and then clears the replies it carried.
@@ -215,7 +281,8 @@ func (r replyWriter) Write(b []byte) (int, error) {
 // framer splits a byte stream into top-level JSON values the way the SDK's json.Decoder does
 // (whitespace and newlines between values are free; one value may span lines) and hands each
 // complete value to fn. It keeps at most max bytes of the current value: a longer one is
-// skipped (the SDK fails on it and closes the session), so memory stays bounded.
+// skipped (the SDK fails on it and closes the session), so memory stays bounded. A buffer grown
+// past keepBuf is released when its frame ends.
 type framer struct {
 	max     int
 	fn      func([]byte)
@@ -273,6 +340,9 @@ func (f *framer) feed(p []byte) {
 				f.started = false
 				if !f.over {
 					f.fn(f.buf)
+				}
+				if cap(f.buf) > keepBuf {
+					f.buf = nil
 				}
 			}
 		}
