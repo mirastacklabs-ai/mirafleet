@@ -1,0 +1,47 @@
+# mirafleet workspace-mode runner (container executor). See README.md. Read its security note:
+# this runner is root-equivalent on the host. Prepare the host once, join once, then:
+#   docker compose up -d
+name: mirafleet-runner-workspace
+
+services:
+  runner:
+    image: ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.6.1}
+    command: ["runner", "run", "-data", "/var/lib/mirafleet/runner", "-workspace", "/etc/mirafleet/workspace.yaml"]
+    # root: the containerd socket and the workspace root (root 0700) need it.
+    user: "0:0"
+    # The host's pid namespace: the runner reads /proc/<pid>/ns/net of workspace tasks (egress
+    # proxy) and /proc/<pid>/task/*/children (kill an exec's process tree).
+    pid: host
+    cap_add:
+      - SYS_ADMIN   # setns into a workspace's network namespace (egress proxy)
+    security_opt:
+      # Docker's default AppArmor profile (Ubuntu, Debian) denies the /proc/<pid>/ns/net opens
+      # above. A no-op on hosts without AppArmor.
+      - apparmor=unconfined
+    volumes:
+      - runner-data:/var/lib/mirafleet/runner
+      - ./workspace.yaml:/etc/mirafleet/workspace.yaml:ro
+      # The image has no CA bundle, and the runner pulls images itself (over TLS): lend it the
+      # host's. On RHEL/Fedora set MIRAFLEET_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt.
+      - type: bind
+        source: ${MIRAFLEET_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}
+        target: /etc/ssl/certs/ca-certificates.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      # The host's containerd: its socket, and the fifo directory beside it. An exec's stdio
+      # fifos are made by the runner under /run/containerd/fifo and opened by the shim on the
+      # host, so the directory must be the same one on both sides.
+      - /run/containerd:/run/containerd
+      # The workspace root, at the SAME path inside and out: containerd bind-mounts directories
+      # from it into workspaces, resolving the path on the host. Create it first (README step 1);
+      # Docker would otherwise create it with the wrong mode, and the runner refuses that.
+      - type: bind
+        source: /var/lib/mirafleet/ws
+        target: /var/lib/mirafleet/ws
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+
+volumes:
+  runner-data:

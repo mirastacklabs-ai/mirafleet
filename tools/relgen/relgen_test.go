@@ -96,6 +96,7 @@ func TestBumpThenCheck(t *testing.T) {
 		"deploy/compose/central/compose.yaml",
 		"deploy/compose/runner/compose.yaml",
 		"deploy/compose/lab/compose.yaml",
+		"deploy/compose/runner-workspace/compose.yaml",
 	} {
 		want := strings.ReplaceAll(read(t, filepath.Join("testdata", "tree"), rel), "0.5.0", "0.6.0")
 		// 0.6.0 is the last version with the plugin at integrations/claude-code: the path stays.

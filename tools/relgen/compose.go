@@ -32,6 +32,7 @@ func init() {
 		"deploy/compose/central/compose.yaml",
 		"deploy/compose/runner/compose.yaml",
 		"deploy/compose/lab/compose.yaml",
+		"deploy/compose/runner-workspace/compose.yaml",
 	} {
 		addTarget(target{Path: p, Get: composeTags, Set: setComposeTags})
 	}

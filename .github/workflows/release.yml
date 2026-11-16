@@ -75,7 +75,7 @@ jobs:
           # enforced there, so it is not listed.
           # windows-latest and macos-latest are the orchestrator.yml matrix jobs (name: matrix.os),
           # which runs on push to main.
-          REQUIRED: gate licenses vuln lint dist integration e2e-systemd windows-latest macos-latest
+          REQUIRED: gate licenses vuln lint dist compose-workspace integration e2e-systemd windows-latest macos-latest
         run: |
           # Wait up to 50 minutes for slow jobs; fail at once when any required check failed.
           for _ in $(seq 1 50); do

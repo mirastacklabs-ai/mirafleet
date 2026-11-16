@@ -865,7 +865,7 @@ operator laptop just runs `mirafleet mcp` when a harness starts it.*
 |---|---|---|---|
 | central | `mirafleet-central.service`, user `mirafleet`, data in `/var/lib/mirafleet/central`, config `/etc/mirafleet/central.env` | `central` plus a one-shot `central-init`, volume `/var/lib/mirafleet` | none |
 | runner, actions mode | `mirafleet-runner.service`, user `mirafleet`, needs an `actions.yaml` | the image runs it; `deploy/compose/runner/` | none |
-| runner, container workspaces | `mirafleet-runner-workspace.service`, runs as root, `After=containerd.service` | not supported (needs host containerd) | none |
+| runner, container workspaces | `mirafleet-runner-workspace.service`, runs as root, `After=containerd.service` | `deploy/compose/runner-workspace/` (root on the host: host containerd, host pid namespace) | none |
 | runner, host mode (M7) | a user unit and a `mirafleet-runner@.service` template, one OS user per runner | not supported (needs a real OS user) | none |
 | `mirafleet mcp` | the binary is in the package too | the image is not used for this | Homebrew, `install.sh`, `install.ps1`, npm, archive, plugin marketplace |
 

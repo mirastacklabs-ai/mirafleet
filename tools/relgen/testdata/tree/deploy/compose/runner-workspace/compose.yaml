@@ -1,0 +1,10 @@
+# mirafleet workspace-mode runner (container executor). See README.md.
+name: mirafleet-runner-workspace
+
+services:
+  runner:
+    image: ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.5.0}
+    command: ["runner", "run", "-data", "/var/lib/mirafleet/runner", "-workspace", "/etc/mirafleet/workspace.yaml"]
+    user: "0:0"
+    pid: host
+    restart: unless-stopped

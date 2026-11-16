@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -39,6 +40,7 @@ const (
 
 	appArmorProfileName = "mirafleet-workspace"
 	metaDirName         = ".meta" // <root>/.meta/<id>/{hosts,resolv.conf}; never a valid workspace id
+	initDirName         = ".init" // <root>/.init/mirafleet: the staged init binary; never a valid id
 
 	killWait    = 15 * time.Second // bound for a task to die after SIGKILL
 	startSettle = 300 * time.Millisecond
@@ -95,7 +97,13 @@ func New(cfg *wsconfig.Config, opts Options) (workspace.Executor, error) {
 		if err != nil {
 			return nil, fmt.Errorf("ctrd: locate own binary: %w", err)
 		}
-		bin = self
+		// containerd (the host's) resolves the bind-mount source on the host. The runner's own
+		// path may not exist there (a runner in a container), so mount a copy kept under the
+		// root, a path the runner and containerd must already agree on.
+		bin, err = stageInitBinary(self, cc.Root)
+		if err != nil {
+			return nil, err
+		}
 	}
 	bin, err := filepath.EvalSymlinks(bin)
 	if err != nil {
@@ -175,6 +183,48 @@ func checkInitBinary(p string) error {
 		return fmt.Errorf("ctrd: init binary %s must be world readable and executable (mode %04o)", p, fi.Mode().Perm())
 	}
 	return nil
+}
+
+// stageInitBinary copies the running binary to <root>/.init/mirafleet (replaced atomically at
+// every start) and returns that path. The root is root-owned 0700 (CheckFiles); the copy is
+// 0555, so it is the same program as the runner, readable and executable inside a workspace.
+// ".init" can never be a valid workspace id.
+func stageInitBinary(self, root string) (string, error) {
+	dir := filepath.Join(root, initDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("ctrd: stage init binary: %w", err)
+	}
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return "", fmt.Errorf("ctrd: stage init binary: %s is not a plain directory", dir)
+	}
+	src, err := os.Open(self)
+	if err != nil {
+		return "", fmt.Errorf("ctrd: stage init binary: %w", err)
+	}
+	defer src.Close()
+	tmp, err := os.CreateTemp(dir, "mirafleet.*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("ctrd: stage init binary: %w", err)
+	}
+	defer os.Remove(tmp.Name()) // no-op after the rename
+	_, cerr := io.Copy(tmp, src)
+	if cerr == nil {
+		cerr = tmp.Chmod(0o555)
+	}
+	if cerr == nil {
+		cerr = tmp.Sync()
+	}
+	if xerr := tmp.Close(); cerr == nil {
+		cerr = xerr
+	}
+	if cerr != nil {
+		return "", fmt.Errorf("ctrd: stage init binary: %w", cerr)
+	}
+	dst := filepath.Join(dir, "mirafleet")
+	if err := os.Rename(tmp.Name(), dst); err != nil {
+		return "", fmt.Errorf("ctrd: stage init binary: %w", err)
+	}
+	return dst, nil
 }
 
 // checkRuntimeShim verifies that containerd can find the shim binary for a runtime name such

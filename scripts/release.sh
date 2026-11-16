@@ -6,7 +6,7 @@
 # Override with MIRAFLEET_CTR. MIRAFLEET_CTR and the *_IMAGE variables are trusted caller
 # environment (CTR is word-split and executed); never derive them from untrusted input.
 #
-# Usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|stage|snapshot|pkgtest|installtest|image|lab|npmtest|harnesscheck|m6check|clean
+# Usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|stage|snapshot|pkgtest|installtest|image|lab|wslab|npmtest|harnesscheck|m6check|clean
 set -eu
 
 # Pinned by tag and multi-arch index digest. GO_IMAGE must equal the one in dev.sh
@@ -204,6 +204,11 @@ image)
 lab)
 	runscript labtest.sh "$@"
 	;;
+wslab)
+	# Not in m6check: it needs a Linux Docker host with containerd and creates /var/lib/mirafleet/ws
+	# there. CI runs it as the compose-workspace job.
+	runscript wslabtest.sh "$@"
+	;;
 npmtest)
 	runscript npmtest.sh "$@"
 	;;
@@ -261,7 +266,7 @@ m6check)
 	echo "m6check: OK ($ran steps passed${skipped:+; skipped:$skipped})"
 	;;
 *)
-	echo "usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|stage|snapshot|pkgtest|installtest|image|lab|npmtest|harnesscheck|m6check|clean" >&2
+	echo "usage: scripts/release.sh licenses-report|vuln|lint-sh|lint-actions|stage|snapshot|pkgtest|installtest|image|lab|wslab|npmtest|harnesscheck|m6check|clean" >&2
 	exit 2
 	;;
 esac
