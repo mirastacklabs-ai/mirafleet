@@ -1,0 +1,12 @@
+{
+  "name": "mirafleet",
+  "version": "0.6.0",
+  "description": "Orchestrate fleets of servers from Gemini CLI through a central mirafleet server.",
+  "mcpServers": {
+    "mirafleet": {
+      "command": "mirafleet",
+      "args": ["mcp", "-project-dir", "."]
+    }
+  },
+  "contextFileName": "GEMINI.md"
+}
