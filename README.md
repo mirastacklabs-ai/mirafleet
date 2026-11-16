@@ -17,7 +17,7 @@
 
 </div>
 
-> **Status:** v0.6.0, the first release (milestones M1 to M7 are built). Pre-1.0: the protocol and CLI can still change between minor versions. Read the
+> **Status:** v0.6.1, a patch on the first release, 0.6.0 (milestones M1 to M7 are built). Pre-1.0: the protocol and CLI can still change between minor versions. Read the
 > [threat model](docs/THREAT-MODEL.md) before you point it at anything important.
 
 ## Why mirafleet
@@ -94,21 +94,21 @@ connection, HTTPS to your GitLab, only if you turn on GitLab token self-rotation
 
 One binary, `mirafleet`, runs as `central`, `runner` or `mcp`. Central and runners are Linux only;
 the orchestrator side also runs on macOS and Windows (amd64 and arm64). Pick one channel per
-machine. Versions below are `0.6.0`; replace them with the release you want.
+machine. Versions below are `0.6.1`; replace them with the release you want.
 Pre-releases (`-rc.N`) are not published to Homebrew or the MCP Registry, and go to npm dist-tag `next`.
 
 | Where | Channel | Command |
 |---|---|---|
-| Central or runner (Linux) | Package (deb, rpm, apk) from the [release page](https://github.com/mirastacklabs-ai/mirafleet/releases) | `sudo apt install ./mirafleet_0.6.0_linux_amd64.deb` · `sudo dnf install ./mirafleet_0.6.0_linux_amd64.rpm` · `sudo apk add --allow-untrusted ./mirafleet_0.6.0_linux_amd64.apk` |
+| Central or runner (Linux) | Package (deb, rpm, apk) from the [release page](https://github.com/mirastacklabs-ai/mirafleet/releases) | `sudo apt install ./mirafleet_0.6.1_linux_amd64.deb` · `sudo dnf install ./mirafleet_0.6.1_linux_amd64.rpm` · `sudo apk add --allow-untrusted ./mirafleet_0.6.1_linux_amd64.apk` |
 | Central or actions runner (Linux) | Docker Compose (`deploy/compose/`) | `docker compose up -d` in `deploy/compose/central` or `deploy/compose/runner` |
-| Central or actions runner (Linux) | OCI image | `docker pull mirastack/mirafleet:0.6.0` (also `ghcr.io/mirastacklabs-ai/mirafleet:0.6.0`, same digest) |
+| Central or actions runner (Linux) | OCI image | `docker pull mirastack/mirafleet:0.6.1` (also `ghcr.io/mirastacklabs-ai/mirafleet:0.6.1`, same digest) |
 | macOS, Linux | Homebrew | `brew install mirastacklabs-ai/tap/mirafleet` |
 | macOS, Linux | Script | `curl -fsSL https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.sh \| sh` |
 | Windows | Script (PowerShell 5.1 or 7, no admin) | `irm https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.ps1 \| iex` |
-| Any OS with Node 18+ | npm / npx (`@mirastacklabs/mirafleet`) | `npx -y @mirastacklabs/mirafleet@0.6.0 mcp -project-dir .` |
+| Any OS with Node 18+ | npm / npx (`@mirastacklabs/mirafleet`) | `npx -y @mirastacklabs/mirafleet@0.6.1 mcp -project-dir .` |
 | Claude Code | Marketplace plugin (Node.js 18+ and the binary must be on `PATH` too) | `/plugin marketplace add mirastacklabs-ai/mirafleet`, then `/plugin install mirafleet@mirastacklabs` |
-| Anywhere | Archive | `mirafleet_0.6.0_<os>_<arch>.tar.gz` (`.zip` on Windows) |
-| Go developers | `go install` | `go install github.com/mirastacklabs-ai/mirafleet/cmd/mirafleet@v0.6.0` |
+| Anywhere | Archive | `mirafleet_0.6.1_<os>_<arch>.tar.gz` (`.zip` on Windows) |
+| Go developers | `go install` | `go install github.com/mirastacklabs-ai/mirafleet/cmd/mirafleet@v0.6.1` |
 
 Notes:
 
