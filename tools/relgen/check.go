@@ -31,6 +31,7 @@ type target struct {
 // Later steps (compose image tags, ...) append from their own file's init via addTarget.
 var targets = []target{
 	{Path: "integrations/claude-code/plugin/.claude-plugin/plugin.json", Get: jsonVersions, Set: setJSONVersions},
+	{Path: "integrations/claude-code/directory/.claude-plugin/plugin.json", Get: jsonVersions, Set: setJSONVersions},
 	{Path: "cmd/mirafleet/mcp_hook.go", Get: goPluginVersion, Set: setGoPluginVersion},
 	{Path: ".claude-plugin/marketplace.json", Tag: true, Get: marketplaceRef, Set: setMarketplaceRef},
 	{Path: "server.json", Get: jsonVersions, Set: setJSONVersions},

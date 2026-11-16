@@ -1,0 +1,18 @@
+{
+  "name": "mirafleet-setup",
+  "displayName": "mirafleet",
+  "version": "0.6.0",
+  "description": "Set up mirafleet in Claude Code: installs the mirafleet binary and the full mirafleet plugin from the mirastacklabs marketplace, then connects to your central server.",
+  "author": {
+    "name": "mirastacklabs-ai",
+    "url": "https://github.com/mirastacklabs-ai"
+  },
+  "homepage": "https://github.com/mirastacklabs-ai/mirafleet",
+  "repository": "https://github.com/mirastacklabs-ai/mirafleet",
+  "license": "Apache-2.0",
+  "documentationUrl": "https://github.com/mirastacklabs-ai/mirafleet/blob/main/integrations/claude-code/directory/README.md",
+  "supportUrl": "https://github.com/mirastacklabs-ai/mirafleet/blob/main/SUPPORT.md",
+  "privacyPolicyUrl": "https://github.com/mirastacklabs-ai/mirafleet/blob/main/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/mirastacklabs-ai/mirafleet/blob/main/LICENSE",
+  "keywords": ["fleet", "mcp", "servers", "ops", "setup"]
+}
