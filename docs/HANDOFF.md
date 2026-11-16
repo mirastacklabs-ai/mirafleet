@@ -1,4 +1,4 @@
-# Handoff — 15 Nov 2026 (`v0.6.0` released on every channel; directory listings submitted)
+# Handoff — 16 Nov 2026 (`v0.6.1` released on every channel; directory listings submitted)
 
 Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and the plans
 ([M4.md](M4.md), [M6.md](M6.md), [M7.md](M7.md)). Every decision is recorded in those plans.
@@ -7,7 +7,11 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
 
 | What | State |
 |---|---|
-| `main` | M1–M7 built and merged; version files at `0.6.0`; all CI green. Protected: changes only by PR. |
+| `main` | M1–M7 built and merged; version files at `0.6.1`; all CI green. Protected: changes only by PR. |
+| Tag `v0.6.1` (16 Nov) | run https://github.com/mirastacklabs-ai/mirafleet/actions/runs/43807258316: verify, build, draft, publish-release, image, npm, brew green; `mcp-registry` re-run after the npm approval. Ships PRs #14–#30 (MCP EOF drain, plugin node launcher at `integrations/claude-code/plugin/`, `mirafleet-setup`, Gemini archives). |
+| GitHub release `v0.6.1` | https://github.com/mirastacklabs-ai/mirafleet/releases/tag/v0.6.1, latest, 35 assets (incl. `darwin|linux|win32.mirafleet.tar.gz` for Gemini). Notes written by hand (goreleaser's changelog is off). |
+| Images, Homebrew (0.6.1) | `docker.io/mirastack/mirafleet:0.6.1` + `:latest` and GHCR, amd64 + arm64; tap formula at 0.6.1. |
+| npm (0.6.1) | 7 packages staged through the trusted publishers (OIDC, provenance) — this validated them; approved by the user with 2FA. |
 | Tag `v0.6.0-rc.1` | dead: tagged before the version bump, nothing published. Left in place. |
 | Tag `v0.6.0-rc.2` | GitHub pre-release and images published; `npm` failed (no auth; old `npm publish`). Not re-run. |
 | Tag `v0.6.0-rc.3` | run https://github.com/mirastacklabs-ai/mirafleet/actions/runs/43730773461, all jobs green; npm `0.6.0-rc.3` live on dist-tag `next`. |
@@ -17,16 +21,16 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
 | npm | `@mirastacklabs/mirafleet` + 6 platform packages: `latest` = `0.6.0`, `next` = `0.6.0-rc.3`; `npx -y @mirastacklabs/mirafleet@0.6.0 version` prints `0.6.0`. |
 | Homebrew | `mirastacklabs-ai/homebrew-tap` `Formula/mirafleet.rb` at 0.6.0; `brew install mirastacklabs-ai/tap/mirafleet` (homebrew/brew container) prints `0.6.0`. |
 | MCP Registry | `io.github.mirastacklabs-ai/mirafleet` 0.6.0 listed. |
-| Wiki | regenerated from `cded12f` (v0.6.0) and pushed (`0480e3e`). Not yet regenerated after PRs #15–#19 (front page, plugin layout, PRIVACY.md). |
-| `main` after v0.6.0 (16 Nov) | PRs #21/#26: `mirafleet mcp` answers pipelined requests even when stdin closes at once (EOF drain by id set, 2 s cap, `tools/call` still cancelled, SIGPIPE-safe, broken stdout exits 0; M5.md). PR #22: flaky `TestM7Done` step 10 fixed (test bug, not product). PRs #23/#25: directory setup plugin. Not yet in a release. |
-| `main` after v0.6.0 (15 Nov) | PRs #14–#19: plugin icon; plugin root moved to `integrations/claude-code/plugin/` with a node launcher (`bin/mirafleet.js`, no Go code in the plugin, Claude directory rules, M6 §2.18); front page, `docs/TESTING.md`, issue forms (`test-report` label), SUPPORT, CITATION, social preview; `gemini-extension.json`, `GEMINI.md`, `llms-install.md`, `glama.json`, `docs/assets/logo-400.png`; plugin listing links + `PRIVACY.md`. The marketplace still serves the v0.6.0 plugin (old path); the next `relgen bump` writes the new path with the new ref. |
+| Wiki | regenerated from `218a550` (main after v0.6.1) on 16 Nov. |
+| In v0.6.1 (16 Nov) | PRs #21/#26: `mirafleet mcp` answers pipelined requests even when stdin closes at once (EOF drain by id set, 2 s cap, `tools/call` still cancelled, SIGPIPE-safe, broken stdout exits 0; M5.md). PR #22: flaky `TestM7Done` step 10 fixed (test bug). PRs #23/#25: directory setup plugin. PRs #29/#30: Gemini release archives, "Every release" checklist. |
+| In v0.6.1 (15 Nov) | PRs #14–#19: plugin icon; plugin root moved to `integrations/claude-code/plugin/` with a node launcher (`bin/mirafleet.js`, no Go code in the plugin, Claude directory rules, M6 §2.18); front page, `docs/TESTING.md`, issue forms (`test-report` label), SUPPORT, CITATION, social preview; `gemini-extension.json`, `GEMINI.md`, `llms-install.md`, `glama.json`, `docs/assets/logo-400.png`; plugin listing links + `PRIVACY.md`. The marketplace now pins the plugin at `integrations/claude-code/plugin` with ref `v0.6.1`. |
 
 ## Listings (15 Nov 2026)
 
 | Where | State |
 |---|---|
-| Claude plugin directory | Two submissions at claude.ai/directory/manage (contact rv@mirastacklabs.ai). (1) **`mirafleet-setup`** (`integrations/claude-code/directory`: skills + command only; PRs #23, #25): scan passed, no holds, Publish requested, waiting for an Anthropic reviewer; Claude Code only. Its skill installs the binary and the full plugin from our marketplace. (2) Full plugin **`mirafleet`** (`integrations/claude-code/plugin`): refused automatically on 16 Nov, because non-Verified orgs may not ship command hooks, local MCP servers, `bin/` or scripts. Verification asked of Anthropic: ticket **#156498411**. Once Verified, push a new version to submission (2). Data answers for both: no personal data, sends nowhere else, not retained, not for under-18s. |
-| Kilo Code marketplace | PR https://github.com/Kilo-Org/kilo-marketplace/pull/734 (`mcps/mirafleet/MCP.yaml`); bot review addressed (least-privilege guidance, pinned v0.6.0 installers); awaiting maintainers. |
+| Claude plugin directory | Two submissions at claude.ai/directory/manage (contact rv@mirastacklabs.ai). (1) **`mirafleet-setup`** (`integrations/claude-code/directory`: skills + command only; PRs #23, #25): tracks tag `v0.6.1` (not `main`); scan passed, Publish requested for v0.6.1 on 16 Nov, waiting for an Anthropic reviewer; Claude Code only. Its skill installs the binary and the full plugin from our marketplace. (2) Full plugin **`mirafleet`** (`integrations/claude-code/plugin`): refused automatically on 16 Nov, because non-Verified orgs may not ship command hooks, local MCP servers, `bin/` or scripts. Verification asked of Anthropic: ticket **#156498411**. Once Verified, push a new version to submission (2). Data answers for both: no personal data, sends nowhere else, not retained, not for under-18s. |
+| Kilo Code marketplace | PR https://github.com/Kilo-Org/kilo-marketplace/pull/734 (`mcps/mirafleet/MCP.yaml`); bot review addressed (least-privilege guidance, pinned installers); pinned to 0.6.1 on 16 Nov; awaiting maintainers. |
 | punkpeye/awesome-mcp-servers | PR https://github.com/punkpeye/awesome-mcp-servers/pull/19631 (Command Line). Their bot requires a Glama listing and a Glama score badge in the line; add the badge once Glama approves. |
 | Glama | Submitted with "Add Server" (16 Nov, user's account). After approval Glama emails how to add a Dockerfile for its checks (the server must start and answer introspection; `mirafleet mcp` answers initialize and tools/list with no central). Then copy the score badge into the awesome-mcp-servers PR. |
 | opencode ecosystem page | PR https://github.com/anomalyco/opencode/pull/64147 (Projects), awaiting review. |
@@ -36,7 +40,7 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
 | GitHub MCP registry / VS Code, PulseMCP, LobeHub, Zed | Fed from the official MCP Registry; not visible yet on 15 Nov. Re-check in 1–2 weeks. |
 | Cline marketplace | Not filed: its form requires confirming Cline installs it from `llms-install.md` and that it is stable. File once a tester confirms (logo: `docs/assets/logo-400.png`). |
 | Skipped | cursor.directory (user's call), appcypher list (archived), modelcontextprotocol/servers (closed to listings), Smithery (publishing shut down), Codex directory (no self-serve). |
-| Repo page | Description, homepage (wiki), 19 topics, Discussions on. Social preview `docs/assets/social-preview.png` is uploaded by hand in Settings. A stray fork `aarvee11/awesome-mcp-servers-1` can be deleted. |
+| Repo page | Description, homepage (wiki), 19 topics, Discussions on. Social preview `docs/assets/social-preview.png` is uploaded by hand in Settings. |
 
 ## Settings in place (15 Nov 2026)
 - **GitHub repo** `mirastacklabs-ai/mirafleet`: `release` environment (required reviewer aarvee11,
@@ -50,10 +54,8 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
 - **npm:** user account `mirastacklabs` (no npm org; the scope is the user scope). Publishing is
   staged (`npm stage publish`, PR #7); a maintainer approves with 2FA. All 7 packages have a
   trusted publisher (repo `mirastacklabs-ai/mirafleet`, workflow `release.yml`, environment
-  `release`, allowed action `npm stage publish` only), **pending validation: it expires on
-  18 Nov 2026 ~00:35 UTC unless a release stages through it before then.** If it expires, delete
-  and recreate it on each package (one 2FA each) right before the next release, then tag within
-  2 days. Publishing access "disallow bypass 2FA tokens" is set on `mirafleet` and
+  `release`, allowed action `npm stage publish` only), validated by the v0.6.1 staging on
+  16 Nov 2026. Publishing access "disallow bypass 2FA tokens" is set on `mirafleet` and
   `mirafleet-linux-x64` only; for the other 5 the npm website returned a Cloudflare bot check
   (HTTP 429) on save, for the agent and the user alike.
 - **Docker Hub:** org `mirastack`, public repo `mirafleet`; short description and overview set
@@ -73,15 +75,15 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
    and the `test-report` issue form; it covers M4 S19, M5 S17 and M7 S21. Also smoke-test the new
    node launcher in real Claude Code (MCP server cwd = project, `--resume` reattach). Then resolve
    the open doc markers below.
-4. Regenerate and push the wiki (`relgen wiki`) for the post-v0.6.0 doc changes.
-5. Next release (0.6.1 or 0.7.0): ships the new plugin path to marketplace users; recreate the npm
-   trusted publishers first if they expired (see npm above); renew `HOMEBREW_TAP_TOKEN` before
+4. Next release: follow RELEASING.md "Every release"; renew `HOMEBREW_TAP_TOKEN` before
    15 Dec 2026.
 
 ## Rules learned
 - Approving `release` deployments: the user's click by default. On 15 Nov 2026 the user allowed the
-  agent to approve them for the rc.3 and v0.6.0 runs only (gh API, with a comment naming that).
-  Ask again for any later run.
+  agent to approve them for the rc.3 and v0.6.0 runs, and on 16 Nov for v0.6.1 (gh API, with a
+  comment naming that). Ask again for any later run.
+- The final "Approve packages" click on npm staged packages is the user's (the agent may select the
+  batch and open the dialog); then 2FA.
 - npm: bypass-2FA tokens are deprecated (no direct publish from Jan 2027); never use one. First
   publish of a new package uses a stage-only token; trusted publishers need the package to exist.
 - The version files must match the tag exactly, rc included (RELEASING.md §3 step 3).
