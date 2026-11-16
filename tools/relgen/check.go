@@ -34,6 +34,7 @@ var targets = []target{
 	{Path: "cmd/mirafleet/mcp_hook.go", Get: goPluginVersion, Set: setGoPluginVersion},
 	{Path: ".claude-plugin/marketplace.json", Tag: true, Get: marketplaceRef, Set: setMarketplaceRef},
 	{Path: "server.json", Get: jsonVersions, Set: setJSONVersions},
+	{Path: "gemini-extension.json", Get: jsonVersions, Set: setJSONVersions},
 	{Path: "internal/protover/protover.go", Level: true, Get: protoLevel, Set: setProtoLevel},
 }
 

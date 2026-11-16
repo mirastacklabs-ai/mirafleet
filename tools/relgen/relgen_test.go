@@ -65,7 +65,7 @@ func TestCheckMismatchListsEveryFile(t *testing.T) {
 	if c != 1 {
 		t.Fatalf("code %d", c)
 	}
-	for _, p := range []string{"plugin.json", "mcp_hook.go", "marketplace.json", "server.json", "protover.go"} {
+	for _, p := range []string{"plugin.json", "mcp_hook.go", "marketplace.json", "server.json", "gemini-extension.json", "protover.go"} {
 		if !strings.Contains(errs, p) {
 			t.Errorf("missing %s in %q", p, errs)
 		}
@@ -89,6 +89,7 @@ func TestBumpThenCheck(t *testing.T) {
 		"cmd/mirafleet/mcp_hook.go",
 		".claude-plugin/marketplace.json",
 		"server.json",
+		"gemini-extension.json",
 		"deploy/compose/central/compose.yaml",
 		"deploy/compose/runner/compose.yaml",
 		"deploy/compose/lab/compose.yaml",
@@ -157,7 +158,7 @@ func TestBumpCheckInvariants(t *testing.T) {
 		if src, _ := m.Plugins[0]["source"].(map[string]any); src["path"] != wantPath {
 			t.Errorf("%s: source.path = %v, want %s", c.ver, src["path"], wantPath)
 		}
-		for _, rel := range []string{"integrations/claude-code/plugin/.claude-plugin/plugin.json", "server.json"} {
+		for _, rel := range []string{"integrations/claude-code/plugin/.claude-plugin/plugin.json", "server.json", "gemini-extension.json"} {
 			if !strings.Contains(read(t, root, rel), `"version": "`+c.ver+`"`) {
 				t.Errorf("%s: %s lacks version %s", c.ver, rel, c.ver)
 			}
@@ -212,7 +213,7 @@ func TestBumpRenameFailureRestores(t *testing.T) {
 	}
 	for _, rel := range []string{
 		"integrations/claude-code/plugin/.claude-plugin/plugin.json", "cmd/mirafleet/mcp_hook.go",
-		".claude-plugin/marketplace.json", "server.json", "internal/protover/protover.go",
+		".claude-plugin/marketplace.json", "server.json", "gemini-extension.json", "internal/protover/protover.go",
 	} {
 		if got, want := read(t, root, rel), read(t, filepath.Join("testdata", "tree"), rel); got != want {
 			t.Errorf("%s not restored:\n%s", rel, got)
