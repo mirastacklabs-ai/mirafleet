@@ -43,7 +43,7 @@ right runner and records it. Read the full story in the [developer guide](docs/g
 
 | Harness | Setup guide |
 |---|---|
-| Claude Code (plugin, with hooks) | [integrations/claude-code](integrations/claude-code/README.md) |
+| Claude Code | Full plugin with hooks, from our marketplace: [integrations/claude-code/plugin](integrations/claude-code/plugin/README.md). Setup plugin for the Claude plugin directory (once listed; it installs the full one): [integrations/claude-code/directory](integrations/claude-code/directory/README.md) |
 | opencode | [integrations/opencode](integrations/opencode/README.md) |
 | Codex CLI | [integrations/codex](integrations/codex/README.md) |
 | Gemini CLI | [integrations/gemini](integrations/gemini/README.md) |
