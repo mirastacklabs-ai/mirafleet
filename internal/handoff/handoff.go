@@ -61,7 +61,16 @@ type file struct {
 	Written time.Time `json:"written"`
 }
 
-func (k Key) clean() string { return filepath.Clean(k.Project) }
+// clean returns the project path with symlinks resolved (falling back to the cleaned path when it
+// cannot be resolved), so a logical $PWD and the physical path give the same key on the hook and
+// the server side.
+func (k Key) clean() string {
+	p := filepath.Clean(k.Project)
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	return p
+}
 
 func (k Key) name() string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d|%s", k.PID, k.clean())))

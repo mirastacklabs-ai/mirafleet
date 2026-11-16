@@ -42,6 +42,18 @@ printf "#!/bin/sh\nexec /bin/cat\n" > /tmp/bin/mirafleet
 out=$(echo hello | PATH=/tmp/bin $N "$L" mcp)
 [ "$out" = hello ] || { echo "FAIL: stdin not passed: $out"; exit 1; }
 
+# 5. relative PATH entries are skipped: a ./mirafleet planted in the project never runs
+mkdir /tmp/proj
+printf "#!/bin/sh\necho PLANTED\n" > /tmp/proj/mirafleet
+chmod +x /tmp/proj/mirafleet
+out=$(cd /tmp/proj && PATH=.:bin $N "$L" mcp 2>&1) && { echo "FAIL: ran a relative PATH entry: $out"; exit 1; } || code=$?
+[ "$code" = 127 ] || { echo "FAIL: relative PATH exit $code, want 127: $out"; exit 1; }
+
+# 6. a child killed by a signal never yields exit 0
+printf "#!/bin/sh\nkill -TERM \$\$\n" > /tmp/bin/mirafleet
+PATH=/tmp/bin $N "$L" mcp && { echo "FAIL: exit 0 after signal death"; exit 1; } || code=$?
+[ "$code" -ge 128 ] || { echo "FAIL: signal exit $code, want >=128"; exit 1; }
+
 # 4. the harness PID (the launcher parent) is handed to the binary
 printf "#!/bin/sh\necho \"pid=\$MIRAFLEET_HARNESS_PID\"\n" > /tmp/bin/mirafleet
 out=$(PATH=/tmp/bin /bin/sh -c "$N \"$L\" mcp; true" )

@@ -25,7 +25,9 @@
 // Assumption Q2 (docs/M5.md §1.4): the hook process and the MCP server are both direct children of
 // Claude Code, so os.Getppid() is the same PID in both and keys the handoff file. The plugin starts
 // both through a Node launcher, which sets MIRAFLEET_HARNESS_PID to Claude Code's PID
-// (handoff.HarnessPID), so the key is still the same. If false, the
+// (handoff.HarnessPID), so the key is still the same. A node shim that spawns a child (Volta,
+// scoop or chocolatey on Windows) makes that ppid the shim, not Claude Code, so --resume reattach
+// is lost (fail-safe: a fresh session). If false, the
 // MCP server falls back to a per-process session and only --resume reattach is lost.
 //
 // This package never dials central at SessionStart, never prints on stdout except the

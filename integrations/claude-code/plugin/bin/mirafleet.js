@@ -6,6 +6,7 @@
 
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const win = process.platform === "win32";
@@ -18,7 +19,10 @@ function find() {
   const dirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {
     for (const name of names) {
-      const p = path.join(dir.replace(/^"(.*)"$/, "$1"), name);
+      const d = dir.replace(/^"(.*)"$/, "$1");
+      // Relative entries (".", "bin") would resolve against the project; never run those.
+      if (!path.isAbsolute(d)) continue;
+      const p = path.join(d, name);
       try {
         if (!fs.statSync(p).isFile()) continue;
         if (!win) fs.accessSync(p, fs.constants.X_OK);
@@ -64,7 +68,8 @@ child.on("exit", (code, signal) => {
     // Die from the same signal so the caller sees it.
     for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.removeAllListeners(sig);
     process.kill(process.pid, signal);
-    return;
+    // Still alive (signal handled or unsupported, e.g. on Windows): never exit 0 after a signal death.
+    process.exit(128 + (os.constants.signals[signal] || 0));
   }
   process.exit(code === null ? 1 : code);
 });

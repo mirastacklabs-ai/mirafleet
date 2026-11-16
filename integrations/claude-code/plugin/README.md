@@ -122,10 +122,17 @@ https://code.claude.com/docs/en/hooks.md, https://code.claude.com/docs/en/skills
   never depend on Claude opening another file.
 - Minimum Claude Code version for exec-form hooks (`args`): the docs read do not state one. Unverified;
   check against your version.
-- Hooks run in exec form; if `args` is unsupported, `node` is started without the launcher path and
-  fails, which blocks every mirafleet tool (PreToolUse exits non-zero).
+- Hooks run in exec form. If `args` is unsupported, or `node` or `mirafleet` is missing, the hook
+  exits with a code other than 2, which does not block the tool call: the PreToolUse remote guard
+  fails open in that case (unchanged from before), and the mirafleet MCP tools are unavailable
+  anyway, because the server cannot start.
+- `node` shims that start a child process (Volta, scoop or chocolatey on Windows) give the launcher
+  a different parent PID than Claude Code, so the hook and the server key the handoff differently
+  and `--resume` reattach is lost (fail-safe: a fresh session).
+- That Claude Code starts the MCP server with the project root as its working directory (the
+  plugin no longer passes `-project-dir`).
 - `ask` still prompting in auto/bypass-permissions modes (not documented on the pages read).
 - Parent PID topology (hook and MCP server both direct children of Claude Code).
-- That `${CLAUDE_PROJECT_DIR}` is non-empty in a plugin `.mcp.json` when `--plugin-dir` is used.
+- That `${CLAUDE_PROJECT_DIR}` is non-empty in the hook's environment when `--plugin-dir` is used.
 - SessionEnd `reason` at the top level of the hook input, and the `tool_input` field names.
 - `claude plugin validate --strict` (run on the host by the user).

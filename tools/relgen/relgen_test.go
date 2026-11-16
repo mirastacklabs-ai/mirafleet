@@ -94,10 +94,7 @@ func TestBumpThenCheck(t *testing.T) {
 		"deploy/compose/lab/compose.yaml",
 	} {
 		want := strings.ReplaceAll(read(t, filepath.Join("testdata", "tree"), rel), "0.5.0", "0.6.0")
-		if rel == ".claude-plugin/marketplace.json" {
-			// bump sets the plugin root path together with the ref (the fixture still has the old path).
-			want = strings.Replace(want, `"path": "integrations/claude-code"`, `"path": "integrations/claude-code/plugin"`, 1)
-		}
+		// 0.6.0 is the last version with the plugin at integrations/claude-code: the path stays.
 		if got := read(t, root, rel); got != want {
 			t.Errorf("%s:\n%s\nwant:\n%s", rel, got, want)
 		}
@@ -152,8 +149,13 @@ func TestBumpCheckInvariants(t *testing.T) {
 		if src, _ := m.Plugins[0]["source"].(map[string]any); src["ref"] != "v"+c.ver {
 			t.Errorf("%s: source.ref = %v", c.ver, src["ref"])
 		}
-		if src, _ := m.Plugins[0]["source"].(map[string]any); src["path"] != "integrations/claude-code/plugin" {
-			t.Errorf("%s: source.path = %v, want the plugin root", c.ver, src["path"])
+		// path and ref are a pair: the new plugin root exists only after v0.6.0.
+		wantPath := "integrations/claude-code/plugin"
+		if c.ver == "0.6.0" {
+			wantPath = "integrations/claude-code"
+		}
+		if src, _ := m.Plugins[0]["source"].(map[string]any); src["path"] != wantPath {
+			t.Errorf("%s: source.path = %v, want %s", c.ver, src["path"], wantPath)
 		}
 		for _, rel := range []string{"integrations/claude-code/plugin/.claude-plugin/plugin.json", "server.json"} {
 			if !strings.Contains(read(t, root, rel), `"version": "`+c.ver+`"`) {

@@ -11,7 +11,7 @@ import (
 
 // Cross-platform: the hook runs on the orchestrator side only.
 
-// pluginVersion is the version in integrations/claude-code/.claude-plugin/plugin.json. The binary's
+// pluginVersion is the version in integrations/claude-code/plugin/.claude-plugin/plugin.json. The binary's
 // own `version` is set at link time ("dev" in tests), so a test keeps this constant and the
 // manifest in lockstep; bump both together.
 const pluginVersion = "0.6.0"
