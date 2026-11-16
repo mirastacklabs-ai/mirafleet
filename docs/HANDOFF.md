@@ -34,19 +34,22 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
   `release`, allowed action `npm stage publish` only), **pending validation: it expires on
   18 Nov 2026 ~00:35 UTC unless a release stages through it before then.** If it expires, delete
   and recreate it on each package (one 2FA each) right before the next release, then tag within
-  2 days. Publishing access is still the npm default (not "disallow bypass 2FA tokens").
-- **Docker Hub:** org `mirastack`, public repo `mirafleet` (description still empty).
+  2 days. Publishing access "disallow bypass 2FA tokens" is set on `mirafleet` and
+  `mirafleet-linux-x64` only; for the other 5 the npm website returned a Cloudflare bot check
+  (HTTP 429) on save, for the agent and the user alike.
+- **Docker Hub:** org `mirastack`, public repo `mirafleet`; short description and overview set
+  (15 Nov 2026, P6 done).
 - **GitHub org `mirastacklabs`** (not `mirastacklabs-ai`) shows "flagged, hidden from the public";
   the user may ask GitHub support for a review. It does not affect the release.
 - **DCO:** every commit uses `git commit -s` as the user (aarvee11); no Claude co-author trailer.
 
 ## Next steps, in order
-1. Optional, one 2FA per package: set each package's publishing access to "Require two-factor
-   authentication and disallow bypass 2fa tokens".
-2. P6: Docker Hub description and README (needs a Docker Hub sign-in).
-3. P9–P12 (RELEASING.md §3 step 16): Anthropic plugin directory, galleries, Docker-Sponsored OSS,
+1. Optional: the other 5 packages' publishing access ("disallow bypass 2fa tokens"). Retry the
+   website later, or use `npm access set mfa=publish @mirastacklabs/<pkg>` from a throwaway
+   `node:24-alpine` container after the user's `npm login` (2FA per call).
+2. P9–P12 (RELEASING.md §3 step 16): Anthropic plugin directory, galleries, Docker-Sponsored OSS,
    mirastacklabs.ai one-pager and announcement.
-4. Full-product test: M4 S19 browser check, M5 S17, M7 S21 smoke on the user's Mac + a VM with
+3. Full-product test: M4 S19 browser check, M5 S17, M7 S21 smoke on the user's Mac + a VM with
    their GitLab, quickstart and harness spot checks. Then resolve the open doc markers below.
 
 ## Rules learned
