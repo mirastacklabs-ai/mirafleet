@@ -56,6 +56,7 @@ The module is `github.com/mirastacklabs-ai/mirafleet`, built as one static binar
 | `modernc.org/sqlite` | central's store (pure Go, no cgo) |
 | `gopkg.in/yaml.v3` | `actions.yaml` and `workspace.yaml` |
 | `github.com/containerd/containerd/v2` | workspace containers (Linux only; the darwin and windows builds link none of it) |
+| `github.com/containerd/errdefs`, `github.com/opencontainers/runtime-spec` | containerd's error types and the OCI container spec, used with the containerd client (Linux only) |
 | `github.com/modelcontextprotocol/go-sdk` | the `mirafleet mcp` server, with the modules it links: `google/jsonschema-go`, `yosida95/uritemplate`, `segmentio/encoding`, `segmentio/asm` and `golang.org/x/{oauth2,sync,time}` |
 
 The CLI uses the standard library (`flag` with subcommands). Every dependency, transitive ones
