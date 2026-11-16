@@ -1,6 +1,6 @@
 {
   "name": "mirafleet",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Orchestrate fleets of servers from Gemini CLI through a central mirafleet server.",
   "mcpServers": {
     "mirafleet": {

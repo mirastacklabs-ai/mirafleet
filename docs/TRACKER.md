@@ -19,6 +19,7 @@ Status: `done` · `running` · `next` · `waiting on user`.
 | M4 Admin GUI | built 15 Nov 2026; final review 0 P0/P1; G-01…G-43 closed or documented. Browser check (S19) in the full-product test |
 | M7 Developer workspaces | built 15 Nov 2026; combined review (3 reviewers) P1s fixed; hardening H-01…H-21 done. User smoke (S21) in the full-product test |
 | M6 Release and distribution | now lane N1–N3 and late lane L1–L9 done; version files at 0.6.0 (bump PR); `m6check` OK; closing review P1s fixed |
+| 0.6.1 patch release | version files bumped to 0.6.1 (PR); ships PRs #14–#26: plugin under `integrations/claude-code/plugin` with a Node 18+ launcher, MCP stdin-EOF drain fixes, `mirafleet-setup` directory plugin, Gemini extension manifest, llms-install.md, PRIVACY.md. Tag awaits the maintainer |
 | Flaky `TestM7Done/10_one_operator_per_runner` (`replacing heartbeat: false EOF`, CI run 43797504106) | test bug, fixed 16 Nov 2026. Central registers the raw replacing connection, closes the real runner and writes `runner.replaced` before it replies; the real runner redials within ~20ms and, if central is slow (store write, `-race` load), replaces the raw connection first, so the reply is lost (EOF). Product behaviour is correct (newest connection wins). Reproduced deterministically with a 300ms delay before the reply; the test now accepts a lost reply and waits on the audit row |
 | Wiki | live, generated from main (guide + quickstart, MIRASTACK LABS cast) |
 
