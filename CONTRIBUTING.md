@@ -17,9 +17,9 @@ Where to ask what: [SUPPORT.md](SUPPORT.md).
 
 - Small fixes: open a pull request directly.
 - Anything bigger (a feature, a new dependency, a protocol change): open an issue first so we can
-  agree on the approach. Milestones are in [docs/PLAN.md](docs/PLAN.md). Enterprise features
+  agree on the approach. Enterprise features
   (RBAC, SSO, HA) are out of scope for the open source tree.
-- New dependencies need a maintainer's yes before you add them (see docs/PLAN.md).
+- New dependencies need a maintainer's yes before you add them (the current list is in [the developer guide](docs/guide/11-contributing.md#dependencies)).
 
 ## Sign off every commit (DCO)
 

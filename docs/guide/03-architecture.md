@@ -839,7 +839,7 @@ does not report reliably. On other systems the request still ends at its own tim
 
 ## Distribution: how the parts reach a machine (M6)
 
-The architecture above is the same however mirafleet is installed. What M6 adds is *where each
+The architecture above is the same however mirafleet is installed. What the release packaging (M6) decides is *where each
 program comes from* and *who starts it*. It is still one static binary; the channels differ in
 how they put it on a machine and what surrounds it.
 
@@ -910,20 +910,19 @@ Status: the rule is wired. The runner heartbeat and the operator `hello` carry `
 refuses a mismatch with the message, audits `runner.refused_version` for runners, and the runner
 backs off to its maximum interval.
 
-## Planned parts (not in the code yet)
+## What is and is not built
 
-M1, M2, M3 and M4 (the admin GUI) are done, and M5 (the orchestrator) and M7 (host mode and
-credentials, above) are built. Not built yet: a container-mode version of the M7 file tools (the
-`fsops` package is pure Go, so wiring it into `ctrd` is a small follow-up; the new tools return
-`unsupported` on container fleets). M6 (release
-packaging, systemd units, the package-manager and plugin-marketplace listings) is in the
-repository and ships as the first release, `v0.6.0`; see
-[the distribution view](#distribution-how-the-parts-reach-a-machine-m6). Not built, by design: more than one GUI admin, roles,
-single sign-on and two-factor login (enterprise features; `gui.Backend` is the seam). Workspace mode, the containerd executor
-and the OpenSandbox executor are **built** (M3, [M3.md](../M3.md)). The MCP stdio server, the
-Claude Code plugin and hooks, and the opencode and generic notes are **built** (M5,
-[M5.md](../M5.md)). Also deferred: MCP elicitation (a prompt from the server to the human) and SSH
-jump hosts per context.
+Everything described in this chapter is released as `v0.6.1`: the actions and workspace modes, the
+containerd and OpenSandbox executors, the admin GUI, the MCP stdio server, the Claude Code plugin
+and hooks, the opencode and generic notes, host mode with credentials, and the release packaging,
+systemd units and package-manager and plugin-marketplace listings (see
+[the distribution view](#distribution-how-the-parts-reach-a-machine-m6)).
+
+Not built: a container-mode version of the host-mode file tools (the `fsops` package is pure Go,
+so wiring it into `ctrd` is a small follow-up; the new tools return `unsupported` on container
+fleets). Also not built: MCP elicitation (a prompt from the server to the human) and SSH jump
+hosts per context. Not built, by design: more than one GUI admin, roles, single sign-on and
+two-factor login (enterprise features; `gui.Backend` is the seam).
 
 ## Check your understanding
 

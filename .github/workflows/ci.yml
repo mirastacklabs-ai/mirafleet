@@ -1,6 +1,6 @@
 name: ci
 
-# Release-readiness checks (docs/M6.md section 2.15). gate.yml already runs the build, tests,
+# Release-readiness checks. gate.yml already runs the build, tests,
 # licenses and the privileged integration harness (and its `gate` job is the required check), so
 # they are not repeated here. This workflow adds what a release needs on top: vulnerability scan,
 # shell and workflow lint, the snapshot with the packaging tests, and the systemd end-to-end test.

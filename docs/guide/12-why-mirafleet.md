@@ -2,10 +2,9 @@
 
 > **A snapshot of the landscape on 13 Nov 2026. It is not maintained with the code.** Other
 > projects change licences, get archived and add features; check the sources (section 12.6)
-> before relying on any row. This chapter compares mirafleet as designed, with all planned
-> milestones (M1 to M6) implemented. M1, M2, M3 (workspaces), M4 (the admin GUI) and M5 (the MCP
-> server, the Claude Code plugin and the other harness files) are done; release packaging (M6) is
-> done and shipped as `v0.6.0` (section 12.7 covers distribution). See [../PLAN.md](../PLAN.md) for what is built today. Star counts are approximate. The rows
+> before relying on any row. This chapter compares mirafleet as released in `v0.6.1`: workspaces, the admin GUI,
+> the MCP server, the Claude Code plugin and the other harness files, host mode and release
+> packaging (section 12.7 covers distribution). Star counts are approximate. The rows
 > for other tools were last researched on 13 Nov 2026 and were **not** re-researched for the M4
 > or M5 refreshes; only the statements about mirafleet were re-checked against the code.
 
@@ -188,8 +187,7 @@ box around the sandbox with credentials, and every connection to central points 
 ## 12.3 The comparison
 
 Legend: ✅ yes, ⚠️ partly or with caveats, ❌ no. "Unverified" means the research could not
-confirm it. mirafleet's row describes the **full planned feature set** (M1 to M5 are built,
-including the MCP server and the admin GUI; release packaging is too, as `v0.6.0`), not only the code today. The
+confirm it. mirafleet's row describes the **full feature set** of `v0.6.1`, including the MCP server, the admin GUI and release packaging. The
 table has five columns of facts on purpose; everything else (extra dependencies, MCP support,
 audit and revoke) is in the prose after it.
 
@@ -520,7 +518,7 @@ Code stays on durga's Mac, raj's spare VM runs the tool calls, and aarvee's cent
 credentials. Two other setups do the
 nearest job. This section compares them. **Statements about other products are general knowledge
 about how they usually work, not checked against their current documentation; verify before you
-decide.** Statements about mirafleet come from the code and [docs/M7.md](../M7.md).
+decide.** Statements about mirafleet come from the code.
 
 ### The three setups in one sentence each
 

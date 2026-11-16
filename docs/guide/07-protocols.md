@@ -33,7 +33,7 @@ All examples use the running example: central at `central.example.com:2222`, fle
 `prod`, runners `build-1` (in `dev`) and `db-1` (in `prod`), operators `durga` and `kalyan`, and
 aarvee, the admin who uses the local admin socket. Tokens and codes are obviously fake (the secret
 and host-key-hash placeholders are exactly 43 characters long, like the real ones). Timestamps
-are made up. M1 to M5 are done, M7 (host mode) is built, and M6 (release, `v0.6.0`) is done; everything here is implemented, except where
+are made up. Everything here is implemented and released (`v0.6.1`), except where
 a paragraph says "planned". Workspace ids are 32 lowercase hex characters; the examples use
 `3f9a6c1e5b7d4820a1c3e5f708192a4b`.
 
@@ -93,7 +93,7 @@ Notes you will need when debugging:
   started with `-workspace` handles only `workspace@mirafleet`. The SSH library rejects every
   other channel type toward the runner, and a runner refuses the channel type it has no config
   for (`Prohibited`).
-- There is **no** `file@mirafleet` channel. [M3](../M3.md) put file reads and writes on
+- There is **no** `file@mirafleet` channel. File reads and writes go over
   `workspace@mirafleet` (same handler, same trust, half the plumbing).
 - The **admin socket** is a unix socket, not SSH. It speaks the same framing and envelope as
   `api@mirafleet` (section 7.5).
@@ -181,7 +181,7 @@ matches (`apiclient.callOn`).
 
 Why a length prefix and not one JSON object per line (NDJSON)? It lets a receiver reject a big
 message by looking at 4 bytes, and the payload may contain any bytes including raw newlines.
-(`docs/M2.md` records NDJSON as rejected, Q12.)
+(Newline-delimited JSON was considered and rejected for this reason.)
 
 ### Body frames (M3): bytes behind a request
 
@@ -1539,9 +1539,9 @@ The GUI's own limits (all in `internal/gui` unless noted):
 
 ## 7.15 Protocol levels and version skew (M6)
 
-Until M6 nothing said what happens when a runner is newer or older than central. Real fleets are
+The protocol defines what happens when a runner is newer or older than central. Real fleets are
 never upgraded in one instant: at MIRASTACK LABS aarvee upgrades central at 09:00, raj upgrades
-`build-1` at 09:10, and `db-1` stays on the old version until Friday because it is busy. M6 therefore defines a **protocol
+`build-1` at 09:10, and `db-1` stays on the old version until Friday because it is busy. The protocol therefore defines a **protocol
 level** (see the [glossary](glossary.md)) and one rule about it. The rule lives in a small, pure
 package: `internal/protover`.
 
@@ -1602,7 +1602,7 @@ a deliberate one-time break, to be called out in the 1.0 release notes.
 
 ### Wiring
 
-The rule is wired into the handshake (docs/M6.md section 2.2, step L2). Central compares plain
+The rule is wired into the handshake. Central compares plain
 levels (`Config.Proto`, default `protover.Current`); the peer's name is in the message, so the
 runner sees "runner `db-1` is protocol 4, ..." and "central is protocol 6, runner `db-1` is 7:
 upgrade central first".
@@ -1633,7 +1633,7 @@ version from `debug.ReadBuildInfo` when the stamp is missing, and `mirafleet ver
 ## 7.16 Developer workspaces (M7): tools, jobs, credentials
 
 M7 lets an agent on the orchestrator's Mac work on a remote VM as if the VM were its laptop. The
-design is [docs/M7.md](../M7.md); this section is the wire-level view. Plain-language story first:
+design is in [ARCHITECTURE.md](../ARCHITECTURE.md#host-mode-m7); this section is the wire-level view. Plain-language story first:
 the **model** (inference) stays on the Mac; every **tool call** runs on the VM; the **secrets**
 (an SSH key, a GitLab token) live on central and reach the VM's memory, never the model. Terms
 (host mode, credential, broker, ssh-agent, background job, `Ref`) are in the [glossary](glossary.md).

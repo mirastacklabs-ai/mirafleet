@@ -544,7 +544,7 @@ servers do not speak TLS, so mirafleet ships a small **TLS front** (`mirafleet r
 that sits next to it and terminates TLS. The runner can also *pin* the front's public key (an
 **SPKI pin**, a hash of the certificate's public-key info, so a look-alike certificate from a
 stolen CA still fails). The key design rule: the agent's own API keys never enter the sandbox,
-and OpenSandbox's API key stays on the runner host. See [../M3.md](../M3.md) and
+and OpenSandbox's API key stays on the runner host. See
 [chapter 3](03-architecture.md#where-does-each-secret-and-key-live).
 
 **Why mirafleet needs this.** Actions mode is a menu; coding needs freedom. A container gives

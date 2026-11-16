@@ -506,8 +506,7 @@ is a thin wrapper over operator API methods; there is none for admin work. See
 in the binary; forward-only; a newer database than the binary fails closed. See
 [chapter 6](06-data-model.md).
 
-**Milestone (M1-M6).** A stage of the build plan. See [chapter 1](01-what-is-mirafleet.md#18-milestones-and-current-status)
-and [../PLAN.md](../PLAN.md).
+**Milestone (M1-M7).** A stage of the build; the docs still use the labels. See [chapter 1](01-what-is-mirafleet.md#18-milestones-and-current-status).
 
 **mTLS (mutual TLS).** TLS where *both* sides present certificates: the server proves who it is,
 and the client does too. Used between the runner and the OpenSandbox TLS front, so only the runner
@@ -565,7 +564,7 @@ written after the work ends and sharing the `request_id` of the `start` row. See
 
 **OpenSandbox.** An open-source sandbox service; mirafleet's opt-in second workspace executor,
 reached over HTTPS only (TLS 1.3, mutual TLS, a private CA, an optional SPKI pin) through a TLS
-front. Its API key lives on the runner host only. See [../M3.md](../M3.md) and
+front. Its API key lives on the runner host only. See
 [chapter 2](02-background.md#29-containers-containerd-and-opensandbox).
 
 **os.Root.** A Go 1.24 standard-library type: a directory handle through which every file
@@ -905,8 +904,8 @@ run any command. It has an id (`ws_id`), an owner, a state (`opening`, `open`, `
 [chapter 1](01-what-is-mirafleet.md#the-workspace-running-example) and
 [chapter 6](06-data-model.md#the-workspace-state-machine).
 
-**workspace mode.** The fleet mode for workspaces (built in M3). Its runner takes `-workspace
-FILE` (`workspace.yaml`) instead of an actions file. See [../M3.md](../M3.md).
+**workspace mode.** The fleet mode for workspaces. Its runner takes `-workspace
+FILE` (`workspace.yaml`) instead of an actions file. See [chapter 3](03-architecture.md).
 
 ## Y
 
