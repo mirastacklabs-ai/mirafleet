@@ -77,6 +77,7 @@ func parseServeFlags(args []string, cwd string, errw io.Writer) (serveOpts, erro
 
 // mcpServe is the production entry: signals, TTY hint, real stdio.
 func mcpServe(args []string, stdin io.Reader, stdout io.Writer) error {
+	ignoreSIGPIPE()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	if f, ok := stdin.(*os.File); ok {

@@ -10,6 +10,8 @@
 //     nil on stdin EOF or ctx cancellation, and an error only for a broken Config or a transport
 //     failure. If ctx is cancelled while a read on in is blocked, that read goroutine is
 //     abandoned (it ends with the process).
+//   - On stdin EOF, Serve first lets the non-tools/call calls already read (initialize, tools/list,
+//     ping) be answered, for at most 2 s; tools/call is cancelled at once (drain.go).
 //   - A [Tool] is a mirafleet-owned struct: name, description, JSON input and output schemas
 //     (json.RawMessage; the input schema must have type "object"), [Annotations] and a handler
 //     func(ctx, Request) (any, error). The SDK does no argument validation for raw tools: the

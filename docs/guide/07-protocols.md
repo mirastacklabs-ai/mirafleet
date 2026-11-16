@@ -1253,9 +1253,12 @@ What the server implements, in `internal/mcpserver/server.go`:
   `notifications/progress` every 15 s while the call runs and none after the answer. Output is
   still buffered: you get it all at the end.
 - **Shutdown.** stdin EOF, `SIGTERM` or `SIGHUP` (on Windows: an interrupt) stops the server with
-  exit code 0 within 5 s. On EOF the server first waits (up to 10 s) for calls it has already read
-  to be answered, so a client that pipes its requests and closes stdin still gets every reply. It cancels in-flight calls and closes the SSH connections. It never
-  closes workspaces; see [chapter 4](04-flows.md) for idle-on-exit and the reaper.
+  exit code 0 within 5 s. It cancels in-flight tool calls and closes the SSH connections. It
+  never closes workspaces; see [chapter 4](04-flows.md) for idle-on-exit and the reaper. One
+  detail on stdin EOF: for at most 2 s the server first lets the quick calls it has already read
+  (`initialize`, `tools/list`, `ping`) be answered, so a client that pipes its requests and
+  closes stdin still gets those replies. It never waits for a `tools/call`. A write to a
+  closed stdout fails quietly (SIGPIPE is ignored on unix) and shutdown goes on as usual.
 
 ### The nine tools
 

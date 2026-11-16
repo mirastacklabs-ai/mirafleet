@@ -287,13 +287,16 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, cfg Config) (err er
 	}
 	// Reads from in go through a pipe so closing the transport never blocks on (or closes) in.
 	pr, pw := io.Pipe()
-	// On stdin EOF the SDK cancels in-flight calls, so pump holds EOF back until the calls already
-	// read have been answered (see drain.go). Messages themselves are processed in arrival order
-	// by the SDK: initialize is handled synchronously, tools/call etc. run concurrently.
-	pend := &pending{}
-	go pump(ctx, in, pw, pend)
-	tr := &mcp.IOTransport{Reader: pr, Writer: nopWriteCloser{countedWriter{out, pend}}}
+	// The SDK handles initialize and notifications in arrival order, but when its reader hits EOF
+	// jsonrpc2 cancels every queued or running async call. pump forwards stdin unchanged and holds
+	// EOF back (max drainTimeout) until the quick calls already read (all but tools/call) have
+	// replies on stdout; tools/call is cancelled at EOF as before. See drain.go.
+	pend := newTracker()
+	ended := make(chan struct{}) // closed when the SDK session ends, so pump stops waiting
+	go pump(ctx, in, pw, pend, ended)
+	tr := &mcp.IOTransport{Reader: pr, Writer: nopWriteCloser{replyWriter{out, pend}}}
 	err = srv.Run(ctx, tr)
+	close(ended)
 	_ = pr.Close()
 	switch {
 	case err == nil, ctx.Err() != nil,
