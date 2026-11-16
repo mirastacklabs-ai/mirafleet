@@ -38,8 +38,10 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
 | Gemini CLI extensions gallery | Auto-indexed: root `gemini-extension.json` + repo topic `gemini-cli-extension`. Check the gallery in about a week. |
 | Docker-Sponsored Open Source | Application submitted by the user (commercialization: "No"). Reply by email within about 2 weeks. |
 | GitHub MCP registry / VS Code, PulseMCP, LobeHub, Zed | Fed from the official MCP Registry; not visible yet on 15 Nov. Re-check in 1–2 weeks. |
+| Cursor Marketplace | Plugin `integrations/cursor/plugin`, listed by `.cursor-plugin/marketplace.json` (PR #34). Publisher application sent 16 Nov at cursor.com/marketplace/publish as MIRASTACK LABS / `@mirastacklabs-ai` (contact rv@mirastacklabs.ai); manual review, no timeline. The form's Owner field is locked to the signed-in account (Individual), so the user emails marketplace-publishing@cursor.com to make the org the owner. Not yet tested in a real Cursor. |
+| cursor.directory | Submitted 16 Nov from the user's GitHub login (aarvee11): https://cursor.directory/plugins/mirafleet (MCP server pinned to 0.6.1, `/mirafleet` command, brand logo). Their security scan failed on their side (common); re-run asked in https://github.com/cursor/community-plugins/issues/538. Hidden until the scan passes. |
 | Cline marketplace | Not filed: its form requires confirming Cline installs it from `llms-install.md` and that it is stable. File once a tester confirms (logo: `docs/assets/logo-400.png`). |
-| Skipped | cursor.directory (user's call), appcypher list (archived), modelcontextprotocol/servers (closed to listings), Smithery (publishing shut down), Codex directory (no self-serve). |
+| Skipped | appcypher list (archived), modelcontextprotocol/servers (closed to listings), Smithery (publishing shut down), Codex directory (no self-serve). |
 | Repo page | Description, homepage (wiki), 19 topics, Discussions on. Social preview `docs/assets/social-preview.png` is uploaded by hand in Settings. |
 
 ## Settings in place (15 Nov 2026)
