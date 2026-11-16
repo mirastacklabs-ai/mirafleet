@@ -22,6 +22,11 @@ No hooks. Cursor's tool approval is the local gate; central enforces `confirm` o
 The package version in `mcp.json` is pinned to the plugin version. For a server that tracks npm
 `latest`, use the "Add to Cursor" button in [../README.md](../README.md).
 
+## Troubleshooting
+
+If the server fails to start with "looks like an unexpanded variable", Cursor did not expand
+`${workspaceFolder}`. Use the by-hand config in [../README.md](../README.md), which passes `.`.
+
 ## Status
 
 Not yet tested in a real Cursor. The layout follows the Cursor plugin reference (checked 2026-11-16).

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -63,7 +64,17 @@ func parseServeFlags(args []string, cwd string, errw io.Writer) (serveOpts, erro
 		return o, fmt.Errorf("mcp serve: unexpected argument %q", fs.Arg(0))
 	}
 	if o.projectDir == "" {
-		o.projectDir = cwd
+		if !filepath.IsAbs(cwd) {
+			return o, errors.New("mcp serve: cannot resolve -project-dir (no working directory)")
+		}
+		o.projectDir = filepath.Clean(cwd)
+		return o, nil
+	}
+	// An explicit value is checked: a harness that fails to substitute ${workspaceFolder} must not
+	// silently turn into a made-up directory with no project file.
+	given := o.projectDir
+	if strings.Contains(given, "${") || strings.Contains(given, "$(") {
+		return o, fmt.Errorf("mcp serve: -project-dir %q looks like an unexpanded variable; your MCP client did not substitute it", given)
 	}
 	if !filepath.IsAbs(o.projectDir) {
 		if cwd == "" {
@@ -72,6 +83,9 @@ func parseServeFlags(args []string, cwd string, errw io.Writer) (serveOpts, erro
 		o.projectDir = filepath.Join(cwd, o.projectDir)
 	}
 	o.projectDir = filepath.Clean(o.projectDir)
+	if st, err := os.Stat(o.projectDir); err != nil || !st.IsDir() {
+		return o, fmt.Errorf("mcp serve: -project-dir %q is not a directory", given)
+	}
 	return o, nil
 }
 
