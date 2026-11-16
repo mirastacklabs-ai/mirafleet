@@ -557,12 +557,20 @@ Nine tools, thin wrappers over the API methods from M2/M3:
 
 ```
 integrations/claude-code/
-├── .claude-plugin/plugin.json
-├── .mcp.json          mirafleet mcp -project-dir ${CLAUDE_PROJECT_DIR}
-├── hooks/hooks.json   exec-form hooks (no shell, works on Windows)
-├── skills/{mirafleet,openfleet,claudefleet}/SKILL.md   the aliases point at the main skill
+├── plugin/            the plugin root: plugin files only (no Go source)
+│   ├── .claude-plugin/plugin.json
+│   ├── .mcp.json          node ${CLAUDE_PLUGIN_ROOT}/bin/mirafleet.js mcp
+│   ├── hooks/hooks.json   exec-form hooks through the same launcher (no shell, works on Windows)
+│   ├── bin/mirafleet.js   Node launcher: runs the installed `mirafleet` found on PATH
+│   └── skills/{mirafleet,openfleet,claudefleet}/SKILL.md   the aliases point at the main skill
 └── hook/              Go handlers behind `mirafleet mcp hook claude-code <event>`
 ```
+
+The Anthropic plugin directory accepts only plugin files and flags plugins that start an installed
+program directly, so the Go package lives next to the plugin root and the plugin starts the binary
+through the launcher (Node 18+). The launcher sets `MIRAFLEET_HARNESS_PID` to Claude Code's PID,
+which keys the session handoff for both the hook and the MCP server. The server starts in the
+project directory, which `mirafleet mcp` uses by default. See docs/M6.md section 2.18.
 
 - `SessionStart` writes the handoff (`cc:<session_id>`); offline, no output.
 - `SessionEnd` removes the handoff if it still names this session and, only for reason `clear` or `logout`, closes the session's

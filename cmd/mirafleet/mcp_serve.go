@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mirastacklabs-ai/mirafleet/internal/handoff"
 	"github.com/mirastacklabs-ai/mirafleet/internal/mcpserver"
 	"github.com/mirastacklabs-ai/mirafleet/internal/opconf"
 	"github.com/mirastacklabs-ai/mirafleet/internal/orch"
@@ -120,7 +121,7 @@ func runServe(ctx context.Context, stop func(), args []string, in io.Reader, out
 		Context:    opts.context,
 		Fleet:      opts.fleet,
 		Session:    opts.session,
-		PPID:       os.Getppid(),
+		PPID:       handoff.HarnessPID(),
 		Logf:       logf,
 	})
 	if err != nil {

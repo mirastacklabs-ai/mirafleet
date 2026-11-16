@@ -5,8 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mirafleet",
-            "args": ["mcp", "hook", "claude-code", "session-start"]
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/bin/mirafleet.js", "mcp", "hook", "claude-code", "session-start"]
           }
         ]
       }
@@ -16,8 +16,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mirafleet",
-            "args": ["mcp", "hook", "claude-code", "session-end"],
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/bin/mirafleet.js", "mcp", "hook", "claude-code", "session-end"],
             "timeout": 15
           }
         ]
@@ -29,8 +29,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mirafleet",
-            "args": ["mcp", "hook", "claude-code", "pre-tool-use"]
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/bin/mirafleet.js", "mcp", "hook", "claude-code", "pre-tool-use"]
           }
         ]
       },
@@ -39,8 +39,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mirafleet",
-            "args": ["mcp", "hook", "claude-code", "pre-tool-use"]
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/bin/mirafleet.js", "mcp", "hook", "claude-code", "pre-tool-use"]
           }
         ]
       }
