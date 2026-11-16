@@ -20,7 +20,7 @@ inside containers, and teaches you how the tests are built so you can write your
 - The M5 additions: `TestM5Done` (the MCP layer against a real central), `TestM5NoHooks` (the built
   `mirafleet mcp` as a child process, with no harness), the hook and plugin tests, the CI workflow
   that tests the orchestrator side on Windows and macOS ([9.13](#913-the-orchestrator-workflow-windows-and-macos)), and how to try the plugin
-  with `claude --plugin-dir integrations/claude-code` ([9.14](#914-try-it-locally-the-mcp-server-and-the-claude-code-plugin)).
+  with `claude --plugin-dir integrations/claude-code/plugin` ([9.14](#914-try-it-locally-the-mcp-server-and-the-claude-code-plugin)).
 - The M4 additions: `TestM4Done` (the admin GUI against a real central, over real TLS), the GUI
   security suite, the built-binary smoke test `TestGUIBinary`, `scripts/dev.sh gui-shots`, and how
   to look at the GUI yourself ([9.15](#915-try-it-locally-the-admin-gui)).
@@ -518,9 +518,11 @@ needed:
 
 **The integration tests** (`integrations/integrations_test.go`, `harnesses_test.go`) check the
 files as data, because a typo in JSON would fail only inside someone else's Claude Code: the plugin
-manifest keys and semver; `.mcp.json` runs the bare `mirafleet` with `-project-dir`; every hook is
-**exec form** (a `command` and an `args` array, no shell string, so it works on Windows too) and
-SessionEnd has `timeout: 15`; the PreToolUse **matcher** matches all nine tool names under
+manifest keys and semver; `.mcp.json` runs `node` on the plugin's own launcher
+(`${CLAUDE_PLUGIN_ROOT}/bin/mirafleet.js mcp`); every hook is
+**exec form** (a `command` and an `args` array, no shell string, so it works on Windows too) that
+runs the same launcher, and SessionEnd has `timeout: 15`; the plugin root holds only plugin files
+(JSON, Markdown, the icon and the launcher; no Go source); the PreToolUse **matcher** matches all nine tool names under
 `mcp__plugin_mirafleet_mirafleet__` and no other tool; the skill body is byte-for-byte
 `integrations/commands/mirafleet.md`, and the aliases are full copies with
 `disable-model-invocation: true`; the opencode command bodies match the shared one, its example
@@ -1092,10 +1094,11 @@ file under the state directory (chapter 10).
 your choice that has (or does not have) a `.mirafleet.yaml`:
 
 ```bash
-claude --plugin-dir integrations/claude-code
+claude --plugin-dir integrations/claude-code/plugin
 ```
 
-`--plugin-dir` loads a plugin straight from a folder, with no install and no marketplace (those come
+The plugin needs Node.js 18 or later and `mirafleet` on `PATH`. `scripts/dev.sh launcher` tests the
+launcher in a Node container. `--plugin-dir` loads a plugin straight from a folder, with no install and no marketplace (those come
 in M6). Then:
 
 1. `/mcp` lists the server as `plugin:mirafleet:mirafleet`. If it is failed, `mirafleet` is not on
@@ -1107,13 +1110,14 @@ in M6). Then:
 4. Ask it to do something on a guarded fleet. You should be asked twice: Claude Code's own tool
    prompt, and the hook's `ask` with the reason `Guarded fleet "prod": ...`.
 5. `claude --debug` shows the hook commands and their output. `claude plugin validate
-   integrations/claude-code --strict` checks the manifest.
+   integrations/claude-code/plugin --strict` checks the manifest.
 
 Some behaviours depend on Claude Code itself and are checked by hand rather than by a test
 (M5 step S17): that bare `/mirafleet` resolves, that a hook `ask` still prompts in the
-auto-approve permission modes, that `${CLAUDE_PROJECT_DIR}` is filled in the plugin's `.mcp.json`,
-and that the hook and the MCP server share a parent process (so that `--resume` reattaches to the
-old workspace). If one of them is false for your version, the core still works; you lose the
+auto-approve permission modes, that Claude Code starts the MCP server in the project directory (the plugin's `.mcp.json` passes no
+`-project-dir`),
+and that the hook and the MCP server see the same harness PID (the launcher passes Claude Code's PID
+in `MIRAFLEET_HARNESS_PID`; this is what lets `--resume` reattach to the old workspace). If one of them is false for your version, the core still works; you lose the
 convenience, and the docs say which ([chapter 11](11-contributing.md#117-adding-a-harness-integration)).
 
 ## 9.15 Try it locally: the admin GUI

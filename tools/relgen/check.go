@@ -30,7 +30,7 @@ type target struct {
 // targets is the list of versioned files (docs/M6.md section 2.1). npm templates carry no version.
 // Later steps (compose image tags, ...) append from their own file's init via addTarget.
 var targets = []target{
-	{Path: "integrations/claude-code/.claude-plugin/plugin.json", Get: jsonVersions, Set: setJSONVersions},
+	{Path: "integrations/claude-code/plugin/.claude-plugin/plugin.json", Get: jsonVersions, Set: setJSONVersions},
 	{Path: "cmd/mirafleet/mcp_hook.go", Get: goPluginVersion, Set: setGoPluginVersion},
 	{Path: ".claude-plugin/marketplace.json", Tag: true, Get: marketplaceRef, Set: setMarketplaceRef},
 	{Path: "server.json", Get: jsonVersions, Set: setJSONVersions},
@@ -189,6 +189,23 @@ func setProtoLevel(b []byte, value string) ([]byte, error) {
 // pluginName is the marketplace entry whose source ref tracks the release tag.
 const pluginName = "mirafleet"
 
+// newerThan060 reports whether the tag form vX.Y.Z[-rc.N] is above 0.6.0 by X.Y.Z (so 0.7.0-rc.1
+// counts, 0.6.0 and 0.6.0-rc.N do not).
+func newerThan060(tag string) bool {
+	m := semverRE.FindStringSubmatch(strings.TrimPrefix(tag, "v"))
+	if m == nil {
+		return false
+	}
+	n := func(s string) int { v, _ := strconv.Atoi(s); return v }
+	x, y, z := n(m[1]), n(m[2]), n(m[3])
+	return x > 0 || y > 6 || (y == 6 && z > 0)
+}
+
+// pluginPath is the marketplace source path written by bump, together with the new ref.
+const pluginPath = "integrations/claude-code/plugin"
+
+var pathKeyRE = regexp.MustCompile(`("path"\s*:\s*")[^"]*(")`)
+
 var refKeyRE = regexp.MustCompile(`("ref"\s*:\s*")[^"]*(")`)
 
 func marketplaceRef(b []byte) ([]string, error) {
@@ -225,6 +242,15 @@ func setMarketplaceRef(b []byte, value string) ([]byte, error) {
 	}
 	if n := len(refKeyRE.FindAll(b, -1)); n != 1 {
 		return nil, fmt.Errorf(`found %d "ref" keys, expected exactly 1`, n)
+	}
+	if n := len(pathKeyRE.FindAll(b, -1)); n != 1 {
+		return nil, fmt.Errorf(`found %d "path" keys, expected exactly 1`, n)
+	}
+	// path and ref move together: the plugin root is integrations/claude-code/plugin from the first
+	// release after v0.6.0, and v0.6.0 and older tags (and their rc tags) do not have that path, so
+	// for those versions the path is left alone.
+	if newerThan060(value) {
+		b = pathKeyRE.ReplaceAll(b, []byte("${1}"+pluginPath+"${2}"))
 	}
 	return refKeyRE.ReplaceAll(b, []byte("${1}"+value+"${2}")), nil
 }

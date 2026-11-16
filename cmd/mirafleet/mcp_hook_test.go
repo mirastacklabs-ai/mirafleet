@@ -106,7 +106,7 @@ func TestMCPHookEndToEnd(t *testing.T) {
 // The plugin manifest version must equal pluginVersion (the binary's own `version` is "dev" until
 // the release build links it in).
 func TestPluginVersionLockstep(t *testing.T) {
-	b, err := os.ReadFile("../../integrations/claude-code/.claude-plugin/plugin.json")
+	b, err := os.ReadFile("../../integrations/claude-code/plugin/.claude-plugin/plugin.json")
 	if err != nil {
 		t.Fatal(err)
 	}

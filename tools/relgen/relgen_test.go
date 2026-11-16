@@ -85,7 +85,7 @@ func TestBumpThenCheck(t *testing.T) {
 	}
 	// Only the version strings changed; formatting is preserved byte for byte.
 	for _, rel := range []string{
-		"integrations/claude-code/.claude-plugin/plugin.json",
+		"integrations/claude-code/plugin/.claude-plugin/plugin.json",
 		"cmd/mirafleet/mcp_hook.go",
 		".claude-plugin/marketplace.json",
 		"server.json",
@@ -95,6 +95,7 @@ func TestBumpThenCheck(t *testing.T) {
 		"deploy/compose/lab/compose.yaml",
 	} {
 		want := strings.ReplaceAll(read(t, filepath.Join("testdata", "tree"), rel), "0.5.0", "0.6.0")
+		// 0.6.0 is the last version with the plugin at integrations/claude-code: the path stays.
 		if got := read(t, root, rel); got != want {
 			t.Errorf("%s:\n%s\nwant:\n%s", rel, got, want)
 		}
@@ -149,7 +150,15 @@ func TestBumpCheckInvariants(t *testing.T) {
 		if src, _ := m.Plugins[0]["source"].(map[string]any); src["ref"] != "v"+c.ver {
 			t.Errorf("%s: source.ref = %v", c.ver, src["ref"])
 		}
-		for _, rel := range []string{"integrations/claude-code/.claude-plugin/plugin.json", "server.json", "gemini-extension.json"} {
+		// path and ref are a pair: the new plugin root exists only after v0.6.0.
+		wantPath := "integrations/claude-code/plugin"
+		if c.ver == "0.6.0" {
+			wantPath = "integrations/claude-code"
+		}
+		if src, _ := m.Plugins[0]["source"].(map[string]any); src["path"] != wantPath {
+			t.Errorf("%s: source.path = %v, want %s", c.ver, src["path"], wantPath)
+		}
+		for _, rel := range []string{"integrations/claude-code/plugin/.claude-plugin/plugin.json", "server.json", "gemini-extension.json"} {
 			if !strings.Contains(read(t, root, rel), `"version": "`+c.ver+`"`) {
 				t.Errorf("%s: %s lacks version %s", c.ver, rel, c.ver)
 			}
@@ -203,7 +212,7 @@ func TestBumpRenameFailureRestores(t *testing.T) {
 		t.Fatalf("code %d %q", c, errs)
 	}
 	for _, rel := range []string{
-		"integrations/claude-code/.claude-plugin/plugin.json", "cmd/mirafleet/mcp_hook.go",
+		"integrations/claude-code/plugin/.claude-plugin/plugin.json", "cmd/mirafleet/mcp_hook.go",
 		".claude-plugin/marketplace.json", "server.json", "gemini-extension.json", "internal/protover/protover.go",
 	} {
 		if got, want := read(t, root, rel), read(t, filepath.Join("testdata", "tree"), rel); got != want {

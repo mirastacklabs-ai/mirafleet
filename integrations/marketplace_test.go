@@ -61,8 +61,16 @@ func TestMarketplaceJSON(t *testing.T) {
 	}
 	// No "version" on the entry: Claude Code takes the version from plugin.json, and a second copy
 	// could only drift. The release tag is pinned through source.ref instead.
-	if p.Source.Source != "git-subdir" || p.Source.Path != "integrations/claude-code" {
-		t.Fatalf("source = %+v, want git-subdir integrations/claude-code", p.Source)
+	// path and ref move together (relgen bump writes both). The plugin root is
+	// integrations/claude-code/plugin from the first release after v0.6.0; the v0.6.0 tag has the
+	// plugin at integrations/claude-code, so that pair must stay valid for existing installs until
+	// the next bump.
+	wantPath := "integrations/claude-code/plugin"
+	if p.Source.Ref == "v0.6.0" {
+		wantPath = "integrations/claude-code"
+	}
+	if p.Source.Source != "git-subdir" || p.Source.Path != wantPath {
+		t.Fatalf("source = %+v, want git-subdir %s", p.Source, wantPath)
 	}
 	if !strings.HasPrefix(p.Source.URL, "https://github.com/mirastacklabs-ai/mirafleet") {
 		t.Errorf("source url = %q", p.Source.URL)

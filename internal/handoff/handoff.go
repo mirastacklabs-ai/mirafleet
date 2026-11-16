@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
@@ -31,6 +32,20 @@ const (
 	maxAge     = 7 * 24 * time.Hour
 	maxScanned = 1000
 )
+
+// HarnessPIDEnv names the variable a launcher sets to the harness PID when it sits between the
+// harness and this process (the Claude Code plugin starts mirafleet through a Node launcher, so
+// os.Getppid() would be the launcher, which differs for the hook and the MCP server).
+const HarnessPIDEnv = "MIRAFLEET_HARNESS_PID"
+
+// HarnessPID returns the PID that keys handoffs: HarnessPIDEnv when it holds a positive integer,
+// else the parent PID.
+func HarnessPID() int {
+	if n, err := strconv.Atoi(os.Getenv(HarnessPIDEnv)); err == nil && n > 0 {
+		return n
+	}
+	return os.Getppid()
+}
 
 // Key identifies a handoff: the parent (harness) PID and the project directory.
 type Key struct {
@@ -46,7 +61,16 @@ type file struct {
 	Written time.Time `json:"written"`
 }
 
-func (k Key) clean() string { return filepath.Clean(k.Project) }
+// clean returns the project path with symlinks resolved (falling back to the cleaned path when it
+// cannot be resolved), so a logical $PWD and the physical path give the same key on the hook and
+// the server side.
+func (k Key) clean() string {
+	p := filepath.Clean(k.Project)
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	return p
+}
 
 func (k Key) name() string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d|%s", k.PID, k.clean())))
