@@ -24,8 +24,11 @@ The package version in `mcp.json` is pinned to the plugin version. For a server 
 
 ## Troubleshooting
 
-If the server fails to start with "looks like an unexpanded variable", Cursor did not expand
-`${workspaceFolder}`. Use the by-hand config in [../README.md](../README.md), which passes `.`.
+If mirafleet ignores your `.mirafleet.yaml`, or (from the next release) stops with "unexpanded variable",
+Cursor did not expand `${workspaceFolder}`: use the by-hand config in [../README.md](../README.md) with `.`.
+
+Cursor commands have no argument placeholder, so the command shows `Task: $ARGUMENTS` literally. The text you
+type after `/mirafleet` is the task.
 
 ## Status
 

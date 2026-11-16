@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +74,7 @@ func TestParseServeFlagsProjectDir(t *testing.T) {
 		want      string // "" for the error cases
 		errSub    string
 	}{
+		{"explicit empty", "", "", "is empty"},
 		{"unexpanded brace", "${workspaceFolder}", "", "unexpanded variable"},
 		{"unexpanded paren", "$(pwd)", "", "unexpanded variable"},
 		{"embedded variable", "${HOME}/x", "", "unexpanded variable"},
@@ -86,7 +88,7 @@ func TestParseServeFlagsProjectDir(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var args []string
-			if c.dir != "" {
+			if c.dir != "" || c.name == "explicit empty" {
 				args = []string{"-project-dir", c.dir}
 			}
 			o, err := parseServeFlags(args, cwd, io.Discard)
@@ -100,6 +102,18 @@ func TestParseServeFlagsProjectDir(t *testing.T) {
 				t.Fatalf("projectDir = %q, %v; want %q", o.projectDir, err, c.want)
 			}
 		})
+	}
+}
+
+func TestParseServeFlagsWindowsRelative(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("volume-relative and root-relative paths only exist on Windows")
+	}
+	cwd := t.TempDir()
+	for _, d := range []string{`C:proj`, `\proj`, `/proj`} {
+		if _, err := parseServeFlags([]string{"-project-dir", d}, cwd, io.Discard); err == nil || !strings.Contains(err.Error(), "absolute") {
+			t.Errorf("%q: err = %v, want an 'absolute path' error", d, err)
+		}
 	}
 }
 

@@ -52,7 +52,7 @@ func TestCursorPluginManifest(t *testing.T) {
 	if m.Name != "mirafleet" || !kebabRE.MatchString(m.Name) {
 		t.Errorf("name = %q, want kebab-case mirafleet", m.Name)
 	}
-	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(m.Version) {
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+(-rc\.\d+)?$`).MatchString(m.Version) {
 		t.Errorf("version = %q", m.Version)
 	}
 	if len(m.Description) < 40 || !strings.Contains(m.Description, "mirafleet mcp login") {
@@ -163,6 +163,9 @@ func TestCursorInstallButton(t *testing.T) {
 	m := regexp.MustCompile(`https://cursor\.com/en/install-mcp\?name=mirafleet&config=([A-Za-z0-9+/=]+)\)`).FindStringSubmatch(readme)
 	if m == nil {
 		t.Fatal("no install-mcp link in cursor/README.md")
+	}
+	if strings.Contains(m[1], "+") {
+		t.Error("button config contains '+', which is unsafe in a query string")
 	}
 	b, err := base64.StdEncoding.DecodeString(m[1])
 	if err != nil {
