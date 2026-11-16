@@ -104,7 +104,8 @@ maintainer's explicit go-ahead.
 **After**
 14. Docker Hub repo description and README, ghcr package public and linked (P6).
 15. Wiki: you create the first page, then **yes** to publishing `docs/guide` and the quickstart (P7, P8).
-16. Submissions, one at a time: Anthropic plugin directory (P9), galleries (P10), Docker-Sponsored
+16. Submissions, one at a time: Anthropic plugin directory (P9; submit `integrations/claude-code/directory`,
+    the slim `mirafleet-setup` plugin, not the full one: see docs/M6.md section 2.18), galleries (P10), Docker-Sponsored
     OSS (section 7; P11), mirastacklabs.ai one-pager and announcement (P12).
 17. `scripts/release.sh clean`.
 
