@@ -140,7 +140,9 @@ After the tag is pushed (each item needs the maintainer; an agent never approves
    regenerate `marketplace.yaml` and run their tests in a node container.
 8. Wiki: regenerate with `relgen wiki -out DIR -commit SHA` (see M6.md), then push it (**yes**).
 9. Update `docs/HANDOFF.md`.
-10. Now and then, re-check the directories that feed themselves from the registry or GitHub (Glama and similar).
+10. Glama: admin → Dockerfile, change the build step's `@mirastacklabs/mirafleet@X.Y.Z` to the new version,
+    Build & Release, and check the build test passes.
+11. Now and then, re-check the directories that feed themselves from the registry or GitHub.
 
 Calendar: `HOMEBREW_TAP_TOKEN` expires on 15 Dec 2026; renew it before then or `brew` fails.
 
