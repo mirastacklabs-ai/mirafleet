@@ -79,7 +79,7 @@ func TestPluginManifest(t *testing.T) {
 	var raw map[string]any
 	readJSON(t, &raw, ".claude-plugin", "plugin.json")
 	// No hooks, mcpServers or commands keys: components are found at the plugin root by convention.
-	wantKeys := "author description displayName homepage keywords license name repository version"
+	wantKeys := "author description displayName documentationUrl homepage keywords license name privacyPolicyUrl repository supportUrl termsOfServiceUrl version"
 	if got := strings.Join(keySet(raw), " "); got != wantKeys {
 		t.Fatalf("plugin.json keys %q, want %q", got, wantKeys)
 	}

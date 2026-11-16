@@ -10,5 +10,9 @@
   "homepage": "https://github.com/mirastacklabs-ai/mirafleet",
   "repository": "https://github.com/mirastacklabs-ai/mirafleet",
   "license": "Apache-2.0",
+  "documentationUrl": "https://github.com/mirastacklabs-ai/mirafleet/blob/main/integrations/claude-code/plugin/README.md",
+  "supportUrl": "https://github.com/mirastacklabs-ai/mirafleet/blob/main/SUPPORT.md",
+  "privacyPolicyUrl": "https://github.com/mirastacklabs-ai/mirafleet/blob/main/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/mirastacklabs-ai/mirafleet/blob/main/LICENSE",
   "keywords": ["fleet", "mcp", "servers", "ops"]
 }
