@@ -46,7 +46,7 @@ right runner and records it. Read the full story in the [developer guide](docs/g
 | Claude Code | Full plugin with hooks, from our marketplace: [integrations/claude-code/plugin](integrations/claude-code/plugin/README.md). Setup plugin for the Claude plugin directory (once listed; it installs the full one): [integrations/claude-code/directory](integrations/claude-code/directory/README.md) |
 | opencode | [integrations/opencode](integrations/opencode/README.md) |
 | Codex CLI | [integrations/codex](integrations/codex/README.md) |
-| Gemini CLI | [integrations/gemini](integrations/gemini/README.md) |
+| Gemini CLI | `gemini extensions install https://github.com/mirastacklabs-ai/mirafleet` ([details](integrations/gemini/README.md)) |
 | Cursor | [integrations/cursor](integrations/cursor/README.md) |
 | VS Code (Copilot) | [integrations/vscode](integrations/vscode/README.md) |
 | Cline | [integrations/cline](integrations/cline/README.md) |
