@@ -142,7 +142,10 @@ After the tag is pushed (each item needs the maintainer; an agent never approves
 9. Update `docs/HANDOFF.md`.
 10. Glama: admin → Dockerfile, change the build step's `@mirastacklabs/mirafleet@X.Y.Z` to the new version,
     Build & Release, and check the build test passes.
-11. Now and then, re-check the directories that feed themselves from the registry or GitHub.
+11. Cursor: the Marketplace needs nothing (`relgen bump` sets the plugin version and the npx pin on `main`).
+    cursor.directory keeps its own copy of the MCP config: plugin menu, Edit, change
+    `@mirastacklabs/mirafleet@X.Y.Z` in the MCP server, save, and check the scan passes.
+12. Now and then, re-check the directories that feed themselves from the registry or GitHub.
 
 Calendar: `HOMEBREW_TAP_TOKEN` expires on 15 Dec 2026; renew it before then or `brew` fails.
 
