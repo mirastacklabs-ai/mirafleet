@@ -24,24 +24,25 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
   `v*` tags only); ruleset `main` (PR, squash only, required checks `gate`, `licenses`, `lint`,
   `dco`, `windows-latest`, `macos-latest`); ruleset `release-tags` (only admins on `v*`);
   auto-merge and delete-branch on; private vulnerability reporting on.
-- **`release` environment:** variable `DOCKERHUB_USERNAME=mirastack`; secrets `DOCKERHUB_TOKEN`,
-  `NPM_TOKEN` (npm granular token `mirafleet-stage-only`: stage only, scope `@mirastacklabs`,
-  no 2FA bypass, expires 22 Nov 2026) and `HOMEBREW_TAP_TOKEN` (fine-grained PAT
-  `mirafleet-homebrew-tap`, owner `mirastacklabs-ai`, Contents read/write on `homebrew-tap` only,
-  expires 15 Dec 2026: renew before the next release).
+- **`release` environment:** variable `DOCKERHUB_USERNAME=mirastack`; secrets `DOCKERHUB_TOKEN`
+  and `HOMEBREW_TAP_TOKEN` (fine-grained PAT `mirafleet-homebrew-tap`, owner `mirastacklabs-ai`,
+  Contents read/write on `homebrew-tap` only, expires 15 Dec 2026: renew before the next release).
+  `NPM_TOKEN` is deleted, and npm has no access tokens at all.
 - **npm:** user account `mirastacklabs` (no npm org; the scope is the user scope). Publishing is
-  staged (`npm stage publish`, PR #7); a maintainer approves with 2FA.
+  staged (`npm stage publish`, PR #7); a maintainer approves with 2FA. All 7 packages have a
+  trusted publisher (repo `mirastacklabs-ai/mirafleet`, workflow `release.yml`, environment
+  `release`, allowed action `npm stage publish` only), **pending validation: it expires on
+  18 Nov 2026 ~00:35 UTC unless a release stages through it before then.** If it expires, delete
+  and recreate it on each package (one 2FA each) right before the next release, then tag within
+  2 days. Publishing access is still the npm default (not "disallow bypass 2FA tokens").
 - **Docker Hub:** org `mirastack`, public repo `mirafleet` (description still empty).
 - **GitHub org `mirastacklabs`** (not `mirastacklabs-ai`) shows "flagged, hidden from the public";
   the user may ask GitHub support for a review. It does not affect the release.
 - **DCO:** every commit uses `git commit -s` as the user (aarvee11); no Claude co-author trailer.
 
 ## Next steps, in order
-1. **Agent, with the user's 2FA:** add a trusted publisher to each of the 7 packages (repo
-   `mirastacklabs-ai/mirafleet`, workflow `release.yml`, environment `release`, allowed action
-   `npm stage publish` only); delete the npm token and
-   `gh secret delete NPM_TOKEN --env release --repo mirastacklabs-ai/mirafleet`; set publishing
-   access to "Require 2FA and disallow tokens".
+1. Optional, one 2FA per package: set each package's publishing access to "Require two-factor
+   authentication and disallow bypass 2fa tokens".
 2. P6: Docker Hub description and README (needs a Docker Hub sign-in).
 3. P9–P12 (RELEASING.md §3 step 16): Anthropic plugin directory, galleries, Docker-Sponsored OSS,
    mirastacklabs.ai one-pager and announcement.
