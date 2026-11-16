@@ -14,6 +14,7 @@ One git tag `vX.Y.Z` (or `vX.Y.Z-rc.N`) on `main` produces every channel from th
 | Channel | Produced by job | Notes |
 |---|---|---|
 | GitHub release: archives (6 targets), `.deb` `.rpm` `.apk`, `checksums.txt` (+ `checksums.txt.sigstore.json`), SBOMs, `install.sh`, `install.ps1`, `THIRD_PARTY_LICENSES.txt` | `build`, `draft`, `publish-release` | cosign keyless signature of `checksums.txt`; build provenance for every archive and package |
+| Gemini CLI extension: `darwin.mirafleet.tar.gz`, `linux.mirafleet.tar.gz`, `win32.mirafleet.tar.gz` (identical; no binary inside) | `build` (goreleaser) | listed in `checksums.txt`, so signed and attested with the rest; one per platform because Gemini uses a generic name only for a single-asset release |
 | OCI image `docker.io/mirastack/mirafleet` and `ghcr.io/mirastacklabs-ai/mirafleet` | `image` | one multi-arch build, same digest in both; cosign + provenance for both. Tags `X.Y.Z`, `X.Y`, `latest`; a pre-release gets only `X.Y.Z-rc.N` |
 | npm `@mirastacklabs/mirafleet` + six platform packages | `npm` | stages the 7 packages (`npm stage publish`); the maintainer approves them on npmjs.com with 2FA; provenance; pre-releases go to dist-tag `next` |
 | Homebrew tap `mirastacklabs-ai/homebrew-tap` | `brew` | not for pre-releases |
@@ -113,6 +114,28 @@ If a job fails, fix the cause and re-run the failed job from the Actions page. A
 skips versions that are already published (staged but unapproved versions are not published yet,
 so approve or reject them on npmjs.com first); the other publishing jobs are safe to repeat only
 before they have pushed anything, so read the log first.
+
+## Every release
+
+After the tag is pushed (each item needs the maintainer; an agent never approves a deployment):
+
+1. Approve the release jobs in the GitHub UI, in order: `draft`, `publish-release`, `image`, `npm`, `brew`, then `mcp-registry`.
+2. Approve the staged npm packages with 2FA at <https://www.npmjs.com/settings/mirastacklabs/staged-packages>.
+3. Verify: GitHub release (assets, `checksums.txt` signature, attestations), Docker Hub and GHCR
+   (same digest), npm (`npx -y @mirastacklabs/mirafleet@X.Y.Z version`), Homebrew, MCP Registry.
+4. Claude Code marketplace: nothing. `relgen bump` already set `source.path` and `source.ref` to the tag.
+5. Claude directory: portal, then each submission (`mirafleet-setup`; `mirafleet` once Verified), Settings,
+   "Tracked branch or tag" = `vX.Y.Z`, Save, wait for the scan, Publish. The ref cannot be changed while a
+   version is with a reviewer, and changing it cancels a waiting publish request.
+6. Gemini: nothing. The release ships `darwin|linux|win32.mirafleet.tar.gz` (built by goreleaser, signed via
+   `checksums.txt`, version checked by `relgen gemini-check`); `gemini extensions install` takes the Latest release.
+7. Kilo: PR to the Kilo marketplace repo updating the pinned npx version in `mcps/mirafleet/MCP.yaml`;
+   regenerate `marketplace.yaml` and run their tests in a node container.
+8. Wiki: regenerate with `relgen wiki -out DIR -commit SHA` (see M6.md), then push it (**yes**).
+9. Update `docs/HANDOFF.md`.
+10. Now and then, re-check the directories that feed themselves from the registry or GitHub (Glama and similar).
+
+Calendar: `HOMEBREW_TAP_TOKEN` expires on 15 Dec 2026; renew it before then or `brew` fails.
 
 ## 4. Pull requests and auto-merge
 

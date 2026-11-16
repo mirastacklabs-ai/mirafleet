@@ -50,6 +50,35 @@ archives:
       - src: dist/stage/QUICKSTART.md
         strip_parent: true
 
+  # Gemini CLI extension (no binary inside). Gemini picks a release asset by name prefix
+  # `<platform>.<arch>.`, then `<platform>.`; a bare generic name is used only when the release
+  # has a single asset. So we ship one identical archive per platform (darwin, linux, win32).
+  # gemini-extension.json is at the archive root; `relgen gemini-check` verifies it in release.yml.
+  - id: gemini-darwin
+    meta: true
+    formats: [tar.gz]
+    name_template: "darwin.mirafleet"
+    files: &gemini_files
+      - src: gemini-extension.json
+        info: {mode: 0644, owner: root, group: root, mtime: "{{ .CommitDate }}"}
+      - src: GEMINI.md
+        info: {mode: 0644, owner: root, group: root, mtime: "{{ .CommitDate }}"}
+      - src: LICENSE
+        info: {mode: 0644, owner: root, group: root, mtime: "{{ .CommitDate }}"}
+      - src: integrations/gemini/commands/mirafleet.toml
+        dst: commands/mirafleet.toml
+        info: {mode: 0644, owner: root, group: root, mtime: "{{ .CommitDate }}"}
+  - id: gemini-linux
+    meta: true
+    formats: [tar.gz]
+    name_template: "linux.mirafleet"
+    files: *gemini_files
+  - id: gemini-win32
+    meta: true
+    formats: [tar.gz]
+    name_template: "win32.mirafleet"
+    files: *gemini_files
+
 nfpms:
   - id: mirafleet
     ids: [mirafleet]

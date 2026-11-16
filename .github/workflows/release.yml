@@ -126,6 +126,10 @@ jobs:
       - name: checksums match every file they list
         working-directory: dist/goreleaser
         run: sha256sum -c checksums.txt
+      - name: Gemini extension archives have the right layout and the tag's version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/dev.sh go run ./tools/relgen gemini-check "$TAG" dist/goreleaser
       - name: package and install tests on the real artifacts
         env:
           VERSION: ${{ needs.verify.outputs.version }}
