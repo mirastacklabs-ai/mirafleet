@@ -127,7 +127,10 @@ After the tag is pushed (each item needs the maintainer; an agent never approves
    Then replace the release body ("Draft. Verify...") with notes written by hand
    (`gh release edit vX.Y.Z --notes-file FILE`): goreleaser's changelog is off.
 4. Claude Code marketplace: nothing. `relgen bump` already set `source.path` and `source.ref` to the tag.
-5. Claude directory: portal, then each submission (`mirafleet-setup`; `mirafleet` once Verified), Settings,
+5. Claude directory: open each version's scan log and read every warning before reporting status.
+   Expected: "Unrecognized field" for the listing links in `plugin.json` (removed from
+   `mirafleet-setup` after v0.6.1, see HANDOFF) and an "image passed without a code check" note.
+   Then: portal, each submission (`mirafleet-setup`; `mirafleet` once Verified), Settings,
    "Tracked branch or tag" = `vX.Y.Z`, Save, "Check for new commits" (else Publish says
    "Version isn't ready"), wait for the scan, Publish. The ref cannot be changed while a
    version is with a reviewer, and changing it cancels a waiting publish request.

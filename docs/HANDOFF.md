@@ -76,7 +76,12 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
    node launcher in real Claude Code (MCP server cwd = project, `--resume` reattach). Then resolve
    the open doc markers below.
 4. Next release: follow RELEASING.md "Every release"; renew `HOMEBREW_TAP_TOKEN` before
-   15 Dec 2026.
+   15 Dec 2026. One-off, after `mirafleet-setup` v0.6.1 is live (not before: a new tag cancels
+   the waiting publish request): remove `documentationUrl`, `supportUrl`, `privacyPolicyUrl` and
+   `termsOfServiceUrl` from `integrations/claude-code/directory/.claude-plugin/plugin.json` and
+   update `integrations/directory_plugin_test.go`. They raise the directory's "Unrecognized field"
+   warnings ("No action needed"); the listing already saved the links at submission. Keep them in
+   the full plugin (`integrations/claude-code/plugin/`), whose future submission reads them.
 
 ## Rules learned
 - Approving `release` deployments: the user's click by default. On 15 Nov 2026 the user allowed the
