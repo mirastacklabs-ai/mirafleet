@@ -4,7 +4,7 @@ package gui
 // two POSTs that answer directly instead of redirecting, because they show a secret once:
 //
 //   - The form carries a signed nonce (32 random bytes, MACed with the session's CSRF key, valid
-//     nonceTTL). The handler consumes it with an atomic MarkUsed before CreateToken (G-15), so a
+//     nonceTTL). The handler consumes it with an atomic MarkUsed before CreateToken, so a
 //     resubmitted form (back button, refresh, double click) mints nothing and shows "already
 //     created" instead.
 //   - The response is Cache-Control: no-store and is the only place the token ever appears: it is

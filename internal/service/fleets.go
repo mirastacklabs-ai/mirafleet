@@ -88,7 +88,7 @@ func (s *Service) SetFleetConfirm(ctx context.Context, p auth.Principal, src Sou
 	ev := s.event(p, src, api.MethodFleetSetConfirm)
 	ev.Fleet = fleet
 	ev.Subject = fleet
-	// The store adds "from" inside its transaction (G-20).
+	// The store adds "from" inside its transaction.
 	ev.Params = map[string]string{"to": strconv.FormatBool(confirm)}
 	f, err := s.st.SetFleetConfirm(ctx, fleet, confirm, s.now(), ev)
 	if err != nil {

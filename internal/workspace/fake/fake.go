@@ -44,7 +44,7 @@ type Executor struct {
 	MaxFile int64
 	// Slots caps live workspaces (0 = unlimited); Create beyond it returns ErrUnavailable.
 	Slots int
-	// SessionRoot, when set, turns on the M7 host-mode behaviour (devops.go): every workspace
+	// SessionRoot, when set, turns on the host-mode behaviour (devops.go): every workspace
 	// gets a 0700 session directory under it with a "work" tree the file tools run on.
 	SessionRoot string
 

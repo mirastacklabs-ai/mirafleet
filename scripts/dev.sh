@@ -83,7 +83,7 @@ licenses)
 	# --ignore github.com/segmentio/asm: its LICENSE is verbatim MIT-0 (MIT No Attribution,
 	# approved and on the CLAUDE.md allowlist), reviewed by hand, but go-licenses v1.6.0 has no
 	# MIT-0 classifier and reports it as unknown. MIT-0 stays in --allowed_licenses for when it does.
-	# Pinned to the reviewed version like mathutil. Linked via go-sdk -> segmentio/encoding (M5 §10).
+	# Pinned to the reviewed version like mathutil. Linked via go-sdk -> segmentio/encoding.
 	# github.com/modelcontextprotocol/go-sdk (Apache-2.0 + MIT combined file) needs no ignore:
 	# go-licenses classifies it as an allowed licence.
 	run ro "v=\$(go list -m -f '{{.Version}}' modernc.org/mathutil)

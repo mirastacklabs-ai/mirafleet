@@ -8,7 +8,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
 )
 
-// F-47: an unknown workspace id and a foreign one are indistinguishable to the caller, and each
+// An unknown workspace id and a foreign one are indistinguishable to the caller, and each
 // writes exactly one denied audit row.
 func TestF47UnknownAndForeignWorkspaceRefusedAlike(t *testing.T) {
 	e := newEnv(t)
@@ -38,7 +38,7 @@ func TestF47UnknownAndForeignWorkspaceRefusedAlike(t *testing.T) {
 	}
 }
 
-// F-48: the reaper audits stale opening rows of an offline runner.
+// The reaper audits stale opening rows of an offline runner.
 func TestF48StaleOpeningOfflineRunnerAudited(t *testing.T) {
 	e := newEnv(t)
 	clk := e.clock()

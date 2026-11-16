@@ -12,7 +12,7 @@ import (
 )
 
 // `executor: host` in workspace.yaml builds the hostx executor on the runner user's XDG
-// directories, with host.root and the cleanup sweeper wired (S11).
+// directories, with host.root and the cleanup sweeper wired.
 func TestNewExecutorHost(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -45,7 +45,7 @@ func TestNewExecutorHost(t *testing.T) {
 	if err := ex.Close(); err != nil { // stops the sweeper
 		t.Fatal(err)
 	}
-	// H-12: both the state dir and $HOME go through the group/world-writable check.
+	// Both the state dir and $HOME go through the group/world-writable check.
 	if len(checked) != 2 || checked[1] != home {
 		t.Fatalf("hardening checked %v, want the state dir and %s", checked, home)
 	}

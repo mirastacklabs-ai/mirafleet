@@ -24,7 +24,7 @@ func listenUnix(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Go would unlink the path on Close, even when it is by then a newer server's socket (D-20).
+	// Go would unlink the path on Close, even when it is by then a newer server's socket.
 	// ServeAdmin removes it itself, only if it still is this listener's file.
 	if ul, ok := ln.(*net.UnixListener); ok {
 		ul.SetUnlinkOnClose(false)
@@ -60,7 +60,7 @@ func checkPeer(c net.Conn) error {
 }
 
 // sockID identifies a socket file (device and inode) so cleanup removes only the file this
-// server created, never a newer server's socket at the same path (D-20).
+// server created, never a newer server's socket at the same path.
 type sockID struct{ dev, ino uint64 }
 
 func statSocket(path string) (sockID, error) {

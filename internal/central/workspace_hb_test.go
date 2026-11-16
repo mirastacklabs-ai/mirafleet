@@ -8,7 +8,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// S10: a heartbeat failing Validate is refused and the connection is closed, whether it is the
+// A heartbeat failing Validate is refused and the connection is closed, whether it is the
 // first one or a later one; a valid one carries its workspace fields into the snapshot.
 func TestInvalidHeartbeatClosesConnection(t *testing.T) {
 	for _, first := range []bool{true, false} {

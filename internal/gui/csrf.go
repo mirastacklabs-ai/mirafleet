@@ -73,7 +73,7 @@ func FormToken(key []byte) string {
 	return base64.RawURLEncoding.EncodeToString(hmacSum(key, "form"))
 }
 
-// CSRF enforces the three layers of M4 §2.6 on unsafe methods. Layer 3 (SameSite=Strict) is a
+// CSRF enforces the three layers on unsafe methods. Layer 3 (SameSite=Strict) is a
 // cookie attribute enforced by the browser; see SetSessionCookie.
 type CSRF struct {
 	cop *http.CrossOriginProtection

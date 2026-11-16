@@ -470,7 +470,7 @@ func TestStaticCaching(t *testing.T) {
 	for _, p := range []string{"/static/deadbeefdeadbeef/app.css", "/static/" + e.s.Assets().Hash() + "/nope.css", "/static/", "/static/x"} {
 		rec := e.do("GET", "localhost", p, nil)
 		if rec.Code != 404 || rec.Header().Get("Cache-Control") != "no-store" {
-			t.Errorf("%s: %d, Cache-Control %q, want 404 no-store (G-01)", p, rec.Code, rec.Header().Get("Cache-Control"))
+			t.Errorf("%s: %d, Cache-Control %q, want 404 no-store", p, rec.Code, rec.Header().Get("Cache-Control"))
 		}
 	}
 	if rec := e.do("GET", "localhost", "/missing", nil); rec.Header().Get("Cache-Control") != "no-store" {
@@ -816,7 +816,7 @@ func TestRouteTimeout(t *testing.T) {
 	}
 }
 
-// G-23 and G-24: the certificate expiry warning, and wildcard SANs stay off the Host allowlist.
+// The certificate expiry warning, and wildcard SANs stay off the Host allowlist.
 func TestCertExpiryWarning(t *testing.T) {
 	for _, c := range []struct {
 		name string

@@ -117,7 +117,7 @@ func (s *Server) ServeAdmin(ctx context.Context, path string) error {
 		return err
 	}
 	// The listener does not unlink its path on Close (see listenUnix); this server removes the
-	// file itself, and only while it is still this server's file (D-20).
+	// file itself, and only while it is still this server's file.
 	id, err := statSocket(path)
 	if err != nil {
 		ln.Close()
@@ -129,7 +129,7 @@ func (s *Server) ServeAdmin(ctx context.Context, path string) error {
 		return err
 	}
 	// track takes the accept loop's WaitGroup slot under the lock Close uses, so Add can never
-	// race Close's Wait (D-17); the loop's own tracking of each connection happens while it
+	// race Close's Wait; the loop's own tracking of each connection happens while it
 	// still holds its slot.
 	if !s.track(ln) {
 		ln.Close()
@@ -211,7 +211,7 @@ func (s *Server) adminConn(ctx context.Context, c net.Conn, table *methodTable) 
 	}
 	// The peer closing the connection cancels the request (e.g. Ctrl-C of `central exec`). A
 	// half-close (shutdown of the peer's write side after the request) does NOT: it only means
-	// "no more input", and the response is still written (D-06).
+	// "no more input", and the response is still written.
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	// credential.set reads its body frame from the connection, so nothing else may read it.
@@ -266,9 +266,9 @@ func watchPeerClose(ctx context.Context, c net.Conn, cancel context.CancelFunc) 
 var writeResponse = api.WriteResponse
 
 // writeResponseTimeout writes resp to w and closes c if the write has not finished within
-// api.WriteTimeout (D-09). ssh.Channel has no write deadline, so a peer that stops reading would
+// api.WriteTimeout. ssh.Channel has no write deadline, so a peer that stops reading would
 // otherwise pin the handler (and its channel slot) forever. A local Channel.Close does not
-// unblock a write stalled on the peer's window in x/crypto/ssh (D-16), so for ssh channels the
+// unblock a write stalled on the peer's window in x/crypto/ssh, so for ssh channels the
 // owning connection is passed in also and closed too, which does. On net.Conn, c alone suffices
 // and WriteResponse additionally applies a real deadline.
 func writeResponseTimeout(w io.Writer, c io.Closer, resp *api.Response, also ...io.Closer) error {

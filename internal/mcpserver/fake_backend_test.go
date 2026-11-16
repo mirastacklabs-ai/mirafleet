@@ -27,7 +27,7 @@ type fakeBackend struct {
 	FleetsListFn   func(ctx context.Context, cname string) (*api.FleetsListResult, error)
 	RunnersListFn  func(ctx context.Context, cname, fleet string) (*api.RunnersListResult, error)
 
-	// M7 dev-workspace calls; the methods live in fake_dev_test.go.
+	// Dev-workspace calls; the methods live in fake_dev_test.go.
 	WorkspaceCloseWithFn func(ctx context.Context, cname string, p api.WorkspaceCloseParams) (*api.WorkspaceCloseResult, error)
 	WorkspaceFSFn        func(ctx context.Context, cname string, p api.FSParams, data []byte) (*api.FSResult, []byte, error)
 	JobStartFn           func(ctx context.Context, cname string, p api.JobStartParams) (*api.JobStartResult, error)

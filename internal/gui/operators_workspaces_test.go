@@ -1,6 +1,6 @@
 package gui
 
-// Tests for the Operators and Workspaces screens (M4 step S10). They use the shared harness
+// Tests for the Operators and Workspaces screens. They use the shared harness
 // (helpers_test.go) and seed operators, runners and workspaces through its store handle.
 
 import (
@@ -431,7 +431,7 @@ func TestOperatorsWorkspacesCSRFOnEveryPost(t *testing.T) {
 	}
 }
 
-// G-37: session and image text goes through inertRunnerText, so a bidi control never reaches the page.
+// Session and image text goes through inertRunnerText, so a bidi control never reaches the page.
 func TestWorkspacesShowInertText(t *testing.T) {
 	h := newOpsHarness(t)
 	op := h.operator("alice", "fp-bidi")

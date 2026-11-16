@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// F-04: a FIFO planted at the handoff name must not hang Read.
+// A FIFO planted at the handoff name must not hang Read.
 func TestReadFIFONotHung(t *testing.T) {
 	dir := t.TempDir()
 	if err := Write(dir, k1, "s", time.Now()); err != nil {
@@ -41,7 +41,7 @@ func TestReadFIFONotHung(t *testing.T) {
 	}
 }
 
-// F-03: a sessions dir owned by another uid is refused (needs root to create one).
+// A sessions dir owned by another uid is refused (needs root to create one).
 func TestForeignOwnedSessionsRefused(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("needs root to chown")
@@ -75,7 +75,7 @@ func TestOwnedByUs(t *testing.T) {
 	}
 }
 
-// F-01: loose-mode sessions dir we own is tightened.
+// A loose-mode sessions dir we own is tightened.
 func TestLooseOwnedSessionsTightened(t *testing.T) {
 	dir := t.TempDir()
 	if err := Write(dir, k1, "s", time.Now()); err != nil {

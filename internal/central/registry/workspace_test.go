@@ -494,8 +494,8 @@ func TestSnapshotCarriesHeartbeatFields(t *testing.T) {
 	var _ Live = r
 }
 
-// The M7 dev ops run on an active runner, the fs image bytes follow the result, and a disabled
-// runner takes only the winding-down ops (S11).
+// The dev ops run on an active runner, the fs image bytes follow the result, and a disabled
+// runner takes only the winding-down ops.
 func TestWorkspaceDevOps(t *testing.T) {
 	fsReq := transport.WorkspaceRequest{Op: transport.OpFS, ID: wsID,
 		FS: &transport.FSOp{Op: transport.FSRead, Path: "a.png"}}
@@ -524,7 +524,7 @@ func TestWorkspaceDevOps(t *testing.T) {
 			t.Errorf("%s on a disabled runner: %v", op, err)
 		}
 	}
-	// H-02: central must be able to send a disabled runner the empty set.
+	// Central must be able to send a disabled runner the empty set.
 	if err := workspaceAllowed(transport.OpCredsSync, StatusDisabled); err != nil {
 		t.Errorf("creds_sync on a disabled runner: %v", err)
 	}

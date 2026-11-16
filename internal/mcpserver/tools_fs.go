@@ -231,7 +231,7 @@ func (s *wsState) makeOut(r *api.FSResult, sel selection, path, hint string) fsO
 			out.Truncated = true
 			out.OmittedBytes += int64(omitted)
 		}
-		budget -= orch.EncodedCost(out.Content) // H-17: the budget is the encoded size
+		budget -= orch.EncodedCost(out.Content) // the budget is the encoded size
 	}
 	if path != "" {
 		out.Path = sc.text(path)
@@ -356,7 +356,7 @@ func (s *wsState) read(ctx context.Context, req Request) (any, error) {
 		return nil, err
 	}
 	if r.Content != "" && r.Kind != transport.KindImage {
-		// H-18: when the MCP cap would cut the page in the middle, end it after the last whole
+		// When the MCP cap would cut the page in the middle, end it after the last whole
 		// line that fits, so next_offset resumes exactly there.
 		if n := fitPrefix(r.Content, s.b.OutputCap()); n < len(r.Content) {
 			if i := strings.LastIndexByte(r.Content[:n], '\n'); i >= 0 {

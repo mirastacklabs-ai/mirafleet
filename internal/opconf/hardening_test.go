@@ -18,7 +18,7 @@ func mustReadDir(t *testing.T, dir string) []os.DirEntry {
 	return ents
 }
 
-// F-07: a second YAML document is an error, in both the contexts file and the project file.
+// A second YAML document is an error, in both the contexts file and the project file.
 func TestSecondYAMLDocumentRefused(t *testing.T) {
 	dir := t.TempDir()
 	for name, body := range map[string]string{
@@ -48,7 +48,7 @@ func TestSecondYAMLDocumentRefused(t *testing.T) {
 	}
 }
 
-// F-08: a root home must not let the walk-up reach the filesystem root.
+// A root home must not let the walk-up reach the filesystem root.
 func TestLoadProjectRootHomeIsNoHome(t *testing.T) {
 	root := string(filepath.Separator)
 	if vol := filepath.VolumeName(t.TempDir()); vol != "" {
@@ -69,7 +69,7 @@ func TestLoadProjectRootHomeIsNoHome(t *testing.T) {
 	}
 }
 
-// F-11: concurrent read-modify-write updates must not lose each other's change.
+// Concurrent read-modify-write updates must not lose each other's change.
 func TestUpdateContextsConcurrent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "cfg")
 	const n = 16

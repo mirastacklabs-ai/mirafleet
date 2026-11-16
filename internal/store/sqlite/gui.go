@@ -154,7 +154,7 @@ func (d *DB) putGUISetup(ctx context.Context, hash []byte, expires, now time.Tim
 	return created, nil
 }
 
-// CheckGUISetup is the read-only token check that runs before the password is hashed (G-21).
+// CheckGUISetup is the read-only token check that runs before the password is hashed.
 func (d *DB) CheckGUISetup(ctx context.Context, hash []byte, now time.Time) error {
 	if err := checkHash32(hash, "setup token"); err != nil {
 		return err

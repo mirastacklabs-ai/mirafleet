@@ -1,4 +1,4 @@
-// Package gitlab is a test double for a corporate GitLab, used by the M7 integration tests
+// Package gitlab is a test double for a corporate GitLab, used by the host-mode integration tests
 // (build tag linux && integration). It serves git over HTTPS (git http-backend through
 // net/http/cgi) and over SSH (x/crypto/ssh running git upload-pack / receive-pack), plus a
 // minimal OCI registry with a bearer-token exchange, all with certificates signed by a

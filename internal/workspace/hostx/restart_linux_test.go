@@ -39,7 +39,7 @@ func listIDs(t *testing.T, ex *Executor) map[workspace.ID]bool {
 }
 
 // An executor started on the state of a previous runner process lists the workspaces that were
-// still open, and not the ones that were closed (S11 follow-up 5).
+// still open, and not the ones that were closed.
 func TestExecutorReadoptsOpenSessionsAfterRestart(t *testing.T) {
 	base := t.TempDir()
 	ctx := context.Background()
@@ -81,7 +81,7 @@ func TestExecutorReadoptsOpenSessionsAfterRestart(t *testing.T) {
 }
 
 // A project-file workdir NAME resolves to a shared directory under the sessions root; sessions
-// naming the same workdir share it, and a name that could leave the root is refused (follow-up 7).
+// naming the same workdir share it, and a name that could leave the root is refused.
 func TestWorkdirNameResolvesUnderRoot(t *testing.T) {
 	base := t.TempDir()
 	ex := newExecutorAt(t, base)

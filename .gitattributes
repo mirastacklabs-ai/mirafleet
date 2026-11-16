@@ -1,4 +1,4 @@
-# Text is LF in the repository and in every checkout (F-45): the integrations tests compare file
+# Text is LF in the repository and in every checkout: the integrations tests compare file
 # bytes and break on a CRLF checkout (Windows CI, core.autocrlf=true).
 * text=auto eol=lf
 

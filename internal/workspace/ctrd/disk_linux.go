@@ -18,7 +18,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
 )
 
-// Disk accounting (M3 decision 8: a soft quota).
+// Disk accounting (a soft quota).
 //
 // The usage of a workspace is the allocated size (st_blocks) of everything in its directory,
 // found by a bounded walk through os.Root that never follows symlinks and counts hardlinked

@@ -1,6 +1,6 @@
 package gui
 
-// Tests for the Join tokens screens (M4 step S9): the token is shown once, the signed nonce plus
+// Tests for the Join tokens screens: the token is shown once, the signed nonce plus
 // the atomic MarkUsed stop a second token, and the token is in no other response.
 
 import (

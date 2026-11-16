@@ -31,7 +31,7 @@ func (s *slowSender) SyncCredentials(ctx context.Context, id int64, b *transport
 	return err
 }
 
-// H-01: deliveries to one runner are serialised, so generations reach the runner in order.
+// Deliveries to one runner are serialised, so generations reach the runner in order.
 func TestDeliverRunnerSerialised(t *testing.T) {
 	ce := newCredEnv(t)
 	ce.fleet("f")
@@ -61,7 +61,7 @@ func TestDeliverRunnerSerialised(t *testing.T) {
 	}
 }
 
-// H-02: disabling withdraws the secrets with an empty creds_sync; enabling delivers again.
+// Disabling withdraws the secrets with an empty creds_sync; enabling delivers again.
 func TestDisableWithdrawsEnableDelivers(t *testing.T) {
 	ce := newCredEnv(t)
 	ce.fleet("f")
@@ -88,7 +88,7 @@ func TestDisableWithdrawsEnableDelivers(t *testing.T) {
 	}
 }
 
-// H-04: reusing a session with a different credentials list is a conflict; the same list reuses.
+// Reusing a session with a different credentials list is a conflict; the same list reuses.
 func TestReuseSessionCredentialsNarrowing(t *testing.T) {
 	ce := newCredEnv(t)
 	e := ce.env
@@ -135,7 +135,7 @@ func (c *capRing) Open(ct, aad []byte) ([]byte, error) {
 	return pt, err
 }
 
-// H-05: the plaintext JSON copy is zeroed after Seal and after Unmarshal.
+// The plaintext JSON copy is zeroed after Seal and after Unmarshal.
 func TestPlaintextCopiesCleared(t *testing.T) {
 	ce := newCredEnv(t)
 	ring := &capRing{testRing: testRing{ce.key}}

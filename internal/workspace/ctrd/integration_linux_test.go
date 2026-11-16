@@ -170,8 +170,8 @@ func TestDaemonVersionAndIdmap(t *testing.T) {
 		t.Fatalf("daemon version %q, want 2.4.x (harness must run the go.mod containerd)", v.Version)
 	}
 
-	// Idmapped mounts need Linux >= 5.12 (>= 5.19 for overlayfs). Informational only: S12 decides
-	// what to do when unsupported.
+	// Idmapped mounts need Linux >= 5.12 (>= 5.19 for overlayfs). Informational only: the
+	// executor decides what to do when unsupported.
 	var u syscall.Utsname
 	if err := syscall.Uname(&u); err != nil {
 		t.Logf("uname: %v", err)

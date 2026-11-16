@@ -462,7 +462,7 @@ func TestHeartbeatImagesDropped(t *testing.T) {
 	}
 }
 
-// F-23: only the immediate parent directory is checked (documented on checkParentDir); the
+// Only the immediate parent directory is checked (documented on checkParentDir); the
 // ancestors above it are never stat'ed, so a group-writable grandparent does not matter.
 func TestCheckParentDirImmediateOnly(t *testing.T) {
 	var seen []string

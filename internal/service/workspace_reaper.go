@@ -141,7 +141,7 @@ func (s *Service) ReapOnce(ctx context.Context) {
 	s.freeDeadRunnerRows(ctx)
 	stale := s.failStaleOpening(ctx)
 
-	// C-13: one goroutine per online runner, at most reapParallel at once, each with its own
+	// One goroutine per online runner, at most reapParallel at once, each with its own
 	// time budget, so one hung runner cannot stall the others. ReapOnce still returns only after
 	// every goroutine has finished (RunReaper's "stops before store close" guarantee).
 	var wg sync.WaitGroup
@@ -165,7 +165,7 @@ func (s *Service) ReapOnce(ctx context.Context) {
 		}(si.ID)
 	}
 	wg.Wait()
-	// F-48: stale rows of runners that were offline (or never reached) get a destroy row too.
+	// Stale rows of runners that were offline (or never reached) get a destroy row too.
 	for id, rows := range stale {
 		if !launched[id] {
 			s.auditStaleSkipped(ctx, rows, "stale opening: runner offline; reconcile will retry")
@@ -174,7 +174,7 @@ func (s *Service) ReapOnce(ctx context.Context) {
 }
 
 // auditStaleSkipped writes the workspace.destroy row (outcome error) for stale rows whose
-// container could not be destroyed this sweep (F-48).
+// container could not be destroyed this sweep.
 func (s *Service) auditStaleSkipped(ctx context.Context, rows []store.Workspace, msg string) {
 	for _, w := range rows {
 		ev := s.sysEvent(actionDestroy, w, msg)
@@ -191,7 +191,7 @@ const (
 )
 
 // reapRunner destroys the closing rows of one runner and marks them closed. staleFailed are rows
-// of this runner just failed by failStaleOpening (F-28): their containers get a best-effort
+// of this runner just failed by failStaleOpening: their containers get a best-effort
 // destroy here, with the result audited.
 func (s *Service) reapRunner(ctx context.Context, runnerID int64, staleFailed []store.Workspace) {
 	for i, w := range staleFailed {
@@ -265,7 +265,7 @@ func (s *Service) freeDeadRunnerRows(ctx context.Context) {
 // never produced a container; this sweep covers the rest. A best-effort destroy follows when the
 // runner is online (the row is already failed, so reconcile also reaps any leftover container).
 //
-// F-28: the destroys are not done here. The rows just failed are returned per runner and
+// The destroys are not done here. The rows just failed are returned per runner and
 // destroyed (and audited) inside the budgeted, parallel reapRunner phase.
 func (s *Service) failStaleOpening(ctx context.Context) map[int64][]store.Workspace {
 	rows, err := s.st.ListWorkspaces(ctx, store.WorkspaceFilter{States: []store.WorkspaceState{store.WorkspaceOpening}, Limit: sweepLimit})

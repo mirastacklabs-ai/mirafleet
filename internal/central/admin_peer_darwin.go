@@ -28,6 +28,6 @@ func peerUID(c *net.UnixConn) (uint32, error) {
 }
 
 // peerClosed always reports false on darwin: polling with no events is not guaranteed to
-// surface POLLHUP there (D-18), and central is linux-only. Admin disconnect-cancel is therefore
+// surface POLLHUP there, and central is linux-only. Admin disconnect-cancel is therefore
 // a linux feature (see admin.go); on darwin a request is bounded only by its own timeouts.
 func peerClosed(*net.UnixConn) bool { return false }

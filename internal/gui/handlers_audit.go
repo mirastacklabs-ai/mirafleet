@@ -4,7 +4,7 @@ package gui
 // export. Every filter and the page position live in the query string, so a view can be
 // bookmarked. Paging: "Older" is a descending query with BeforeID; "Newer" is an ascending query
 // with AfterID whose rows are reversed here (AuditFilter Desc+AfterID would return the newest
-// rows overall, not the next newer page; G-09).
+// rows overall, not the next newer page).
 
 import (
 	"bufio"
@@ -57,7 +57,7 @@ type auditQuery struct {
 
 // parseAuditTime parses a UTC filter time. For an upper bound (end) the value stands for its
 // whole unit and the bound is the unit's last millisecond (the store compares in ms,
-// inclusive): "2026-11-14" ends at 23:59:59.999, "...T09:30" at 09:30:59.999 (G-35). An RFC
+// inclusive): "2026-11-14" ends at 23:59:59.999, "...T09:30" at 09:30:59.999. An RFC
 // 3339 value with a fraction is taken as given.
 func parseAuditTime(v string, end bool) (time.Time, bool) {
 	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04", "2006-01-02"} {

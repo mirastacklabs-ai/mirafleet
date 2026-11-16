@@ -431,7 +431,7 @@ func TestHeartbeatDevFields(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	// An M3/M5 heartbeat without the new fields is still valid.
+	// An older heartbeat without the new fields is still valid.
 	if err := (&Heartbeat{Hostname: "old"}).Validate(); err != nil {
 		t.Errorf("old heartbeat: %v", err)
 	}

@@ -169,7 +169,7 @@ func (b *purgeSpy) PurgeGUISessions(ctx context.Context) (int, error) {
 	return b.Backend.PurgeGUISessions(ctx)
 }
 
-// G-32: Start purges once at startup.
+// Start purges once at startup.
 func TestServerStartPurgesSessions(t *testing.T) {
 	var spy *purgeSpy
 	h := newGUIHarness(t, withBackend(func(be Backend) Backend { spy = &purgeSpy{Backend: be}; return spy }))
@@ -182,7 +182,7 @@ func TestServerStartPurgesSessions(t *testing.T) {
 	}
 }
 
-// G-32: Account hides a session past its absolute expiry that no purge has removed yet.
+// Account hides a session past its absolute expiry that no purge has removed yet.
 func TestAccountSkipsExpiredSessions(t *testing.T) {
 	h := newAdminHarness(t)
 	if rec := h.get("/account"); !strings.Contains(rec.Body.String(), "this session") {
@@ -204,7 +204,7 @@ func TestAccountSkipsExpiredSessions(t *testing.T) {
 	}
 }
 
-// G-34: the footer shows the version only to a signed-in admin.
+// The footer shows the version only to a signed-in admin.
 func TestFooterVersionOnlyWhenAuthed(t *testing.T) {
 	h := newGUIHarness(t)
 	h.loginDirect()
@@ -219,7 +219,7 @@ func TestFooterVersionOnlyWhenAuthed(t *testing.T) {
 	}
 }
 
-// G-39: the theme switch returns to the page it was used on, never to an off-site target.
+// The theme switch returns to the page it was used on, never to an off-site target.
 func TestThemeReturnsToPage(t *testing.T) {
 	h := newAdminHarness(t)
 	if b := h.get("/audit?fleet=prod").Body.String(); !strings.Contains(b, `name="next" value="/audit?fleet=prod"`) {
@@ -245,7 +245,7 @@ func (conflictBackend) ChangeGUIPassword(context.Context, auth.Principal, int64,
 	return "", api.Errorf(api.CodeConflict, "the account changed while you were editing it; try again")
 }
 
-// G-39: a conflict while changing the password is a 422 on the form, not a 500.
+// A conflict while changing the password is a 422 on the form, not a 500.
 func TestPasswordChangeConflictIs422(t *testing.T) {
 	h := newAdminHarness(t, withBackend(func(be Backend) Backend { return conflictBackend{be} }))
 	rec := h.post("/account/password", url.Values{"current": {testPW}, "new": {"another long password"}, "new2": {"another long password"}})

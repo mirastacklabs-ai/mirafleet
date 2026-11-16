@@ -34,12 +34,12 @@ type callCtx struct {
 
 // connState is per-connection mutable state shared by the channels of one connection.
 type connState struct {
-	mu   sync.Mutex // guards hint (D-13: channels of one connection run concurrently)
+	mu   sync.Mutex // guards hint (channels of one connection run concurrently)
 	hint string     // client hint from hello; recorded, never trusted
 }
 
 // methodTable is one front end's method set: the allow predicate (an independent gate in front
-// of the policy) and the handlers. The operator table serves api@mirafleet; S9 builds an admin
+// of the policy) and the handlers. The operator table serves api@mirafleet; the admin socket builds an admin
 // table (api.IsAdminMethod) on the same type for the admin socket.
 type methodTable struct {
 	src      service.Source
@@ -55,7 +55,7 @@ func (t *methodTable) serve(ctx context.Context, c *callCtx, req *api.Request) *
 	if !t.allowed(req.Method) {
 		if api.IsAdminMethod(req.Method) || api.IsEnrollMethod(req.Method) || api.IsOperatorMethod(req.Method) {
 			// Principal and method only, never params. Attempts at admin/enroll methods through
-			// a channel that must not carry them are worth a log line (D-12).
+			// a channel that must not carry them are worth a log line.
 			if api.IsAdminMethod(req.Method) || api.IsEnrollMethod(req.Method) {
 				c.logf("api: %s %q attempted forbidden method %q", c.p.Kind, c.p.Name, req.Method)
 			}

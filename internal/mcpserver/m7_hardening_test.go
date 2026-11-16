@@ -10,7 +10,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/orch"
 )
 
-// H-15/H-16: scrubbing neutralises (no byte deleted), also with escaped whitespace and the
+// Scrubbing neutralises (no byte deleted), also with escaped whitespace and the
 // Claude Code tag names.
 func TestScrubNeutralisesWithoutDeleting(t *testing.T) {
 	for _, in := range []string{
@@ -50,7 +50,7 @@ func TestScrubNeutralisesWithoutDeleting(t *testing.T) {
 	}
 }
 
-// H-17: the entries share what the content left of the ENCODED budget, not the raw length.
+// The entries share what the content left of the ENCODED budget, not the raw length.
 func TestMakeOutBudgetUsesEncodedContent(t *testing.T) {
 	r := devRig(t)
 	r.f.Cap = 2000

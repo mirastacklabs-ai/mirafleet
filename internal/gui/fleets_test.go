@@ -1,6 +1,6 @@
 package gui
 
-// Tests for the Overview and Fleets screens (M4 step S8). They run against the shared harness
+// Tests for the Overview and Fleets screens. They run against the shared harness
 // (helpers_test.go): a real service on a temp SQLite file, signed in with loginDirect.
 
 import (

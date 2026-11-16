@@ -22,7 +22,7 @@ func (c *countSender) SyncCredentials(context.Context, int64, *transport.CredsSy
 	return nil
 }
 
-// H-06: a reconnect inside the edge gap does not decrypt and send at once; the next heartbeat's
+// A reconnect inside the edge gap does not decrypt and send at once; the next heartbeat's
 // retry delivers the set.
 func TestReconnectInsideEdgeGapDefersDelivery(t *testing.T) {
 	key, _, err := secrets.GenerateKey()

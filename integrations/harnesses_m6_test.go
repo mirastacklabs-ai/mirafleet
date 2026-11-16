@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// N2.7: Codex CLI, Gemini CLI, Cursor, VS Code, Cline and Kilo Code. Every snippet must parse and
+// Codex CLI, Gemini CLI, Cursor, VS Code, Cline and Kilo Code. Every snippet must parse and
 // name the right command; every command copy must equal the shared body.
 
 var m6Dirs = []string{"codex", "gemini", "cursor", "vscode", "cline", "kilocode"}

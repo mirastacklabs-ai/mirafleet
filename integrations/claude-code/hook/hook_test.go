@@ -500,7 +500,7 @@ func TestPreToolUseConfirmStillAsksInRemoteProject(t *testing.T) {
 	}
 }
 
-// H-20: values from tool arguments and from the project file never carry a harness tag into a
+// Values from tool arguments and from the project file never carry a harness tag into a
 // reason (ask or deny); the tag is neutralised, not removed.
 func TestReasonsNeutraliseTags(t *testing.T) {
 	env := remoteEnv(t, "remote: true\n")

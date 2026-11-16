@@ -318,7 +318,7 @@ func (s *Service) ReadWorkspaceFile(ctx context.Context, p auth.Principal, src S
 	if out == nil {
 		out = io.Discard
 	}
-	// C-17: the reply is buffered (at most limit <= MaxFileChunk bytes) and checked against the
+	// The reply is buffered (at most limit <= MaxFileChunk bytes) and checked against the
 	// runner's stated length BEFORE anything reaches out, so an inconsistent reply sends nothing.
 	buf := &capBuffer{max: limit}
 	rid, err := newRequestID()

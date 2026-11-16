@@ -127,10 +127,10 @@ type WorkspaceRequest struct {
 	Length    int64             `json:"length,omitempty"`
 	TimeoutMs int64             `json:"timeout_ms,omitempty"`
 
-	// Delete (M7, destroy on a host runner only): also delete the session directory.
+	// Delete (destroy on a host runner only): also delete the session directory.
 	Delete bool `json:"delete,omitempty"`
 
-	// Dev-workspace payloads (M7): exactly the one matching Op is set. creds_sync carries its
+	// Dev-workspace payloads: exactly the one matching Op is set. creds_sync carries its
 	// secrets in a body of StdinLen bytes (see CredsSyncBody), never in this request.
 	FS  *FSOp     `json:"fs,omitempty"`
 	Job *JobOp    `json:"job,omitempty"`
@@ -146,7 +146,7 @@ type WorkspaceExec struct {
 	TimedOut   bool   `json:"timed_out,omitempty"`
 	DurationMs int64  `json:"duration_ms"`
 
-	// M7 (additive): full output is kept on the runner. Ref names it for output_read; the byte
+	// Additive: full output is kept on the runner. Ref names it for output_read; the byte
 	// counts are the true totals; Omitted is how many bytes the inline text left out.
 	Ref         string `json:"ref,omitempty"`
 	StdoutBytes int64  `json:"stdout_bytes,omitempty"`
@@ -182,7 +182,7 @@ type WorkspaceResult struct {
 	List       []WorkspaceInfo `json:"list,omitempty"`
 	DurationMs int64           `json:"duration_ms"`
 
-	// M7 results; the one matching the request's op is set. For an fs result with Length > 0,
+	// Dev-workspace results; the one matching the request's op is set. For an fs result with Length > 0,
 	// that many raw body bytes follow the frame.
 	FS     *FSResult        `json:"fs,omitempty"`
 	Job    *JobResult       `json:"job,omitempty"`

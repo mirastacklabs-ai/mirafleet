@@ -289,7 +289,7 @@ func TestDevReadOutputCap(t *testing.T) {
 	}
 	v := r.mustCall(t, "read", `{"path":"big.log"}`)
 	c := v["content"].(string)
-	// H-18: the page ends after a whole line (no marker in the middle) and next_offset resumes there.
+	// The page ends after a whole line (no marker in the middle) and next_offset resumes there.
 	if len(c) > 2100 || v["truncated"] != true || v["omitted_bytes"].(float64) < 1000 || strings.Contains(c, "bytes omitted") ||
 		!strings.HasSuffix(c, "\n") || v["next_offset"] != float64(1+strings.Count(c, "\n")) {
 		t.Fatalf("len %d: %v", len(c), v)

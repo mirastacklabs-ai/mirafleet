@@ -24,7 +24,7 @@ func hsTotal(e *env) int {
 	return e.srv.hs.total
 }
 
-// D-15: a peer that never completes the handshake is dropped at the deadline, slot released.
+// A peer that never completes the handshake is dropped at the deadline, slot released.
 func TestHandshakeDeadlineDropsSilentPeer(t *testing.T) {
 	e := newEnvOpts(t, 15*time.Second, func(c *Config) { c.HandshakeTimeout = 300 * time.Millisecond })
 	c, err := net.Dial("tcp", e.addr)
@@ -50,7 +50,7 @@ func TestHandshakeDeadlineDropsSilentPeer(t *testing.T) {
 	}
 }
 
-// D-15: a source holding an authenticated connection can still connect with a full handshake
+// A source holding an authenticated connection can still connect with a full handshake
 // bucket; an anonymous (enroll) connection does not earn the exemption.
 func TestAuthedIPExemptFromHandshakeCap(t *testing.T) {
 	e := newEnvOpts(t, 15*time.Second, func(c *Config) { c.MaxHandshakesPerIP = 2 })
@@ -97,7 +97,7 @@ func TestAuthedIPExemptFromHandshakeCap(t *testing.T) {
 	}
 }
 
-// D-16: a peer that never reads a large response gets its whole connection closed at the write
+// A peer that never reads a large response gets its whole connection closed at the write
 // timeout (a local channel Close alone does not unblock the stalled write).
 func TestStalledAPIWriteClosesConnection(t *testing.T) {
 	oldT, oldW := api.WriteTimeout, writeResponse
@@ -133,7 +133,7 @@ func TestStalledAPIWriteClosesConnection(t *testing.T) {
 	}
 }
 
-// D-22: the global enroll rate holds however the source addresses rotate or evict buckets.
+// The global enroll rate holds however the source addresses rotate or evict buckets.
 func TestEnrollGlobalRate(t *testing.T) {
 	now := time.Unix(1000, 0)
 	l := newIPLimiter(5, func() time.Time { return now })
@@ -162,7 +162,7 @@ func TestEnrollGlobalRateConfigDefault(t *testing.T) {
 	}
 }
 
-// D-21: teardown with a hung store completes promptly.
+// Teardown with a hung store completes promptly.
 func TestRunnerTeardownDoesNotWaitOnStore(t *testing.T) {
 	bs := &blockTouchStore{release: make(chan struct{})}
 	e := newEnvOpts(t, 15*time.Second, func(c *Config) { bs.Store = c.Store; c.Store = bs }, "r1")
@@ -188,7 +188,7 @@ func (c *countTouchStore) TouchRunner(ctx context.Context, id int64, seen time.T
 	return c.Store.TouchRunner(ctx, id, seen, info)
 }
 
-// D-21: the disconnect write is not skipped by edge throttling right after the connect write.
+// The disconnect write is not skipped by edge throttling right after the connect write.
 func TestDisconnectTouchNotThrottled(t *testing.T) {
 	cs := &countTouchStore{}
 	e := newEnvOpts(t, 15*time.Second, func(c *Config) {

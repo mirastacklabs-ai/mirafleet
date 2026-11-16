@@ -11,14 +11,14 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// S5: runners.list shows the actions of an actions-mode runner (names and param shapes only);
-// a runner that sends none (M2/M3 style heartbeat) lists without the field.
+// runners.list shows the actions of an actions-mode runner (names and param shapes only);
+// a runner that sends none (older-style heartbeat) lists without the field.
 func TestRunnersListShowsActions(t *testing.T) {
 	e := newEnv(t, "r1", "old")
 	e.startRunner("r1")
 	e.waitOnline("r1")
 
-	// An M2/M3-style runner: raw heartbeat with no actions field.
+	// An older-style runner: raw heartbeat with no actions field.
 	cl, err := e.dial(transport.UserRunner, "old")
 	must(t, err)
 	defer cl.Close()

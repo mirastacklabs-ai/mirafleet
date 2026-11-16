@@ -652,7 +652,7 @@ type RunnerInfo struct {
 	// ActionsOmitted: the runner advertises actions, but the response's action budget was used up
 	// by earlier runners; query it alone or ask for fewer runners to see them.
 	ActionsOmitted bool `json:"actions_omitted,omitempty"`
-	// Host-mode runners (M7, additive): supported features, the credentials held (names, kinds,
+	// Host-mode runners (additive): supported features, the credentials held (names, kinds,
 	// hosts, status only; fingerprints and expiry are admin-only) and running background jobs.
 	Features    []string           `json:"features,omitempty"`
 	Credentials []RunnerCredential `json:"credentials,omitempty"`
@@ -801,10 +801,10 @@ type WorkspaceOpenParams struct {
 	Image   string            `json:"image,omitempty"` // must be in the fleet allowlist
 	Labels  map[string]string `json:"labels,omitempty"`
 	Confirm string            `json:"confirm,omitempty"` // fleet name on guarded fleets
-	// Credentials (M7, additive) narrows the credentials the session uses to this subset of those
+	// Credentials (additive) narrows the credentials the session uses to this subset of those
 	// the runner holds; empty = all. Placement needs every named credential on the runner.
 	Credentials []string `json:"credentials,omitempty"`
-	// Workdir (M7, additive, host fleets only) names a shared directory on the runner instead of
+	// Workdir (additive, host fleets only) names a shared directory on the runner instead of
 	// the per-session one. A name, never a path.
 	Workdir string `json:"workdir,omitempty"`
 }
@@ -831,7 +831,7 @@ type WorkspaceExecResult struct {
 	TimedOut   bool   `json:"timed_out,omitempty"`
 	DurationMS int64  `json:"duration_ms"`
 	RequestID  string `json:"request_id,omitempty"`
-	// M7 (additive, host mode): the full output stays on the runner. Ref names it for
+	// Additive (host mode): the full output stays on the runner. Ref names it for
 	// workspace.output_read; the byte counts are the true totals; Omitted is how many bytes the
 	// inline text left out.
 	Ref         string `json:"ref,omitempty"`
@@ -876,7 +876,7 @@ type WorkspaceWriteFileResult struct {
 
 type WorkspaceCloseParams struct {
 	Workspace string `json:"workspace"`
-	// Delete (M7, host mode) also deletes the session directory; close alone keeps it.
+	// Delete (host mode) also deletes the session directory; close alone keeps it.
 	Delete bool `json:"delete,omitempty"`
 }
 type WorkspaceCloseResult struct {
@@ -930,7 +930,7 @@ type WorkspaceAdminListResult struct {
 
 type WorkspaceKillParams struct {
 	ID string `json:"id"`
-	// Delete (M7, host mode) also deletes the session directory.
+	// Delete (host mode) also deletes the session directory.
 	Delete bool `json:"delete,omitempty"`
 }
 

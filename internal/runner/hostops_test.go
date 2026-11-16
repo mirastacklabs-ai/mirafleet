@@ -584,7 +584,7 @@ func TestOpenSSHThroughSessionAgent(t *testing.T) {
 		t.Skip("openssh-client is not installed in this image")
 	}
 	if _, err := user.Current(); err != nil {
-		t.Skip("ssh needs a passwd entry for the uid (the dev container runs as the host uid); runs in the S16 harness")
+		t.Skip("ssh needs a passwd entry for the uid (the dev container runs as the host uid); runs in the host-mode integration harness")
 	}
 	k := newTestKey(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -700,7 +700,7 @@ func TestRestartRewiresAdoptedSessions(t *testing.T) {
 	}
 }
 
-// H-21: the unsent table is spooled to disk and a new runner process sends it; a poisoned entry
+// The unsent table is spooled to disk and a new runner process sends it; a poisoned entry
 // is dropped, and a sent table removes the file.
 func TestEventSpoolSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.spool")

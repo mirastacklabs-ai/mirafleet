@@ -429,7 +429,7 @@ func (d *DB) CloseWorkspacesOf(ctx context.Context, who store.WorkspaceOwner, re
 	return ids, nil
 }
 
-// closeParams returns a copy of p carrying the affected count and id list (C-12, B-12), so the audit
+// closeParams returns a copy of p carrying the affected count and id list, so the audit
 // row has them whatever Message the caller set. The list is capped to keep the row small.
 func closeParams(p map[string]string, ids []string) map[string]string {
 	out := make(map[string]string, len(p)+2)

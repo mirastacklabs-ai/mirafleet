@@ -111,7 +111,7 @@ func TestEnvDenied(t *testing.T) {
 	}
 }
 
-// F-24: exec-hook names and the DATABASE_URL suffix match.
+// Exec-hook names and the DATABASE_URL suffix match.
 func TestEnvDeniedF24(t *testing.T) {
 	cases := map[string]bool{
 		"GIT_SSH": true, "GIT_EXTERNAL_DIFF": true, "GIT_PAGER": true, "PAGER": true,

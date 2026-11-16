@@ -188,7 +188,7 @@ const labelWorkdir = "mirafleet.workdir"
 // (hostx.LabelSession), which keys the session directory by it so a reopen reattaches.
 const labelSession = "mirafleet.session"
 
-// OpenWorkspaceIn is OpenWorkspace with an optional shared workdir name (host fleets only, Q4).
+// OpenWorkspaceIn is OpenWorkspace with an optional shared workdir name (host fleets only).
 func (s *Service) OpenWorkspaceIn(ctx context.Context, p auth.Principal, src Source, fleet, session, image string,
 	labels map[string]string, confirm, workdir string) (store.Workspace, bool, error) {
 	return s.OpenWorkspaceWith(ctx, p, src, fleet, session, image, labels, confirm, workdir, nil)
@@ -221,7 +221,7 @@ func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src S
 		return store.Workspace{}, false, s.fail("get fleet", err)
 	}
 	if f.Mode != store.ModeWorkspace {
-		// F-41: a mode mismatch is audited as one denied row (no start row exists yet).
+		// A mode mismatch is audited as one denied row (no start row exists yet).
 		den := s.event(p, src, api.MethodWorkspaceOpen)
 		den.Fleet, den.Subject = fleet, session
 		den.Outcome, den.Message = OutcomeDenied, "fleet is not in workspace mode"
@@ -245,7 +245,7 @@ func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src S
 	}
 	host := cfg.Executor == store.ExecutorHost
 	specLabels := labels
-	if host { // no images in host mode; guarding is the typed confirm above, nothing else (Q10)
+	if host { // no images in host mode; guarding is the typed confirm above, nothing else
 		if image != "" {
 			return store.Workspace{}, false, badRequest("host fleets take no image")
 		}
@@ -303,7 +303,7 @@ func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src S
 	for _, w := range live {
 		if w.Fleet == fleet && w.Session == session && (w.State == store.WorkspaceOpen || w.State == store.WorkspaceOpening) {
 			if host && len(credentials) > 0 && !sameCredSet(w.Spec, specLabels[labelCredentials]) {
-				// H-04: a reused session keeps the narrowing it was opened with.
+				// A reused session keeps the narrowing it was opened with.
 				return store.Workspace{}, false, api.Errorf(api.CodeConflict,
 					"session %q is open with a different credentials list", session)
 			}
@@ -330,7 +330,7 @@ func (s *Service) OpenWorkspaceWith(ctx context.Context, p auth.Principal, src S
 	if err != nil {
 		return store.Workspace{}, false, s.fail("place workspace", err)
 	}
-	if len(credentials) > 0 && len(cands) > 0 { // placement needs every named credential (Q33)
+	if len(credentials) > 0 && len(cands) > 0 { // placement needs every named credential
 		rs := make([]store.Runner, len(cands))
 		for i, c := range cands {
 			rs[i] = c.runner
@@ -481,7 +481,7 @@ func (s *Service) destroyStray(ctx context.Context, runnerID int64, id, why stri
 	}
 }
 
-// failStuckOpening (F-27) re-reads the row after destroyStray and, if it is still opening (the
+// failStuckOpening re-reads the row after destroyStray and, if it is still opening (the
 // open could not be recorded), moves it to failed with an audit row, so session reuse is not
 // blocked until the stale sweep. Best effort: errors are logged only.
 func (s *Service) failStuckOpening(ctx context.Context, p auth.Principal, src Source, fleet, runner, id, session, rid, why string) {
@@ -543,7 +543,7 @@ func sameCredSet(specJSON, want string) bool {
 }
 
 func (s *Service) reuse(ctx context.Context, p auth.Principal, src Source, w store.Workspace, rid string) (store.Workspace, bool, error) {
-	if w.State == store.WorkspaceOpening { // C-14: the create is still in flight; do not hand out a half-made workspace
+	if w.State == store.WorkspaceOpening { // the create is still in flight; do not hand out a half-made workspace
 		ev := s.wsEvent(p, src, api.MethodWorkspaceOpen, w.Fleet, w.Runner, w.WsID, rid)
 		ev.Subject, ev.Outcome, ev.Message = w.Session, OutcomeError, "sticky workspace is still opening"
 		s.recordBestEffort(ctx, ev)
@@ -568,10 +568,10 @@ func (s *Service) reuse(ctx context.Context, p auth.Principal, src Source, w sto
 // ownedWorkspace loads a workspace the principal owns; anyone else gets not_found so existence
 // does not leak.
 //
-// F-43: a refusal on an existing workspace of another operator is audited as denied (requester as
+// A refusal on an existing workspace of another operator is audited as denied (requester as
 // actor, the workspace id); the caller still sees plain not_found.
 func (s *Service) ownedWorkspace(ctx context.Context, p auth.Principal, src Source, method, wsID string) (store.Workspace, error) {
-	// F-47: an unknown id takes the same path as a foreign one: one denied row, plain not_found.
+	// An unknown id takes the same path as a foreign one: one denied row, plain not_found.
 	// A malformed id is never copied into the audit row (caller-controlled, unbounded).
 	deny := func(w store.Workspace, id string) (store.Workspace, error) {
 		den := s.wsEvent(p, src, method, w.Fleet, w.Runner, id, "")

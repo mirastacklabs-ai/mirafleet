@@ -10,7 +10,7 @@ import (
 
 // InitPKIAt is InitPKI for a caller that already holds a verified directory (an fd opened
 // O_DIRECTORY|O_NOFOLLOW and checked through that fd): every file is created with
-// openat(dirfd, name, O_CREAT|O_EXCL|O_NOFOLLOW), so nothing is resolved by path again (F-19).
+// openat(dirfd, name, O_CREAT|O_EXCL|O_NOFOLLOW), so nothing is resolved by path again.
 // path is only used to build the returned file names. The directory must be mode 0700 and owned
 // by the effective uid, re-checked here through the fd.
 func InitPKIAt(dir *os.File, path string, days int, now time.Time) (*PKI, error) {

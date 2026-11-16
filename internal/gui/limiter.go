@@ -15,7 +15,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/auth"
 )
 
-// Limits from M4 §2.4, §2.5, §2.6.
+// Limits.
 const (
 	loginBurst        = 5
 	loginRefill       = 12 * time.Second // 5 per minute
@@ -86,7 +86,7 @@ type ipState struct {
 	elem        *list.Element
 }
 
-// LoginLimiter implements the per-IP token bucket, lockout and global slow-down of §2.5.
+// LoginLimiter implements the per-IP token bucket, lockout and global slow-down.
 // Maps are capped at 4096 entries with LRU eviction. Safe for concurrent use.
 type LoginLimiter struct {
 	now func() time.Time
@@ -112,7 +112,7 @@ func (l *LoginLimiter) get(key string, now time.Time) *ipState {
 		return s
 	}
 	for len(l.byKey) >= limiterMaxEntries {
-		// Evict the least recent entry that is not under a lockout (G-16); only when every
+		// Evict the least recent entry that is not under a lockout; only when every
 		// entry is locked does the least recent one go.
 		old := l.lru.Back()
 		for e := old; e != nil; e = e.Prev() {
@@ -225,8 +225,8 @@ func (l *LoginLimiter) Success(addr string) {
 // ErrHashBusy means no hash slot freed up in time; answer 503.
 var ErrHashBusy = errors.New("gui: password hashing busy")
 
-// HashSem bounds concurrent Argon2 work (at most 2 at once, 5 s wait, then 503; M4 §2.4).
-// S7 wraps every login and password verification/hash in Acquire.
+// HashSem bounds concurrent Argon2 work (at most 2 at once, 5 s wait, then 503).
+// The login handlers wrap every login and password verification/hash in Acquire.
 type HashSem struct {
 	slots chan struct{}
 	wait  time.Duration
@@ -263,7 +263,7 @@ func (h *HashSem) Acquire(ctx context.Context) (release func(), err error) {
 	return func() { once.Do(func() { <-h.slots }) }, nil
 }
 
-// ParseForm applies the request hygiene of §2.6 and G-13: urlencoded content type only (415),
+// ParseForm applies the request hygiene: urlencoded content type only (415),
 // body capped at MaxFormBytes before parsing (413), then ParseForm (400 on malformed). It
 // returns the parsed values and 0, or nil and the HTTP status to answer with.
 func ParseForm(w http.ResponseWriter, r *http.Request) (url.Values, int) {
@@ -283,5 +283,5 @@ func ParseForm(w http.ResponseWriter, r *http.Request) (url.Values, int) {
 }
 
 // PasswordTooLong reports whether a submitted password exceeds auth.MaxPasswordBytes. The login
-// handler must call it after ParseForm and before the user lookup or any hashing (G-13).
+// handler must call it after ParseForm and before the user lookup or any hashing.
 func PasswordTooLong(pw string) bool { return len(pw) > auth.MaxPasswordBytes }

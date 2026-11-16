@@ -1,8 +1,8 @@
 // Package hook implements the Claude Code hook handlers for the mirafleet plugin
-// (`mirafleet mcp hook claude-code <session-start|session-end|pre-tool-use>`, wired in S12).
+// (`mirafleet mcp hook claude-code <session-start|session-end|pre-tool-use>`).
 //
 // Hook contract, from the official docs (https://docs.claude.com/en/docs/claude-code/hooks, which
-// 301-redirects to https://code.claude.com/docs/en/hooks), as read on the day S11 was written:
+// 301-redirects to https://code.claude.com/docs/en/hooks), as read on the day this was written:
 //
 //   - Input is one JSON object on stdin. Common fields: session_id, transcript_path, cwd,
 //     hook_event_name (also permission_mode, prompt_id, agent_id, ... which we ignore: unknown
@@ -408,7 +408,7 @@ func strOf(raw json.RawMessage) string {
 
 // oneLine sanitises s (ANSI, controls, bidi and other format characters), folds whitespace and
 // neutralises harness tags (orch.NeutralizeTags), so a value taken from a project file or tool
-// arguments cannot carry one into a reason (H-20).
+// arguments cannot carry one into a reason.
 func oneLine(s string) string {
 	out, _ := orch.NeutralizeTags(strings.Join(strings.Fields(orch.Sanitize([]byte(s))), " "))
 	return out

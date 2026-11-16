@@ -25,7 +25,7 @@ import (
 
 // Helpers of TestM5Done (m5_done_test.go).
 
-// newM5Env is newEnvOpts with a service on the injected clock and a registry with the M3 stale window.
+// newM5Env is newEnvOpts with a service on the injected clock and a registry with the workspace stale window.
 func newM5Env(t *testing.T, clock func() time.Time) *env {
 	t.Helper()
 	var reg *registry.Registry

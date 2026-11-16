@@ -1,6 +1,6 @@
 package main
 
-// M4 admin commands: `central gui reset-admin`, `central fleet set NAME -confirm=BOOL` and the
+// Admin GUI commands: `central gui reset-admin`, `central fleet set NAME -confirm=BOOL` and the
 // audit filter flags. All are thin clients of the admin socket.
 
 import (

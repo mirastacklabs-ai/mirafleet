@@ -78,7 +78,7 @@ type Runner struct {
 	cfg    Config
 	sem    chan struct{}
 	ws     *wsState // nil unless workspace mode
-	dev    *devMgr  // nil unless the executor has per-session directories (host mode, M7)
+	dev    *devMgr  // nil unless the executor has per-session directories (host mode)
 	hbKick chan struct{}
 	cfgErr error
 }

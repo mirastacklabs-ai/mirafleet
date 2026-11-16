@@ -208,7 +208,7 @@ func (r *Runner) runEvents(ctx context.Context, client *ssh.Client) {
 	}
 }
 
-// Spool (H-21): the unsent table is written to Config.EventSpool every eventSpoolEvery and on a
+// Spool: the unsent table is written to Config.EventSpool every eventSpoolEvery and on a
 // graceful stop, and loaded at start, so a restart or a crash loses at most one interval. It is
 // at-least-once: events sent in the last interval before a crash are sent again. The file holds
 // no secrets (counts per credential name, host and status), mode 0600, replaced atomically.

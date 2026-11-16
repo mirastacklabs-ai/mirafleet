@@ -376,7 +376,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	wrong := func() {
 		s.loginPage(w, r, http.StatusUnauthorized, ft, next, clip(username, 64), &Flash{Kind: "bad", Text: "Wrong username or password."})
 	}
-	// G-13: nothing is looked up or hashed for an oversized field.
+	// Nothing is looked up or hashed for an oversized field.
 	if PasswordTooLong(password) || len(username) > maxFieldBytes {
 		s.recordFailure(r, s.auth.login)
 		wrong()
@@ -504,7 +504,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 				field = "username"
 			}
 			fail(http.StatusUnprocessableEntity, map[string]string{field: userMessage(ae.Message)})
-		case errors.As(err, &ae) && ae.Code == api.CodeConflict: // wrong, expired or used token, or a lost race (G-07)
+		case errors.As(err, &ae) && ae.Code == api.CodeConflict: // wrong, expired or used token, or a lost race
 			s.recordFailure(r, s.auth.setup)
 			fail(http.StatusUnprocessableEntity, map[string]string{"token": "Setup is not available with that token. Check the token, or run `mirafleet central gui reset-admin` on the central host to get a new one."})
 		default:

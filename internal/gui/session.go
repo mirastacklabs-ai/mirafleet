@@ -16,7 +16,7 @@ const (
 	SessionCookieName = "__Host-mf_session"
 	PreCookieName     = "__Host-mf_pre"
 
-	// PurgeInterval is how often expired and dead session rows are deleted (M4 §2.4).
+	// PurgeInterval is how often expired and dead session rows are deleted.
 	PurgeInterval = 10 * time.Minute
 
 	preCookieMaxAge = 15 * 60 // seconds; the pre-session cookie is short-lived
@@ -82,7 +82,7 @@ func cookieToken(r *http.Request, name string) (string, bool) {
 type passiveKey struct{}
 
 // Passive marks a handler as a polled fragment endpoint: requests through it never touch the
-// session row (M4 §2.4). Apply it at route registration.
+// session row. Apply it at route registration.
 func Passive(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), passiveKey{}, true)))

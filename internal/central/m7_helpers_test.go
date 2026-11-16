@@ -45,7 +45,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/wsconfig"
 )
 
-// Helpers of TestM7Done (m7_done_test.go) and the M7 glue tests.
+// Helpers of TestM7Done (m7_done_test.go) and the host-mode glue tests.
 
 // m7Ring adapts a secrets.Key to service.KeyRing (the same adapter cmd/mirafleet uses).
 type m7Ring struct{ k secrets.Key }

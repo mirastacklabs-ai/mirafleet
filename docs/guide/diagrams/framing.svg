@@ -151,7 +151,7 @@ text{font:400 13px "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;fill:#
 <g class="st" style="--i:5"><circle class="bdg" cx="140" cy="406" r="11"/><text class="bt" x="140" y="410.5">5</text><text x="158" y="411">payload: 28 bytes of JSON</text></g>
 <circle class="dot pk" cx="0" cy="0" r="7"/>
 
-<text class="h" x="10" y="458">Body frame (M3): after a write_file request, 5 bytes &quot;hello&quot;</text>
+<text class="h" x="10" y="458">Body frame: after a write_file request, 5 bytes &quot;hello&quot;</text>
 <g class="st" style="--i:7">
 <rect class="cph" x="13" y="476" width="22" height="46"/><text class="hh" x="24" y="496">00</text><text class="as" x="24" y="514">·</text>
 <rect class="cph" x="35" y="476" width="22" height="46"/><text class="hh" x="46" y="496">00</text><text class="as" x="46" y="514">·</text>

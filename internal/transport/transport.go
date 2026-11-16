@@ -117,18 +117,18 @@ type Heartbeat struct {
 	// heartbeat; missing counts as level 0 and is refused.
 	Proto int `json:"proto,omitempty"`
 
-	// Workspace fields (M3), all optional: M2 runners omit them, and zero values mean "no workspace
+	// Workspace fields, all optional: older runners omit them, and zero values mean "no workspace
 	// executor". Bounded by Validate.
 	Slots         int      `json:"slots,omitempty"`          // concurrent workspaces the runner accepts
 	Executor      string   `json:"executor,omitempty"`       // "containerd" or "opensandbox"
 	SecureRuntime string   `json:"secure_runtime,omitempty"` // "gvisor", "kata" or empty
 	Images        []string `json:"images,omitempty"`         // advertised image patterns, <= 32 entries of <= 256 bytes
 
-	// Actions (M5, additive): the actions an actions-mode runner offers, for discovery only.
-	// <= 128 actions; see ValidateAction. M2/M3 runners omit it.
+	// Actions (additive): the actions an actions-mode runner offers, for discovery only.
+	// <= 128 actions; see ValidateAction. older runners omit it.
 	Actions []ActionInfo `json:"actions,omitempty"`
 
-	// M7 (additive; see devws.go): Features lists what the runner supports (fs, jobs, creds,
+	// Additive (see devws.go): Features lists what the runner supports (fs, jobs, creds,
 	// events, host), Credentials the credentials it holds (names, kinds, hosts, status; never a
 	// value), Busy the number of running background jobs (a workspace with one is in use).
 	Features    []string              `json:"features,omitempty"`

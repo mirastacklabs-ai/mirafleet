@@ -46,7 +46,7 @@ func svcOn(t *testing.T, c *Config, st store.Store, every time.Duration) *servic
 	return svc
 }
 
-// S17: the reaper runs inside the server wait group, and Close drains it before the caller may
+// The reaper runs inside the server wait group, and Close drains it before the caller may
 // close the store: no store call arrives afterwards.
 func TestReaperStopsBeforeStoreClose(t *testing.T) {
 	ws := &wsListStore{slow: 15 * time.Millisecond}
@@ -64,7 +64,7 @@ func TestReaperStopsBeforeStoreClose(t *testing.T) {
 	}
 }
 
-// S17: central startup marks opening rows failed (a create we crashed in) before serving.
+// Central startup marks opening rows failed (a create we crashed in) before serving.
 func TestStartupRecoversOpeningRows(t *testing.T) {
 	var wsID string
 	e := newEnvOpts(t, 15*time.Second, func(c *Config) {
@@ -90,7 +90,7 @@ func TestStartupRecoversOpeningRows(t *testing.T) {
 	}
 }
 
-// S17: a runner's first heartbeat starts a reconcile (a store read of its rows) in the
+// A runner's first heartbeat starts a reconcile (a store read of its rows) in the
 // background, only when it has an executor; later heartbeats do not repeat it.
 func TestReconcileOnFirstHeartbeat(t *testing.T) {
 	for _, withExec := range []bool{true, false} {

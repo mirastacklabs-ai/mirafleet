@@ -141,10 +141,10 @@ func TestFrontRefusesEverythingElse(t *testing.T) {
 		"/v1/sandboxes/../admin", "/v1/sandboxes/%2e%2e/admin", "/v1/sandboxes/a/../../x", "/v1/sandboxes//x",
 		"/sandboxes/abc/proxy/44772/../../etc", "/sandboxes/abc/proxy/44772/%2e%2e/x", "/v1/sandboxes/a%5Cb",
 		"/v1/filesystem/1000/1000/files/info", "/admin", "/etc/passwd",
-		// D-01: the server proxy under the lifecycle prefix reaches execd's port only.
+		// The server proxy under the lifecycle prefix reaches execd's port only.
 		"/v1/sandboxes/x/proxy/8080", "/v1/sandboxes/x/port/8080/a", "/v1/sandboxes/x/proxy", "/v1/sandboxes/x/port/",
 		"/v1/sandboxes/x/proxy/44772x", "/v1/sandboxes/x/endpoints/proxy/8080",
-		// D-04: control bytes.
+		// Control bytes.
 		"/v1/sandboxes/a%0Ab", "/v1/sandboxes/a%09b", "/v1/sandboxes/a%0D%0Ab", "/v1/sandboxes/a%7Fb",
 	} {
 		code, _, _ := e.do(t, "GET", p, nil)

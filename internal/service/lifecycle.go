@@ -27,7 +27,7 @@ type RunnerView struct {
 	// Actions an actions-mode runner advertised (informational, from the latest heartbeat,
 	// bounded by Heartbeat.Validate). Never used for authorisation.
 	Actions []transport.ActionInfo
-	// Host-mode runners (M7): the features and running-job count of the latest heartbeat, and the
+	// Host-mode runners: the features and running-job count of the latest heartbeat, and the
 	// credentials the runner is assigned (name, kind, hosts, status only).
 	Features    []string
 	Busy        int
@@ -121,7 +121,7 @@ func (s *Service) Enable(ctx context.Context, p auth.Principal, src Source, ref 
 	return s.lifecycle(ctx, p, src, ref, api.OpEnable)
 }
 
-// Revoke permanently revokes a non-revoked runner and kicks its connection (§1.6). Admin only.
+// Revoke permanently revokes a non-revoked runner and kicks its connection. Admin only.
 func (s *Service) Revoke(ctx context.Context, p auth.Principal, src Source, ref string) (store.Runner, error) {
 	return s.lifecycle(ctx, p, src, ref, api.OpRevoke)
 }
@@ -174,7 +174,7 @@ func (s *Service) lifecycle(ctx context.Context, p auth.Principal, src Source, r
 	ev.Params = map[string]string{"from": string(r.Status), "to": string(to)}
 
 	if to == store.StatusRevoked {
-		// §1.6: tombstone + kick first so nothing can slip in or keep running while the commit
+		// Tombstone + kick first so nothing can slip in or keep running while the commit
 		// is in flight; undo the tombstone if the commit fails.
 		ev.Message = RevokeReason
 		s.live.Tombstone(r.ID)
@@ -209,7 +209,7 @@ func (s *Service) lifecycle(ctx context.Context, p auth.Principal, src Source, r
 	}
 	switch to {
 	case store.StatusDisabled:
-		s.withdrawRunner(ctx, r.ID) // H-02: the runner drops its secrets
+		s.withdrawRunner(ctx, r.ID) // the runner drops its secrets
 	case store.StatusActive:
 		if r.Status == store.StatusDisabled && s.cred != nil { // re-enable: deliver again
 			if err := s.DeliverRunner(context.WithoutCancel(ctx), r.ID); err != nil {

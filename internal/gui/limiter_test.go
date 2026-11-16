@@ -309,7 +309,7 @@ func TestRetryAfterSeconds(t *testing.T) {
 	}
 }
 
-// G-16: a full map evicts unlocked entries before a locked-out one.
+// A full map evicts unlocked entries before a locked-out one.
 func TestLimiterEvictsUnlockedFirst(t *testing.T) {
 	c := newClock()
 	l := NewLoginLimiter(c.Now)

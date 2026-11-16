@@ -43,7 +43,7 @@ const (
 
 var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// baseEnv are always passed (when the runner has a value): section 3.2.
+// baseEnv are always passed (when the runner has a value).
 var baseEnv = []string{"HOME", "USER", "LOGNAME", "PATH", "LANG"}
 
 // Config configures an Engine.
@@ -91,7 +91,7 @@ type Engine struct {
 	cwds     map[string]string           // sid -> cwd
 	fg       map[string]map[int]struct{} // sid -> running foreground pgids
 	sessions map[string]string           // sid -> Dir, every session seen (for Busy)
-	startMu  map[string]*sync.Mutex      // sid -> serializes StartJob so job_max holds (H-11)
+	startMu  map[string]*sync.Mutex      // sid -> serializes StartJob so job_max holds
 }
 
 // startLock returns the session's StartJob mutex.

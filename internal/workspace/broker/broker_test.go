@@ -357,7 +357,7 @@ func TestBundleAndValidate(t *testing.T) {
 	}
 }
 
-// H-14: a CA whose hosts are all DNS names must not vouch for an IP address, and one whose hosts
+// A CA whose hosts are all DNS names must not vouch for an IP address, and one whose hosts
 // are all IPs must not vouch for a DNS name.
 func TestNameConstraintsCoverTheOtherFamily(t *testing.T) {
 	for _, tc := range []struct {
@@ -394,7 +394,7 @@ func TestNameConstraintsCoverTheOtherFamily(t *testing.T) {
 	}
 }
 
-// H-13: a secret echoed in the body (also split across reads) is redacted, the registry bearer is
+// A secret echoed in the body (also split across reads) is redacted, the registry bearer is
 // scrubbed like the secret, and an empty secret does not drop every header.
 func TestBodyEchoIsRedacted(t *testing.T) {
 	up := upstream(t, func(w http.ResponseWriter, r *http.Request) {

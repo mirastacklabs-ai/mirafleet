@@ -594,7 +594,7 @@ func (s *syncBuf) String() string {
 }
 
 // A client-supplied Host header must not steer the upstream request to another virtual host
-// on an allowlisted address (B-08).
+// on an allowlisted address.
 func TestPlainHTTPHostHeaderPinned(t *testing.T) {
 	var gotHost string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

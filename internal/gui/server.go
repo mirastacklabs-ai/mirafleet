@@ -61,7 +61,7 @@ type Server struct {
 	flashSecret []byte
 
 	// PageDefaults, when set, fills the session-dependent Page fields (Authed, CSRF, Nav for error
-	// pages) for every page including error pages. S7 sets it. It is not called for 421 and 503.
+	// pages) for every page including error pages. It is not called for 421 and 503.
 	PageDefaults func(r *http.Request, pg *Page)
 
 	auth   *authState // login limiter, hash semaphore, CSRF checker, setup state (handlers_auth.go)
@@ -165,7 +165,7 @@ func New(cfg Config) (*Server, error) {
 		}
 		s.hsts = true
 		for _, n := range s.cert.DNSNames {
-			if !strings.HasPrefix(n, "*") { // a wildcard SAN is not a Host name to allow (G-23)
+			if !strings.HasPrefix(n, "*") { // a wildcard SAN is not a Host name to allow
 				dns = append(dns, n)
 			}
 		}
@@ -310,7 +310,7 @@ func (s *Server) Start() error {
 			}
 		}
 	}()
-	// Certificate expiry: warn at start and then once a day while running (G-23, G-24).
+	// Certificate expiry: warn at start and then once a day while running.
 	s.warnCertExpiry()
 	go func() {
 		t := time.NewTicker(CertCheckInterval)
@@ -382,7 +382,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // Close stops the server at once: it cancels the context of every in-flight request (so backend
 // calls abort) and closes all connections. Call it when Shutdown timed out. Safe after Shutdown
 // and when not started. It does not wait for handlers to return: a handler still unwinding
-// may find the store closed, which only turns its answer into an error (G-31).
+// may find the store closed, which only turns its answer into an error.
 func (s *Server) Close() error {
 	s.mu.Lock()
 	srv, stop, cancel := s.srv, s.stop, s.baseCancel
