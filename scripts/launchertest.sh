@@ -25,7 +25,7 @@ $N --check "$L"
 # 1. binary missing
 out=$(PATH=/nonexistent $N "$L" mcp 2>&1) && { echo "FAIL: expected non-zero when mirafleet is missing"; exit 1; } || code=$?
 [ "$code" = 127 ] || { echo "FAIL: missing binary exit $code, want 127"; exit 1; }
-for s in "not found on PATH" brew install.sh install.ps1 "release archive"; do
+for s in "not found on PATH" Homebrew install.sh install.ps1 "release archive"; do
 	echo "$out" | grep -q "$s" || { echo "FAIL: message lacks $s: $out"; exit 1; }
 done
 

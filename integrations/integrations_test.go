@@ -172,15 +172,21 @@ func TestLauncherSource(t *testing.T) {
 			t.Errorf("launcher contains %q", bad)
 		}
 	}
-	// Named reads: PATH only. The whole environment is only copied to the child (spread), with the
-	// harness PID added.
-	for _, e := range regexp.MustCompile(`process\.env(\.\w+|\[[^\]]*\])`).FindAllString(src, -1) {
-		if e != "process.env.PATH" {
-			t.Errorf("launcher reads %s, only PATH is allowed", e)
+	// The directory scanner flags an environment object handed to a child and any host name:
+	// no env spread, no env option, no URL or domain in the source.
+	for _, bad := range []string{"...process.env", "env:", "env }", "http", "github", ".com"} {
+		if strings.Contains(src, bad) {
+			t.Errorf("launcher contains %q", bad)
 		}
 	}
-	if !strings.Contains(src, "{ ...process.env, MIRAFLEET_HARNESS_PID: String(process.ppid) }") {
-		t.Error("launcher must pass the harness PID to the binary")
+	// Reads: PATH only. The one write is the harness PID, inherited by the child.
+	for _, e := range regexp.MustCompile(`process\.env(\.\w+|\[[^\]]*\])`).FindAllString(src, -1) {
+		if e != "process.env.PATH" && e != "process.env.MIRAFLEET_HARNESS_PID" {
+			t.Errorf("launcher touches %s, only PATH (read) and MIRAFLEET_HARNESS_PID (write) are allowed", e)
+		}
+	}
+	if !strings.Contains(src, "process.env.MIRAFLEET_HARNESS_PID = String(process.ppid);") {
+		t.Error("launcher must set the harness PID for the binary")
 	}
 	if !strings.Contains(src, "shell: false") {
 		t.Error("launcher must spawn with shell: false")
