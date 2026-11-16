@@ -85,7 +85,7 @@ func TestBumpThenCheck(t *testing.T) {
 	}
 	// Only the version strings changed; formatting is preserved byte for byte.
 	for _, rel := range []string{
-		"integrations/claude-code/.claude-plugin/plugin.json",
+		"integrations/claude-code/plugin/.claude-plugin/plugin.json",
 		"cmd/mirafleet/mcp_hook.go",
 		".claude-plugin/marketplace.json",
 		"server.json",
@@ -94,6 +94,10 @@ func TestBumpThenCheck(t *testing.T) {
 		"deploy/compose/lab/compose.yaml",
 	} {
 		want := strings.ReplaceAll(read(t, filepath.Join("testdata", "tree"), rel), "0.5.0", "0.6.0")
+		if rel == ".claude-plugin/marketplace.json" {
+			// bump sets the plugin root path together with the ref (the fixture still has the old path).
+			want = strings.Replace(want, `"path": "integrations/claude-code"`, `"path": "integrations/claude-code/plugin"`, 1)
+		}
 		if got := read(t, root, rel); got != want {
 			t.Errorf("%s:\n%s\nwant:\n%s", rel, got, want)
 		}
@@ -148,7 +152,10 @@ func TestBumpCheckInvariants(t *testing.T) {
 		if src, _ := m.Plugins[0]["source"].(map[string]any); src["ref"] != "v"+c.ver {
 			t.Errorf("%s: source.ref = %v", c.ver, src["ref"])
 		}
-		for _, rel := range []string{"integrations/claude-code/.claude-plugin/plugin.json", "server.json"} {
+		if src, _ := m.Plugins[0]["source"].(map[string]any); src["path"] != "integrations/claude-code/plugin" {
+			t.Errorf("%s: source.path = %v, want the plugin root", c.ver, src["path"])
+		}
+		for _, rel := range []string{"integrations/claude-code/plugin/.claude-plugin/plugin.json", "server.json"} {
 			if !strings.Contains(read(t, root, rel), `"version": "`+c.ver+`"`) {
 				t.Errorf("%s: %s lacks version %s", c.ver, rel, c.ver)
 			}
@@ -202,7 +209,7 @@ func TestBumpRenameFailureRestores(t *testing.T) {
 		t.Fatalf("code %d %q", c, errs)
 	}
 	for _, rel := range []string{
-		"integrations/claude-code/.claude-plugin/plugin.json", "cmd/mirafleet/mcp_hook.go",
+		"integrations/claude-code/plugin/.claude-plugin/plugin.json", "cmd/mirafleet/mcp_hook.go",
 		".claude-plugin/marketplace.json", "server.json", "internal/protover/protover.go",
 	} {
 		if got, want := read(t, root, rel), read(t, filepath.Join("testdata", "tree"), rel); got != want {

@@ -30,7 +30,7 @@ type target struct {
 // targets is the list of versioned files (docs/M6.md section 2.1). npm templates carry no version.
 // Later steps (compose image tags, ...) append from their own file's init via addTarget.
 var targets = []target{
-	{Path: "integrations/claude-code/.claude-plugin/plugin.json", Get: jsonVersions, Set: setJSONVersions},
+	{Path: "integrations/claude-code/plugin/.claude-plugin/plugin.json", Get: jsonVersions, Set: setJSONVersions},
 	{Path: "cmd/mirafleet/mcp_hook.go", Get: goPluginVersion, Set: setGoPluginVersion},
 	{Path: ".claude-plugin/marketplace.json", Tag: true, Get: marketplaceRef, Set: setMarketplaceRef},
 	{Path: "server.json", Get: jsonVersions, Set: setJSONVersions},
@@ -188,6 +188,11 @@ func setProtoLevel(b []byte, value string) ([]byte, error) {
 // pluginName is the marketplace entry whose source ref tracks the release tag.
 const pluginName = "mirafleet"
 
+// pluginPath is the marketplace source path written by bump, together with the new ref.
+const pluginPath = "integrations/claude-code/plugin"
+
+var pathKeyRE = regexp.MustCompile(`("path"\s*:\s*")[^"]*(")`)
+
 var refKeyRE = regexp.MustCompile(`("ref"\s*:\s*")[^"]*(")`)
 
 func marketplaceRef(b []byte) ([]string, error) {
@@ -225,5 +230,11 @@ func setMarketplaceRef(b []byte, value string) ([]byte, error) {
 	if n := len(refKeyRE.FindAll(b, -1)); n != 1 {
 		return nil, fmt.Errorf(`found %d "ref" keys, expected exactly 1`, n)
 	}
+	if n := len(pathKeyRE.FindAll(b, -1)); n != 1 {
+		return nil, fmt.Errorf(`found %d "path" keys, expected exactly 1`, n)
+	}
+	// path and ref move together: the plugin root is integrations/claude-code/plugin from the first
+	// release that contains it, and an older tag does not have that path.
+	b = pathKeyRE.ReplaceAll(b, []byte("${1}"+pluginPath+"${2}"))
 	return refKeyRE.ReplaceAll(b, []byte("${1}"+value+"${2}")), nil
 }

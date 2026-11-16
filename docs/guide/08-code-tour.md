@@ -71,7 +71,9 @@ mirafleet/
 │                              e2e_integration_linux_test.go (built binary, real containerd),
 │                              mcp_stdio_linux_test.go (TestM5NoHooks: the built `mcp` over stdio)
 ├── integrations/              harness-specific files, one directory each (M5)
-│   ├── claude-code/           the plugin: .claude-plugin/, .mcp.json, hooks/hooks.json, skills/,
+│   ├── claude-code/
+│   │   ├── plugin/            the plugin root (plugin files only): .claude-plugin/, .mcp.json,
+│   │   │                      hooks/hooks.json, skills/, bin/mirafleet.js (Node launcher)
 │   │   └── hook/              Go package behind `mirafleet mcp hook claude-code <event>`
 │   ├── opencode/, generic/   commands and config snippets for other harnesses (no hooks)
 │   ├── commands/mirafleet.md  the one shared command body

@@ -102,7 +102,7 @@ var mdLink = regexp.MustCompile(`\]\(([^)\s]+)\)`)
 
 func TestREADMERelativeLinks(t *testing.T) {
 	files := []string{"README.md", "opencode/README.md", "generic/README.md"}
-	if m, _ := filepath.Glob("claude-code/README.md"); len(m) > 0 {
+	if m, _ := filepath.Glob("claude-code/plugin/README.md"); len(m) > 0 {
 		files = append(files, m...)
 	}
 	for _, f := range files {

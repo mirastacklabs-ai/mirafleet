@@ -1434,17 +1434,20 @@ safe to commit: it holds only names.
 
 ### 10.10.4 Claude Code: the plugin
 
-The plugin is in the repository at `integrations/claude-code/`. Until M6 ships a marketplace entry,
-load it from a checkout:
+The plugin is in the repository at `integrations/claude-code/plugin/`. It needs Node.js 18 or later
+(it only runs a small launcher) and `mirafleet` on `PATH`. Install it from the marketplace, or load
+it from a checkout:
 
 ```bash
-claude --plugin-dir /path/to/mirafleet/integrations/claude-code
+claude --plugin-dir /path/to/mirafleet/integrations/claude-code/plugin
 ```
 
 What it gives Claude Code:
 
-- the MCP server: `.mcp.json` runs `mirafleet mcp -project-dir ${CLAUDE_PROJECT_DIR}`, so the project
-  file is found from your project, not from wherever Claude Code was started. In `/mcp` the server
+- the MCP server: `.mcp.json` runs `node ${CLAUDE_PLUGIN_ROOT}/bin/mirafleet.js mcp`. The launcher
+  starts the installed `mirafleet mcp`; Claude Code starts the server in your project, and
+  `mirafleet mcp` uses its working directory as the project directory, so the project
+  file is found from your project. In `/mcp` the server
   is called `plugin:mirafleet:mirafleet`, and its tools are `mcp__plugin_mirafleet_mirafleet__<tool>`;
 - the commands `/mirafleet <task>`, `/openfleet <task>` and `/claudefleet <task>`: one skill text
   (the aliases are copies) that tells the model how to use the tools. If another plugin already owns
@@ -1545,7 +1548,7 @@ are written below as `code: message`; on the wire they are `{"error":{"code":"..
 | `timeout: the call timed out` | The client-side limit passed (`timeout_s` plus 30 s; 2 minutes for other calls; 5 minutes 30 s for `workspace_open`). | Raise `timeout_s` or fix the command. |
 | `canceled: request canceled` | The harness cancelled the call (you pressed Esc, for example). The command on the runner is cancelled too; the audit shows `cancelled`. | Expected. |
 | `mirafleet: mcp server stopped: ...` on stderr, exit code 1 | **A malformed frame.** Something wrote a line that is not valid JSON-RPC to the server's stdin. The server closes the session, exits 1 and does not echo the input. Typical causes: a shell wrapper or an alias around `mirafleet` that prints a banner to stdout, an IDE launcher that mixes output into the pipe, or a test typo. | Run the exact command from your harness config in a terminal and check it prints nothing on stdout by itself. Use the binary directly in `command`, not through a script that writes to stdout. The harness will restart it. |
-| After the plugin loads, **every mirafleet tool call is blocked**, or the hook log shows `mirafleet` printing its usage text | **PreToolUse and exec-form `args`.** The plugin's hooks are written in "exec form": a `command` plus an `args` list, started without a shell (so they work on Windows). A Claude Code release that does not know `args` runs the bare `mirafleet`, which prints its usage and exits with code 2, and for a PreToolUse hook exit code 2 means "block this tool call". The minimum Claude Code version for `args` is not stated in the documentation we read. | Update Claude Code. As a stopgap that loses only the convenience hooks, register the server without the plugin: `claude mcp add mirafleet -- mirafleet mcp`. Central still enforces `confirm`. |
+| After the plugin loads, **every mirafleet tool call is blocked**, or the hook log shows `mirafleet` printing its usage text | **PreToolUse and exec-form `args`.** The plugin's hooks are written in "exec form": a `command` plus an `args` list, started without a shell (so they work on Windows). A Claude Code release that does not know `args` runs the bare `node` (or, in older plugin versions, the bare `mirafleet`, which printed its usage and exited with code 2); a failing PreToolUse hook blocks the tool call. A missing Node.js 18+ or a missing `mirafleet` on `PATH` has the same effect: the launcher prints "binary not found on PATH" and exits 127. The minimum Claude Code version for `args` is not stated in the documentation we read. | Update Claude Code. As a stopgap that loses only the convenience hooks, register the server without the plugin: `claude mcp add mirafleet -- mirafleet mcp`. Central still enforces `confirm`. |
 | Hooks seem silent | They are silent by design except `pre-tool-use` with `confirm`. | Run one by hand: `echo '{"session_id":"x","cwd":"."}' \| mirafleet mcp hook claude-code session-start` should print nothing and exit 0. `claude --debug` shows hook runs. |
 | A resumed conversation did not find its workspace | Reattach needs the hook's handoff to be keyed by the same parent process as the server (assumed for Claude Code, checked by hand in M5 step S17), or `-session NAME`. | `workspace_list` shows your workspaces; use their `workspace` id explicitly, or set `-session`. |
 | Workspaces left over after you quit | Only `/clear` and logout close them; other exits leave them to the idle timer. | `workspace_list`, `workspace_close`, or wait (24 h by default). |

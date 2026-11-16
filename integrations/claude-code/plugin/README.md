@@ -16,18 +16,20 @@ The marketplace is `mirastacklabs`; its `mirafleet` entry is pinned to the relea
 plugin version matches the binary release. From a checkout (development):
 
 ```sh
-claude --plugin-dir integrations/claude-code
+claude --plugin-dir integrations/claude-code/plugin
 ```
 
 Requirements:
 
-- `mirafleet` must be on `PATH`. The plugin ships no binary; `.mcp.json` and the hooks run the
-  bare command `mirafleet`. Install it by any channel in the [README](../../README.md#install):
+- Node.js 18 or later (`node` on `PATH`). It runs only the small launcher `bin/mirafleet.js`.
+- `mirafleet` must be on `PATH`. The plugin ships no binary; `.mcp.json` and the hooks run
+  `node ${CLAUDE_PLUGIN_ROOT}/bin/mirafleet.js ...`, and the launcher runs the installed
+  `mirafleet` with the same arguments. Install it by any channel in the [README](../../../README.md#install):
   Homebrew (`brew install mirastacklabs-ai/tap/mirafleet`), `install.sh` (macOS, Linux),
   `install.ps1` (Windows), the release archive, or `go install`. On Windows use `install.ps1` or
   the zip, not npm: the hooks run in exec form and an npm `.cmd` shim cannot be executed that way.
 - Set up a context once: `mirafleet mcp login ADDR -name NAME -code -` (see the
-  [quickstart](../../docs/QUICKSTART.md) and the [developer guide](../../docs/guide/README.md)).
+  [quickstart](../../../docs/QUICKSTART.md) and the [developer guide](../../../docs/guide/README.md)).
 - Update the plugin and the binary together: the plugin version follows the release tag.
 
 mirafleet sends no telemetry. The plugin and the binary talk only to the central you logged in to.
@@ -51,11 +53,15 @@ bare name, use `/mirafleet:mirafleet`, `/mirafleet:openfleet`, `/mirafleet:claud
 | File | Purpose |
 |---|---|
 | `.claude-plugin/plugin.json` | Manifest. Version is kept in lockstep with `pluginVersion` in `cmd/mirafleet/mcp_hook.go` by a test. |
-| `.mcp.json` | MCP server `mirafleet`: `mirafleet mcp -project-dir ${CLAUDE_PROJECT_DIR}`. |
-| `hooks/hooks.json` | SessionStart, SessionEnd (timeout 15), PreToolUse, all exec form. |
+| `.mcp.json` | MCP server `mirafleet`: `node ${CLAUDE_PLUGIN_ROOT}/bin/mirafleet.js mcp`. The server's working directory is the project, which `mirafleet mcp` uses as its project directory by default. |
+| `hooks/hooks.json` | SessionStart, SessionEnd (timeout 15), PreToolUse, all exec form through the launcher. |
+| `bin/mirafleet.js` | Launcher: finds `mirafleet` on `PATH` and runs it with the same arguments and exit code (no shell, no download). Sets `MIRAFLEET_HARNESS_PID` to Claude Code's PID so the hooks and the MCP server share one handoff key. |
 | `skills/mirafleet/SKILL.md` | The command body; equals `integrations/commands/mirafleet.md` (tested). |
 | `skills/openfleet`, `skills/claudefleet` | Aliases, `disable-model-invocation: true`, each a full copy of the same body (tested byte for byte). |
-| `hook/` | Go package behind `mirafleet mcp hook claude-code <event>`. |
+
+The Go package behind `mirafleet mcp hook claude-code <event>` is `integrations/claude-code/hook/`,
+outside the plugin folder on purpose: the plugin directory accepts only plugin files, so the plugin
+root (`integrations/claude-code/plugin/`) holds no Go source.
 
 Hooks: SessionStart writes a handoff so the MCP server (same parent PID) reuses session
 `cc:<session_id>` after `--resume`. SessionEnd removes it and, on reason `clear` or `logout`, closes
@@ -74,12 +80,13 @@ the hook; the skill carries the remote workflow.
 
 ## Troubleshooting
 
-- Tools missing or `/mcp` shows `plugin:mirafleet:mirafleet` failed: `which mirafleet`; launch
-  Claude Code from a shell where it is on PATH.
+- Tools missing or `/mcp` shows `plugin:mirafleet:mirafleet` failed: `which mirafleet` and
+  `node --version` (18 or later); launch Claude Code from a shell where both are on PATH. The
+  launcher prints "binary not found on PATH" when `mirafleet` is missing.
 - Tools say "not set up": run `mirafleet mcp login` (see above).
 - Hooks silent: `claude --debug`; run by hand, e.g.
   `echo '{"session_id":"x","cwd":"."}' | mirafleet mcp hook claude-code session-start`.
-- `claude plugin validate integrations/claude-code --strict` should pass.
+- `claude plugin validate integrations/claude-code/plugin --strict` should pass.
 - Workspaces left open after exit: only `clear`/`logout` close them; others are reaped by the idle TTL.
 
 ## Conventions relied on (docs read 13 Nov 2026)
@@ -115,7 +122,8 @@ https://code.claude.com/docs/en/hooks.md, https://code.claude.com/docs/en/skills
   never depend on Claude opening another file.
 - Minimum Claude Code version for exec-form hooks (`args`): the docs read do not state one. Unverified;
   check against your version.
-- Hooks run in exec form; if `args` is unsupported, every mirafleet tool is blocked (PreToolUse exits 2).
+- Hooks run in exec form; if `args` is unsupported, `node` is started without the launcher path and
+  fails, which blocks every mirafleet tool (PreToolUse exits non-zero).
 - `ask` still prompting in auto/bypass-permissions modes (not documented on the pages read).
 - Parent PID topology (hook and MCP server both direct children of Claude Code).
 - That `${CLAUDE_PROJECT_DIR}` is non-empty in a plugin `.mcp.json` when `--plugin-dir` is used.

@@ -12,7 +12,9 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/mcpserver"
 )
 
-const pluginDir = "claude-code"
+// pluginDir is the plugin root: the folder Claude Code (and the plugin directory validator) sees.
+// The Go hook package lives next to it, outside the root.
+const pluginDir = "claude-code/plugin"
 
 func read(t *testing.T, rel ...string) []byte {
 	t.Helper()
@@ -116,11 +118,72 @@ func TestMCPJSON(t *testing.T) {
 	}
 	readJSON(t, &c, ".mcp.json")
 	s, ok := c.MCPServers["mirafleet"]
-	if !ok || len(c.MCPServers) != 1 || s.Command != "mirafleet" {
+	if !ok || len(c.MCPServers) != 1 || s.Command != "node" {
 		t.Fatalf("mcp servers: %+v", c.MCPServers)
 	}
-	if strings.Join(s.Args, " ") != "mcp -project-dir ${CLAUDE_PROJECT_DIR}" {
+	// The server's cwd is the project, which `mirafleet mcp` defaults -project-dir to, so no flag.
+	if strings.Join(s.Args, " ") != launcher+" mcp" {
 		t.Fatalf("args %q", s.Args)
+	}
+}
+
+const launcher = "${CLAUDE_PLUGIN_ROOT}/bin/mirafleet.js"
+
+// The plugin root holds only plugin files, so the plugin directory validator sees no Go source and
+// no program other than the Node launcher (docs/M6.md section 2.18).
+func TestPluginRootFileTypes(t *testing.T) {
+	err := filepath.WalkDir(pluginDir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(pluginDir, p)
+		rel = filepath.ToSlash(rel)
+		ext := filepath.Ext(rel)
+		ok := false
+		switch {
+		case rel == "bin/mirafleet.js":
+			ok = true
+		case ext == ".json" || ext == ".md" || ext == ".png":
+			ok = !strings.HasPrefix(rel, "bin/")
+		}
+		if strings.HasPrefix(rel, "skills/") && ext != ".md" {
+			ok = false
+		}
+		if !ok {
+			t.Errorf("%s: not an allowed plugin file", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"bin/mirafleet.js", ".mcp.json", "hooks/hooks.json", ".claude-plugin/plugin.json", ".claude-plugin/icon.png", "README.md"} {
+		if _, err := os.Stat(filepath.Join(pluginDir, filepath.FromSlash(f))); err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+// The launcher reads only PATH, runs without a shell, and fetches nothing.
+func TestLauncherSource(t *testing.T) {
+	src := string(read(t, "bin", "mirafleet.js"))
+	for _, bad := range []string{"eval(", "new Function", "npx", "http.get", "https.get", "fetch(", "exec(", "execSync", "shell: true", "CLAUDE_PROJECT_DIR"} {
+		if strings.Contains(src, bad) {
+			t.Errorf("launcher contains %q", bad)
+		}
+	}
+	// Named reads: PATH only. The whole environment is only copied to the child (spread), with the
+	// harness PID added.
+	for _, e := range regexp.MustCompile(`process\.env(\.\w+|\[[^\]]*\])`).FindAllString(src, -1) {
+		if e != "process.env.PATH" {
+			t.Errorf("launcher reads %s, only PATH is allowed", e)
+		}
+	}
+	if !strings.Contains(src, "{ ...process.env, MIRAFLEET_HARNESS_PID: String(process.ppid) }") {
+		t.Error("launcher must pass the harness PID to the binary")
+	}
+	if !strings.Contains(src, "shell: false") {
+		t.Error("launcher must spawn with shell: false")
 	}
 }
 
@@ -157,12 +220,13 @@ func TestHooksExecForm(t *testing.T) {
 				t.Fatalf("%s: want one hook per group: %+v", ev, g)
 			}
 			hk := g.Hooks[0]
-			// Exec form: command is the bare executable and args is set, so no shell is involved
-			// (works on Windows without sh or PowerShell).
-			if hk.Type != "command" || hk.Command != "mirafleet" {
+			// Exec form: command is the bare executable (node) and args is set, so no shell is
+			// involved (works on Windows without sh or PowerShell). The only file run is the
+			// plugin's own launcher, which starts the installed mirafleet binary.
+			if hk.Type != "command" || hk.Command != "node" {
 				t.Fatalf("%s: %+v", ev, hk)
 			}
-			if strings.Join(hk.Args, " ") != "mcp hook claude-code "+sub {
+			if strings.Join(hk.Args, " ") != launcher+" mcp hook claude-code "+sub {
 				t.Fatalf("%s args: %q", ev, hk.Args)
 			}
 			if strings.ContainsAny(hk.Command, " \t") {
@@ -230,7 +294,7 @@ func TestSharedBodyExplainsRemoteWorkflow(t *testing.T) {
 			t.Errorf("shared body lacks %q", s)
 		}
 	}
-	for _, f := range []string{"opencode/README.md", "generic/README.md", "README.md", "claude-code/README.md"} {
+	for _, f := range []string{"opencode/README.md", "generic/README.md", "README.md", "claude-code/plugin/README.md"} {
 		rb, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

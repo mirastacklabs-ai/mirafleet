@@ -45,7 +45,7 @@ Pre-releases (`-rc.N`) are not published to Homebrew or the MCP Registry, and go
 | macOS, Linux | Script | `curl -fsSL https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.sh \| sh` |
 | Windows | Script (PowerShell 5.1 or 7, no admin) | `irm https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.ps1 \| iex` |
 | Any OS with Node 18+ | npm / npx (`@mirastacklabs/mirafleet`) | `npx -y @mirastacklabs/mirafleet@0.6.0 mcp -project-dir .` |
-| Claude Code | Marketplace plugin (the binary must be on `PATH` too) | `/plugin marketplace add mirastacklabs-ai/mirafleet`, then `/plugin install mirafleet@mirastacklabs` |
+| Claude Code | Marketplace plugin (Node.js 18+ and the binary must be on `PATH` too) | `/plugin marketplace add mirastacklabs-ai/mirafleet`, then `/plugin install mirafleet@mirastacklabs` |
 | Anywhere | Archive | `mirafleet_0.6.0_<os>_<arch>.tar.gz` (`.zip` on Windows) |
 | Go developers | `go install` | `go install github.com/mirastacklabs-ai/mirafleet/cmd/mirafleet@v0.6.0` |
 
@@ -63,8 +63,8 @@ Notes:
 - **No Apple or Microsoft code signing.** Homebrew, npm, `install.sh` and `install.ps1` are not
   affected by quarantine. An archive downloaded in a browser is: after checking its checksum run
   `xattr -d com.apple.quarantine mirafleet` (macOS) or `Unblock-File .\mirafleet.exe` (Windows).
-- **Windows and the Claude Code plugin:** its hooks need a real `mirafleet.exe` on `PATH` (use
-  `install.ps1` or the zip). The npm launcher is for plain MCP configs.
+- **The Claude Code plugin** needs Node.js 18+ and `mirafleet` on `PATH`; on Windows that must be a
+  real `mirafleet.exe` (use `install.ps1` or the zip). The npm launcher is for plain MCP configs.
 - Other harnesses (Codex CLI, Gemini CLI, Cursor, VS Code Copilot, Cline, Kilo Code, opencode,
   anything that speaks stdio MCP): see [integrations/](integrations/README.md).
 

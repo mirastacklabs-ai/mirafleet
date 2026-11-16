@@ -292,8 +292,9 @@ gui-shots)
 	echo "screenshots: $n in $out"
 	;;
 go) run rw 'exec go "$@"' "$@" ;;
+launcher) exec "$ROOT/scripts/launchertest.sh" ;;
 *)
-	echo "usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|integration-host|gui-shots|shell|go <args...>" >&2
+	echo "usage: scripts/dev.sh build|test|vet|cross|fmt|licenses|integration|integration-host|gui-shots|launcher|shell|go <args...>" >&2
 	exit 2
 	;;
 esac

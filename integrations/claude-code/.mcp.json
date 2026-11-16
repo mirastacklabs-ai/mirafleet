@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "mirafleet": {
-      "command": "mirafleet",
-      "args": ["mcp", "-project-dir", "${CLAUDE_PROJECT_DIR}"]
-    }
-  }
-}

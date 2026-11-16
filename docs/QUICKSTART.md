@@ -376,7 +376,7 @@ output.
 
 ### Connect your agent
 
-**Claude Code** (plugin, needs the binary on `PATH`):
+**Claude Code** (plugin, needs Node.js 18+ and the binary on `PATH`):
 
 ```text
 /plugin marketplace add mirastacklabs-ai/mirafleet

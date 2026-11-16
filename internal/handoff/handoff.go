@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/mirastacklabs-ai/mirafleet/internal/api"
@@ -31,6 +32,20 @@ const (
 	maxAge     = 7 * 24 * time.Hour
 	maxScanned = 1000
 )
+
+// HarnessPIDEnv names the variable a launcher sets to the harness PID when it sits between the
+// harness and this process (the Claude Code plugin starts mirafleet through a Node launcher, so
+// os.Getppid() would be the launcher, which differs for the hook and the MCP server).
+const HarnessPIDEnv = "MIRAFLEET_HARNESS_PID"
+
+// HarnessPID returns the PID that keys handoffs: HarnessPIDEnv when it holds a positive integer,
+// else the parent PID.
+func HarnessPID() int {
+	if n, err := strconv.Atoi(os.Getenv(HarnessPIDEnv)); err == nil && n > 0 {
+		return n
+	}
+	return os.Getppid()
+}
 
 // Key identifies a handoff: the parent (harness) PID and the project directory.
 type Key struct {

@@ -62,6 +62,9 @@ maintainer's explicit go-ahead.
    (`X.Y.Z-rc.N` for a rehearsal tag), committed on a branch, merged by PR (section 4).
    `relgen check vX.Y.Z[-rc.N]` must pass; the workflow's `verify` job runs it again and stops on a
    mismatch. A tag that failed `verify` is never moved: bump to the next rc and tag that.
+   The bump also rewrites the marketplace entry's `source.path` to `integrations/claude-code/plugin`
+   together with `source.ref`: the path exists only from the first tag after v0.6.0, so until that
+   bump `main` keeps the old path with `ref: v0.6.0`, which existing installs rely on.
 4. The accounts in section 2 exist (P1).
 
 **Rehearsal: `v0.6.0-rc.1`**
