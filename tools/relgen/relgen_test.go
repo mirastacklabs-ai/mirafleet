@@ -65,7 +65,7 @@ func TestCheckMismatchListsEveryFile(t *testing.T) {
 	if c != 1 {
 		t.Fatalf("code %d", c)
 	}
-	for _, p := range []string{"plugin.json", "directory/.claude-plugin/plugin.json", "mcp_hook.go", "marketplace.json", "server.json", "gemini-extension.json", "protover.go"} {
+	for _, p := range []string{"plugin.json", "directory/.claude-plugin/plugin.json", "cursor/plugin/.cursor-plugin/plugin.json", "cursor/plugin/mcp.json", "mcp_hook.go", "marketplace.json", "server.json", "gemini-extension.json", "protover.go"} {
 		if !strings.Contains(errs, p) {
 			t.Errorf("missing %s in %q", p, errs)
 		}
@@ -87,6 +87,8 @@ func TestBumpThenCheck(t *testing.T) {
 	for _, rel := range []string{
 		"integrations/claude-code/plugin/.claude-plugin/plugin.json",
 		"integrations/claude-code/directory/.claude-plugin/plugin.json",
+		"integrations/cursor/plugin/.cursor-plugin/plugin.json",
+		"integrations/cursor/plugin/mcp.json",
 		"cmd/mirafleet/mcp_hook.go",
 		".claude-plugin/marketplace.json",
 		"server.json",
@@ -159,10 +161,13 @@ func TestBumpCheckInvariants(t *testing.T) {
 		if src, _ := m.Plugins[0]["source"].(map[string]any); src["path"] != wantPath {
 			t.Errorf("%s: source.path = %v, want %s", c.ver, src["path"], wantPath)
 		}
-		for _, rel := range []string{"integrations/claude-code/plugin/.claude-plugin/plugin.json", "integrations/claude-code/directory/.claude-plugin/plugin.json", "server.json", "gemini-extension.json"} {
+		for _, rel := range []string{"integrations/claude-code/plugin/.claude-plugin/plugin.json", "integrations/claude-code/directory/.claude-plugin/plugin.json", "integrations/cursor/plugin/.cursor-plugin/plugin.json", "server.json", "gemini-extension.json"} {
 			if !strings.Contains(read(t, root, rel), `"version": "`+c.ver+`"`) {
 				t.Errorf("%s: %s lacks version %s", c.ver, rel, c.ver)
 			}
+		}
+		if !strings.Contains(read(t, root, "integrations/cursor/plugin/mcp.json"), `"@mirastacklabs/mirafleet@`+c.ver+`"`) {
+			t.Errorf("%s: cursor mcp.json pin not set", c.ver)
 		}
 		if !strings.Contains(read(t, root, "internal/protover/protover.go"), "const Current = "+c.level+"\n") {
 			t.Errorf("%s: protover level, want %s", c.ver, c.level)
@@ -214,6 +219,7 @@ func TestBumpRenameFailureRestores(t *testing.T) {
 	}
 	for _, rel := range []string{
 		"integrations/claude-code/plugin/.claude-plugin/plugin.json", "integrations/claude-code/directory/.claude-plugin/plugin.json", "cmd/mirafleet/mcp_hook.go",
+		"integrations/cursor/plugin/.cursor-plugin/plugin.json", "integrations/cursor/plugin/mcp.json",
 		".claude-plugin/marketplace.json", "server.json", "gemini-extension.json", "internal/protover/protover.go",
 	} {
 		if got, want := read(t, root, rel), read(t, filepath.Join("testdata", "tree"), rel); got != want {

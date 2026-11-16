@@ -47,7 +47,7 @@ right runner and records it. Read the full story in the [developer guide](docs/g
 | opencode | [integrations/opencode](integrations/opencode/README.md) |
 | Codex CLI | [integrations/codex](integrations/codex/README.md) |
 | Gemini CLI | `gemini extensions install https://github.com/mirastacklabs-ai/mirafleet` ([details](integrations/gemini/README.md)) |
-| Cursor | [integrations/cursor](integrations/cursor/README.md) |
+| Cursor | [integrations/cursor](integrations/cursor/README.md) · button adds the unpinned server (tracks npm `latest`): [![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=mirafleet&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBtaXJhc3RhY2tsYWJzL21pcmFmbGVldCIsIm1jcCIsIi1wcm9qZWN0LWRpciIsIiR7d29ya3NwYWNlRm9sZGVyfSJdfQ==) |
 | VS Code (Copilot) | [integrations/vscode](integrations/vscode/README.md) |
 | Cline | [integrations/cline](integrations/cline/README.md) |
 | Kilo Code | [integrations/kilocode](integrations/kilocode/README.md) |

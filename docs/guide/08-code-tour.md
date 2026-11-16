@@ -75,6 +75,8 @@ mirafleet/
 │   │   ├── plugin/            the plugin root (plugin files only): .claude-plugin/, .mcp.json,
 │   │   │                      hooks/hooks.json, skills/, bin/mirafleet.js (Node launcher)
 │   │   └── hook/              Go package behind `mirafleet mcp hook claude-code <event>`
+│   ├── cursor/plugin/     Cursor plugin: .cursor-plugin/plugin.json, mcp.json (npx pin), commands/
+│   │                      (listed by the root .cursor-plugin/marketplace.json); no hooks
 │   ├── opencode/, generic/   commands and config snippets for other harnesses (no hooks)
 │   ├── commands/mirafleet.md  the one shared command body
 │   └── *_test.go              the plugin and the harness files are checked by tests
@@ -1502,7 +1504,7 @@ into structs and encoding again, so a stray character cannot corrupt a file.
 
 | Command | File | What it does |
 |---|---|---|
-| `bump X.Y.Z` | `bump.go` | Sets the version in every versioned file at once: the plugin manifest, `pluginVersion` in `cmd/mirafleet/mcp_hook.go`, the marketplace `ref`, `server.json`, the Compose image tags and `protover.Current` (see `compose.go`). |
+| `bump X.Y.Z` | `bump.go` | Sets the version in every versioned file at once: the plugin manifest, the Cursor plugin manifest and its npx pin in `mcp.json`, `pluginVersion` in `cmd/mirafleet/mcp_hook.go`, the marketplace `ref`, `server.json`, the Compose image tags and `protover.Current` (see `compose.go`). |
 | `check vX.Y.Z` | `check.go` | Fails unless every one of those files agrees with the tag. `release.yml`'s `verify` job and `release.sh m6check` both run it. |
 | `licenses` | `licenses.go` | Joins `go-licenses save` output and `licenses/extra/` into `THIRD_PARTY_LICENSES.txt`. |
 | `npm` | `npm.go` | Generates the 7 npm packages from the release archives, checking each archive against `checksums.txt` first. `npmfixture` writes stand-in archives for tests. |

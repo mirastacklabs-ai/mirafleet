@@ -2,7 +2,17 @@
 
 MCP server entry plus a `/mirafleet` command. No hooks.
 
-## Install
+[![Add mirafleet MCP server to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=mirafleet&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBtaXJhc3RhY2tsYWJzL21pcmFmbGVldCIsIm1jcCIsIi1wcm9qZWN0LWRpciIsIiR7d29ya3NwYWNlRm9sZGVyfSJdfQ==)
+
+The button adds the npx server (unpinned, so it tracks npm `latest`). You still run `npx -y @mirastacklabs/mirafleet mcp login`
+once in a terminal (needs Node.js 18+).
+
+## Plugin
+
+[plugin/](plugin/README.md) is a Cursor plugin (MCP server pinned to the release plus the `/mirafleet` command) for the
+Cursor Marketplace. The repo root `.cursor-plugin/marketplace.json` points at it. Not yet tested in a real Cursor.
+
+## Install by hand
 
 1. Put `mirafleet` on your PATH and run `mirafleet mcp login` once in a terminal.
 2. Add the server to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global), see

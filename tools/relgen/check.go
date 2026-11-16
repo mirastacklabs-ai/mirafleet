@@ -36,6 +36,8 @@ var targets = []target{
 	{Path: ".claude-plugin/marketplace.json", Tag: true, Get: marketplaceRef, Set: setMarketplaceRef},
 	{Path: "server.json", Get: jsonVersions, Set: setJSONVersions},
 	{Path: "gemini-extension.json", Get: jsonVersions, Set: setJSONVersions},
+	{Path: "integrations/cursor/plugin/.cursor-plugin/plugin.json", Get: jsonVersions, Set: setJSONVersions},
+	{Path: "integrations/cursor/plugin/mcp.json", Get: cursorPin, Set: setCursorPin},
 	{Path: "internal/protover/protover.go", Level: true, Get: protoLevel, Set: setProtoLevel},
 }
 
@@ -254,4 +256,23 @@ func setMarketplaceRef(b []byte, value string) ([]byte, error) {
 		b = pathKeyRE.ReplaceAll(b, []byte("${1}"+pluginPath+"${2}"))
 	}
 	return refKeyRE.ReplaceAll(b, []byte("${1}"+value+"${2}")), nil
+}
+
+// cursorPinRE matches the exact-version npx pin in the Cursor plugin's mcp.json.
+var cursorPinRE = regexp.MustCompile(`("@mirastacklabs/mirafleet@)([^"]*)(")`)
+
+// cursorPin returns the version after "@mirastacklabs/mirafleet@"; there must be exactly one pin.
+func cursorPin(b []byte) ([]string, error) {
+	m := cursorPinRE.FindAllSubmatch(b, -1)
+	if len(m) != 1 {
+		return nil, fmt.Errorf(`want exactly one "@mirastacklabs/mirafleet@X.Y.Z" pin, found %d`, len(m))
+	}
+	return []string{string(m[0][2])}, nil
+}
+
+func setCursorPin(b []byte, value string) ([]byte, error) {
+	if _, err := cursorPin(b); err != nil {
+		return nil, err
+	}
+	return cursorPinRE.ReplaceAll(b, []byte("${1}"+value+"${3}")), nil
 }

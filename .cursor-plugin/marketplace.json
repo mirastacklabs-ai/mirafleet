@@ -1,0 +1,16 @@
+{
+  "name": "mirastacklabs",
+  "owner": {
+    "name": "mirastacklabs-ai"
+  },
+  "metadata": {
+    "description": "mirafleet: AI coding harnesses orchestrate fleets of servers through a central server."
+  },
+  "plugins": [
+    {
+      "name": "mirafleet",
+      "source": "integrations/cursor/plugin",
+      "description": "Orchestrate fleets of servers from Cursor through a self-hosted mirafleet central server."
+    }
+  ]
+}

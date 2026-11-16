@@ -8,7 +8,9 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,14 @@ import (
 func TestParseServeFlags(t *testing.T) {
 	root := t.TempDir()
 	cwd := filepath.Join(root, "proj")
+	for _, d := range []string{"x", filepath.Join("a", "c")} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(cwd, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	var errw bytes.Buffer
 	o, err := parseServeFlags([]string{"-context", "c1", "-fleet", "f1", "-session", "s1", "-project-dir", "sub/../x"}, cwd, &errw)
 	if err != nil {
@@ -48,6 +58,62 @@ func TestParseServeFlags(t *testing.T) {
 	}
 	if _, err := parseServeFlags([]string{"extra"}, cwd, &errw); err == nil {
 		t.Error("positional argument accepted")
+	}
+}
+
+func TestParseServeFlagsProjectDir(t *testing.T) {
+	cwd := t.TempDir()
+	if err := os.Mkdir(filepath.Join(cwd, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "file"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, dir string
+		want      string // "" for the error cases
+		errSub    string
+	}{
+		{"explicit empty", "", "", "is empty"},
+		{"unexpanded brace", "${workspaceFolder}", "", "unexpanded variable"},
+		{"unexpanded paren", "$(pwd)", "", "unexpanded variable"},
+		{"embedded variable", "${HOME}/x", "", "unexpanded variable"},
+		{"missing", "nope", "", "is not a directory"},
+		{"file", "file", "", "is not a directory"},
+		{"dot", ".", cwd, ""},
+		{"relative", "sub/../sub", filepath.Join(cwd, "sub"), ""},
+		{"absolute", filepath.Join(cwd, "sub"), filepath.Join(cwd, "sub"), ""},
+		{"empty is cwd", "", cwd, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var args []string
+			if c.dir != "" || c.name == "explicit empty" {
+				args = []string{"-project-dir", c.dir}
+			}
+			o, err := parseServeFlags(args, cwd, io.Discard)
+			if c.errSub != "" {
+				if err == nil || !strings.Contains(err.Error(), c.errSub) || !strings.Contains(err.Error(), c.dir) {
+					t.Fatalf("err = %v, want %q naming %q", err, c.errSub, c.dir)
+				}
+				return
+			}
+			if err != nil || o.projectDir != c.want {
+				t.Fatalf("projectDir = %q, %v; want %q", o.projectDir, err, c.want)
+			}
+		})
+	}
+}
+
+func TestParseServeFlagsWindowsRelative(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("volume-relative and root-relative paths only exist on Windows")
+	}
+	cwd := t.TempDir()
+	for _, d := range []string{`C:proj`, `\proj`, `/proj`} {
+		if _, err := parseServeFlags([]string{"-project-dir", d}, cwd, io.Discard); err == nil || !strings.Contains(err.Error(), "absolute") {
+			t.Errorf("%q: err = %v, want an 'absolute path' error", d, err)
+		}
 	}
 }
 

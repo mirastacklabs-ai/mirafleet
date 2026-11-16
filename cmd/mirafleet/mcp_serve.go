@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -62,16 +63,44 @@ func parseServeFlags(args []string, cwd string, errw io.Writer) (serveOpts, erro
 	if fs.NArg() > 0 {
 		return o, fmt.Errorf("mcp serve: unexpected argument %q", fs.Arg(0))
 	}
-	if o.projectDir == "" {
-		o.projectDir = cwd
-	}
-	if !filepath.IsAbs(o.projectDir) {
-		if cwd == "" {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "project-dir" {
+			set = true
+		}
+	})
+	if !set {
+		if !filepath.IsAbs(cwd) {
 			return o, errors.New("mcp serve: cannot resolve -project-dir (no working directory)")
 		}
-		o.projectDir = filepath.Join(cwd, o.projectDir)
+		o.projectDir = filepath.Clean(cwd)
+		return o, nil
 	}
+	// An explicit value is checked: a harness that fails to substitute ${workspaceFolder} must not
+	// silently turn into a made-up directory with no project file.
+	given := o.projectDir
+	if given == "" {
+		return o, errors.New("mcp serve: -project-dir is empty; your MCP client did not substitute it")
+	}
+	if strings.Contains(given, "${") || strings.Contains(given, "$(") {
+		return o, fmt.Errorf("mcp serve: -project-dir %q looks like an unexpanded variable; your MCP client did not substitute it", given)
+	}
+	if !filepath.IsAbs(given) {
+		// Windows only in practice: "C:proj" (volume-relative) and "\proj" (root-relative) depend on
+		// per-drive state; on Unix a leading "/" is absolute and never gets here.
+		if filepath.VolumeName(given) != "" || os.IsPathSeparator(given[0]) {
+			return o, fmt.Errorf("mcp serve: -project-dir %q is neither absolute nor a plain relative path; give an absolute path", given)
+		}
+		if !filepath.IsAbs(cwd) {
+			return o, errors.New("mcp serve: cannot resolve -project-dir (no working directory)")
+		}
+		o.projectDir = filepath.Join(cwd, given)
+	}
+	// Clean resolves ".." lexically; confinement against symlinks is os.Root's job (orch/transfer.go).
 	o.projectDir = filepath.Clean(o.projectDir)
+	if st, err := os.Stat(o.projectDir); err != nil || !st.IsDir() {
+		return o, fmt.Errorf("mcp serve: -project-dir %q is not a directory", given)
+	}
 	return o, nil
 }
 
