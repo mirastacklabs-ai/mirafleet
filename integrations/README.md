@@ -24,3 +24,4 @@ instructions (no hooks).
 - [opencode/README.md](opencode/README.md): opencode commands and MCP config
 - [commands/mirafleet.md](commands/mirafleet.md): shared command body
 - `claude-code/`: Claude Code plugin and hooks
+- [cursor/](cursor/README.md): Cursor MCP entry, command, "Add to Cursor" button and a Cursor plugin (`cursor/plugin/`, no hooks)

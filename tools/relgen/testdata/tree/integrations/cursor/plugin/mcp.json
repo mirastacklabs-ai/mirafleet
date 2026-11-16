@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mirafleet": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@mirastacklabs/mirafleet@0.5.0", "mcp", "-project-dir", "${workspaceFolder}"]
+    }
+  }
+}

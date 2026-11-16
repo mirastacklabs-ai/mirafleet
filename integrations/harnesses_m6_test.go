@@ -280,8 +280,8 @@ func TestM6LFAndStructure(t *testing.T) {
 			t.Errorf("%s/README.md lacks dated source URLs", d)
 		}
 		err := filepath.WalkDir(d, func(p string, de fs.DirEntry, err error) error {
-			if err != nil || de.IsDir() {
-				return err
+			if err != nil || de.IsDir() || strings.EqualFold(filepath.Ext(p), ".png") {
+				return err // the plugin logo is binary
 			}
 			b, err := os.ReadFile(p)
 			if err != nil {
