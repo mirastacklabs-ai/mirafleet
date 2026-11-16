@@ -202,6 +202,9 @@ func TestLFLineEndings(t *testing.T) {
 		if err != nil || d.IsDir() {
 			return err
 		}
+		if filepath.Ext(p) == ".png" { // binary (the plugin icon): CR bytes are data
+			return nil
+		}
 		b, err := os.ReadFile(p)
 		if err != nil {
 			return err
