@@ -1,6 +1,6 @@
 package gui
 
-// Overview screen (docs/M4.md 3.2): counts, pending runners and recent audit. The live part is
+// Overview screen: counts, pending runners and recent audit. The live part is
 // one fragment that polls itself every 10 s through a Passive route (no session touch).
 
 import (

@@ -1,5 +1,5 @@
 #!/bin/sh
-# M6 release tooling (docs/M6.md). Every step runs in a digest-pinned container; nothing is
+# Release tooling. Every step runs in a digest-pinned container; nothing is
 # installed on the host. dev.sh is not touched by M6: release targets live here, and N2/N3 add
 # theirs below the marked line. ONE target per call.
 # Default runtime: the Docker CLI against colima's Docker runtime (`colima start`).
@@ -29,7 +29,7 @@ if [ -z "${MIRAFLEET_CTR:-}" ] && ! docker info >/dev/null 2>&1; then
 	exit 1
 fi
 
-# Same targets as dev.sh (docs/PLAN.md M6).
+# Same targets as dev.sh.
 TARGETS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
 
 # gorun MODE SCRIPT [ARG...]: like dev.sh run. MODE is ro|rw (source mount); SCRIPT runs under
@@ -211,7 +211,7 @@ harnesscheck)
 	runscript harnesscheck.sh "$@"
 	;;
 m6check)
-	# docs/M6.md 2.14: every check in order, then `relgen check`; stops at the first failure,
+	# Every check in order, then `relgen check`; stops at the first failure,
 	# prints one summary line, and always cleans up (dist/ and labelled test resources).
 	# MIRAFLEET_M6CHECK_SKIP="cross licenses" skips named steps (for example when CI already ran the
 	# full gate); a skipped step is listed in the summary. The slow privileged `integration` run is

@@ -37,7 +37,7 @@ type guardEntry struct {
 }
 
 // Resolve applies the precedence tool argument > flags > .mirafleet.yaml > context default_fleet
-// > none (docs/M5.md §1.5). contexts.yaml and the project file are re-read on every call. A
+// > none. contexts.yaml and the project file are re-read on every call. A
 // guarded fleet taken from the project file or a context default is refused; it must be named
 // explicitly (argument or flag). Guarded status comes from fleets.list (cached GuardedTTL).
 func (o *Orch) Resolve(ctx context.Context, contextArg, fleetArg string) (Target, error) {
@@ -181,7 +181,7 @@ func (o *Orch) noteFleets(cname, addr string, r *api.FleetsListResult) {
 }
 
 // SessionFor returns the workspace session id for t and where it came from ("flag", "handoff" or
-// "process"). It is re-read at every call (docs/M5.md §1.4), so a hook that writes a new handoff
+// "process"). It is re-read at every call, so a hook that writes a new handoff
 // file (after /clear) binds a new workspace on the next open. Every value passed
 // api.ValidateSession.
 func (o *Orch) SessionFor(t Target) (session, source string) {

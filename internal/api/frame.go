@@ -86,7 +86,7 @@ func writeFrameMax(w io.Writer, payload []byte, limit int) error {
 }
 
 // BodyTimeout is how long a peer has to deliver a complete body frame once central asks for it
-// (docs/M3.md §1.1: 30 s). Variable so tests can shorten it.
+// (30 s). Variable so tests can shorten it.
 var BodyTimeout = 30 * time.Second
 
 // WriteBody writes one body frame: a 4-byte big-endian length and the bytes, in a single Write.

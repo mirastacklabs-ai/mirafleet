@@ -12,7 +12,7 @@ import (
 )
 
 // TestS3TemplatesParse parses every screen template set (layout + partials + screen), executes the
-// styleguide page, and lints the files for inline script/style/handlers (docs/M4.md 2.7).
+// styleguide page, and lints the files for inline script/style/handlers.
 func TestS3TemplatesParse(t *testing.T) {
 	dir := "templates"
 	files, err := filepath.Glob(filepath.Join(dir, "*.html"))

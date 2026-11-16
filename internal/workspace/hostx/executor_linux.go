@@ -2,7 +2,7 @@
 
 package hostx
 
-// Executor is the host-mode workspace executor (docs/M7.md section 3): it ties the session
+// Executor is the host-mode workspace executor: it ties the session
 // Manager (directories, file tools) to the Engine (bash, jobs). Besides workspace.Executor it
 // implements the runner's optional interfaces structurally (runner.SessionHooks, FSExecutor,
 // JobExecutor, BashExecutor, DestroyDeleter, HostModer); hostx never imports the runner.
@@ -345,7 +345,7 @@ func fileErr(err error) error {
 }
 
 // Destroy implements workspace.Executor: kill the session's processes and release it. The
-// directory stays (docs/M7.md section 3.4). Idempotent.
+// directory stays. Idempotent.
 func (e *Executor) Destroy(ctx context.Context, id workspace.ID) error {
 	e.mu.Lock()
 	w := e.ws[id]

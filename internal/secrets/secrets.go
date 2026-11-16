@@ -1,4 +1,4 @@
-// Package secrets encrypts credential values at rest on central (docs/M7.md §4.1): AES-256-GCM
+// Package secrets encrypts credential values at rest on central: AES-256-GCM
 // with a random nonce per value, a versioned envelope that names the key, and a key-check value
 // central stores to detect a missing or wrong key at start-up.
 package secrets

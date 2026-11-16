@@ -8,7 +8,7 @@ import (
 
 // osRoot is the file access of an FS: plain OS calls where a relative name is taken from cwd and
 // an absolute name is used as is. There is no confinement: like local Claude Code, the tools reach
-// whatever the OS user can (docs/M7.md §3.7), and the OS permissions are the boundary.
+// whatever the OS user can, and the OS permissions are the boundary.
 type osRoot struct{ cwd string }
 
 func (r osRoot) p(name string) string {

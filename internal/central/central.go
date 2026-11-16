@@ -221,7 +221,7 @@ func New(cfg Config) (*Server, error) {
 
 // Start binds the listener and serves in the background. It returns the bound address.
 func (s *Server) Start() (string, error) {
-	// Startup recovery (M3.md 1.6): opening rows are from a create we crashed in. Runs before the
+	// Startup recovery: opening rows are from a create we crashed in. Runs before the
 	// listener so no new open can race it.
 	if n, err := s.cfg.Service.RecoverWorkspaces(s.ctx); err != nil {
 		s.cfg.Logf("workspace recovery failed: %v", err)

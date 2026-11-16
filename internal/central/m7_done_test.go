@@ -40,12 +40,12 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/wsconfig"
 )
 
-// TestM7Done is the "M7 done when" scenario of docs/M7.md section 7.1, in process: a real central
+// TestM7Done is the end-to-end host-mode scenario, in process: a real central
 // (SQLite, registry, service, SSH on an ephemeral port, admin socket), two host-mode runners
 // (real runner code, credentials, per-session wiring) over the m7Host stand-in for the host
 // executor, a guarded third runner, and MCP servers (mcpserver.Serve over io.Pipe, one orch each)
 // for the operators "ann" and "bob". The clock of the service is injected; the secrets are decoys
-// generated at test time. The subtests follow the numbered checks of section 7.1; what the fake
+// generated at test time. The subtests follow the numbered checks; what the fake
 // cannot show (real processes, /proc, the broker on the wire) is in TestM7DoneIntegration.
 
 const m7Pass = "m7-gui-password-1"

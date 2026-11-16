@@ -1,6 +1,6 @@
 package main
 
-// `mirafleet central credential ...` (docs/M7.md §4.1): thin clients of the admin socket. The
+// `mirafleet central credential ...`: thin clients of the admin socket. The
 // secret value is read from stdin only (never a flag, so never in argv or the process list) and
 // travels as one body frame right behind the request; params, output and errors carry metadata
 // only. Nothing here links the secrets package or SQLite.

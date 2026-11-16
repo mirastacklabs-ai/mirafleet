@@ -1,4 +1,4 @@
-/* mirafleet admin GUI: progressive enhancement only (docs/M4.md 2.7).
+/* mirafleet admin GUI: progressive enhancement only.
    Allowed: copy-to-clipboard buttons, the registration-code countdown, relative-age refresh.
    No eval, no inline handlers, no dependencies. Every flow works without this file. */
 (function () {

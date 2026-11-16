@@ -1,6 +1,6 @@
 package service
 
-// Dev-workspace dispatch (docs/M7.md 3.5 to 3.7): workspace.fs and the shared call path of the
+// Dev-workspace dispatch: workspace.fs and the shared call path of the
 // job and output methods (jobs.go). All of them need a host-mode fleet; container fleets answer
 // bad_request. The guard of a guarded host fleet is the typed fleet-name confirm only (Q10),
 // decided by policy.RequiresConfirm.

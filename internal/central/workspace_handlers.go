@@ -12,7 +12,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
 
-// Workspace handlers (docs/M3.md 1.1). They decode strictly, call the service and map to api
+// Workspace handlers. They decode strictly, call the service and map to api
 // DTOs; store rows, specs and runner ids never reach the wire.
 //
 // Body frames: the service gates a call (policy, ownership, state, input, confirm) BEFORE it

@@ -33,12 +33,11 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/wsconfig"
 )
 
-// TestM5Done is the "M5 done when" scenario of docs/M5.md section 6, in process: a real central
+// TestM5Done is the end-to-end MCP scenario, in process: a real central
 // (SQLite, registry, service, SSH on an ephemeral port, reaper on an injected clock), real
 // runners, and MCP servers (mcpserver.Serve over io.Pipe, one orch each, one config directory
 // per operator) driven by the go-sdk client. Only the workspace executor is the fake one.
-// Differences from the text of section 6 are listed in the report of the change that added it;
-// the subtests follow the numbered steps.
+// The subtests follow the numbered steps.
 
 const m5Actions = `
 actions:
@@ -282,7 +281,7 @@ func m5Tools(t *testing.T, f *m5Fixture) {
 		"read_file":       {true, false, true, true},
 		"write_file":      {false, true, false, true},
 		"workspace_close": {false, true, true, true},
-		// M7 (docs/M7.md §3.5, §3.7): Claude Code tool parity. Annotations as in mcpserver.
+		// Claude Code tool parity for remote projects. Annotations as in mcpserver.
 		"read":          {true, false, true, true},
 		"write":         {false, true, false, true},
 		"edit":          {false, true, false, true},

@@ -20,7 +20,7 @@ type Params struct {
 	Threads uint8
 }
 
-// defaultParams is the production cost (docs/M4.md §2.4): t=3, m=64 MiB, p=2. Unexported so no
+// defaultParams is the production cost: t=3, m=64 MiB, p=2. Unexported so no
 // other package can weaken it; tests use SetParamsForTest.
 var defaultParams = Params{Time: 3, Memory: 64 * 1024, Threads: 2}
 
@@ -38,7 +38,7 @@ const (
 	maxKeyLen    = 64
 )
 
-// Password length rules (docs/M4.md §2.4).
+// Password length rules.
 const (
 	MinPasswordBytes = 12
 	MaxPasswordBytes = 256

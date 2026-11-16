@@ -671,7 +671,7 @@ func TestOpenSSHThroughSessionAgent(t *testing.T) {
 }
 
 // A runner restart keeps the executor's workspaces: the adopted sessions are wired again once
-// central's creds_sync arrives, with the same narrowed set (docs/M7.md 3.5 Q6, 4.2).
+// central's creds_sync arrives, with the same narrowed set.
 func TestRestartRewiresAdoptedSessions(t *testing.T) {
 	h, ex := hostHarness(t)
 	k := newTestKey(t)

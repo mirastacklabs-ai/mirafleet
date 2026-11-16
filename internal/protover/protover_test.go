@@ -66,7 +66,7 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-// The texts of docs/M6.md section 2.2, verbatim.
+// The refusal texts, verbatim.
 func TestCheckSpecText(t *testing.T) {
 	if got := Check("runner", "db-1", 6, 4).Error(); got !=
 		"runner `db-1` is protocol 4, central needs 5 or 6: upgrade mirafleet on that runner" {

@@ -9,7 +9,7 @@ import (
 	"unicode/utf8"
 )
 
-// Limits from docs/M3.md section 1.9.
+// Workspace limits.
 const (
 	MaxPathBytes  = 4 << 10
 	MaxArgvElems  = 256

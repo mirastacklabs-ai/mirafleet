@@ -27,7 +27,7 @@ import (
 const mcpShutdownGrace = 5 * time.Second
 
 // projectOrch adds mcpserver.ProjectDirer to the Orch: the local project directory that the
-// workspace_* file tools resolve relative paths against (docs/M7.md).
+// workspace_* file tools resolve relative paths against.
 type projectOrch struct {
 	*orch.Orch
 	dir string

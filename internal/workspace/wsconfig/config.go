@@ -1,4 +1,4 @@
-// Package wsconfig parses and validates the runner's workspace.yaml (docs/M3.md section 1.11).
+// Package wsconfig parses and validates the runner's workspace.yaml.
 // It is the workspace-mode security boundary on the runner: every rule fails closed, and there
 // is deliberately no field for privileged containers, unconfined profiles or host mounts.
 //
@@ -30,7 +30,7 @@ import (
 const (
 	ExecContainerd  = "containerd"
 	ExecOpenSandbox = "opensandbox"
-	// ExecHost runs tool calls as the runner's own user on the VM (docs/M7.md section 3).
+	// ExecHost runs tool calls as the runner's own user on the VM.
 	ExecHost = "host"
 )
 
@@ -135,7 +135,7 @@ type OpenSandbox struct {
 	SecureRuntime string `yaml:"secure_runtime"`
 }
 
-// Host configures the host executor (docs/M7.md section 3.1). Every field is optional.
+// Host configures the host executor. Every field is optional.
 type Host struct {
 	// Root is the parent of the session directories ("~/" is the runner user's home); default
 	// $XDG_DATA_HOME/mirafleet/work.

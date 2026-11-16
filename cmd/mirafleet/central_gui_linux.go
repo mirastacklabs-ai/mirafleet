@@ -1,6 +1,6 @@
 package main
 
-// GUI wiring for `central run` (docs/M4.md 2.2, 2.3): flag parsing, the setup-token file and the
+// GUI wiring for `central run`: flag parsing, the setup-token file and the
 // start/stop of internal/gui. Linux only, like all of central.
 
 import (

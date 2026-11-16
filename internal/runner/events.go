@@ -1,6 +1,6 @@
 package runner
 
-// Usage events (docs/M7.md section 4.5). Every credential use is counted per session, credential,
+// Usage events. Every credential use is counted per session, credential,
 // host, status and 60 s window, kept in a bounded in-memory table and sent in batches on
 // events@mirafleet. An event holds no URL, path, header or value. When the table is full new keys
 // are dropped and counted; the next batch reports the count (central writes events.dropped).

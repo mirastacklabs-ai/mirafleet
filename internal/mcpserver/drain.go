@@ -22,7 +22,7 @@ import (
 
 // drainTimeout bounds the EOF hold. Quick calls (initialize, tools/list, ping) answer in
 // milliseconds; the bound only protects exit time. Worst case after stdin EOF is this 2 s plus
-// the cmd's orch.Close grace (mcpShutdownGrace, 5 s): 7 s (docs/M5.md). Variable for tests.
+// the cmd's orch.Close grace (mcpShutdownGrace, 5 s): 7 s. Variable for tests.
 var drainTimeout = 2 * time.Second
 
 // maxFrame is the largest single JSON-RPC frame the SDK accepts (its decoder fails past it), so it

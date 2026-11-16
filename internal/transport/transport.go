@@ -83,7 +83,7 @@ const (
 	ChanExec     = "exec@mirafleet"
 	ReqHeartbeat = "heartbeat@mirafleet"
 	// ReqRefused is the central->runner global request that carries the version-skew refusal
-	// message (docs/M6.md 2.2). The payload is the plain message text; the runner replies true.
+	// message. The payload is the plain message text; the runner replies true.
 	ReqRefused = "refused@mirafleet"
 )
 
@@ -94,7 +94,7 @@ const (
 	ChanRegister = "register@mirafleet"
 )
 
-// SSH users: the user name binds the role a key may authenticate as (docs/M2.md §1.3).
+// SSH users: the user name binds the role a key may authenticate as.
 const (
 	UserOperator = "operator"
 	UserEnroll   = "enroll"

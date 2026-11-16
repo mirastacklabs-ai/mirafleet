@@ -1,6 +1,6 @@
 package gui
 
-// Runners screens (docs/M4.md 3.4): list across fleets (polled, passive), detail, lifecycle
+// Runners screens: list across fleets (polled, passive), detail, lifecycle
 // transitions and the typed-confirmation revoke. Everything a runner reports (labels, heartbeat
 // info, advertised actions) is untrusted: it is cut to a bounded length and control and format
 // characters (bidi overrides, zero-width, ESC) are shown as <U+XXXX> before html/template escapes

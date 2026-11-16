@@ -1,4 +1,4 @@
-# Example workspace.yaml for a host-mode runner (docs/M7.md section 3). Copy to
+# Example workspace.yaml for a host-mode runner. Copy to
 # ~/.config/mirafleet/workspace.yaml as the runner's own user (not root) and edit. Unknown
 # fields are errors. Tool calls run as that user on this VM; the VM is the boundary, so there
 # are no images or resource limits. The VM firewall is the egress control.

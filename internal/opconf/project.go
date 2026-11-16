@@ -17,7 +17,7 @@ const ProjectName = ".mirafleet.yaml"
 const maxProjectBytes = 4 << 10
 
 // Project is the contents of .mirafleet.yaml. Every field may be empty. Remote marks a project
-// whose tools all run on the remote workspace (docs/M7.md §3.8); Workdir names a shared
+// whose tools all run on the remote workspace; Workdir names a shared
 // directory on the runner instead of a per-session one (Q4) and needs Remote. Still no addresses,
 // keys or caps.
 type Project struct {

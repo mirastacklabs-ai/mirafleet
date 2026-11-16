@@ -32,7 +32,7 @@ const (
 	// This assumes containerd's runc uses the cgroupfs driver (SystemdCgroup=false, the
 	// containerd default). With SystemdCgroup=true runc expects "slice:prefix:name" paths and
 	// would reject this one. New cannot detect the setting cheaply (it lives in containerd's
-	// config, not in its API), so it is documented in docs/M3.md 1.13 instead.
+	// config, not in its API), so the containerd cgroup driver must be cgroupfs (the default).
 	cgroupParent = "/mirafleet"
 
 	cpuPeriod = 100000

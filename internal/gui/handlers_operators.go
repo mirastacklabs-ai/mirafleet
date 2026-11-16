@@ -1,6 +1,6 @@
 package gui
 
-// Operators screen (docs/M4.md 3.6): the operator list, the registration-code panel, secret
+// Operators screen: the operator list, the registration-code panel, secret
 // rotation and revocation. The code is shown only in the response to an explicit POST (each show
 // is audited by service.OperatorCode); no GET and no polled fragment ever carries it.
 

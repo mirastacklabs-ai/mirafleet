@@ -37,7 +37,7 @@ func requireGo(t *testing.T) {
 	}
 }
 
-// darwin and windows binaries must never link SQLite (docs/M2.md §1.9): central and runner
+// darwin and windows binaries must never link SQLite: central and runner
 // wiring lives in server_linux.go only.
 func TestNoSQLiteOnNonLinux(t *testing.T) {
 	requireGo(t)
@@ -66,7 +66,7 @@ func linksContainerd(pkg string) bool {
 	return strings.HasPrefix(pkg, "github.com/containerd/") || strings.HasPrefix(pkg, "google.golang.org/grpc")
 }
 
-// darwin and windows binaries must never link containerd or gRPC (docs/M3.md §8): the containerd
+// darwin and windows binaries must never link containerd or gRPC: the containerd
 // executor lives under internal/workspace/ctrd and is wired in from linux-only files.
 func TestNoContainerdOnNonLinux(t *testing.T) {
 	requireGo(t)
@@ -107,7 +107,7 @@ func goListPkgs(t *testing.T, goos, goarch string, args ...string) []string {
 }
 
 // forbiddenForOrchestrator reports packages the orchestrator side (MCP server, orch core, hooks)
-// must never link: the server-side stack, SQLite and containerd (docs/M5.md §1.2).
+// must never link: the server-side stack, SQLite and containerd.
 func forbiddenForOrchestrator(pkg string) bool {
 	const mod = "github.com/mirastacklabs-ai/mirafleet/"
 	for _, p := range []string{"internal/service", "internal/store", "internal/central", "internal/runner", "internal/workspace/ctrd"} {
@@ -244,7 +244,7 @@ func TestNoM7ServerPackagesOnOrchestratorOrNonLinux(t *testing.T) {
 
 const guiPkg = "github.com/mirastacklabs-ai/mirafleet/internal/gui"
 
-// forbiddenForGUI lists what internal/gui must never import (docs/M4.md 2.1): the GUI talks to
+// forbiddenForGUI lists what internal/gui must never import: the GUI talks to
 // central only through gui.Backend (*service.Service), never to the store, registry or SSH side.
 // direct is true for its own imports; the transitive closure (through internal/service, which
 // legitimately uses exactly internal/central/registry) keeps every other one of these out too, plus

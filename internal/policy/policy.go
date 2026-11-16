@@ -60,7 +60,7 @@ func (TablePolicy) Authorize(_ context.Context, p auth.Principal, action string,
 
 // RequiresConfirm reports whether a call needs `confirm` = fleet name on a guarded fleet. For
 // workspace.fs, fsOp is the call's op; it is ignored for other methods. On host-mode fleets the
-// guard is this typed confirm only (docs/M7.md Q10). Reads, listings, job_status/tail/cancel and
+// guard is this typed confirm only. Reads, listings, job_status/tail/cancel and
 // output_read never need it.
 func RequiresConfirm(method, fsOp string) bool {
 	switch method {

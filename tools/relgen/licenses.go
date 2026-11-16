@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-// relgen licenses assembles THIRD_PARTY_LICENSES.txt (docs/M6.md section 2.13) from
+// relgen licenses assembles THIRD_PARTY_LICENSES.txt from
 // `go-licenses save` output directories (one per build target) plus the hand-reviewed texts in
 // licenses/extra, in a deterministic order. Stdlib-only.
 

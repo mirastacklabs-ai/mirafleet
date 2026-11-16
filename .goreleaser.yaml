@@ -1,6 +1,6 @@
 # goreleaser OSS v2 (MIT), pinned in scripts/release/tools.Dockerfile. No Pro features.
 # Builds, archives, nFPM packages, checksums, syft SBOMs, cosign keyless signature of
-# checksums.txt, draft GitHub release. It never pushes images, Homebrew or npm (docs/M6.md 2.4).
+# checksums.txt, draft GitHub release. It never pushes images, Homebrew or npm.
 # Run only through scripts/release.sh (`snapshot` locally; release.yml in CI). Archive and
 # package documents come from dist/stage/, which `scripts/release.sh stage` fills.
 version: 2

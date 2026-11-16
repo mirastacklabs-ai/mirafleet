@@ -13,7 +13,7 @@ import (
 
 // directoryDir is the slim setup plugin submitted to the Anthropic plugin directory. The directory
 // refuses command hooks, local MCP servers, bin/ and any file that is not text, JSON, YAML or an
-// image, for organizations that are not Verified (docs/M6.md section 2.18). It holds only
+// image, for organizations that are not Verified. It holds only
 // Markdown, JSON and the icon.
 const directoryDir = "claude-code/directory"
 

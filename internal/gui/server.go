@@ -228,7 +228,7 @@ func (s *Server) Notice() string {
 }
 
 // Start listens on cfg.Listen, logs the URLs, the certificate fingerprint and the bind notice
-// (docs/M4.md 2.2) and serves in the background. It never logs the setup token.
+// and serves in the background. It never logs the setup token.
 func (s *Server) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

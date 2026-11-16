@@ -1,6 +1,6 @@
 package runner
 
-// Credentials on the runner (docs/M7.md section 4.2, Q8). creds_sync delivers the runner's whole
+// Credentials on the runner. creds_sync delivers the runner's whole
 // effective set; the holder keeps it in memory only and replaces it atomically. Nothing here is
 // ever written to disk, logged or put in an environment. The only view that leaves the holder is
 // the heartbeat's name/kind/hosts/status list.
@@ -20,7 +20,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace/sshagent"
 )
 
-// credExpiringWithin is how long before expiry a credential reports "expiring" (docs/M7.md 4.5).
+// credExpiringWithin is how long before expiry a credential reports "expiring".
 const credExpiringWithin = 14 * 24 * time.Hour
 
 // credEntry is one held credential, prepared for use. It is immutable once built.

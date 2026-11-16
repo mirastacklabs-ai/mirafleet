@@ -7,8 +7,8 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/opconf"
 )
 
-// localTools maps Claude Code's built-in local tools to the equivalent remote mirafleet tool
-// (docs/M7.md §3.8). In a project whose .mirafleet.yaml says `remote: true` the hook denies these.
+// localTools maps Claude Code's built-in local tools to the equivalent remote mirafleet tool.
+// In a project whose .mirafleet.yaml says `remote: true` the hook denies these.
 var localTools = map[string]string{
 	"Bash": "bash", "Read": "read", "Write": "write", "Edit": "edit", "MultiEdit": "multi_edit",
 	"Grep": "grep", "Glob": "glob", "LS": "ls", "NotebookEdit": "notebook_edit",

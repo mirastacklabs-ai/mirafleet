@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds the OCI image locally from a binary (no push) and checks it (docs/M6.md sections 2.7, 2.14).
+# Builds the OCI image locally from a binary (no push) and checks it.
 # Everything runs in containers; the host only needs the Docker CLI (colima's runtime) and tar.
 #
 # Usage: scripts/release/imagetest.sh [test|build]
@@ -158,7 +158,7 @@ banner=$($CTR run --rm --network "container:$C" "$TOOL_IMAGE" bash -c 'exec 3<>/
 [ "$banner" = "SSH-" ] || fail "no SSH banner on 2222 (got: $banner)"
 ok "SSH banner on 2222"
 
-# --- GUI (docs/M4.md 2.2, 2.3) ---
+# --- GUI ---
 {
 	gui_fp() { # prints "hex b64" of the certificate served on 8443
 		$CTR run --rm --network "container:$C" "$TOOL_IMAGE" bash -c '

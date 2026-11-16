@@ -1,8 +1,8 @@
 package main
 
 // The central admin CLI: every subcommand except `central init` and `central run` is a thin
-// client of the running central's local admin socket (<data>/admin.sock, internal/api framing,
-// docs/M2.md §1.5). The socket call is a seam (adminCLI.call) so argument parsing is tested
+// client of the running central's local admin socket (<data>/admin.sock, internal/api framing).
+// The socket call is a seam (adminCLI.call) so argument parsing is tested
 // without a central. Nothing here links SQLite; central init/run live in server_linux.go.
 
 import (

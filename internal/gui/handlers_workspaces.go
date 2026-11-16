@@ -1,6 +1,6 @@
 package gui
 
-// Workspaces screen (docs/M4.md 3.7): the admin list (polled, passive), filters and kill.
+// Workspaces screen: the admin list (polled, passive), filters and kill.
 
 import (
 	"net/http"

@@ -8,7 +8,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/transport"
 )
 
-// M7 handlers (docs/M7.md 3.7, 4.1): the host-workspace operator methods (workspace.fs, job_*,
+// Dev-workspace and credential handlers: the host-workspace operator methods (workspace.fs, job_*,
 // output_read) on api@, and the credential admin methods on the admin socket. Like the M3
 // handlers they decode strictly and call the service, which gates before any body is read.
 // credential.set carries its secret as one body frame; it never appears in params or a result.

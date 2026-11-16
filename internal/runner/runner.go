@@ -34,16 +34,16 @@ type Config struct {
 	Signer     ssh.Signer
 	KnownHosts string // known-hosts-style file pinning central's host key
 	Actions    *actions.Set
-	// Workspace and WorkspaceConfig enable workspace mode (docs/M3.md 1.12): both or neither, and never
+	// Workspace and WorkspaceConfig enable workspace mode: both or neither, and never
 	// together with Actions. Run returns the error from Validate before connecting.
 	Workspace       workspace.Executor
 	WorkspaceConfig *wsconfig.Config
 	Labels          map[string]string
 	// CorporateCA (optional PEM) is added to the system roots the credential broker verifies
-	// upstream servers against (host mode, docs/M7.md 4.4).
+	// upstream servers against (host mode).
 	CorporateCA []byte
 	// EventSpool (optional) is a file where unsent usage events are kept across a restart or a
-	// crash (docs/M7.md 4.5). Empty: events live in memory only.
+	// crash. Empty: events live in memory only.
 	EventSpool string
 	Version    string
 	Audit      *audit.Writer

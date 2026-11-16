@@ -16,7 +16,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/workspace"
 )
 
-// maxPlacementTries bounds how many candidate runners one open attempts (M3.md 1.4).
+// maxPlacementTries bounds how many candidate runners one open attempts.
 const maxPlacementTries = 3
 
 // candidate is a runner that may take a new workspace.
@@ -46,7 +46,7 @@ type placementReq struct {
 const hostImage = "host"
 
 // heldRunners maps each runner of the fleet to the operator, other than opID, who has live
-// workspaces on it (docs/M7.md 3.4). Placement skips these; ReserveWorkspace re-checks atomically.
+// workspaces on it. Placement skips these; ReserveWorkspace re-checks atomically.
 func (s *Service) heldRunners(ctx context.Context, fleet string, opID int64) (map[int64]string, error) {
 	live, err := s.st.ListWorkspaces(ctx, store.WorkspaceFilter{Fleet: fleet, Limit: 1000,
 		States: []store.WorkspaceState{store.WorkspaceOpening, store.WorkspaceOpen, store.WorkspaceClosing}})

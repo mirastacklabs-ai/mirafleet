@@ -1,6 +1,6 @@
 package gui
 
-// Account screen (docs/M4.md 3.9): password change, the admin's sessions, the About section and
+// Account screen: password change, the admin's sessions, the About section and
 // the theme switch. Every route is behind requireAdmin and checks the session CSRF token.
 
 import (

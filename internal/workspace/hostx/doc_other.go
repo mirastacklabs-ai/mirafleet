@@ -1,6 +1,6 @@
 //go:build !linux
 
-// Package hostx is the host-mode workspace executor (docs/M7.md section 3). It exists on linux
+// Package hostx is the host-mode workspace executor. It exists on linux
 // only; this stub fails closed everywhere else.
 package hostx
 

@@ -411,7 +411,7 @@ var (
 )
 
 // workspaceAllowed reports whether op may run on a session in status st. Deny by default:
-// read, destroy and list also work on disabled runners (M3.md 1.5); create, exec and write need active.
+// read, destroy and list also work on disabled runners; create, exec and write need active.
 func workspaceAllowed(op string, st Status) error {
 	switch st {
 	case StatusActive:

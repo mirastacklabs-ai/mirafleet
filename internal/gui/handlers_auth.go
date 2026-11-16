@@ -1,6 +1,6 @@
 package gui
 
-// Auth screens (docs/M4.md 2.3 to 2.6, 3.1): setup, login, logout, the requireAdmin middleware
+// Auth screens: setup, login, logout, the requireAdmin middleware
 // and the PageDefaults hook. The setup token never reaches a response or a log; it lives in a
 // 0600 file in central's data directory and in the setup form's POST body.
 

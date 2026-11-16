@@ -1,6 +1,6 @@
 package mcpserver
 
-// bash, background shells and saved-output paging of a remote project (docs/M7.md §3.5, §3.6):
+// bash, background shells and saved-output paging of a remote project:
 // bash, bash_output, kill_shell, job_list and read_output. Every result is sanitised, capped and
 // free of system-reminder tags (see scrub in tools_fs.go), and says where it ran.
 

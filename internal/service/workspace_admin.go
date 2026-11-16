@@ -13,7 +13,7 @@ import (
 
 // StdinDeferred as ExecWorkspace's stdinLen means "the stdin body is not read yet": stdin must
 // then implement DeferredBody. The front end uses it so that a body frame is read from the wire
-// only after policy, ownership, state, input and confirm checks have passed (docs/M3.md 1.1).
+// only after policy, ownership, state, input and confirm checks have passed.
 const StdinDeferred int64 = -1
 
 // DeferredBody supplies a request body (and its exact length) on demand. ExecWorkspace calls

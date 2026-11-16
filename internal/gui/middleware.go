@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Security headers set on every response (docs/M4.md 2.7). Cache-Control is not here: it is
+// Security headers set on every response. Cache-Control is not here: it is
 // set per response (see statusWriter.WriteHeader), so content-hashed static files keep immutable.
 var securityHeaders = [][2]string{
 	{"Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"},

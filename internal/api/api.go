@@ -20,7 +20,7 @@ const Version = 1
 
 var SupportedVersions = []int{1}
 
-// Limits (docs/M2.md §1.4).
+// Limits.
 const (
 	MaxRequestBytes = 64 << 10
 	// MaxResultBytes mirrors actions.MaxOutput (stdout+stderr combined); not imported to keep
@@ -53,7 +53,7 @@ const (
 	MethodRunnersList = "runners.list"
 	MethodActionRun   = "action.run"
 
-	// Workspace operator methods (api@mirafleet; docs/M3.md §1.1).
+	// Workspace operator methods (api@mirafleet).
 	MethodWorkspaceOpen      = "workspace.open"
 	MethodWorkspaceExec      = "workspace.exec"
 	MethodWorkspaceReadFile  = "workspace.read_file"
@@ -61,7 +61,7 @@ const (
 	MethodWorkspaceClose     = "workspace.close"
 	MethodWorkspaceList      = "workspace.list"
 
-	// Dev-workspace operator methods (api@mirafleet; docs/M7.md §3.7). Types in devws.go.
+	// Dev-workspace operator methods (api@mirafleet). Types in devws.go.
 	MethodWorkspaceFS         = "workspace.fs"
 	MethodWorkspaceJobStart   = "workspace.job_start"
 	MethodWorkspaceJobStatus  = "workspace.job_status"
@@ -69,7 +69,7 @@ const (
 	MethodWorkspaceJobCancel  = "workspace.job_cancel"
 	MethodWorkspaceOutputRead = "workspace.output_read"
 
-	// Credential admin methods (admin socket / GUI only; never on api@mirafleet; docs/M7.md §4.1).
+	// Credential admin methods (admin socket / GUI only; never on api@mirafleet).
 	MethodCredentialSet      = "credential.set"
 	MethodCredentialList     = "credential.list"
 	MethodCredentialDelete   = "credential.delete"
@@ -456,7 +456,7 @@ func ActionTimeout(timeoutS int) time.Duration {
 	return time.Duration(timeoutS) * time.Second
 }
 
-// Admin-only (docs/M2.md §1.2-§1.4). No DTO ever carries a token secret or its hash, except
+// Admin-only. No DTO ever carries a token secret or its hash, except
 // TokenCreateResult.Token, returned exactly once.
 
 type FleetCreateParams struct {
@@ -601,7 +601,7 @@ type AuditListResult struct {
 type HelloParams struct {
 	Client string `json:"client,omitempty"` // e.g. "mcp"; recorded as a hint, not trusted
 	// Proto is the caller's protocol level (internal/protover). Missing counts as 0 and is
-	// refused with CodeUnsupportedVersion (docs/M6.md 2.2).
+	// refused with CodeUnsupportedVersion.
 	Proto int `json:"proto,omitempty"`
 }
 type HelloResult struct {
@@ -616,7 +616,7 @@ type FleetInfo struct {
 	Mode    string `json:"mode"`
 	Confirm bool   `json:"confirm"`
 	Runners int    `json:"runners"` // non-revoked runner count
-	// Workspace is set for workspace-mode fleets only (additive, docs/M3.md §1.1).
+	// Workspace is set for workspace-mode fleets only (additive).
 	Workspace *FleetWorkspaceInfo `json:"workspace,omitempty"`
 }
 
@@ -693,7 +693,7 @@ type ActionRunResult struct {
 	RequestID  string `json:"request_id,omitempty"`
 }
 
-// Workspace limits (docs/M3.md §1.9).
+// Workspace limits.
 const (
 	MaxArgvElems  = 256
 	MaxArgvBytes  = 32 << 10
@@ -805,7 +805,7 @@ type WorkspaceOpenParams struct {
 	// the runner holds; empty = all. Placement needs every named credential on the runner.
 	Credentials []string `json:"credentials,omitempty"`
 	// Workdir (M7, additive, host fleets only) names a shared directory on the runner instead of
-	// the per-session one (docs/M7.md Q4). A name, never a path.
+	// the per-session one. A name, never a path.
 	Workdir string `json:"workdir,omitempty"`
 }
 type WorkspaceOpenResult struct {

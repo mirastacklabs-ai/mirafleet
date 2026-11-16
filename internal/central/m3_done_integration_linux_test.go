@@ -2,10 +2,10 @@
 
 package central
 
-// The "M3 done when" scenario against a real containerd (docs/M3.md S20), run by
+// The end-to-end workspace scenario against a real containerd, run by
 // `scripts/dev.sh integration` in the privileged dind harness: central, two runners and the
 // operator clients are in this process (as in TestM3Done); each runner owns a real ctrd executor
-// over its own root and containerd namespace. Every isolation claim of point 4 is checked by
+// over its own root and containerd namespace. Every isolation claim is checked by
 // behaviour: the process runs as a non-root uid, the root filesystem is read-only, a host symlink
 // cannot be read, and a TCP dial fails. Nothing is pulled: the image is built at test time from
 // this test binary, which also acts as the in-container init and as a tiny tool.

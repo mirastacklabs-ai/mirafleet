@@ -1,6 +1,6 @@
 package gui
 
-// Fleets screens (docs/M4.md 3.3): list, create (both modes), detail, workspace config edit and
+// Fleets screens: list, create (both modes), detail, workspace config edit and
 // the guard toggle. Also home of the small helpers the overview shares (screenAuth, screenPage,
 // backendFail, relAge).
 

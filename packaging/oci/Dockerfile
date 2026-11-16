@@ -1,4 +1,4 @@
-# mirafleet OCI image (docs/M6.md section 2.7). FROM scratch, only COPY lines: buildx builds
+# mirafleet OCI image. FROM scratch, only COPY lines: buildx builds
 # every architecture without QEMU. Not distroless: that ships ca-certificates (MPL-2.0), which
 # may not be bundled. No shell, no CA bundle, no certificate or key: the GUI's self-signed
 # certificate is generated on first start into the data volume.

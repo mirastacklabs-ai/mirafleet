@@ -1,7 +1,7 @@
 #!/bin/sh
 # pkgtest: install the snapshot .deb/.rpm/.apk in digest-pinned distro containers and check the
 # system user, files, modes, `systemd-analyze verify` on the units, and remove/purge/reinstall
-# behaviour (data and user are never deleted). docs/M6.md section 2.14.
+# behaviour (data and user are never deleted).
 #
 # Usage: scripts/release/pkgtest.sh [DIST_DIR]      (default: <repo>/dist)
 # Always runs the static checks first (packaging/ files + maintainer scripts run directly in a

@@ -9,7 +9,7 @@ import (
 	"github.com/mirastacklabs-ai/mirafleet/internal/store"
 )
 
-// Backend is the narrow set of service methods the GUI calls (docs/M4.md 2.1). *service.Service
+// Backend is the narrow set of service methods the GUI calls. *service.Service
 // satisfies it; it is also the seam an enterprise build wraps for RBAC or SSO. The GUI always
 // passes service.SourceGUI and an auth.GUIAdmin principal.
 //
@@ -63,7 +63,7 @@ type Backend interface {
 	AdminListWorkspaces(ctx context.Context, p auth.Principal, src service.Source, fleet string) ([]store.Workspace, error)
 	KillWorkspace(ctx context.Context, p auth.Principal, src service.Source, wsID string) (store.Workspace, error)
 
-	// Credentials (docs/M7.md 4.1). The value goes in through SetCredential only; every view is masked.
+	// Credentials. The value goes in through SetCredential only; every view is masked.
 	SetCredential(ctx context.Context, p auth.Principal, src service.Source, params api.CredentialSetParams, value []byte) (api.CredentialSetResult, error)
 	ListCredentials(ctx context.Context, p auth.Principal, src service.Source, name string) ([]api.CredentialInfo, error)
 	DeleteCredential(ctx context.Context, p auth.Principal, src service.Source, name string) error

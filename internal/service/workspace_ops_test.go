@@ -663,7 +663,7 @@ func TestListWorkspaces(t *testing.T) {
 
 func TestWorkspaceOpsDisabledRunnerRefusesExecAndWrite(t *testing.T) {
 	e, op, w := opsEnv(t, false, nil)
-	// A disabled runner still serves read (M3.md 1.5); create, exec and write are refused.
+	// A disabled runner still serves read; create, exec and write are refused.
 	e.live.wsFn = func(ctx context.Context, id int64, req transport.WorkspaceRequest, b io.Reader, o io.Writer) (*transport.WorkspaceResult, error) {
 		if req.Op == transport.OpRead {
 			return fileOK(ctx, id, req, b, o)

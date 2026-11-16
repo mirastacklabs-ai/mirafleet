@@ -178,7 +178,7 @@ func ValidID(id ID) bool {
 	return true
 }
 
-// DiskUsage is one workspace's disk accounting (M3.md 1.9, decision 8: a soft quota).
+// DiskUsage is one workspace's disk accounting (a soft quota).
 type DiskUsage struct {
 	Used     int64     // allocated bytes (a lower bound when Partial)
 	Quota    int64     // soft quota

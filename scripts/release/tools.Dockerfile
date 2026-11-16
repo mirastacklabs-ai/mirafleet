@@ -1,4 +1,4 @@
-# Release tools image (docs/M6.md 2.4): the pinned goreleaser OSS image (MIT; it carries the
+# Release tools image: the pinned goreleaser OSS image (MIT; it carries the
 # Go toolchain, git and nFPM as a library) plus pinned syft, cosign and the standalone nfpm CLI.
 # Every FROM is pinned by version tag AND the multi-arch index digest (the checksum). The Go in
 # the goreleaser image must match go.mod; scripts/release.sh prints the versions on build.

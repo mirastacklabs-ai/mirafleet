@@ -65,7 +65,7 @@ type Config struct {
 	// ReaperInterval is the workspace reaper sweep period; 0 means 60 seconds.
 	ReaperInterval time.Duration
 
-	// Credentials (M7, docs/M7.md section 4); see credentials.go. All optional.
+	// Credentials; see credentials.go. All optional.
 	Credentials CredentialsConfig
 }
 

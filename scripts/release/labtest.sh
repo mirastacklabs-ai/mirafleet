@@ -1,7 +1,7 @@
 #!/bin/sh
 # Brings up deploy/compose/lab with a locally built image, joins and approves the runner, waits
 # for it to be online, runs an action as an operator, checks the GUI login page, then tears
-# everything down with `compose down -v` (docs/M6.md sections 2.8, 2.14). Nothing is pushed.
+# everything down with `compose down -v`. Nothing is pushed.
 #
 # Usage: scripts/release/labtest.sh
 # Environment (trusted caller input):
