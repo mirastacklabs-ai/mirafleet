@@ -7,12 +7,16 @@ body:
       value: |
         Security problem? Do not file it here. Use
         [private vulnerability reporting](https://github.com/mirastacklabs-ai/mirafleet/security/advisories/new).
-        Never paste tokens, keys or real hostnames.
+        Never paste tokens, keys, registration codes or real hostnames.
+
+        Setup question? Ask in [Discussions](https://github.com/mirastacklabs-ai/mirafleet/discussions).
+        Testing an early build? A [test report](https://github.com/mirastacklabs-ai/mirafleet/issues/new?template=test_report.yml) fits better.
   - type: input
     id: version
     attributes:
       label: Version
       description: Output of `mirafleet version`.
+      placeholder: 0.6.0
     validations:
       required: true
   - type: dropdown
@@ -25,6 +29,7 @@ body:
         - mcp (orchestrator side)
         - admin GUI
         - installer or packaging
+        - harness integration or plugin
         - docs
         - other
     validations:
@@ -36,12 +41,30 @@ body:
       placeholder: Ubuntu 24.04 amd64
     validations:
       required: true
+  - type: input
+    id: harness
+    attributes:
+      label: Harness and version
+      description: Only if it matters (Claude Code, opencode, Codex, Cursor ...).
+    validations:
+      required: false
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Fleet mode
+      options:
+        - actions
+        - workspace (container)
+        - host
+        - not applicable
+    validations:
+      required: false
   - type: textarea
     id: steps
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. mirafleet central init ...
+        1. mirafleet central fleet create dev -mode actions
         2. ...
     validations:
       required: true
@@ -59,3 +82,12 @@ body:
       render: shell
     validations:
       required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues and the docs.
+          required: true
+        - label: I removed tokens, keys, registration codes and real hostnames from everything above.
+          required: true

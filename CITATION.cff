@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use mirafleet, please cite it as below."
+title: "mirafleet"
+abstract: "Let an AI coding agent drive fleets of servers through one central server, the way a CI server drives runners."
+type: software
+authors:
+  - name: "MIRASTACK LABS"
+version: 0.6.0
+license: Apache-2.0
+repository-code: "https://github.com/mirastacklabs-ai/mirafleet"
+url: "https://github.com/mirastacklabs-ai/mirafleet"
+keywords:
+  - mcp
+  - ai-agents
+  - fleet-management
+  - claude-code

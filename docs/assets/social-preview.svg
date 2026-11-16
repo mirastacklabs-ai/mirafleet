@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <!-- Brand tokens (docs/BRAND.md), dark theme: bg #0A0A0A, ink #FFFFFF, text #E6E6E6, muted #8F8F8F, accent #2BD4BF, signal #FF671F.
+       Fonts: JetBrains Mono and Oswald (SIL OFL-1.1), installed in the render container. -->
+  <rect width="1280" height="640" fill="#0A0A0A"/>
+  <rect x="0" y="0" width="1280" height="4" fill="#FF671F"/>
+  <g transform="translate(100 206) scale(8)">
+    <polygon points="0,26 7,0 12,0 5,26" fill="#00C9B1"/>
+    <polygon points="9,26 16,0 21,0 14,26" fill="#FF671F"/>
+    <polygon points="18,26 25,0 30,0 23,26" fill="#CED4DA"/>
+  </g>
+  <text x="440" y="250" font-family="JetBrains Mono" font-weight="700" font-size="72" letter-spacing="5.76" fill="#FFFFFF">MIRAFLEET</text>
+  <text x="440" y="292" font-family="JetBrains Mono" font-weight="400" font-size="22" letter-spacing="1.76" fill="#8F8F8F">BY MIRASTACK LABS</text>
+  <text x="440" y="368" font-family="Oswald" font-weight="600" font-size="38" letter-spacing="-0.38" fill="#FFFFFF">LET AN AI CODING AGENT</text>
+  <text x="440" y="414" font-family="Oswald" font-weight="600" font-size="38" letter-spacing="-0.38" fill="#FFFFFF">DRIVE FLEETS OF SERVERS</text>
+  <text x="440" y="462" font-family="Oswald" font-weight="300" font-size="26" fill="#E6E6E6">One central server. Runners dial out. Any MCP harness.</text>
+  <text x="100" y="560" font-family="JetBrains Mono" font-weight="600" font-size="12" letter-spacing="1.68" fill="#2BD4BF">APACHE-2.0  ·  NO TELEMETRY  ·  GITHUB.COM/MIRASTACKLABS-AI/MIRAFLEET</text>
+</svg>

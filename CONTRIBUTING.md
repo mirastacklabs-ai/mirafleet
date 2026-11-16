@@ -6,6 +6,13 @@ organised, read the [developer guide](docs/guide/README.md) and
 [Code of Conduct](CODE_OF_CONDUCT.md). Security problems go to private reporting, see
 [SECURITY.md](SECURITY.md).
 
+## Ways to help
+
+Code is one way. You can also [test an early build](docs/TESTING.md) and file a test report,
+improve the docs, answer questions in
+[Discussions](https://github.com/mirastacklabs-ai/mirafleet/discussions), or report bugs.
+Where to ask what: [SUPPORT.md](SUPPORT.md).
+
 ## Before you start
 
 - Small fixes: open a pull request directly.
@@ -81,7 +88,8 @@ OFL-1.1, shipped with their licence text. `scripts/dev.sh licenses` checks this.
 Update the docs in the same pull request. User-visible behaviour changes go in the README or
 the relevant doc; design changes go in docs/ARCHITECTURE.md; the developer guide
 ([docs/guide/](docs/guide/README.md)) follows [docs/guide/STYLE.md](docs/guide/STYLE.md). Use the
-Acme running example, never real hostnames, people or secrets.
+MIRASTACK LABS running example (aarvee, raj, durga, kalyan, sid; `central.example.com`), never
+real hostnames, people or secrets.
 
 ## How pull requests land
 

@@ -6,3 +6,9 @@ contact_links:
   - name: Security policy
     url: https://github.com/mirastacklabs-ai/mirafleet/security/policy
     about: Supported versions and what to expect after you report.
+  - name: Ask a question or share an idea
+    url: https://github.com/mirastacklabs-ai/mirafleet/discussions
+    about: Questions, setup help and early ideas go to Discussions, not issues.
+  - name: Read the docs
+    url: https://github.com/mirastacklabs-ai/mirafleet/blob/main/docs/QUICKSTART.md
+    about: The quickstart, the developer guide and the threat model.

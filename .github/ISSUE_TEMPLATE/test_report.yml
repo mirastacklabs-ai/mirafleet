@@ -1,0 +1,127 @@
+name: Test report
+description: Tell us how an early test of mirafleet went, good or bad. See docs/TESTING.md.
+title: "test report: "
+labels: ["test-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing. Follow [docs/TESTING.md](https://github.com/mirastacklabs-ai/mirafleet/blob/main/docs/TESTING.md).
+        A report that says where you got stuck is as useful as a full pass.
+
+        **Security problem?** Do not file it here. Use
+        [private vulnerability reporting](https://github.com/mirastacklabs-ai/mirafleet/security/advisories/new).
+        Remove tokens, keys, registration codes and real hostnames from everything you paste.
+  - type: input
+    id: version
+    attributes:
+      label: mirafleet version
+      description: Output of `mirafleet version`.
+      placeholder: 0.6.0
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: Harness and version
+      description: The agent harness you connected, and its version.
+      placeholder: Claude Code 2.x, Cursor 1.x, opencode 0.x ...
+    validations:
+      required: true
+  - type: input
+    id: laptop_os
+    attributes:
+      label: Laptop OS and architecture
+      placeholder: macOS 15 arm64, Windows 11 amd64, Ubuntu 24.04 amd64
+    validations:
+      required: true
+  - type: input
+    id: server_os
+    attributes:
+      label: Central and runner OS
+      description: Linux distribution and architecture. Say "Docker lab" if you used the one-machine lab.
+      placeholder: Ubuntu 24.04 amd64 (central and runner on one VM)
+    validations:
+      required: true
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Install channel
+      description: How you installed the binary (pick the one you used on central).
+      options:
+        - Package (deb, rpm or apk)
+        - Docker Compose
+        - OCI image
+        - Homebrew
+        - install.sh or install.ps1
+        - npm or npx
+        - Claude Code plugin
+        - Archive
+        - go install
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode you tried
+      options:
+        - actions
+        - workspace (container)
+        - host
+        - more than one
+    validations:
+      required: true
+  - type: textarea
+    id: worked
+    attributes:
+      label: What worked
+      description: Which quickstart parts and checklist items passed.
+    validations:
+      required: true
+  - type: textarea
+    id: failed
+    attributes:
+      label: What did not work
+      description: Steps you took, what you expected, and what happened. Write "nothing" if all went well.
+      placeholder: |
+        Steps:
+        1. ...
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: Relevant lines only. Remove secrets first.
+      render: shell
+    validations:
+      required: false
+  - type: dropdown
+    id: difficulty
+    attributes:
+      label: How hard was the setup?
+      options:
+        - 1 - Easy, no surprises
+        - 2 - Fine, a few small questions
+        - 3 - Medium, I had to guess or search
+        - 4 - Hard, I got stuck at least once
+        - 5 - I could not finish
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Confusing docs, unclear errors, ideas, how long each part took.
+    validations:
+      required: false
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Before you submit
+      options:
+        - label: I removed tokens, keys, registration codes and real hostnames from everything above.
+          required: true
