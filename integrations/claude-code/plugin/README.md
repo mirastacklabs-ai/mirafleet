@@ -3,6 +3,12 @@
 Gives Claude Code the mirafleet MCP tools (list fleets, workspaces, allowlisted actions), a
 `/mirafleet` command and two aliases, and hooks that tie each Claude session to its workspaces.
 
+Docs: [mirafleet README](https://github.com/mirastacklabs-ai/mirafleet#readme),
+[quickstart](https://github.com/mirastacklabs-ai/mirafleet/blob/main/docs/QUICKSTART.md),
+[developer guide](https://github.com/mirastacklabs-ai/mirafleet/blob/main/docs/guide/README.md).
+Support: [SUPPORT.md](https://github.com/mirastacklabs-ai/mirafleet/blob/main/SUPPORT.md).
+Privacy: [PRIVACY.md](https://github.com/mirastacklabs-ai/mirafleet/blob/main/PRIVACY.md).
+
 ## Install
 
 From the marketplace (inside Claude Code):
@@ -91,7 +97,7 @@ the hook; the skill carries the remote workflow.
 
 ## Conventions relied on (docs read 13 Nov 2026)
 
-URLs: https://code.claude.com/docs/en/plugins-reference (redirects to the plugins manifest
+Claude Code plugin-system references: https://code.claude.com/docs/en/plugins-reference (redirects to the plugins manifest
 reference), https://code.claude.com/docs/en/plugins/components.md,
 https://code.claude.com/docs/en/hooks.md, https://code.claude.com/docs/en/skills.md.
 
