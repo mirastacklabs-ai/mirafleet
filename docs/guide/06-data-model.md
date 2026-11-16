@@ -53,7 +53,7 @@ not generic ("run this SQL"). Two reasons:
    high availability) by implementing the same interface; `internal/store/storetest` is the
    shared test-suite any implementation must pass.
 
-Rejected alternatives (from `docs/M2.md` section 1.1): a generic `WithTx` (leaks SQL, harder
+Rejected alternatives: a generic `WithTx` (leaks SQL, harder
 fakes); `goose`/`golang-migrate` (new dependencies); ad-hoc DDL at start-up (no versioning).
 
 ## 6.2 The tables at a glance
@@ -177,7 +177,7 @@ A fleet is a named group of runners and the unit of isolation.
 |---|---|---|
 | `id` | `INTEGER` PK AUTOINCREMENT | Internal id; never shown to users. |
 | `name` | `TEXT NOT NULL UNIQUE` | `dev`, `prod`. Regex `^[a-z0-9][a-z0-9._-]{0,62}$` (`store.FleetNameRE`), checked in Go before the insert. |
-| `mode` | `TEXT NOT NULL`, `CHECK IN ('actions','workspace')` | `actions` runs only named actions (the only mode `action.run` accepts). `workspace` (built in [M3](../M3.md)) serves the `workspace.*` methods and has a `fleet_workspace` row ([6.15](#615-the-workspace-tables-migration-0002)); central refuses `action.run` on it with `conflict: fleet is not in actions mode`, and `workspace.*` on an actions fleet with `conflict: fleet is not in workspace mode`. |
+| `mode` | `TEXT NOT NULL`, `CHECK IN ('actions','workspace')` | `actions` runs only named actions (the only mode `action.run` accepts). `workspace` serves the `workspace.*` methods and has a `fleet_workspace` row ([6.15](#615-the-workspace-tables-migration-0002)); central refuses `action.run` on it with `conflict: fleet is not in actions mode`, and `workspace.*` on an actions fleet with `conflict: fleet is not in workspace mode`. |
 | `confirm` | `INTEGER NOT NULL DEFAULT 0`, `CHECK IN (0,1)` | SQLite has no boolean type; 0/1. `1` = **guarded fleet**: `action.run` must carry `confirm == fleet name` ([chapter 5](05-security.md#537-guarded-fleets-confirm-must-equal-the-fleet-name)). |
 | `created_at` | `INTEGER NOT NULL` | Unix ms. |
 
@@ -1058,8 +1058,7 @@ sits in the `0700` directory, and any stored credentials in it are encrypted wit
 `-shm` files aside too: a stale `-wal` next to a restored file could be replayed onto it.
 ## 6.19 Host mode and credentials: migration 0004 (M7)
 
-The column lists below follow `internal/store/sqlite/migrations/0004_devws.sql`, which
-[docs/M7.md section 4.1](../M7.md) now matches (`fingerprint`, `rotated_at` and `expires_at` are
+The column lists below follow `internal/store/sqlite/migrations/0004_devws.sql` (`fingerprint`, `rotated_at` and `expires_at` are
 columns; there is no `updated_at` on `credentials`).
 
 Migration 0004 (schema version 4; `0003_gui.sql` was M4's admin accounts, sessions and two audit

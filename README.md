@@ -17,7 +17,7 @@
 
 </div>
 
-> **Status:** v0.6.1, a patch on the first release, 0.6.0 (milestones M1 to M7 are built). Pre-1.0: the protocol and CLI can still change between minor versions. Read the
+> **Status:** v0.6.1, a patch on the first release, 0.6.0 (milestones M1 to M7 are released). Pre-1.0: the protocol and CLI can still change between minor versions. Read the
 > [threat model](docs/THREAT-MODEL.md) before you point it at anything important.
 
 ## Why mirafleet
@@ -70,7 +70,7 @@ The core needs no hooks. What each harness adds is in [integrations/](integratio
 - **Ask or share ideas:** [Discussions](https://github.com/mirastacklabs-ai/mirafleet/discussions) and [SUPPORT.md](SUPPORT.md).
 - **Contribute:** [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
 - **Report a vulnerability:** privately, see [SECURITY.md](SECURITY.md).
-- **Read more:** [Design](docs/ARCHITECTURE.md) · [Plan](docs/PLAN.md) · [Developer guide](docs/guide/README.md) · [wiki](https://github.com/mirastacklabs-ai/mirafleet/wiki)
+- **Read more:** [Design](docs/ARCHITECTURE.md) · [Developer guide](docs/guide/README.md) · [wiki](https://github.com/mirastacklabs-ai/mirafleet/wiki)
 
 ## What it is
 

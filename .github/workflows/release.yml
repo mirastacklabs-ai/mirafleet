@@ -1,8 +1,8 @@
 name: release
 
-# Release workflow (docs/M6.md 2.16, docs/RELEASING.md). Runs only for version tags (vX.Y.Z and
+# Release workflow (docs/RELEASING.md). Runs only for version tags (vX.Y.Z and
 # vX.Y.Z-rc.N). Tags are pushed by the user, or by an agent after the user's explicit yes
-# (docs/M6.md section 8); nothing else starts this workflow.
+# (docs/RELEASING.md); nothing else starts this workflow.
 #
 # Shape: verify -> build (no credentials) -> draft -> publish-release -> image | npm | brew,
 # then mcp-registry after npm. Every job that publishes or signs runs in the protected `release`

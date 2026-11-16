@@ -1,7 +1,7 @@
 # Handoff — 16 Nov 2026 (`v0.6.1` released on every channel; directory listings submitted)
 
-Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and the plans
-([M4.md](M4.md), [M6.md](M6.md), [M7.md](M7.md)). Every decision is recorded in those plans.
+Read this first, then [RELEASING.md](RELEASING.md). Maintainers keep the milestone plans and the
+tracker locally (git-ignored).
 
 ## Where things are
 
@@ -22,7 +22,7 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
 | Homebrew | `mirastacklabs-ai/homebrew-tap` `Formula/mirafleet.rb` at 0.6.0; `brew install mirastacklabs-ai/tap/mirafleet` (homebrew/brew container) prints `0.6.0`. |
 | MCP Registry | `io.github.mirastacklabs-ai/mirafleet` 0.6.0 listed. |
 | Wiki | regenerated from `218a550` (main after v0.6.1) on 16 Nov. |
-| In v0.6.1 (16 Nov) | PRs #21/#26: `mirafleet mcp` answers pipelined requests even when stdin closes at once (EOF drain by id set, 2 s cap, `tools/call` still cancelled, SIGPIPE-safe, broken stdout exits 0; M5.md). PR #22: flaky `TestM7Done` step 10 fixed (test bug). PRs #23/#25: directory setup plugin. PRs #29/#30: Gemini release archives, "Every release" checklist. |
+| In v0.6.1 (16 Nov) | PRs #21/#26: `mirafleet mcp` answers pipelined requests even when stdin closes at once (EOF drain by id set, 2 s cap, `tools/call` still cancelled, SIGPIPE-safe, broken stdout exits 0). PR #22: flaky `TestM7Done` step 10 fixed (test bug). PRs #23/#25: directory setup plugin. PRs #29/#30: Gemini release archives, "Every release" checklist. |
 | In v0.6.1 (15 Nov) | PRs #14–#19: plugin icon; plugin root moved to `integrations/claude-code/plugin/` with a node launcher (`bin/mirafleet.js`, no Go code in the plugin, Claude directory rules, M6 §2.18); front page, `docs/TESTING.md`, issue forms (`test-report` label), SUPPORT, CITATION, social preview; `gemini-extension.json`, `GEMINI.md`, `llms-install.md`, `glama.json`, `docs/assets/logo-400.png`; plugin listing links + `PRIVACY.md`. The marketplace now pins the plugin at `integrations/claude-code/plugin` with ref `v0.6.1`. |
 
 ## Listings (15 Nov 2026)

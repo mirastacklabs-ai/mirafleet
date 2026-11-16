@@ -5,3 +5,13 @@
 .env.local
 *.env.local
 .DS_Store
+
+# Internal planning notes, kept local
+/docs/M2.md
+/docs/M3.md
+/docs/M4.md
+/docs/M5.md
+/docs/M6.md
+/docs/M7.md
+/docs/PLAN.md
+/docs/TRACKER.md

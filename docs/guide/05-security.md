@@ -925,10 +925,9 @@ Be clear about these. Do not describe mirafleet as providing them.
 10. **Secrets in action parameters.** Parameters are written to the audit table verbatim.
 11. **Client-supplied hints.** The optional `client` string a caller sends in `hello` (the
     "who am I" call, chapter 7 section 7.5) is recorded, not trusted.
-12. **Things not built yet.** MCP elicitation (a server-side
+12. **Things not built.** MCP elicitation (a server-side
     question to the human) and SSH jump hosts. Do not assume protections for features that do
-    not exist yet. (Workspaces and containers are built since
-    M3; their limits are listed at the end of [section 5.9](#what-is-not-protected-workspaces).)
+    not exist. (Workspaces and containers are built; their limits are listed at the end of [section 5.9](#what-is-not-protected-workspaces).)
 13. **Anything inside a workspace.** The agent may do anything inside its own container,
     including deleting the repository it was given or filling its disk quota. That is allowed by
     design; protect work by keeping it in version control elsewhere, because a workspace is
@@ -1101,7 +1100,7 @@ no passphrase, TPM or OS keychain in M5 (5.10, item 6).
 
 ## 5.12 Attacking the GUI
 
-Until M4, everything that could change the fleet was reachable only through a Unix socket on the
+Without the GUI, everything that could change the fleet is reachable only through a Unix socket on the
 central host. The admin GUI changes that: it is a **web application on a TCP port that, by
 default, listens on every interface** (`0.0.0.0:8443`), and it can revoke runners. A web page has
 its own family of attacks, mostly aimed at tricking aarvee's browser. This section takes the

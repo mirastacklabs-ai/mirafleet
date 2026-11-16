@@ -8,18 +8,16 @@ those as they come up.
 After reading it you should be able to explain the whole design, find any piece of code, run the
 tests, and make your first change without asking the authors.
 
-> **Status:** M1, M2 and M3 (workspaces) are done (13 Nov 2026), M5 (the orchestrator: MCP
-> server, Claude Code plugin and hooks, Windows support) is built, and M4 (the admin GUI) is
-> done. A smoke test of M5 with a real Claude Code is still to run. M6 (release and
-> distribution: packages, image, Compose, install scripts, npm, Homebrew, signed checksums, the
-> quickstart and the threat model) is built in the repository; the first release is `v0.6.0`.
+> **Status:** everything is released as `v0.6.1`: workspaces, the orchestrator (MCP server, Claude
+> Code plugin and hooks, Windows support), the admin GUI, and release and
+> distribution (packages, image, Compose, install scripts, npm, Homebrew, signed checksums, the
+> quickstart and the threat model). A hand test with a real Claude Code is still to do.
 > To try mirafleet, follow the [quickstart](../QUICKSTART.md). This guide is
 > also published on the [project wiki](https://github.com/mirastacklabs-ai/mirafleet/wiki)
 > (generated from `docs/`; edit the files here).
 > M7 (**host mode**: remote development on a VM, central-held credentials, background jobs, full
-> output, Claude Code tool parity; see [../M7.md](../M7.md)) is built; the review is done,
-> hardening is in progress and the user smoke test is still to run.
-> Where a feature is planned, the guide says so and links the milestone in [../PLAN.md](../PLAN.md).
+> output, Claude Code tool parity) is released too; a hand test by outside testers is still to do.
+> Where a feature is planned, the guide says so.
 >
 > **New in M7 (read these first if you work on host mode):** [1.4a](01-what-is-mirafleet.md#14a-host-mode-remote-development-on-a-vm-m7),
 > [2.14](02-background.md#214-host-mode-background-secrets-you-can-use-but-not-read-m7),
@@ -146,10 +144,9 @@ instead of a picture, the code itself is readable: `A -->|label| B` means "A sen
 ## Where else to look
 
 - [../ARCHITECTURE.md](../ARCHITECTURE.md): the formal design.
-- [../PLAN.md](../PLAN.md): milestones. [../M2.md](../M2.md), [../M3.md](../M3.md), [../M4.md](../M4.md), [../M5.md](../M5.md), [../M7.md](../M7.md): detailed decisions.
 - [../QUICKSTART.md](../QUICKSTART.md): install and first run, per channel (M6).
 - [../THREAT-MODEL.md](../THREAT-MODEL.md): what is protected, from whom, and what is not (M6).
-- [../RELEASING.md](../RELEASING.md): the maintainer's release checklist (M6). Design: [../M6.md](../M6.md).
+- [../RELEASING.md](../RELEASING.md): the maintainer's release checklist.
 - [../BRAND.md](../BRAND.md): colours and fonts.
 - [../../CLAUDE.md](../../CLAUDE.md): ground rules for contributors and AI agents.
 - [STYLE.md](STYLE.md): the rules this guide follows.

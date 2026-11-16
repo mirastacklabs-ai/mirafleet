@@ -44,8 +44,7 @@ mirafleet/
 │                              (`integration` runs the containerd tests in a privileged dind)
 ├── docs/
 │   ├── ARCHITECTURE.md        the design
-│   ├── PLAN.md                milestones M1..M6 and the build order
-│   ├── M2.md, M3.md, M4.md, M5.md   per-milestone plans and decisions (M3 = workspaces, M4 = GUI, M5 = MCP)
+│   ├── QUICKSTART.md, RELEASING.md, THREAT-MODEL.md, TESTING.md   operator and maintainer pages
 │   ├── BRAND.md               colours, fonts, tone
 │   └── guide/                 this developer guide
 ├── cmd/mirafleet/             the one binary: central | runner | mcp | version

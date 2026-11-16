@@ -2,7 +2,7 @@ name: dco
 
 # Every commit in the pull request (merge commits included) must carry a Signed-off-by trailer
 # whose name and email match the commit author. No author is exempt, Dependabot included: its
-# commits must pass on their own sign-off line (see docs/M6.md, M6-D06).
+# commits must pass on their own sign-off line.
 
 on:
   pull_request:

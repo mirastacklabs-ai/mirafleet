@@ -1,6 +1,6 @@
 # Releasing mirafleet
 
-For maintainers. The design is in [M6.md](M6.md) (sections 2.16, 7, 8, 9); this page is the
+For maintainers. The design is in [ARCHITECTURE.md](ARCHITECTURE.md) ("Distribution"); this page is the
 checklist. The first release is `v0.6.0`, rehearsed as `v0.6.0-rc.1`.
 
 **Rule for everyone, agents included:** a tag push, an approval in the `release` environment,
@@ -27,7 +27,7 @@ the reviewer to approve it in the GitHub UI. Each credential is used by one job 
 Environment approvals are made by the user in the GitHub UI; an agent never approves a
 deployment, not even after a yes.
 
-## 2. Accounts and secrets to set up first (M6.md section 9, step P1)
+## 2. Accounts and secrets to set up first (step P1)
 
 Names only; never put a value in a file or a chat. Nothing local needs a secret; if a rehearsal
 ever does, use the git-ignored `.env.local`.
@@ -106,7 +106,7 @@ maintainer's explicit go-ahead.
 14. Docker Hub repo description and README, ghcr package public and linked (P6).
 15. Wiki: you create the first page, then **yes** to publishing `docs/guide` and the quickstart (P7, P8).
 16. Submissions, one at a time: Anthropic plugin directory (P9; submit `integrations/claude-code/directory`,
-    the slim `mirafleet-setup` plugin, not the full one: see docs/M6.md section 2.18), galleries (P10), Docker-Sponsored
+    the slim `mirafleet-setup` plugin, not the full one), galleries (P10), Docker-Sponsored
     OSS (section 7; P11), mirastacklabs.ai one-pager and announcement (P12).
 17. `scripts/release.sh clean`.
 
@@ -138,7 +138,7 @@ After the tag is pushed (each item needs the maintainer; an agent never approves
    `checksums.txt`, version checked by `relgen gemini-check`); `gemini extensions install` takes the Latest release.
 7. Kilo: PR to the Kilo marketplace repo updating the pinned npx version in `mcps/mirafleet/MCP.yaml`;
    regenerate `marketplace.yaml` and run their tests in a node container.
-8. Wiki: regenerate with `relgen wiki -out DIR -commit SHA` (see M6.md), then push it (**yes**).
+8. Wiki: regenerate with `relgen wiki -out DIR -commit SHA`, then push it (**yes**).
 9. Update `docs/HANDOFF.md`.
 10. Glama: admin → Dockerfile, change the build step's `@mirastacklabs/mirafleet@X.Y.Z` to the new version,
     Build & Release, and check the build test passes.

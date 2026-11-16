@@ -2,8 +2,8 @@
 
 Claude Code orchestrates fleets of servers through a central server. Open source (Apache-2.0)
 under the `mirastacklabs-ai` GitHub org. Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-Milestones: [docs/PLAN.md](docs/PLAN.md). Developer guide (for new engineers):
-[docs/guide/](docs/guide/README.md) — every milestone updates it, following docs/guide/STYLE.md.
+Developer guide (for new engineers):
+[docs/guide/](docs/guide/README.md) — every feature updates it, following docs/guide/STYLE.md.
 
 ## Ground rules
 - One static Go binary: `mirafleet central | runner | mcp`. `CGO_ENABLED=0` must keep building.
@@ -13,7 +13,7 @@ Milestones: [docs/PLAN.md](docs/PLAN.md). Developer guide (for new engineers):
   `scripts/dev.sh cross` must pass (compile + vet only). OS-specific code goes behind build tags
   and fails closed elsewhere (no silent no-op on a security check).
 - Central's OSS store is SQLite via `modernc.org/sqlite` (pure Go), behind the `Store` interface.
-- Keep dependencies to those listed in docs/PLAN.md; ask before adding others.
+- Keep dependencies to those listed in [docs/guide/11-contributing.md](docs/guide/11-contributing.md#dependencies); ask before adding others.
 - Licenses (all deps, transitive included, and any bundled binary or asset): permissive only —
   Apache-2.0, MIT, MIT-0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD. Never GPL, LGPL, AGPL, MPL, SSPL, BUSL
   or other copyleft/source-available. `scripts/dev.sh licenses` enforces this with `go-licenses` (CI from M6).

@@ -226,7 +226,7 @@ docker volume rm mirafleet-gomod mirafleet-gocache
 
 ## 9.4 Testing philosophy
 
-The rules come from CLAUDE.md and [docs/PLAN.md](../PLAN.md) ("Rules for every milestone"):
+The rules come from [CLAUDE.md](../../CLAUDE.md):
 
 1. **No real hosts, ports or data.** Tests listen on port 0 (`127.0.0.1:0`, the OS picks a free
    port; the test reads the real address back), never on 2222 or 22.
@@ -361,7 +361,7 @@ You do not need to read all of them. Know these and where they are.
 
 ### `TestM2Done`: the acceptance test
 
-Every milestone has a "done when" sentence in [PLAN.md](../PLAN.md). For M2 that sentence is
+Every milestone has a "done when" sentence that a test checks. For M2 that sentence is
 `TestM2Done`. If this test is green, the milestone's promise holds. In order, it:
 
 1. builds an `env` and a service with an **injected clock** pinned inside one registration step;
@@ -384,7 +384,7 @@ Every milestone has a "done when" sentence in [PLAN.md](../PLAN.md). For M2 that
 
 ### `TestM3Done` and `TestM3DoneIntegration`: the M3 acceptance test
 
-M3's "done when" sentence in [M3.md](../M3.md) is one scenario, written **once** and run twice:
+M3's "done when" sentence is one scenario, written **once** and run twice:
 
 - `TestM3Done` (`internal/central/m3_done_test.go`) runs it with the fake executor
   (`internal/workspace/fake`). It runs on every `scripts/dev.sh test`, in under a few seconds,
@@ -716,8 +716,8 @@ scripts/dev.sh go test -race -count=20 -run TestSomething ./internal/central/
 
 If a test is timing-sensitive (the plan lists `TestBackoffGrowsWhenConnectionNeverHealthy` as
 such), run it with `-count=5` under load before you blame your change. If you find a flaky
-test, do not retry until green: find the race or make the timing robust, and log it in the
-milestone plan (`docs/M2.md` section 4b has the format).
+test, do not retry until green: find the race or make the timing robust, and log it in
+the pull request or an issue.
 
 ## 9.9 The licence gate
 
@@ -747,14 +747,14 @@ but says "The mathutil Authors" in the copyright line, which the classifier does
 person read the file and confirmed it is BSD-3-Clause, so the script skips that one module. The
 skip is tied to the exact version: bump the module and the gate fails until someone reviews the
 new licence text again. A related note in the script: `modernc.org/libc` bundles musl-derived MIT
-code that the tool cannot see; that was reviewed by hand (see `docs/M2.md` section 6.3).
+code that the tool cannot see; that was reviewed by hand.
 
 **The `segmentio/asm` exception (M5).** The MCP go-sdk pulls in `github.com/segmentio/asm` (through
 `segmentio/encoding`). Its LICENSE is verbatim MIT-0, which is on our allow-list, but go-licenses
 v1.6.0 has no classifier for MIT-0 and reports it as unknown. As for `mathutil`, a person read the
 file, and the skip is pinned to the reviewed version. The go-sdk itself needs no exception: its
-combined Apache-2.0 and MIT file is classified correctly. The full list of what M5 linked is in
-`docs/M5.md` section 10.
+combined Apache-2.0 and MIT file is classified correctly. The modules the SDK links are listed in
+[Dependencies](11-contributing.md#dependencies).
 
 When you add a dependency: **ask first** (CLAUDE.md), read its licence and its transitive modules'
 licences, run `scripts/dev.sh licenses`, and note the licence in the PR. CI runs the same
@@ -770,7 +770,7 @@ check (the `licenses` job).
 | `gofmt needed:` followed by a list | files not formatted | `scripts/dev.sh go fmt ./...` (rw) then re-run `fmt` |
 | `go: updates to go.mod needed` | imports changed | `scripts/dev.sh go mod tidy`, commit `go.mod` and `go.sum` |
 | `go.sum` mismatch / `missing go.sum entry` | new import not tidied | same as above |
-| `licenses` fails: `re-review modernc.org/mathutil licence` | the pinned module version changed | review the new LICENSE text by hand, then update the pinned version in the script and `docs/M2.md` |
+| `licenses` fails: `re-review modernc.org/mathutil licence` | the pinned module version changed | review the new LICENSE text by hand, then update the pinned version in the script |
 | `licenses` fails on a new module | forbidden or unrecognised licence | do not add it; ask the maintainers |
 | Test fails only under `-race` with `DATA RACE` | real concurrency bug | read both stack traces in the report; fix the missing lock or channel |
 | `listen unix ...: bind: invalid argument` or a path-too-long error | socket path over the OS limit | use a short temp dir like `centralTestDir` (`os.MkdirTemp("", "mf")`), not `t.TempDir()` |
@@ -1179,7 +1179,7 @@ Stop with `kill $(jobs -p)` and `exit`; the container and `/tmp/c` vanish.
 
 ## 9.16 Testing distribution (M6)
 
-M6 adds a second family of checks: not "does the code work" but "does what we ship install and
+A second family of checks covers release packaging: not "does the code work" but "does what we ship install and
 run". They follow the same container-only rule as the rest of this chapter, through
 `scripts/release.sh` instead of `scripts/dev.sh` (code tour: [8.12](08-code-tour.md#812-the-release-tooling-m6)).
 Scenario: sid has changed a packaging script and wants to know whether the `.deb` still installs.
@@ -1211,8 +1211,8 @@ expensive, so run it once, not after every edit.
 | `e2e-systemd` | `e2e-systemd.sh` | Real systemd as PID 1 in a throwaway privileged container: install the `.deb`, run central and an actions runner as the shipped units, join, approve, `mcp login`, `action.run`, one MCP `tools/call`, the GUI checks, and removal that keeps the data. Run by CI; needs a snapshot first. |
 
 Two details worth knowing. **Real signing cannot be tested locally**: keyless signing needs a
-GitHub OIDC identity, which only a real workflow run has. That is why the first release is
-rehearsed as an `-rc.1` tag ([10.12](10-operations.md#1012-install-upgrade-and-verify-by-channel-m6)).
+GitHub OIDC identity, which only a real workflow run has. That is why each release is
+rehearsed as an `-rc.N` tag ([10.12](10-operations.md#1012-install-upgrade-and-verify-by-channel-m6)).
 **Everything is labelled** `org.mirastacklabs.mirafleet.release=1`, so `scripts/release.sh clean`
 removes the images, containers, volumes and `dist/` that a run left behind.
 
@@ -1267,7 +1267,7 @@ that needs the OS and the second uses the real thing.
 
 ### `TestM7Done`: the fast one (`internal/central/m7_done_test.go`)
 
-It follows [docs/M7.md section 7.1](../M7.md). It starts a real central in process (SQLite, the
+It starts a real central in process (SQLite, the
 registry, the service, an SSH listener on an ephemeral port, the admin socket), **two host-mode
 runners** running the real runner code (credential holder, per-session wiring, events) over
 `m7Host`, a stand-in for the host executor built on `internal/workspace/fake`, a third, guarded
@@ -1277,7 +1277,7 @@ durga and kalyan). The clock is injected. The secrets are **decoys** generated a
 tokens, a fresh SSH key), so the test can search for their exact bytes everywhere. Helpers live in
 `m7_helpers_test.go`, shared steps in `m7_steps_test.go`.
 
-The subtests are numbered like the checks in M7.md:
+The subtests are numbered:
 
 1. `01_credentials`: set through the admin socket (no method ever returns the value), list is
    masked, assign to one runner and to a fleet, each runner receives exactly its effective set,
@@ -1321,7 +1321,7 @@ by real Unix users. That is the second test's job.
 
 ### `TestM7DoneIntegration`: the real one (`m7_done_integration_linux_test.go`, tags `linux && integration`)
 
-It follows M7.md section 7.2. It starts the **real binary** (`MIRAFLEET_TEST_BIN`) as central and as
+It starts the **real binary** (`MIRAFLEET_TEST_BIN`) as central and as
 two runners that run as two real Unix users, `dev` and `qa`, each enrolled with its own token. A
 fake GitLab (`internal/testfake/gitlab`) plays the corporate server on a non-loopback address with
 a test CA: Git over HTTPS (`git http-backend` behind `net/http/cgi`), Git over SSH (`x/crypto/ssh`

@@ -114,7 +114,7 @@ cannot talk an agent into approving or revoking runners, whatever the orchestrat
 
 ## Central core
 
-Detail and rationale: [M2.md](M2.md).
+Detail and rationale: [chapters 3 to 7 of the developer guide](guide/README.md).
 
 ### Store
 
@@ -222,7 +222,7 @@ and it lives on the box being protected.
 
 Each Claude Code session gets its own workspace, as GitLab gives each job a build directory, so
 several orchestrators can work on different projects on the same runner at once. Detail and
-decisions: [M3.md](M3.md); operator how-to: [guide/](guide/README.md).
+decisions: [guide/](guide/README.md) (chapters 3, 6 and 7); operator how-to: chapter 10.
 
 **Runner config.** `mirafleet runner run -workspace /etc/mirafleet/workspace.yaml` (exactly one of
 `-actions` or `-workspace`; one runner = one fleet = one mode). `workspace.yaml` is the
@@ -380,7 +380,7 @@ host (no central needed, works after a revoke): `runner workspace list` and
 
 ### Host mode (M7)
 
-Design and decisions: [M7.md](M7.md). North star: AI inference stays on the operator's laptop; all
+North star: AI inference stays on the operator's laptop; all
 tool calls run on a remote VM through central; credentials live on central. Host mode is a
 `workspace`-mode fleet with executor `host`; sessions, sticky open, placement, ownership, audit,
 reaper and the `workspace.*` methods are the ones above, unchanged.
@@ -434,7 +434,7 @@ are plain CONNECT tunnels, credential hosts are terminated with a per-session CA
 to those hosts, key in memory) and the header is injected; registry 401 challenges are answered by
 a token exchange. The CA bundle env variables are set for common clients. Accepted OSS gaps
 (same-uid agent can use the key while a session is open, or re-enrol as the runner) are listed in
-M7.md section 4.6 and the [threat model](THREAT-MODEL.md).
+the [threat model](THREAT-MODEL.md).
 
 **Tools.** The MCP server exposes, for a host session: `bash` (default 120 s, max 10 min; the
 current directory persists, env does not), `bash_output`, `kill_shell`, `job_list`, `read_output`,
@@ -570,8 +570,7 @@ The Anthropic plugin directory accepts only plugin files and flags plugins that 
 program directly, so the Go package lives next to the plugin root and the plugin starts the binary
 through the launcher (Node 18+). The launcher sets `MIRAFLEET_HARNESS_PID` to Claude Code's PID,
 which keys the session handoff for both the hook and the MCP server. The server starts in the
-project directory, which `mirafleet mcp` uses by default. See docs/M6.md section 2.18.
-
+project directory, which `mirafleet mcp` uses by default.
 - `SessionStart` writes the handoff (`cc:<session_id>`); offline, no output.
 - `SessionEnd` removes the handoff if it still names this session and, only for reason `clear` or `logout`, closes the session's
   workspace (best effort, always exits 0). Other reasons leave it for `--resume` and the reaper.
@@ -589,8 +588,9 @@ What works without hooks, by harness (`integrations/README.md`):
 | Slash commands | DIY from the shared body | `/mirafleet`, `/openfleet` | all three |
 
 The shared command body is `integrations/commands/mirafleet.md`. Central enforces `confirm` in
-every case. Other harnesses (Kilo Code, Cline, Cursor, ...) are demand-driven. M6 adds the
-marketplace, npm and Homebrew; until then `mirafleet` must be on PATH.
+every case. Integrations for further harnesses are demand-driven. The marketplace plugin, the npm
+launcher and the Homebrew tap put `mirafleet` on PATH; with a plain binary install, put it there
+yourself.
 
 ## Admin GUI
 
@@ -598,8 +598,8 @@ Served by central on a separate HTTPS listener (`mirafleet central run -gui-list
 default `0.0.0.0:8443`; `-gui-listen off` disables it. Built with Go `html/template` and htmx 2,
 with every asset (fonts included) embedded, so it loads nothing from the internet. It is a second
 front end on the same `*service.Service` methods as the admin socket, in the same process, with
-source `gui`; it never touches the store or the registry. Linux only, like central. Detailed
-design: [M4.md](M4.md).
+source `gui`; it never touches the store or the registry. Linux only, like central. Detail:
+[guide chapter 11.8](guide/11-contributing.md#118-adding-a-gui-screen).
 
 - **TLS always on** (1.3 minimum). With `-gui-cert`/`-gui-key` (both or neither; the key file must
   be 0600 and owned by central's user) it serves the operator certificate and sends HSTS. Without
@@ -671,7 +671,7 @@ Join tokens and registration codes are described under
 ## Distribution
 
 One git tag `vX.Y.Z` (pre-releases `vX.Y.Z-rc.N`) produces every channel from one build. The
-design is in [M6.md](M6.md); the maintainer's checklist is [RELEASING.md](RELEASING.md).
+maintainer's checklist is [RELEASING.md](RELEASING.md).
 
 ### Channels
 

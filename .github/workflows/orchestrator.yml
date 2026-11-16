@@ -67,7 +67,7 @@ jobs:
         run: |
           read -ra targets <<< "$PKGS" # PKGS is a space-separated list; split it explicitly
           go test -race "${targets[@]}"
-      # N3.1 additions (docs/M6.md section 2.15). node, pwsh and brew are preinstalled on the runners.
+      # npm launcher and Homebrew checks. node, pwsh and brew are preinstalled on the runners.
       - name: npm launcher tests
         shell: bash
         run: node --test npm/mirafleet/test/*.test.js

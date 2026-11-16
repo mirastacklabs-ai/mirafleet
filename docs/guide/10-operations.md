@@ -28,10 +28,9 @@ to write `actions.yaml`, and a table of error messages with fixes.
   GUI, Compose, verifying checksums, signatures and provenance, upgrade order, the automatic
   backup, rollback, and install troubleshooting ([section 10.12](#1012-install-upgrade-and-verify-by-channel-m6)).
 
-> **Status:** M1 to M5 and M7 (host mode) are built; M6 (release, `v0.6.0`) is done. Sections 10.2 to 10.11 and 10.13 run the
+> **Status:** everything is released as `v0.6.1`. Sections 10.2 to 10.11 and 10.13 run the
 > binary by hand, which still works; packages, systemd units, the image and Compose are in
-> [section 10.12](#1012-install-upgrade-and-verify-by-channel-m6) and the M6 plan
-> ([PLAN.md](../PLAN.md)).
+> [section 10.12](#1012-install-upgrade-and-verify-by-channel-m6).
 > `mirafleet mcp` (no arguments) is the MCP server that Claude Code and other agents talk to;
 > `mirafleet mcp login`, `context` and `api` are the human operator tools. Where the guide shows
 > something planned, it says so.
@@ -1798,7 +1797,7 @@ leave it out the hints say `CENTRAL:2222` and you replace it by hand.
 
 ## 10.12 Install, upgrade and verify by channel (M6)
 
-Until now this chapter ran the binary by hand. M6 adds real install channels. This section
+The sections above run the binary by hand. The release provides real install channels. This section
 explains the choices and the failure modes; the copy-and-paste steps are in
 [QUICKSTART.md](../QUICKSTART.md), which this section does not repeat. The maintainers' side
 (how a release is made) is [RELEASING.md](../RELEASING.md) and [chapter 11.9](11-contributing.md#119-releasing-the-dco-and-new-package-formats-m6).
@@ -1978,7 +1977,7 @@ This is the operator's manual for the M7 feature: a **host-mode runner** on a pl
 **credentials** (an SSH deploy key, a GitLab token, a registry login) stored on central. The
 developer's Claude Code runs on a Mac; every tool call and every repository file lives on the VM;
 the secrets live on central and in the runner's memory, never in front of the agent. Design:
-[docs/M7.md](../M7.md). Terms: [glossary](glossary.md).
+[ARCHITECTURE.md](../ARCHITECTURE.md#host-mode-m7). Terms: [glossary](glossary.md).
 
 ### 10.13.1 What you are setting up
 

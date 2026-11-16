@@ -5,8 +5,8 @@
 - Why an AI coding agent working on many servers is a hard safety problem.
 - What mirafleet is, and the three roles in it: central, runners, operators.
 - The two fleet modes (actions and workspace, both built) and what mirafleet is **not**.
-- Which parts are built today (M1, M2, M3 and M5), which platforms are supported (the
-  orchestrator works on Windows too), and the milestone plan.
+- Which parts are released (M1 to M7), and which platforms are supported (the
+  orchestrator works on Windows too).
 - How an agent actually drives a fleet: by calling MCP tools such as `exec` and `run_action`.
 - How you get mirafleet (the release channels, section 1.10) and that it sends no telemetry.
 - What **host mode** (M7) adds: a developer workspace on a remote VM, where the AI model stays on
@@ -212,8 +212,7 @@ container is the boundary. In the MCP tools the same story reads: `workspace_ope
 
 ## 1.4a Host mode: remote development on a VM (M7)
 
-M7 is built (steps S0 to S20 done, 15 Nov 2026) and is on `main`; the review is done, hardening is
-in progress, and the user smoke test (S21) is still to run.
+Host mode (M7) is released in `v0.6.1`. A hand test by outside testers is still to do.
 
 MIRASTACK LABS built mirafleet to solve its own problem: it has spare servers and VMs sitting
 idle, and wants them to do the engineers' AI coding sessions without anyone receiving server
@@ -334,8 +333,8 @@ In words:
 | `mirafleet runner` | yes | refuses to start | refuses to start |
 | `mirafleet mcp` | yes | yes | yes (since M5). Windows has no Unix file modes, so the key directory and key file get a protected owner-only access-control list (a DACL), checked on every load; if it is wrong the program refuses to start |
 
-Why Linux only for the servers? Fleet nodes and central are Linux machines, and the planned
-container workspaces (built in M3) use Linux features anyway (containerd, namespaces, cgroups).
+Why Linux only for the servers? Fleet nodes and central are Linux machines, and the
+container workspaces use Linux features anyway (containerd, namespaces, cgroups).
 Only `server_linux.go` links the containerd client; the macOS and Windows binaries do not. The server code uses Unix-only security
 features: file-permission checks, a Unix socket peer check, and killing a process group. This
 also keeps those code paths simple.
@@ -350,19 +349,19 @@ The build has `CGO_ENABLED=0`: the result is one static binary with no C library
 
 ## 1.8 Milestones and current status
 
-The project is built in milestones. The order is **M1, M2, M3, M5, M4, M6**: the orchestrator
-(M5) comes before the GUI (M4) because it is what lets Claude Code drive fleets end to end, and
-the admin CLI already covers the GUI's functions. Full details are in [../PLAN.md](../PLAN.md).
+The project was built in parts that this guide still calls by their milestone labels, M1 to M7.
+All of them are delivered and released as `v0.6.1`. The admin CLI covers everything the GUI does,
+so the GUI is a convenience, not a requirement.
 
 | Milestone | Content | Status |
 |---|---|---|
-| **M1** Transport and actions | embedded SSH server, runner dials out, heartbeats, actions guard, JSON-lines audit on the runner | done (13 Nov 2026) |
-| **M2** Central core | SQLite store, fleets, join tokens, runner lifecycle, rotating registration codes, `api@mirafleet`, admin socket, admin CLI, `runner join`, `mcp login` / `mcp api` | done (13 Nov 2026); see [../M2.md](../M2.md) |
-| **M3** Workspaces | `workspace.Executor`, containerd executor, optional OpenSandbox executor, scheduling and sticky sessions, TTL reaper, reconcile, `workspace.*` API, egress proxy | done (13 Nov 2026); see [../M3.md](../M3.md) |
-| **M5** Orchestrator | the real `mirafleet mcp` stdio MCP server (nine tools), contexts and project defaults, session handoff, Claude Code plugin and hooks, opencode and generic notes, Windows support, action discovery; see [../M5.md](../M5.md) | **built** (smoke test with real Claude Code pending) |
-| **M4** Admin GUI | web screens on central (HTML pages from Go templates, with htmx, a small library that updates page parts from the server): Overview, Fleets, Runners, Join tokens, Operators, Workspaces, Audit, Account; HTTPS only, one admin account; see [../M4.md](../M4.md) | done (15 Nov 2026) |
-| **M6** Release | CI, Linux packages (`.deb`, `.rpm`, `.apk`), an OCI image, Docker Compose files, signed checksums and build provenance, install scripts, an npm wrapper, a Homebrew tap, plugin marketplace and MCP Registry entries, a quickstart, a threat model and protocol-version checks; see [../M6.md](../M6.md) and section 1.10 | **0.6.0 built; release pending (the `v0.6.0` tag is not pushed yet)** |
-| **M7** Remote development on a VM | workspace executor `host`; central-held credentials (encrypted at rest); SSH agent and HTTPS broker on the runner; background jobs; full output with paging; Claude Code tool parity (`read`, `edit`, `grep`, ...); upload/download; GUI Credentials page; see [../M7.md](../M7.md) | **built**; review done, hardening in progress, user smoke test pending |
+| **M1** Transport and actions | embedded SSH server, runner dials out, heartbeats, actions guard, JSON-lines audit on the runner | released |
+| **M2** Central core | SQLite store, fleets, join tokens, runner lifecycle, rotating registration codes, `api@mirafleet`, admin socket, admin CLI, `runner join`, `mcp login` / `mcp api` | released |
+| **M3** Workspaces | `workspace.Executor`, containerd executor, optional OpenSandbox executor, scheduling and sticky sessions, TTL reaper, reconcile, `workspace.*` API, egress proxy | released |
+| **M5** Orchestrator | the real `mirafleet mcp` stdio MCP server (nine tools), contexts and project defaults, session handoff, Claude Code plugin and hooks, opencode and generic notes, Windows support, action discovery | released (a hand test with a real Claude Code is still to do; the automated suite uses scripted MCP clients) |
+| **M4** Admin GUI | web screens on central (HTML pages from Go templates, with htmx, a small library that updates page parts from the server): Overview, Fleets, Runners, Join tokens, Operators, Workspaces, Audit, Account; HTTPS only, one admin account | released |
+| **M6** Release | CI, Linux packages (`.deb`, `.rpm`, `.apk`), an OCI image, Docker Compose files, signed checksums and build provenance, install scripts, an npm wrapper, a Homebrew tap, plugin marketplace and MCP Registry entries, a quickstart, a threat model and protocol-version checks; see section 1.10 | released as `v0.6.1` |
+| **M7** Remote development on a VM | workspace executor `host`; central-held credentials (encrypted at rest); SSH agent and HTTPS broker on the runner; background jobs; full output with paging; Claude Code tool parity (`read`, `edit`, `grep`, ...); upload/download; GUI Credentials page | released (a hand test by outside testers is still to do) |
 
 What this means for you today:
 
@@ -385,8 +384,8 @@ What this means for you today:
   `workspace_close` and `workspace_list`. The runner needs a Linux host with containerd, or an
   OpenSandbox server.
 - The Claude Code plugin (`integrations/claude-code/`) adds the slash commands, the session
-  handoff and an extra confirm prompt. It is built but still to be smoke-tested with a real
-  Claude Code. Once `v0.6.0` is published (M6), you add it from the `mirastacklabs` plugin
+  handoff and an extra confirm prompt. It is released with `v0.6.1` (a hand test with a real
+  Claude Code is still to do). You add it from the `mirastacklabs` plugin
   marketplace (section 1.10). Either way `mirafleet` itself must be on your `PATH`: the plugin
   does not contain the binary.
 - Central also serves an **admin GUI**: a web page at `https://central.example.com:8443`. It is

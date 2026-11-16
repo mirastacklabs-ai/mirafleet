@@ -6,8 +6,9 @@ body:
     attributes:
       value: |
         mirafleet stays lean. Enterprise features (RBAC, SSO, HA) are out of scope for the open
-        source tree. Check [docs/PLAN.md](https://github.com/mirastacklabs-ai/mirafleet/blob/main/docs/PLAN.md)
-        first.
+        source tree. Search existing
+        [issues](https://github.com/mirastacklabs-ai/mirafleet/issues) and
+        [Discussions](https://github.com/mirastacklabs-ai/mirafleet/discussions) first.
   - type: textarea
     id: problem
     attributes:

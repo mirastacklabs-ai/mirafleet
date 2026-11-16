@@ -21,7 +21,7 @@ guide they understand the whole design and code and never need to ask the author
   **"Check your understanding"** (3–5 questions, answers in a collapsed `<details>` block).
 - Facts come from the code, not from memory. Name files and functions (`internal/service/exec.go`,
   `service.RunAction`) rather than line numbers, so the guide doesn't rot.
-- Accurate over exhaustive: if a feature is planned (M3+), say "planned" and link the milestone.
+- Accurate over exhaustive: if a feature is planned, say "planned".
 
 ## Diagrams
 - **Mermaid** (rendered by GitHub) for flowcharts, sequence, state and ER diagrams, inline in the
