@@ -121,11 +121,15 @@ After the tag is pushed (each item needs the maintainer; an agent never approves
 
 1. Approve the release jobs in the GitHub UI, in order: `draft`, `publish-release`, `image`, `npm`, `brew`, then `mcp-registry`.
 2. Approve the staged npm packages with 2FA at <https://www.npmjs.com/settings/mirastacklabs/staged-packages>.
+   `mcp-registry` fails until npm is live; re-run that job after the approval.
 3. Verify: GitHub release (assets, `checksums.txt` signature, attestations), Docker Hub and GHCR
    (same digest), npm (`npx -y @mirastacklabs/mirafleet@X.Y.Z version`), Homebrew, MCP Registry.
+   Then replace the release body ("Draft. Verify...") with notes written by hand
+   (`gh release edit vX.Y.Z --notes-file FILE`): goreleaser's changelog is off.
 4. Claude Code marketplace: nothing. `relgen bump` already set `source.path` and `source.ref` to the tag.
 5. Claude directory: portal, then each submission (`mirafleet-setup`; `mirafleet` once Verified), Settings,
-   "Tracked branch or tag" = `vX.Y.Z`, Save, wait for the scan, Publish. The ref cannot be changed while a
+   "Tracked branch or tag" = `vX.Y.Z`, Save, "Check for new commits" (else Publish says
+   "Version isn't ready"), wait for the scan, Publish. The ref cannot be changed while a
    version is with a reviewer, and changing it cancels a waiting publish request.
 6. Gemini: nothing. The release ships `darwin|linux|win32.mirafleet.tar.gz` (built by goreleaser, signed via
    `checksums.txt`, version checked by `relgen gemini-check`); `gemini extensions install` takes the Latest release.
