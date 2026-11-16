@@ -5,7 +5,9 @@ package central
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -152,7 +154,11 @@ func m7OneOperator(t *testing.T, f *m7Fix) {
 	cl, err := f.e.dial(transport.UserRunner, "vm1-qa")
 	must(t, err)
 	hb, _ := json.Marshal(transport.Heartbeat{Hostname: "raw", Proto: testProto})
-	if ok, _, err := cl.SendRequest(transport.ReqHeartbeat, true, hb); err != nil || !ok {
+	// The reply is not the signal: central registers this connection (closing the real runner,
+	// which reconnects within ~20ms) and writes the audit row before it replies, so under load the
+	// real runner can replace this connection first and the reply is lost (io.EOF). Either
+	// outcome is correct; the audit row is what is under test.
+	if ok, _, err := cl.SendRequest(transport.ReqHeartbeat, true, hb); err != nil && !errors.Is(err, io.EOF) || err == nil && !ok {
 		t.Fatalf("replacing heartbeat: %v %v", ok, err)
 	}
 	waitFor(t, func() bool { return len(f.e.auditRowsFor("runner.replaced")) > before })
