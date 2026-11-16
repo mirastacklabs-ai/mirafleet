@@ -1,4 +1,4 @@
-# Handoff — 15 Nov 2026 (`v0.6.0` released on every channel)
+# Handoff — 15 Nov 2026 (`v0.6.0` released on every channel; directory listings submitted)
 
 Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and the plans
 ([M4.md](M4.md), [M6.md](M6.md), [M7.md](M7.md)). Every decision is recorded in those plans.
@@ -17,7 +17,24 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
 | npm | `@mirastacklabs/mirafleet` + 6 platform packages: `latest` = `0.6.0`, `next` = `0.6.0-rc.3`; `npx -y @mirastacklabs/mirafleet@0.6.0 version` prints `0.6.0`. |
 | Homebrew | `mirastacklabs-ai/homebrew-tap` `Formula/mirafleet.rb` at 0.6.0; `brew install mirastacklabs-ai/tap/mirafleet` (homebrew/brew container) prints `0.6.0`. |
 | MCP Registry | `io.github.mirastacklabs-ai/mirafleet` 0.6.0 listed. |
-| Wiki | regenerated from `cded12f` (v0.6.0) and pushed (`0480e3e`). |
+| Wiki | regenerated from `cded12f` (v0.6.0) and pushed (`0480e3e`). Not yet regenerated after PRs #15–#19 (front page, plugin layout, PRIVACY.md). |
+| `main` after v0.6.0 | PRs #14–#19: plugin icon; plugin root moved to `integrations/claude-code/plugin/` with a node launcher (`bin/mirafleet.js`, no Go code in the plugin, Claude directory rules, M6 §2.18); front page, `docs/TESTING.md`, issue forms (`test-report` label), SUPPORT, CITATION, social preview; `gemini-extension.json`, `GEMINI.md`, `llms-install.md`, `glama.json`, `docs/assets/logo-400.png`; plugin listing links + `PRIVACY.md`. The marketplace still serves the v0.6.0 plugin (old path); the next `relgen bump` writes the new path with the new ref. |
+
+## Listings (15 Nov 2026)
+
+| Where | State |
+|---|---|
+| Claude plugin directory | Submitted from claude.ai/directory/manage (plugin path `integrations/claude-code/plugin`, tracks `main`, contact rv@mirastacklabs.ai). Security scan, then mandatory human review (policy hold: "scripts the validator couldn't follow", `bin/mirafleet.js`; only Verified orgs may ship it later). Listed for Claude Code only (Cowork/apps refuse a top-level `bin/`). Data answers: no personal data, sends nowhere else, not retained, not for under-18s. |
+| Kilo Code marketplace | PR https://github.com/Kilo-Org/kilo-marketplace/pull/734 (`mcps/mirafleet/MCP.yaml`), awaiting review. |
+| punkpeye/awesome-mcp-servers | PR https://github.com/punkpeye/awesome-mcp-servers/pull/19631 (Command Line), awaiting review. |
+| opencode ecosystem page | PR https://github.com/anomalyco/opencode/pull/64147 (Projects), awaiting review. |
+| mcp.so | Free route: issue https://github.com/chatmcp/mcpso/issues/7411 (the web form is a paid $39 listing; not used). |
+| Gemini CLI extensions gallery | Auto-indexed: root `gemini-extension.json` + repo topic `gemini-cli-extension`. Check the gallery in about a week. |
+| Docker-Sponsored Open Source | Application submitted by the user (commercialization: "No"). Reply by email within about 2 weeks. |
+| GitHub MCP registry / VS Code, PulseMCP, Glama, LobeHub, Zed | Fed from the official MCP Registry; not visible yet on 15 Nov. Re-check in 1–2 weeks; claim Glama (GitHub sign-in) once indexed (`glama.json` is in the repo). |
+| Cline marketplace | Not filed: its form requires confirming Cline installs it from `llms-install.md` and that it is stable. File once a tester confirms (logo: `docs/assets/logo-400.png`). |
+| Skipped | cursor.directory (user's call), appcypher list (archived), modelcontextprotocol/servers (closed to listings), Smithery (publishing shut down), Codex directory (no self-serve). |
+| Repo page | Description, homepage (wiki), 19 topics, Discussions on. Social preview `docs/assets/social-preview.png` is uploaded by hand in Settings. A stray fork `aarvee11/awesome-mcp-servers-1` can be deleted. |
 
 ## Settings in place (15 Nov 2026)
 - **GitHub repo** `mirastacklabs-ai/mirafleet`: `release` environment (required reviewer aarvee11,
@@ -47,10 +64,17 @@ Read this first, then [TRACKER.md](TRACKER.md), [RELEASING.md](RELEASING.md) and
 1. Optional: the other 5 packages' publishing access ("disallow bypass 2fa tokens"). Retry the
    website later, or use `npm access set mfa=publish @mirastacklabs/<pkg>` from a throwaway
    `node:24-alpine` container after the user's `npm login` (2FA per call).
-2. P9–P12 (RELEASING.md §3 step 16): Anthropic plugin directory, galleries, Docker-Sponsored OSS,
-   mirastacklabs.ai one-pager and announcement.
-3. Full-product test: M4 S19 browser check, M5 S17, M7 S21 smoke on the user's Mac + a VM with
-   their GitLab, quickstart and harness spot checks. Then resolve the open doc markers below.
+2. Follow the listings above: answer Claude directory review questions, re-check the auto-fed
+   directories, file Cline after a tester confirms. P12 (mirastacklabs.ai one-pager, copy in
+   RELEASING.md §8) and the announcement are the user's.
+3. Full-product test by the user's friends (the first outside testers), using `docs/TESTING.md`
+   and the `test-report` issue form; it covers M4 S19, M5 S17 and M7 S21. Also smoke-test the new
+   node launcher in real Claude Code (MCP server cwd = project, `--resume` reattach). Then resolve
+   the open doc markers below.
+4. Regenerate and push the wiki (`relgen wiki`) for the post-v0.6.0 doc changes.
+5. Next release (0.6.1 or 0.7.0): ships the new plugin path to marketplace users; recreate the npm
+   trusted publishers first if they expired (see npm above); renew `HOMEBREW_TAP_TOKEN` before
+   15 Dec 2026.
 
 ## Rules learned
 - Approving `release` deployments: the user's click by default. On 15 Nov 2026 the user allowed the
