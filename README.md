@@ -1,15 +1,76 @@
+<div align="center">
+
+<img src="docs/assets/icon.png" alt="mirafleet logo: three slanted bars in teal, orange and grey" width="120">
+
 # mirafleet
 
-Let an AI coding agent drive fleets of servers through one central server, the way a CI server
-drives GitLab runners. Works with Claude Code first, and with any MCP-capable harness.
+**Let an AI coding agent drive fleets of servers through one central server,<br>the way a CI server drives GitLab runners.**
+
+[![Release](https://img.shields.io/github/v/release/mirastacklabs-ai/mirafleet?color=00695F&labelColor=0A0A0A)](https://github.com/mirastacklabs-ai/mirafleet/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/mirastacklabs-ai/mirafleet/ci.yml?branch=main&label=ci&labelColor=0A0A0A)](https://github.com/mirastacklabs-ai/mirafleet/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/github/license/mirastacklabs-ai/mirafleet?color=00695F&labelColor=0A0A0A)](LICENSE)
+[![Docker pulls](https://img.shields.io/docker/pulls/mirastack/mirafleet?label=docker%20pulls&color=00695F&labelColor=0A0A0A)](https://hub.docker.com/r/mirastack/mirafleet)
+[![npm](https://img.shields.io/npm/v/@mirastacklabs/mirafleet?label=npm&color=00695F&labelColor=0A0A0A)](https://www.npmjs.com/package/@mirastacklabs/mirafleet)
+[![Docs: wiki](https://img.shields.io/badge/docs-wiki-00695F?labelColor=0A0A0A)](https://github.com/mirastacklabs-ai/mirafleet/wiki)
+
+[Quickstart](docs/QUICKSTART.md) · [Install](#install) · [Developer guide](docs/guide/README.md) · [Threat model](docs/THREAT-MODEL.md) · [Discussions](https://github.com/mirastacklabs-ai/mirafleet/discussions) · [Help test it](docs/TESTING.md)
+
+</div>
 
 > **Status:** v0.6.0, the first release (milestones M1 to M7 are built). Pre-1.0: the protocol and CLI can still change between minor versions. Read the
 > [threat model](docs/THREAT-MODEL.md) before you point it at anything important.
 
-- Quickstart (a fresh Linux VM plus your laptop): [docs/QUICKSTART.md](docs/QUICKSTART.md)
-- Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Plan: [docs/PLAN.md](docs/PLAN.md)
-- Threat model: [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) · Security policy: [SECURITY.md](SECURITY.md)
-- Developer guide: [docs/guide/](docs/guide/README.md) · also on the [wiki](https://github.com/mirastacklabs-ai/mirafleet/wiki)
+## Why mirafleet
+
+- **Your spare servers do the work.** Point an agent at idle VMs and servers instead of
+  handing it your laptop or your credentials.
+- **Safe by construction.** Runners dial out to central and nothing listens on them. In
+  *actions* mode a runner runs only the argv-only, regex-checked actions in its own
+  `actions.yaml`. Every request is audited.
+- **Secrets stay put.** In *host* mode, credentials live on central and never reach the agent.
+- **Any harness, no lock-in.** One static binary and a plain MCP server. No telemetry, and
+  Apache-2.0.
+
+## How it works
+
+![Operators and runners all connect outbound to central, which holds the keys and the audit log](docs/guide/diagrams/big-picture.svg)
+
+Operators (your laptop, running `mirafleet mcp`) and runners both dial out to **central** over
+SSH. The agent talks MCP to the orchestrator on your laptop; central routes each request to the
+right runner and records it. Read the full story in the [developer guide](docs/guide/README.md).
+
+## Works with
+
+| Harness | Setup guide |
+|---|---|
+| Claude Code (plugin, with hooks) | [integrations/claude-code](integrations/claude-code/README.md) |
+| opencode | [integrations/opencode](integrations/opencode/README.md) |
+| Codex CLI | [integrations/codex](integrations/codex/README.md) |
+| Gemini CLI | [integrations/gemini](integrations/gemini/README.md) |
+| Cursor | [integrations/cursor](integrations/cursor/README.md) |
+| VS Code (Copilot) | [integrations/vscode](integrations/vscode/README.md) |
+| Cline | [integrations/cline](integrations/cline/README.md) |
+| Kilo Code | [integrations/kilocode](integrations/kilocode/README.md) |
+| Any stdio MCP client | [integrations/generic](integrations/generic/README.md) |
+
+The core needs no hooks. What each harness adds is in [integrations/](integrations/README.md).
+
+## Quickstart
+
+1. **Install** the binary on each machine: see the [install table](#install).
+2. **Start central** on a Linux VM, create a fleet, join a runner:
+   [QUICKSTART, part 1 to 3](docs/QUICKSTART.md#1-central-linux). No Linux VM handy? Try
+   everything on one machine with Docker: [part 7](docs/QUICKSTART.md#7-try-it-on-one-machine).
+3. **Connect your agent** from your laptop:
+   [QUICKSTART, part 5](docs/QUICKSTART.md#5-operator-your-laptop-macos-linux-windows).
+
+## Get involved
+
+- **Test it:** [docs/TESTING.md](docs/TESTING.md) is a 30 to 45 minute guide, with a report form.
+- **Ask or share ideas:** [Discussions](https://github.com/mirastacklabs-ai/mirafleet/discussions) and [SUPPORT.md](SUPPORT.md).
+- **Contribute:** [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+- **Report a vulnerability:** privately, see [SECURITY.md](SECURITY.md).
+- **Read more:** [Design](docs/ARCHITECTURE.md) · [Plan](docs/PLAN.md) · [Developer guide](docs/guide/README.md) · [wiki](https://github.com/mirastacklabs-ai/mirafleet/wiki)
 
 ## What it is
 
