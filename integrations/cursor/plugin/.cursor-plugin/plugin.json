@@ -1,6 +1,6 @@
 {
   "name": "mirafleet",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Orchestrate fleets of servers from Cursor through a self-hosted mirafleet central server: allowlisted actions and isolated workspaces. Starts `mirafleet mcp` through npx; run `mirafleet mcp login` once.",
   "author": {
     "name": "mirastacklabs-ai"

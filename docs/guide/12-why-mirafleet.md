@@ -2,7 +2,7 @@
 
 > **A snapshot of the landscape on 13 Nov 2026. It is not maintained with the code.** Other
 > projects change licences, get archived and add features; check the sources (section 12.6)
-> before relying on any row. This chapter compares mirafleet as released in `v0.6.1`: workspaces, the admin GUI,
+> before relying on any row. This chapter compares mirafleet as released in `v0.6.2`: workspaces, the admin GUI,
 > the MCP server, the Claude Code plugin and the other harness files, host mode and release
 > packaging (section 12.7 covers distribution). Star counts are approximate. The rows
 > for other tools were last researched on 13 Nov 2026 and were **not** re-researched for the M4
@@ -187,7 +187,7 @@ box around the sandbox with credentials, and every connection to central points 
 ## 12.3 The comparison
 
 Legend: ✅ yes, ⚠️ partly or with caveats, ❌ no. "Unverified" means the research could not
-confirm it. mirafleet's row describes the **full feature set** of `v0.6.1`, including the MCP server, the admin GUI and release packaging. The
+confirm it. mirafleet's row describes the **full feature set** of `v0.6.2`, including the MCP server, the admin GUI and release packaging. The
 table has five columns of facts on purpose; everything else (extra dependencies, MCP support,
 audit and revoke) is in the prose after it.
 

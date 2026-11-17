@@ -14,7 +14,7 @@ gemini extensions install https://github.com/mirastacklabs-ai/mirafleet
 
 It installs the latest GitHub Release (each release carries a small `<platform>.mirafleet.tar.gz`
 extension archive: `gemini-extension.json`, `GEMINI.md`, `LICENSE`, `commands/`) and offers updates
-when a newer release appears. To pin a release, add `--ref=<release tag>` (for example `--ref=v0.6.1`).
+when a newer release appears. To pin a release, add `--ref=<release tag>` (for example `--ref=v0.6.2`).
 Gemini CLI also lists public repositories with the `gemini-cli-extension` topic in its extension gallery.
 
 **Manual.**

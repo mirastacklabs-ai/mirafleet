@@ -1,7 +1,7 @@
 # mirafleet central. See README.md. Start with: docker compose up -d
 name: mirafleet-central
 
-x-image: &image ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.6.1}
+x-image: &image ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.6.2}
 
 services:
   # One-shot: creates the host key, database and registration secret (idempotent), then exits.

@@ -212,7 +212,7 @@ container is the boundary. In the MCP tools the same story reads: `workspace_ope
 
 ## 1.4a Host mode: remote development on a VM (M7)
 
-Host mode (M7) is released in `v0.6.1`. A hand test by outside testers is still to do.
+Host mode (M7) is released in `v0.6.2`. A hand test by outside testers is still to do.
 
 MIRASTACK LABS built mirafleet to solve its own problem: it has spare servers and VMs sitting
 idle, and wants them to do the engineers' AI coding sessions without anyone receiving server
@@ -350,7 +350,7 @@ The build has `CGO_ENABLED=0`: the result is one static binary with no C library
 ## 1.8 Milestones and current status
 
 The project was built in parts that this guide still calls by their milestone labels, M1 to M7.
-All of them are delivered and released as `v0.6.1`. The admin CLI covers everything the GUI does,
+All of them are delivered and released as `v0.6.2`. The admin CLI covers everything the GUI does,
 so the GUI is a convenience, not a requirement.
 
 | Milestone | Content | Status |
@@ -360,7 +360,7 @@ so the GUI is a convenience, not a requirement.
 | **M3** Workspaces | `workspace.Executor`, containerd executor, optional OpenSandbox executor, scheduling and sticky sessions, TTL reaper, reconcile, `workspace.*` API, egress proxy | released |
 | **M5** Orchestrator | the real `mirafleet mcp` stdio MCP server (nine tools), contexts and project defaults, session handoff, Claude Code plugin and hooks, opencode and generic notes, Windows support, action discovery | released (a hand test with a real Claude Code is still to do; the automated suite uses scripted MCP clients) |
 | **M4** Admin GUI | web screens on central (HTML pages from Go templates, with htmx, a small library that updates page parts from the server): Overview, Fleets, Runners, Join tokens, Operators, Workspaces, Audit, Account; HTTPS only, one admin account | released |
-| **M6** Release | CI, Linux packages (`.deb`, `.rpm`, `.apk`), an OCI image, Docker Compose files, signed checksums and build provenance, install scripts, an npm wrapper, a Homebrew tap, plugin marketplace and MCP Registry entries, a quickstart, a threat model and protocol-version checks; see section 1.10 | released as `v0.6.1` |
+| **M6** Release | CI, Linux packages (`.deb`, `.rpm`, `.apk`), an OCI image, Docker Compose files, signed checksums and build provenance, install scripts, an npm wrapper, a Homebrew tap, plugin marketplace and MCP Registry entries, a quickstart, a threat model and protocol-version checks; see section 1.10 | released as `v0.6.2` |
 | **M7** Remote development on a VM | workspace executor `host`; central-held credentials (encrypted at rest); SSH agent and HTTPS broker on the runner; background jobs; full output with paging; Claude Code tool parity (`read`, `edit`, `grep`, ...); upload/download; GUI Credentials page | released (a hand test by outside testers is still to do) |
 
 What this means for you today:
@@ -384,7 +384,7 @@ What this means for you today:
   `workspace_close` and `workspace_list`. The runner needs a Linux host with containerd, or an
   OpenSandbox server.
 - The Claude Code plugin (`integrations/claude-code/`) adds the slash commands, the session
-  handoff and an extra confirm prompt. It is released with `v0.6.1` (a hand test with a real
+  handoff and an extra confirm prompt. It is released with `v0.6.2` (a hand test with a real
   Claude Code is still to do). You add it from the `mirastacklabs` plugin
   marketplace (section 1.10). Either way `mirafleet` itself must be on your `PATH`: the plugin
   does not contain the binary.
