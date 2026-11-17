@@ -5,7 +5,7 @@ name: mirafleet-runner-workspace
 
 services:
   runner:
-    image: ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.6.1}
+    image: ${MIRAFLEET_IMAGE:-docker.io/mirastack/mirafleet:0.6.2}
     command: ["runner", "run", "-data", "/var/lib/mirafleet/runner", "-workspace", "/etc/mirafleet/workspace.yaml"]
     # root: the containerd socket and the workspace root (root 0700) need it.
     user: "0:0"

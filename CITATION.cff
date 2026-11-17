@@ -5,7 +5,7 @@ abstract: "Let an AI coding agent drive fleets of servers through one central se
 type: software
 authors:
   - name: "MIRASTACK LABS"
-version: 0.6.1
+version: 0.6.2
 license: Apache-2.0
 repository-code: "https://github.com/mirastacklabs-ai/mirafleet"
 url: "https://github.com/mirastacklabs-ai/mirafleet"

@@ -912,7 +912,7 @@ backs off to its maximum interval.
 
 ## What is and is not built
 
-Everything described in this chapter is released as `v0.6.1`: the actions and workspace modes, the
+Everything described in this chapter is released as `v0.6.2`: the actions and workspace modes, the
 containerd and OpenSandbox executors, the admin GUI, the MCP stdio server, the Claude Code plugin
 and hooks, the opencode and generic notes, host mode with credentials, and the release packaging,
 systemd units and package-manager and plugin-marketplace listings (see

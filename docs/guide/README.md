@@ -8,7 +8,7 @@ those as they come up.
 After reading it you should be able to explain the whole design, find any piece of code, run the
 tests, and make your first change without asking the authors.
 
-> **Status:** everything is released as `v0.6.1`: workspaces, the orchestrator (MCP server, Claude
+> **Status:** everything is released as `v0.6.2`: workspaces, the orchestrator (MCP server, Claude
 > Code plugin and hooks, Windows support), the admin GUI, and release and
 > distribution (packages, image, Compose, install scripts, npm, Homebrew, signed checksums, the
 > quickstart and the threat model). A hand test with a real Claude Code is still to do.

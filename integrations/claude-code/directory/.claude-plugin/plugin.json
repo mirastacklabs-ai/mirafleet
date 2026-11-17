@@ -1,7 +1,7 @@
 {
   "name": "mirafleet-setup",
   "displayName": "mirafleet",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Set up mirafleet in Claude Code: installs the mirafleet binary and the full mirafleet plugin from the mirastacklabs marketplace, then connects to your central server.",
   "author": {
     "name": "mirastacklabs-ai",

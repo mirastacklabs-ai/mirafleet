@@ -28,7 +28,7 @@ to write `actions.yaml`, and a table of error messages with fixes.
   GUI, Compose, verifying checksums, signatures and provenance, upgrade order, the automatic
   backup, rollback, and install troubleshooting ([section 10.12](#1012-install-upgrade-and-verify-by-channel-m6)).
 
-> **Status:** everything is released as `v0.6.1`. Sections 10.2 to 10.11 and 10.13 run the
+> **Status:** everything is released as `v0.6.2`. Sections 10.2 to 10.11 and 10.13 run the
 > binary by hand, which still works; packages, systemd units, the image and Compose are in
 > [section 10.12](#1012-install-upgrade-and-verify-by-channel-m6).
 > `mirafleet mcp` (no arguments) is the MCP server that Claude Code and other agents talk to;
