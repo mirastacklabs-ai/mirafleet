@@ -17,4 +17,7 @@ containerd:
   root: /var/lib/mirafleet/ws   # root-owned, mode 0700; must exist (README step 1)
   userns: required
   uid_base: 1000000
-  apparmor: auto
+  # off: the image has no apparmor_parser, so the runner cannot load the mirafleet AppArmor
+  # profile, and `auto` on an AppArmor host would refuse to start. Workspaces run without that
+  # profile (all other layers still apply). Use the packages if you want it.
+  apparmor: off

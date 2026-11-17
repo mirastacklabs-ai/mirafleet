@@ -132,7 +132,7 @@ func runnerRun(args []string) error {
 		Version: version, Logf: logf, HeartbeatEvery: heartbeatEvery,
 	}
 	if given["workspace"] {
-		wc, ex, err := loadWorkspace(*wsFile, cfg)
+		wc, ex, err := loadWorkspace(*wsFile, cfg, true)
 		if err != nil {
 			return err
 		}

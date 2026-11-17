@@ -65,7 +65,7 @@ images: ["mirafleet-test/init:*"]
 limits: {cpus: 1, memory: 256MiB, pids: 128, tmpfs: 16MiB, disk: 1GiB, max_file: 1MiB}
 network: [none, egress]
 egress_cidr_rules: true
-containerd: {address: %s, namespace: %s, root: %s, userns: %s, uid_base: 1000000, apparmor: auto}
+containerd: {address: %s, namespace: %s, root: %s, userns: %s, uid_base: 1000000, apparmor: off} # the harness has no apparmor_parser; "auto" would refuse to start
 `, os.Getenv("MIRAFLEET_TEST_CONTAINERD_SOCK"), testNamespace, root, userns)))
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func newEgressEnv(t *testing.T) *egressEnv {
 	_, port, _ := net.SplitHostPort(l.Addr().String())
 
 	cfg := egressConfig(t, newRoot(t), mode)
-	ex, err := New(cfg, Options{})
+	ex, err := New(cfg, Options{StageInit: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

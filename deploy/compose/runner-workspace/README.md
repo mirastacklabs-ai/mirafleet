@@ -7,8 +7,15 @@ Host mode (`executor: host`) is not available here; use the packages for it.
 **Security: this runner is root-equivalent on the host.** It runs as root in the host's pid
 namespace with the host containerd's socket and `SYS_ADMIN`. That is the same trust as the
 packaged `mirafleet-runner-workspace` service. Compose adds convenience, not isolation. Use a
-dedicated machine. The workspaces themselves are as locked down as with the packages (user
-namespace, no capabilities, read-only root, empty network namespace).
+dedicated machine.
+
+**Workspaces here run without the mirafleet AppArmor profile.** The image has no
+`apparmor_parser`, so the runner cannot load the profile (`apparmor: off` in `workspace.yaml`;
+`auto` would refuse to start on an AppArmor host). Every other layer is applied as with the
+packages: a user namespace per slot, all capabilities dropped, `no_new_privs`, containerd's
+default seccomp profile, a read-only root filesystem, an empty network namespace (egress only
+through the allow-list proxy), and cgroup limits for CPU, memory and pids. If you want AppArmor
+too, use the packages.
 
 ## Prerequisites
 
@@ -63,8 +70,8 @@ storage, in the namespace `mirafleet` (never Docker's `moby`).
 | `user: "0:0"` | The containerd socket and the workspace root (root, 0700) need root. |
 | `pid: host` | The runner reads `/proc/<pid>/ns/net` of workspace tasks and `/proc/<pid>/task/*/children` of an exec. Those pids are host pids. |
 | `cap_add: [SYS_ADMIN]` | `setns` into a workspace's network namespace, where the egress proxy listens. Not `privileged`. |
-| `apparmor=unconfined` | Docker's default AppArmor profile denies those `/proc/<pid>/ns/net` opens. |
-| `/run/containerd` mounted at the same path | The socket, and the stdio fifos of an exec (made by the runner, opened by the containerd shim on the host). |
+| `apparmor=unconfined` | Docker's default AppArmor profile denies those `/proc/<pid>/ns/net` opens. This is about the runner's own container, not the workspaces. |
+| `/run/containerd` mounted at the same path (`rslave`) | The socket, and the stdio fifos of an exec (made by the runner, opened by the containerd shim on the host). The directory, not just the socket file, because a bind-mounted socket goes stale when containerd restarts. |
 | `/var/lib/mirafleet/ws` mounted at the same path | containerd bind-mounts directories from it into workspaces, resolving the path on the host. The runner also keeps a copy of its own binary there (`.init/`), the PID 1 of every workspace. |
 | CA bundle mounted read-only | Image pulls over TLS; the image ships no CA bundle. |
 | `runner-data` volume at `/var/lib/mirafleet/runner` | The runner's key and pin. |

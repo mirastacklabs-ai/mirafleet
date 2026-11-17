@@ -196,7 +196,7 @@ func newEnvMode(t *testing.T, mode string, concurrent int) *testEnv {
 	}
 	t.Cleanup(func() { deleteImage(t, c, alias.Name) })
 	root := newRoot(t)
-	ex, err := New(newConfig(t, root, mode, concurrent), Options{})
+	ex, err := New(newConfig(t, root, mode, concurrent), Options{StageInit: true})
 	if err != nil {
 		t.Fatalf("New (userns %s): %v", mode, err)
 	}

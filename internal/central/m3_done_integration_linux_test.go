@@ -202,7 +202,7 @@ images: ["mirafleet-test/init:*"]
 limits: {cpus: 1, memory: 256MiB, pids: 128, tmpfs: 16MiB, disk: 256MiB, max_file: 4MiB, exec_max: 2m}
 network: [none]
 env_allow: [LANG]
-containerd: {address: %s, namespace: %s, root: %s, userns: %s, uid_base: %d, apparmor: auto}
+containerd: {address: %s, namespace: %s, root: %s, userns: %s, uid_base: %d, apparmor: off} # the harness has no apparmor_parser; "auto" would refuse to start
 `, sock, h.ns, h.root, userns, base)
 	}
 	newExec := func(name string) (workspace.Executor, error) {
@@ -210,7 +210,7 @@ containerd: {address: %s, namespace: %s, root: %s, userns: %s, uid_base: %d, app
 		if err != nil {
 			return nil, err
 		}
-		return ctrd.New(cfg, ctrd.Options{Runner: name})
+		return ctrd.New(cfg, ctrd.Options{Runner: name, StageInit: true})
 	}
 	for _, name := range []string{"ra", "rb"} {
 		h := &host{ns: "mirafleet-m3-" + name}
@@ -307,7 +307,7 @@ containerd: {address: %s, namespace: %s, root: %s, userns: %s, uid_base: %d, app
 			must(t, err)
 			var out []string
 			for _, d := range ents {
-				if d.Name() != ".meta" { // the executor's own state, not a workspace
+				if d.Name() != ".meta" && d.Name() != ".init" { // the executor's own state, not a workspace
 					out = append(out, d.Name())
 				}
 			}

@@ -32,7 +32,13 @@ services:
       # The host's containerd: its socket, and the fifo directory beside it. An exec's stdio
       # fifos are made by the runner under /run/containerd/fifo and opened by the shim on the
       # host, so the directory must be the same one on both sides.
-      - /run/containerd:/run/containerd
+      # A directory, not the socket file: a bind-mounted socket goes stale when containerd
+      # restarts. rslave: mounts made on the host under it show up here, and none leak back.
+      - type: bind
+        source: /run/containerd
+        target: /run/containerd
+        bind:
+          propagation: rslave
       # The workspace root, at the SAME path inside and out: containerd bind-mounts directories
       # from it into workspaces, resolving the path on the host. Create it first (README step 1);
       # Docker would otherwise create it with the wrong mode, and the runner refuses that.

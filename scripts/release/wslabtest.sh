@@ -28,6 +28,8 @@ LABEL=org.mirastacklabs.mirafleet.release=1
 # The workspace image: busybox by index digest (the shipped workspace.yaml allows this).
 BUSYBOX=docker.io/library/busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
 WSROOT=/var/lib/mirafleet/ws
+# Has ctr; pinned like dev.sh's. Used only to remove the test's containerd namespace.
+DIND_IMAGE="${MIRAFLEET_DIND_IMAGE:-docker.io/library/docker:28-dind@sha256:2a232a42256f70d78e3cc5d2b5d6b3276710a0de0596c145f627ecfae90282ac}"
 
 if [ -z "${MIRAFLEET_CTR:-}" ] && ! docker info >/dev/null 2>&1; then
 	echo "Docker runtime not reachable: start it with \`colima start\` (Docker runtime)" >&2
@@ -43,7 +45,7 @@ ok() { echo "ok: $*"; }
 # hostsh SCRIPT: run SCRIPT under sh in a throwaway container with the daemon host's /var/lib at
 # /hostvar and /run at /hostrun (the paths below are the daemon's, not the CLI's).
 hostsh() {
-	$CTR run --rm --label "$LABEL" -v /var/lib:/hostvar -v /run:/hostrun "$TOOL_IMAGE" sh -ec "$1"
+	$CTR run --rm --label "$LABEL" -v /var/lib:/hostvar -v /run:/hostrun:ro "$TOOL_IMAGE" sh -ec "$1"
 }
 
 hostsh 'test -S /hostrun/containerd/containerd.sock' || fail "no containerd socket at /run/containerd/containerd.sock on the Docker host"
@@ -65,6 +67,10 @@ HTTPD="mfwshttpd$SUFFIX"
 TMP="$ROOT/dist/wslab" # under the repo (gitignored): a colima VM mounts $HOME, not /var/folders
 rm -rf "$TMP"
 mkdir -p "$TMP"
+WS_CREATED=""
+NS_USED=""
+# A containerd namespace of its own, so the test never touches `mirafleet` and can remove it.
+NS="mirafleet-e2e-$SUFFIX"
 CREATED_VARLIB=""
 hostsh 'test -d /hostvar/mirafleet' || CREATED_VARLIB=1
 
@@ -79,17 +85,40 @@ op() {
 	dc run --rm -T operator mcp api "$m" "$p" "$@" 2>/dev/null | tr -d ' \n'
 }
 
+# ctr_cleanup: remove this test's containerd namespace (its containers, images, the namespace
+# itself) with ctr from a throwaway container. Best effort.
+ctr_cleanup() {
+	$CTR run --rm --label "$LABEL" --entrypoint sh -v /run/containerd:/run/containerd "$DIND_IMAGE" -c "
+		c='ctr -a /run/containerd/containerd.sock -n $NS'
+		for t in \$(\$c tasks ls -q); do \$c tasks kill -s 9 \$t; \$c tasks delete \$t; done
+		for x in \$(\$c containers ls -q); do \$c containers delete \$x; done
+		for i in \$(\$c images ls -q); do \$c images rm \$i; done
+		for d in \$(\$c content ls -q); do \$c content rm \$d; done
+		for n in 1 2 3 4 5 6 7 8 9 10; do
+			ctr -a /run/containerd/containerd.sock namespaces remove $NS && exit 0
+			sleep 1
+		done
+		exit 1" >/dev/null 2>&1 || true
+}
+
 cleanup() {
 	status=$?
 	if [ "$status" -ne 0 ]; then
 		echo "--- runner logs" >&2
 		rc logs --no-color 2>&1 | tail -n 40 >&2 || true
 	fi
+	# Destroy whatever workspaces the runner still holds (containers, directories) before it goes.
+	rcid=$(rc ps -q runner 2>/dev/null || true)
+	[ -z "$rcid" ] || $CTR exec "$rcid" /usr/bin/mirafleet runner workspace prune -all -yes -data /var/lib/mirafleet/runner -workspace /etc/mirafleet/workspace.yaml >/dev/null 2>&1 || true
 	rc down -v --remove-orphans >/dev/null 2>&1 || true
 	$CTR rm -f "$HTTPD" >/dev/null 2>&1 || true
 	dc --profile runner --profile tools down -v --remove-orphans >/dev/null 2>&1 || true
-	# Workspace directories are root-owned: remove them (and the staged binary) from a container.
-	hostsh "rm -rf /hostvar/mirafleet/ws; if [ -n '$CREATED_VARLIB' ]; then rmdir /hostvar/mirafleet 2>/dev/null || true; fi" >/dev/null 2>&1 || true
+	[ -z "$NS_USED" ] || ctr_cleanup
+	# Workspace directories are root-owned: remove them (and the staged binary) from a container,
+	# only if this run created the root.
+	if [ -n "$WS_CREATED" ]; then
+		hostsh "rm -rf /hostvar/mirafleet/ws; if [ -n '$CREATED_VARLIB' ]; then rmdir /hostvar/mirafleet 2>/dev/null || true; fi" >/dev/null 2>&1 || true
+	fi
 	[ -z "$BUILT" ] || $CTR rmi -f "$MIRAFLEET_IMAGE" >/dev/null 2>&1 || true
 	rm -rf "$TMP"
 }
@@ -100,8 +129,10 @@ trap cleanup EXIT INT TERM
 grep -q 'create_host_path: false' "$WSR/compose.yaml" || fail "compose.yaml must not let Docker create the workspace root"
 ok "compose.yaml: not privileged, workspace root must pre-exist"
 
-# The workspace root, as the packages make it: root-owned, 0700.
-hostsh 'install -d -m 0700 -o 0 -g 0 /hostvar/mirafleet/ws'
+# The workspace root, as the packages make it: root-owned, 0700. mkdir fails if it exists, so
+# only a root this run created is ever removed.
+hostsh 'mkdir -p /hostvar/mirafleet && mkdir -m 0700 /hostvar/mirafleet/ws' || fail "cannot create $WSROOT (it appeared meanwhile?)"
+WS_CREATED=1
 
 # The lab network is where the runner finds central, and where the egress targets live.
 cat >"$TMP/override.yaml" <<EOF
@@ -115,9 +146,13 @@ networks:
     external: true
     name: ${LABPROJ}_default
 EOF
-# The shipped example, plus IP-literal egress rules (the targets below are private addresses).
+# The shipped example with this test's containerd namespace, plus IP-literal egress rules (the
+# targets below are private addresses).
+grep -q '^  namespace: mirafleet$' "$WSR/workspace.yaml" || fail "workspace.yaml: namespace line not found"
+grep -q '^  apparmor: off$' "$WSR/workspace.yaml" || fail "workspace.yaml must say apparmor: off (the image cannot load the profile)"
+NS_USED=1
 {
-	cat "$WSR/workspace.yaml"
+	sed "s/^  namespace: mirafleet\$/  namespace: $NS/" "$WSR/workspace.yaml"
 	echo "egress_cidr_rules: true"
 } >"$TMP/workspace.yaml"
 chmod 0644 "$TMP/workspace.yaml"
@@ -174,6 +209,12 @@ out=$(op workspace.exec "{\"workspace\":\"$WS\",\"argv\":[\"sh\",\"-c\",\"echo o
 printf '%s' "$out" | grep -q '"exit_code":0' || fail "exec failed: $out"
 printf '%s' "$out" | grep -q '"stdout":"ok\\n[1-9][0-9]*\\n"' || fail "exec output is not 'ok' then a non-root uid: $out"
 ok "workspace.exec echo ok -> exit 0, runs as a non-root uid"
+
+# apparmor: off is what the file says; the workspace must then have no AppArmor profile (and the
+# runner must not have been refused at start, which `auto` would do on an AppArmor host).
+out=$(op workspace.exec "{\"workspace\":\"$WS\",\"argv\":[\"sh\",\"-c\",\"cat /proc/self/attr/apparmor/current 2>/dev/null || cat /proc/self/attr/current 2>/dev/null || echo none\"]}")
+case "$out" in *'"stdout":"unconfined'* | *'"stdout":"none'*) ;; *) fail "the workspace runs under an AppArmor profile although apparmor is off: $out" ;; esac
+ok "apparmor: off as configured: the workspace has no AppArmor profile"
 
 printf 'hello-e2e' | dc run --rm -T operator mcp api workspace.write_file "{\"workspace\":\"$WS\",\"path\":\"/workspace/a.txt\"}" -in - >/dev/null 2>&1 || fail "write_file failed"
 out=$(op workspace.exec "{\"workspace\":\"$WS\",\"argv\":[\"sh\",\"-c\",\"cat /workspace/a.txt; echo from-exec >/workspace/b.txt\"]}")

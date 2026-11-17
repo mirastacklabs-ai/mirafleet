@@ -28,7 +28,7 @@ func TestNewExecutorHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ex, err := newExecutor(wc, "fleet/r1")
+	ex, err := newExecutor(wc, "fleet/r1", true)
 	if err != nil {
 		t.Fatal(err)
 	}
