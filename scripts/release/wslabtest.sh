@@ -212,9 +212,10 @@ ok "workspace.exec echo ok -> exit 0, runs as a non-root uid"
 
 # apparmor: off is what the file says; the workspace must then have no AppArmor profile (and the
 # runner must not have been refused at start, which `auto` would do on an AppArmor host).
+# A host profile in unconfined mode (Ubuntu's `runc`) also counts as no confinement.
 out=$(op workspace.exec "{\"workspace\":\"$WS\",\"argv\":[\"sh\",\"-c\",\"cat /proc/self/attr/apparmor/current 2>/dev/null || cat /proc/self/attr/current 2>/dev/null || echo none\"]}")
-case "$out" in *'"stdout":"unconfined'* | *'"stdout":"none'*) ;; *) fail "the workspace runs under an AppArmor profile although apparmor is off: $out" ;; esac
-ok "apparmor: off as configured: the workspace has no AppArmor profile"
+case "$out" in *'"stdout":"unconfined'* | *'"stdout":"none'* | *'(unconfined)'*) ;; *) fail "the workspace runs under an AppArmor profile although apparmor is off: $out" ;; esac
+ok "apparmor: off as configured: the workspace is not confined by AppArmor"
 
 printf 'hello-e2e' | dc run --rm -T operator mcp api workspace.write_file "{\"workspace\":\"$WS\",\"path\":\"/workspace/a.txt\"}" -in - >/dev/null 2>&1 || fail "write_file failed"
 out=$(op workspace.exec "{\"workspace\":\"$WS\",\"argv\":[\"sh\",\"-c\",\"cat /workspace/a.txt; echo from-exec >/workspace/b.txt\"]}")
