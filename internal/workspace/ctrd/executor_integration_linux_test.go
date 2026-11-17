@@ -39,7 +39,7 @@ concurrent: %d
 images: ["mirafleet-test/init:*"]
 limits: {cpus: 1, memory: 256MiB, pids: 128, tmpfs: 16MiB, disk: %s, max_file: 4MiB}
 network: [none]
-containerd: {address: %s, namespace: %s, root: %s, userns: %s, uid_base: 1000000, apparmor: auto}
+containerd: {address: %s, namespace: %s, root: %s, userns: %s, uid_base: 1000000, apparmor: off} # the harness has no apparmor_parser; "auto" would refuse to start
 `, concurrent, testDisk, os.Getenv("MIRAFLEET_TEST_CONTAINERD_SOCK"), testNamespace, root, userns)))
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +101,7 @@ func newEnv(t *testing.T, concurrent int, opts Options) *testEnv {
 	t.Cleanup(func() { deleteImage(t, c, alias.Name) })
 
 	root := newRoot(t)
+	opts.StageInit = opts.StageInit || opts.InitBinary == ""
 	ex, err := New(newConfig(t, root, mode, concurrent), opts)
 	if err != nil {
 		t.Fatalf("New (userns %s): %v", mode, err)

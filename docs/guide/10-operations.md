@@ -784,6 +784,7 @@ setting: fix the host or the file instead.
 | `ctrd: userns: required is not supported on this host: kernel 5.15 lacks idmapped overlayfs mounts (need >= 5.19) ...` | Hosts without user namespaces or id-mapped snapshots cannot give each workspace its own uid range. | Use a newer kernel and containerd 2.x. `containerd.userns: off` runs, but weakens isolation *between* workspaces (and containers share the host uid `uid_base + slot`); that is a conscious choice, never a default. |
 | `ctrd: connect to containerd at /run/containerd/containerd.sock: ...` or `not answering` | containerd is not running, or the runner user cannot open the socket. | Start containerd; run the runner as root (it needs the socket anyway). On a Docker host see 10.9.3. |
 | `ctrd: secure_runtime: runtime "io.containerd.runsc.v1": shim containerd-shim-runsc-v1 not found on PATH` | You declared gVisor/Kata but its shim is not installed. | Install it or remove `secure_runtime`. Without it the runner refuses guarded fleets. |
+| `ctrd: AppArmor is enabled on this host but the runner cannot load its profile (apparmor_parser not found)...` | `apparmor: auto` on a host with AppArmor in the kernel but no `apparmor_parser` (a minimal install, or the Compose image). | Install `apparmor` (the parser), or set `apparmor: off` knowingly. |
 | `ctrd: apparmor: required but AppArmor is not available on this host` | `apparmor: required` on a host without AppArmor. | Use `auto` (apply when available) or enable AppArmor. |
 | `ctrd: init binary /usr/local/bin/mirafleet must be world readable and executable (mode 0700)` | PID 1 inside the container is not root and must be able to execute the mirafleet binary. | `chmod 0755` the binary. |
 | `warning: N image pattern(s) in workspace.yaml cannot be advertised to central (limit 32 entries of 256 bytes)` | Placement only sees the first 32 patterns. | Harmless for safety (the runner still enforces them all); shorten the list if placement misses. |
@@ -1069,7 +1070,7 @@ Top-level keys:
 | `root` | **required** | Where workspace directories live; a clean absolute path other than `/`; must be a directory **owned by root with mode 0700** (checked at load). Layout in 10.9.4. |
 | `userns` | `required` | `required`: every slot gets its own user namespace and an id-mapped snapshot; the runner refuses to start on a host that cannot do it (kernel 5.19 or newer, user namespaces enabled, an id-mapping snapshotter). `off`: no user namespace; the process runs as the unprivileged host uid `uid_base + slot` (never a real user), so isolation between workspaces rests on those distinct uids alone. A conscious weakening, never a default. |
 | `uid_base` | `1000000` | Start of the host uid/gid ranges: slot N gets `uid_base + N x 65536`. At least 65536 and clear of real users. |
-| `apparmor` | `auto` | `auto`: apply containerd's default profile when the host supports AppArmor; `required`: refuse to start without it; `off`. |
+| `apparmor` | `auto` | `auto`: apply containerd's default profile when the host supports AppArmor (kernel AppArmor on **and** `apparmor_parser` installed). On a host whose kernel has AppArmor enabled but no `apparmor_parser`, `auto` **refuses to start** rather than silently run unprofiled; install the parser or set `off`. A kernel without AppArmor is fine. `required`: refuse to start without it; `off`: never apply it (the Compose setup uses this). |
 
 `opensandbox:` block (required when `executor: opensandbox`; every key but the three marked is required):
 
@@ -1123,6 +1124,8 @@ every start) holds the only host directories a workspace can touch:
 /var/lib/mirafleet/ws/                 root 0700
 ├── 3f9a6c1e5b7d4820a1c3e5f708192a4b/  one workspace's /workspace; owned by its mapped uid, 0700
 │   └── (the agent's files)
+├── .init/
+│   └── mirafleet                      a copy of the runner binary (0555), PID 1 of every workspace
 ├── .meta/
 │   └── 3f9a6c1e5b7d4820a1c3e5f708192a4b/
 │       ├── hosts                      generated /etc/hosts, mounted read-only
@@ -1132,7 +1135,10 @@ every start) holds the only host directories a workspace can touch:
 
 - The directory name is the workspace id (32 lowercase hex characters, **assigned by central**; the
   runner validates it and uses it as the container id `mf-<id>` and the label
-  `mirafleet.workspace`). `.meta` can never be a valid id.
+  `mirafleet.workspace`). `.meta` and `.init` can never be valid ids. `.init/mirafleet` is written by `runner run` at start
+(atomically, and only when it differs from the running binary; `.init` must be mode 0700, same
+owner as the root), so containerd, which may run outside the runner's container, always has a
+binary at a path both sides share. `runner workspace list|prune` never touch it.
 - Inside the container `/workspace` is this directory (read-write, `nosuid`, `nodev`); `/tmp` is a
   size-limited tmpfs; everything else is read-only. Nothing else from the host is mounted except
   the mirafleet binary itself at `/.mirafleet/init` (read-only), which is PID 1.
@@ -1811,8 +1817,8 @@ person uses the channel that fits their machine.
 | Channel | For | You get | Notes |
 |---|---|---|---|
 | `.deb` / `.rpm` / `.apk` | central and runners on Linux | binary, systemd units, `/etc/mirafleet/`, example configs | Starts nothing and enables nothing. `.apk` has no systemd units. |
-| OCI image | central, and actions-mode runners | `docker.io/mirastack/mirafleet`, also `ghcr.io/mirastacklabs-ai/mirafleet`: the same image, same digest | `scratch` base: no shell, runs as UID 65532. No container-workspace or host mode inside the image (they need host containerd or a real OS user). |
-| Docker Compose | central, a runner, or a one-machine lab | `deploy/compose/{central,runner,lab}` | First-class install; image tag pinned to the release. |
+| OCI image | central, and actions-mode runners | `docker.io/mirastack/mirafleet`, also `ghcr.io/mirastacklabs-ai/mirafleet`: the same image, same digest | `scratch` base: no shell, runs as UID 65532. No host mode inside the image (it needs a real OS user). Container workspaces run from the image only through the root-equivalent Compose setup below. |
+| Docker Compose | central, a runner, a container-workspace runner, or a one-machine lab | `deploy/compose/{central,runner,runner-workspace,lab}` | First-class install; image tag pinned to the release. |
 | Homebrew | operator laptops (macOS, Linux) | `brew install mirastacklabs-ai/tap/mirafleet` | Formula rendered from `checksums.txt`. |
 | `install.sh` / `install.ps1` | operators | binary only | Always checks the SHA-256. See 10.12.5. |
 | npm | operators whose harness config runs `npx` | `@mirastacklabs/mirafleet` | Binary comes in a platform package; no scripts run. |
@@ -1883,6 +1889,25 @@ host key, database and registration secret; safe to repeat) and `central`, which
 one-shot `docker compose run --rm runner runner join ... -token -` (token on stdin, so it is not
 in `ps`). `deploy/compose/lab` runs central, a runner and an operator on one machine for trying
 things out.
+
+`deploy/compose/runner-workspace` is the exception to "the container is a sandbox". A container
+workspace runner needs the host's containerd and the host's `/proc`, so the service runs as root
+(`user: "0:0"`) in the host pid namespace (`pid: host`) with `cap_add: [SYS_ADMIN]`, the host's
+`/run/containerd` and `/var/lib/mirafleet/ws` mounted at the **same paths** inside, and the
+runner's own container AppArmor-unconfined. The scratch image has no `apparmor_parser`, so the
+runner cannot load the mirafleet AppArmor profile and the shipped `workspace.yaml` says
+`apparmor: off`: **workspaces from Compose run without that profile** (user namespaces, no
+capabilities, `no_new_privs`, seccomp, read-only rootfs, empty network namespace and cgroup limits
+still apply). Use the packages when you want AppArmor. Same paths, because containerd runs on the host and resolves every path the runner
+gives it there: the stdio fifos of an exec, and the workspace directories it bind-mounts. That is
+root on the host, exactly like the packaged `mirafleet-runner-workspace` unit; the container adds
+convenience, not isolation. The workspace root must exist first (`sudo install -d -m 0700
+/var/lib/mirafleet/ws`): the runner refuses any other owner or mode, and Compose would create it
+wrong. The runner also copies its own binary to `<root>/.init/mirafleet` at start, because the
+path of the binary inside the runner's container does not exist on the host, and PID 1 of every
+workspace is mounted from a host path. The image has no CA bundle, so the compose file lends the
+host's for image pulls. `scripts/release.sh wslab` tests all of this end to end (join, open, exec,
+files, egress, close) and CI runs it as the `compose-workspace` job.
 
 With plain `docker run` the same two steps are two commands: `central init`, then `central run`.
 Without a shell in the image, read the GUI setup token with `docker compose cp` or `docker cp

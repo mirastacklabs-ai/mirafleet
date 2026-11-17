@@ -3,9 +3,14 @@
 package ctrd
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -39,6 +44,7 @@ const (
 
 	appArmorProfileName = "mirafleet-workspace"
 	metaDirName         = ".meta" // <root>/.meta/<id>/{hosts,resolv.conf}; never a valid workspace id
+	initDirName         = ".init" // <root>/.init/mirafleet: the staged init binary; never a valid id
 
 	killWait    = 15 * time.Second // bound for a task to die after SIGKILL
 	startSettle = 300 * time.Millisecond
@@ -53,6 +59,11 @@ type Options struct {
 	Runner string
 	// InitBinary is the executable bind-mounted as PID 1. Default: the running binary.
 	InitBinary string
+	// StageInit (with InitBinary empty) copies the running binary to <root>/.init/mirafleet and
+	// mounts that copy as PID 1. Only the process that serves workspaces (`runner run`) sets it.
+	// Without it (list, prune) the existing copy is used and nothing under .init is written;
+	// Create fails clearly when there is none.
+	StageInit bool
 }
 
 // Executor is the containerd workspace executor.
@@ -91,18 +102,31 @@ func New(cfg *wsconfig.Config, opts Options) (workspace.Executor, error) {
 	}
 	bin := opts.InitBinary
 	if bin == "" {
-		self, err := os.Executable()
-		if err != nil {
-			return nil, fmt.Errorf("ctrd: locate own binary: %w", err)
+		// containerd (the host's) resolves the bind-mount source on the host. The runner's own
+		// path may not exist there (a runner in a container), so mount a copy kept under the
+		// root, a path the runner and containerd must already agree on.
+		if opts.StageInit {
+			self, err := os.Executable()
+			if err != nil {
+				return nil, fmt.Errorf("ctrd: locate own binary: %w", err)
+			}
+			bin, err = stageInitBinary(self, cc.Root)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			bin = filepath.Join(cc.Root, initDirName, "mirafleet") // checked in Create
 		}
-		bin = self
 	}
-	bin, err := filepath.EvalSymlinks(bin)
-	if err != nil {
-		return nil, fmt.Errorf("ctrd: init binary: %w", err)
-	}
-	if err := checkInitBinary(bin); err != nil {
-		return nil, err
+	if bin != "" && (opts.InitBinary != "" || opts.StageInit) {
+		var err error
+		bin, err = filepath.EvalSymlinks(bin)
+		if err != nil {
+			return nil, fmt.Errorf("ctrd: init binary: %w", err)
+		}
+		if err := checkInitBinary(bin); err != nil {
+			return nil, err
+		}
 	}
 
 	// Go probes IPv4/IPv6 support once (ipStackCaps) on the first listen or dial. Do that now in the
@@ -143,15 +167,11 @@ func New(cfg *wsconfig.Config, opts Options) (workspace.Executor, error) {
 			return nil, fmt.Errorf("ctrd: secure_runtime: %w", err)
 		}
 	}
-	switch cc.AppArmor {
-	case "off":
-	case "auto", "required":
-		if !apparmor.HostSupports() {
-			if cc.AppArmor == "required" {
-				return nil, errors.New("ctrd: apparmor: required but AppArmor is not available on this host")
-			}
-			break // auto: no AppArmor on this host
-		}
+	load, aerr := appArmorPlan(cc.AppArmor, apparmorHostSupports(), apparmorEnabledFile)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if load {
 		if err := contribapparmor.LoadDefaultProfile(appArmorProfileName); err != nil {
 			return nil, fmt.Errorf("ctrd: load AppArmor profile (set apparmor: off to run without it): %w", err)
 		}
@@ -160,6 +180,46 @@ func New(cfg *wsconfig.Config, opts Options) (workspace.Executor, error) {
 	e.reattachEgress(ctx)
 	ok = true
 	return e, nil
+}
+
+// apparmorHostSupports is containerd's check (kernel AppArmor enabled and /sbin/apparmor_parser
+// present); a variable so tests can replace it.
+var apparmorHostSupports = apparmor.HostSupports
+
+// apparmorEnabledFile says whether the kernel has AppArmor switched on.
+const apparmorEnabledFile = "/sys/module/apparmor/parameters/enabled"
+
+// appArmorPlan decides, from the apparmor setting, whether the host can load the profile
+// (supports, containerd's check) and whether the kernel has AppArmor on (enabledFile), whether
+// New must load the mirafleet profile. "auto" never silently runs without a profile on a host
+// whose kernel enforces AppArmor: if the profile cannot be loaded (typically no apparmor_parser,
+// as in the scratch image) it is an error. A kernel without AppArmor (file absent) or with it off
+// is fine. "required" fails when unsupported; "off" never loads.
+func appArmorPlan(mode string, supports bool, enabledFile string) (load bool, err error) {
+	switch mode {
+	case "off":
+		return false, nil
+	case "required":
+		if !supports {
+			return false, errors.New("ctrd: apparmor: required but AppArmor is not available on this host")
+		}
+		return true, nil
+	case "auto":
+		if supports {
+			return true, nil
+		}
+		b, rerr := os.ReadFile(enabledFile)
+		switch {
+		case errors.Is(rerr, fs.ErrNotExist):
+			return false, nil // no AppArmor in this kernel
+		case rerr != nil:
+			return false, fmt.Errorf("ctrd: apparmor: cannot tell whether AppArmor is enabled (%v); set apparmor: off to run workspaces without it", rerr)
+		case strings.TrimSpace(string(b)) == "Y":
+			return false, errors.New("ctrd: AppArmor is enabled on this host but the runner cannot load its profile (apparmor_parser not found); install it, or set apparmor: off to run workspaces without AppArmor")
+		}
+		return false, nil // present but off
+	}
+	return false, fmt.Errorf("ctrd: apparmor: unknown mode %q", mode)
 }
 
 func checkInitBinary(p string) error {
@@ -175,6 +235,120 @@ func checkInitBinary(p string) error {
 		return fmt.Errorf("ctrd: init binary %s must be world readable and executable (mode %04o)", p, fi.Mode().Perm())
 	}
 	return nil
+}
+
+// stageInitBinary copies the running binary to <root>/.init/mirafleet (replaced atomically at
+// every start) and returns that path. The root is root-owned 0700 (CheckFiles); the copy is
+// 0555, so it is the same program as the runner, readable and executable inside a workspace.
+// ".init" can never be a valid workspace id.
+//
+// The directory is created 0700 and must be owned by the same user as the root (root, by
+// CheckFiles) with exactly that mode, and not be a symlink. Stale temporary files from a crashed
+// start are removed first; all file operations go through an os.Root on the directory. When the
+// staged copy already equals the running binary (size and SHA-256) nothing is written, so a full
+// disk only blocks a start whose version changed.
+func stageInitBinary(self, root string) (string, error) {
+	fail := func(err error) (string, error) { return "", fmt.Errorf("ctrd: stage init binary: %w", err) }
+	rfi, err := os.Stat(root)
+	if err != nil {
+		return fail(err)
+	}
+	rst, ok := rfi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fail(errors.New("cannot read the owner of the workspace root"))
+	}
+	dir := filepath.Join(root, initDirName)
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return fail(err)
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return fail(err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || !fi.IsDir() || st.Uid != rst.Uid || fi.Mode().Perm() != 0o700 {
+		return fail(fmt.Errorf("%s must be a plain directory owned by the workspace root's owner with mode 0700", dir))
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		return fail(err)
+	}
+	defer r.Close()
+	const name = "mirafleet"
+	dst := filepath.Join(dir, name)
+
+	src, err := os.Open(self)
+	if err != nil {
+		return fail(err)
+	}
+	defer src.Close()
+	if same, err := sameFile(r, name, src); err == nil && same {
+		return dst, nil
+	}
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		return fail(err)
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return fail(err)
+	}
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), "mirafleet.") && strings.HasSuffix(e.Name(), ".tmp") {
+			_ = r.Remove(e.Name())
+		}
+	}
+	var rnd [8]byte
+	if _, err := rand.Read(rnd[:]); err != nil {
+		return fail(err)
+	}
+	tmpName := "mirafleet." + hex.EncodeToString(rnd[:]) + ".tmp"
+	tmp, err := r.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o555)
+	if err != nil {
+		return fail(err)
+	}
+	defer r.Remove(tmpName)  // no-op after the rename
+	cerr := tmp.Chmod(0o555) // the umask (systemd: 0077) must not make it unreadable in a workspace
+	if cerr == nil {
+		_, cerr = io.Copy(tmp, src)
+	}
+	if cerr == nil {
+		cerr = tmp.Sync()
+	}
+	if xerr := tmp.Close(); cerr == nil {
+		cerr = xerr
+	}
+	if cerr != nil {
+		return fail(cerr)
+	}
+	if err := r.Rename(tmpName, name); err != nil {
+		return fail(err)
+	}
+	return dst, nil
+}
+
+// sameFile reports whether name in r is a regular file, mode 0555, equal in size and SHA-256 to src.
+func sameFile(r *os.Root, name string, src *os.File) (bool, error) {
+	cur, err := r.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return false, err
+	}
+	defer cur.Close()
+	cfi, err := cur.Stat()
+	if err != nil || !cfi.Mode().IsRegular() || cfi.Mode().Perm() != 0o555 {
+		return false, err
+	}
+	sfi, err := src.Stat()
+	if err != nil || sfi.Size() != cfi.Size() {
+		return false, err
+	}
+	a, b := sha256.New(), sha256.New()
+	if _, err := io.Copy(a, cur); err != nil {
+		return false, err
+	}
+	if _, err := io.Copy(b, src); err != nil {
+		return false, err
+	}
+	return bytes.Equal(a.Sum(nil), b.Sum(nil)), nil
 }
 
 // checkRuntimeShim verifies that containerd can find the shim binary for a runtime name such
@@ -343,6 +517,9 @@ func (e *Executor) Create(ctx context.Context, s workspace.Spec) (err error) {
 		}
 	}()
 
+	if err := checkInitBinary(e.initBin); err != nil {
+		return unavailable("init binary (it is staged by `runner run`)", err)
+	}
 	img, ierr := e.ensureImage(ctx, norm, s.Pull)
 	if ierr != nil {
 		return ierr

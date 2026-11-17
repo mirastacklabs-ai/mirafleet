@@ -277,7 +277,7 @@ opensandbox:
 	ex = fake.New()
 	var gotOwner string
 	old := newExecutor
-	newExecutor = func(cfg *wsconfig.Config, owner string) (workspace.Executor, error) {
+	newExecutor = func(cfg *wsconfig.Config, owner string, serve bool) (workspace.Executor, error) {
 		gotOwner = owner
 		return keepOpen{ex}, nil
 	}

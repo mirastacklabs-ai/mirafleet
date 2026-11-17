@@ -410,7 +410,7 @@ images: ["mirafleet-test/e2e:*"]
 limits: {cpus: 2, memory: 1GiB, pids: 256, tmpfs: 64MiB, disk: 256MiB, max_file: 8MiB, exec_max: 2m}
 network: [none]
 env_allow: [LANG]
-containerd: {address: %s, namespace: %s, root: %s, userns: %s, uid_base: 1000000, apparmor: auto}
+containerd: {address: %s, namespace: %s, root: %s, userns: %s, uid_base: 1000000, apparmor: off} # the harness has no apparmor_parser; "auto" would refuse to start
 `, e.sock, e2eNamespace, e.wsRoot, userns)
 	if err := os.WriteFile(e.wsFile, []byte(y), 0o600); err != nil {
 		t.Fatal(err)
@@ -569,13 +569,13 @@ func buildE2EImage(bin string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// wsDirs lists workspace directories under the runner's root (the executor's own .meta is state,
-// not a workspace).
+// wsDirs lists workspace directories under the runner's root (the executor's own .meta and .init
+// are state, not workspaces; any other entry counts).
 func (e *e2eEnv) wsDirs() []string {
 	ents, _ := os.ReadDir(e.wsRoot)
 	var out []string
 	for _, d := range ents {
-		if d.Name() != ".meta" {
+		if d.Name() != ".meta" && d.Name() != ".init" {
 			out = append(out, d.Name())
 		}
 	}

@@ -56,6 +56,17 @@ jobs:
       - run: scripts/release.sh npmtest
       - run: scripts/release.sh harnesscheck
 
+  # deploy/compose/runner-workspace end to end on the runner's own Docker Engine and containerd
+  # (central, the workspace runner and an operator in Compose; open, exec, files, egress, close).
+  compose-workspace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/release.sh wslab
+
   # Real systemd as PID 1 in a throwaway privileged container on the runner's ephemeral VM.
   e2e-systemd:
     runs-on: ubuntu-latest

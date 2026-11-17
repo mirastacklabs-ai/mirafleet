@@ -207,6 +207,17 @@ echo 'PASTE-THE-JOIN-TOKEN' | sudo mirafleet runner join central.example.com:222
 sudo systemctl enable --now mirafleet-runner-workspace
 ```
 
+On a Docker host without our packages, `deploy/compose/runner-workspace/` runs the same runner from
+the image (same root-equivalent trust; read its README first):
+
+```bash
+cd deploy/compose/runner-workspace      # edit workspace.yaml here
+sudo install -d -m 0700 /var/lib/mirafleet/ws
+echo 'PASTE-THE-JOIN-TOKEN' | docker compose run --rm -T runner runner join central.example.com:2222 -name ws-1 -data /var/lib/mirafleet/runner -token -
+# approve on central as above, then:
+docker compose up -d
+```
+
 Host mode is not available in the container image; use the packages.
 
 ## 4. Remote development on a VM (host mode)

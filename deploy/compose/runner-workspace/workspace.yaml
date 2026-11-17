@@ -1,0 +1,23 @@
+# Runner-side config for the container-workspace runner (mounted read-only at
+# /etc/mirafleet/workspace.yaml). Unknown fields are errors. Edit `images` and `limits`.
+# This runner is root-equivalent on the host (containerd): use a dedicated machine.
+executor: containerd
+concurrent: 4
+max_age: 168h
+# The image allowlist is the boundary: central cannot run anything outside it. Prefer digests.
+images: ["docker.io/library/busybox@sha256:*"]
+limits: {cpus: 4, memory: 8GiB, pids: 2048, tmpfs: 1GiB, disk: 20GiB, max_file: 64MiB}
+network: [none, egress]   # egress still needs a fleet allowlist; drop it to forbid egress here
+env_allow: [LANG, LC_ALL, TERM, CI]
+containerd:
+  address: /run/containerd/containerd.sock
+  namespace: mirafleet
+  snapshotter: overlayfs
+  runtime: io.containerd.runc.v2
+  root: /var/lib/mirafleet/ws   # root-owned, mode 0700; must exist (README step 1)
+  userns: required
+  uid_base: 1000000
+  # off: the image has no apparmor_parser, so the runner cannot load the mirafleet AppArmor
+  # profile, and `auto` on an AppArmor host would refuse to start. Workspaces run without that
+  # profile (all other layers still apply). Use the packages if you want it.
+  apparmor: off

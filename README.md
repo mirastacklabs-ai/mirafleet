@@ -100,7 +100,7 @@ Pre-releases (`-rc.N`) are not published to Homebrew or the MCP Registry, and go
 | Where | Channel | Command |
 |---|---|---|
 | Central or runner (Linux) | Package (deb, rpm, apk) from the [release page](https://github.com/mirastacklabs-ai/mirafleet/releases) | `sudo apt install ./mirafleet_0.6.1_linux_amd64.deb` · `sudo dnf install ./mirafleet_0.6.1_linux_amd64.rpm` · `sudo apk add --allow-untrusted ./mirafleet_0.6.1_linux_amd64.apk` |
-| Central or actions runner (Linux) | Docker Compose (`deploy/compose/`) | `docker compose up -d` in `deploy/compose/central` or `deploy/compose/runner` |
+| Central, actions runner or container-workspace runner (Linux) | Docker Compose (`deploy/compose/`) | `docker compose up -d` in `deploy/compose/central`, `deploy/compose/runner` or `deploy/compose/runner-workspace` |
 | Central or actions runner (Linux) | OCI image | `docker pull mirastack/mirafleet:0.6.1` (also `ghcr.io/mirastacklabs-ai/mirafleet:0.6.1`, same digest) |
 | macOS, Linux | Homebrew | `brew install mirastacklabs-ai/tap/mirafleet` |
 | macOS, Linux | Script | `curl -fsSL https://github.com/mirastacklabs-ai/mirafleet/releases/latest/download/install.sh \| sh` |

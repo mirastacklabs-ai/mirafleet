@@ -34,10 +34,12 @@ const defaultWorkspaceFile = "/etc/mirafleet/workspace.yaml"
 // default talks to a real containerd or OpenSandbox. owner is the ownership name: it tags every
 // workspace the executor creates and bounds what List returns, so it must be unique across
 // fleets: "<fleet>/<runner>".
-var newExecutor = func(cfg *wsconfig.Config, owner string) (workspace.Executor, error) {
+var newExecutor = func(cfg *wsconfig.Config, owner string, serve bool) (workspace.Executor, error) {
 	switch cfg.Executor {
 	case wsconfig.ExecContainerd:
-		return ctrd.New(cfg, ctrd.Options{Runner: owner})
+		// Only the process that serves workspaces (`runner run`) stages the init binary;
+		// list and prune must not swap PID 1 for the live runner's new workspaces.
+		return ctrd.New(cfg, ctrd.Options{Runner: owner, StageInit: serve})
 	case wsconfig.ExecOpenSandbox:
 		return osb.NewExecutor(cfg, owner)
 	case wsconfig.ExecHost:
@@ -50,7 +52,8 @@ var newExecutor = func(cfg *wsconfig.Config, owner string) (workspace.Executor, 
 func ownerName(c *runner.FileConfig) string { return c.Fleet + "/" + c.Name }
 
 // loadWorkspace loads workspace.yaml (with the on-disk checks) and builds the executor.
-func loadWorkspace(path string, rc *runner.FileConfig) (*wsconfig.Config, workspace.Executor, error) {
+// serve is true only for `runner run`.
+func loadWorkspace(path string, rc *runner.FileConfig, serve bool) (*wsconfig.Config, workspace.Executor, error) {
 	wc, err := wsconfig.Load(path)
 	if err != nil {
 		return nil, nil, err
@@ -58,7 +61,7 @@ func loadWorkspace(path string, rc *runner.FileConfig) (*wsconfig.Config, worksp
 	if d := wc.HeartbeatImagesDropped(); len(d) > 0 {
 		logf("warning: %d image pattern(s) in %s cannot be advertised to central (limit 32 entries of 256 bytes); they still apply here: %q", len(d), path, d)
 	}
-	ex, err := newExecutor(wc, ownerName(rc))
+	ex, err := newExecutor(wc, ownerName(rc), serve)
 	if err != nil {
 		return nil, nil, fmt.Errorf("start %s executor: %w", wc.Executor, err)
 	}
@@ -242,7 +245,7 @@ func runnerWorkspace(args []string, out io.Writer, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	wc, ex, err := loadWorkspace(*file, rc)
+	wc, ex, err := loadWorkspace(*file, rc, false)
 	if err != nil {
 		return err
 	}

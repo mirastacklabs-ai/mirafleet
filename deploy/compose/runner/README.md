@@ -16,4 +16,5 @@ so the example action just runs `mirafleet version`. Edit `actions.yaml` for you
 4. Start it: `docker compose up -d`
 
 The runner key and pin live in the `runner-data` volume. To join again, use a new volume.
-Container workspaces and host mode are not supported in the image; use the packages for those.
+This setup is actions mode only. For container workspaces use [../runner-workspace/](../runner-workspace/README.md).
+Host mode is not supported in the image; use the packages for it.
